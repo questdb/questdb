@@ -621,6 +621,7 @@ public final class IntervalUtils {
      * invert(list, 0);
      * // After inversion, list contains: [Long.MIN_VALUE, 99, 201, 499, 601, Long.MAX_VALUE]
      * </pre>
+     * The complement of no interval at all is the full range.
      *
      * @param intervals  A {@code LongList} containing a flat sequence of sorted, non-overlapping,
      *                   inclusive intervals (e.g., {@code [start1, end1, start2, end2, ...]}).
@@ -630,6 +631,8 @@ public final class IntervalUtils {
      */
     public static void invert(LongList intervals, int startIndex) {
         long last = Long.MIN_VALUE;
+        // the complement runs to Long.MAX_VALUE unless the last interval does
+        boolean isTailOpen = true;
         int n = intervals.size();
         int writeIndex = startIndex;
         for (int i = startIndex; i < n; i += 2) {
@@ -640,11 +643,12 @@ public final class IntervalUtils {
                 intervals.setQuick(writeIndex + 1, lo - 1);
                 writeIndex += 2;
             }
+            // hi + 1 overflows to Long.MIN_VALUE when hi is Long.MAX_VALUE, which closes the tail
             last = hi + 1;
+            isTailOpen = hi != Long.MAX_VALUE;
         }
 
-        // If last hi was Long.MAX_VALUE then last will be Long.MIN_VALUE after +1 overflow
-        if (last != Long.MIN_VALUE) {
+        if (isTailOpen) {
             intervals.extendAndSet(writeIndex + 1, Long.MAX_VALUE);
             intervals.setQuick(writeIndex, last);
             writeIndex += 2;

@@ -237,17 +237,16 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         final int size = staticIntervals.size();
-        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.INTERSECT, sink, noDynamicIntervals);
-            if (noDynamicIntervals) {
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.INTERSECT, sink, true);
+            if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
                     IntervalUtils.intersectInPlace(staticIntervals, size);
                 }
             } else {
-                appendParsedDynamicIntervals();
+                intersectParsedIntervals();
             }
             intervalApplied = true;
         } finally {
@@ -611,18 +610,19 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         final int size = staticIntervals.size();
-        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.SUBTRACT, sink, noDynamicIntervals);
-            if (noDynamicIntervals) {
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.SUBTRACT, sink, true);
+            if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 IntervalUtils.invert(staticIntervals, size);
                 if (intervalApplied) {
                     IntervalUtils.intersectInPlace(staticIntervals, size);
                 }
             } else {
-                appendParsedDynamicIntervals();
+                // the subtraction intersects the preceding result with the complement
+                IntervalUtils.invert(parsedIntervals, 0);
+                intersectParsedIntervals();
             }
             intervalApplied = true;
         } finally {
@@ -648,11 +648,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
     }
 
+    /**
+     * Unions [lo, hi] into the model. The union of the empty set with an interval is that interval,
+     * so an empty model does not stop a union the way it stops an intersection.
+     */
     public void union(long lo, long hi) {
-        if (isEmptySet()) {
-            return;
-        }
-
         if (dynamicRangeList.size() == 0) {
             staticIntervals.add(lo, hi);
             if (intervalApplied) {
@@ -666,11 +666,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
+    /**
+     * Unions the intervals of a tick expression into the model. An empty model does not stop the
+     * union, see {@link #union(long, long)}.
+     */
     public void unionIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
-        if (isEmptySet()) {
-            return;
-        }
-
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
         // so that cached queries always use the current time.
         if (DateExpressionEvaluator.containsDateVariable(seq, lo, lim)) {
@@ -682,17 +682,16 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         // Parse and expand the interval string (may produce multiple pairs for periodic intervals).
         final int size = staticIntervals.size();
-        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.UNION, sink, noDynamicIntervals);
-            if (noDynamicIntervals) {
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.UNION, sink, true);
+            if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
                     IntervalUtils.unionInPlace(staticIntervals, size);
                 }
             } else {
-                appendParsedDynamicIntervals();
+                appendStaticIntervalsUnion();
             }
             intervalApplied = true;
         } finally {
@@ -700,13 +699,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
     }
 
+    /**
+     * Unions a runtime timestamp into the model. An empty model does not stop the union, see
+     * {@link #union(long, long)}.
+     */
     public void unionRuntimeTimestamp(Function function, int functionPosition) {
-        if (isEmptySet()) {
-            // the model is already an empty set, but this builder owns the incoming function
-            Misc.free(function);
-            return;
-        }
-
         try {
             final boolean isCursor = function.getType() == ColumnType.CURSOR;
             reserveEncodedIntervals(1, isCursor ? 1 : 0);
@@ -801,15 +798,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
     }
 
-    private void appendParsedDynamicIntervals() {
-        final int intervalCount = parsedIntervals.size() / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
-        reserveEncodedIntervals(intervalCount, 0);
-        staticIntervals.add(parsedIntervals);
-        for (int i = 0; i < intervalCount; i++) {
-            addDynamicFunction(null, 0, false);
-        }
-    }
-
+    /**
+     * Appends the static intervals in {@code parsedIntervals} as one set that the evaluator
+     * intersects with the preceding result at once. Encoding the intervals one by one, the first
+     * with INTERSECT and the rest with UNION, would intersect only the first of them.
+     */
     private void appendStaticIntervalsIntersection() {
         final int intervalCount = parsedIntervals.size() / 2;
         reserveEncodedIntervals(intervalCount, 0);
@@ -821,6 +814,24 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                     PeriodType.NONE,
                     1,
                     i == 0 ? IntervalOperation.INTERSECT_INTERVALS : IntervalOperation.NONE,
+                    staticIntervals
+            );
+            addDynamicFunction(null, 0, false);
+        }
+    }
+
+    /**
+     * Appends the static intervals in {@code parsedIntervals} as UNION leaves. A union does not
+     * depend on how its operands group.
+     */
+    private void appendStaticIntervalsUnion() {
+        final int intervalCount = parsedIntervals.size() / 2;
+        reserveEncodedIntervals(intervalCount, 0);
+        for (int i = 0; i < intervalCount; i++) {
+            IntervalUtils.encodeInterval(
+                    parsedIntervals.getQuick(i * 2),
+                    parsedIntervals.getQuick(i * 2 + 1),
+                    IntervalOperation.UNION,
                     staticIntervals
             );
             addDynamicFunction(null, 0, false);
@@ -947,6 +958,19 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
     }
 
+    /**
+     * Intersects the preceding result with the static intervals in {@code parsedIntervals}, which
+     * the parser has sorted and merged. With no interval at all the result is the empty set,
+     * whatever the dynamic intervals before it resolve to.
+     */
+    private void intersectParsedIntervals() {
+        if (parsedIntervals.size() == 0) {
+            intersectEmpty();
+        } else {
+            appendStaticIntervalsIntersection();
+        }
+    }
+
     private long offsetIntervalHi(long hi, long hiOffset, TimestampDriver modelTimestampDriver) {
         if (hi == Long.MAX_VALUE || hiOffset == Long.MAX_VALUE) {
             return Long.MAX_VALUE;
@@ -1000,10 +1024,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     private void unionCompiledTickExpr(CompiledTickExpression expr) {
-        if (isEmptySet()) {
-            Misc.free(expr);
-            return;
-        }
+        // an empty model does not stop a union, see union(long, long)
         try {
             reserveEncodedIntervals(1, 0);
             IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.UNION, staticIntervals);

@@ -4840,6 +4840,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 true
         );
 
+        if (intervals.size() == 0) {
+            // The expression has no interval, such as a day filter that drops its only day, so
+            // the IN never matches. It still needs an operand: the operator above it consumes one.
+            putNeverMatchingInPairing(I8_TYPE);
+            return;
+        }
+
         final ExpressionNode lhs = predicateContext.inOperationNode.lhs;
 
         int orCount = -1;

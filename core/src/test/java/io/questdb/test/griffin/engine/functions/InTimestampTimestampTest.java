@@ -28,6 +28,7 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.jit.JitUtil;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Utf8String;
@@ -620,6 +621,27 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotInTickExprThatExpandsToNothing() throws Exception {
+        // A tick expression that expands to no interval excludes no row. 2024-01-02 is a Tuesday,
+        // and $today, 2024-01-01, is a Monday.
+        assertMemoryLeak(() -> {
+            createJanuaryAndSpringTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-01T12:00:00.000000Z"));
+            try {
+                final String everyRow = "408\t2024-01-01T00:00:00.000000Z\t2024-04-03T23:00:00.000000Z";
+                assertIntrinsicRows("ts NOT IN '2024-01-02#Mon'", everyRow);
+                assertIntrinsicRows("ts NOT IN '$today#Sat'", everyRow);
+                assertIntrinsicRows("NOT (ts IN '2024-01-02#Mon')", everyRow);
+                final String firstThreeDays = "72\t2024-01-01T00:00:00.000000Z\t2024-01-03T23:00:00.000000Z";
+                assertIntrinsicRowsInBothOrders("ts NOT IN '$today#Sat'", " AND ", "ts IN '2024-01-[01..03]'", firstThreeDays);
+                assertIntrinsicRowsInBothOrders("ts NOT IN '2024-01-02#Mon'", " AND ", "ts IN '$today..$today+2d'", firstThreeDays);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testNowInTickExprWithDateVariableReevaluatesOnCachedExecution() throws Exception {
         assertMemoryLeak(() -> {
             // T1 = 1_000_000_000 micros (1000 seconds since epoch)
@@ -644,6 +666,176 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue("second execution should return a row after now() advances", cursor.hasNext());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testTickExprAfterDynamicInterval() throws Exception {
+        // An interval scan combines its conditions in the order the query lists them, so a static
+        // tick expression can follow a condition that only resolves when the query runs. The
+        // expression must still select the same rows as when it comes first.
+        assertMemoryLeak(() -> {
+            createJanuaryAndSpringTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-01T12:00:00.000000Z"));
+            try {
+                // a tick expression with several intervals intersects as one set: none of the
+                // 08:00s of 2024-01-02 and 2024-01-03 falls on $today
+                assertIntrinsicRowsInBothOrders("ts IN '[2024-01-02,2024-01-03]T08:00'", " AND ", "ts IN '$today'", "0\t\t");
+                assertIntrinsicRowsInBothOrders(
+                        "ts IN '[2024-01-01,2024-01-03]T08:00'",
+                        " AND ",
+                        "ts IN '$today'",
+                        "1\t2024-01-01T08:00:00.000000Z\t2024-01-01T08:00:00.000000Z"
+                );
+                // 08:00 on 2024-01-02 at +09:00 is 2024-01-01T23:00Z, on $today
+                assertIntrinsicRowsInBothOrders(
+                        "ts IN '2024-01-[02..03]T08:00@+09:00'",
+                        " AND ",
+                        "ts IN '$today'",
+                        "1\t2024-01-01T23:00:00.000000Z\t2024-01-01T23:00:00.000000Z"
+                );
+                // a day filter keeps the Tuesday, 2024-01-02, in local time
+                assertIntrinsicRowsInBothOrders(
+                        "ts IN '2024-01-[01..07]T08:00#Tue'",
+                        " AND ",
+                        "ts IN '$today..$today+10d'",
+                        "1\t2024-01-02T08:00:00.000000Z\t2024-01-02T08:00:00.000000Z"
+                );
+                // 08:00 in Tokyo on Tuesday 2024-01-02 is 2024-01-01T23:00Z
+                assertIntrinsicRowsInBothOrders(
+                        "ts IN '2024-01-[01..07]T08:00@Asia/Tokyo#Tue'",
+                        " AND ",
+                        "ts IN '$today..$today+10d'",
+                        "1\t2024-01-01T23:00:00.000000Z\t2024-01-01T23:00:00.000000Z"
+                );
+                // 20:00 in New York on Monday 2024-01-01 is 2024-01-02T01:00Z
+                assertIntrinsicRowsInBothOrders(
+                        "ts IN '2024-01-[01..07]T20:00@America/New_York#Mon'",
+                        " AND ",
+                        "ts IN '$today..$today+10d'",
+                        "1\t2024-01-02T01:00:00.000000Z\t2024-01-02T01:00:00.000000Z"
+                );
+                // 2024-01-02 is not a Monday, so the expression selects nothing
+                assertIntrinsicRowsInBothOrders("ts IN '2024-01-02#Mon'", " AND ", "ts IN '$today..$today+10d'", "0\t\t");
+                // a repeating interval keeps the days that the day filter keeps
+                assertIntrinsicRowsInBothOrders(
+                        "ts IN '2024-01-01T09:00#Tue;1h;1d;7'",
+                        " AND ",
+                        "ts IN '$today..$today+10d'",
+                        "1\t2024-01-02T09:00:00.000000Z\t2024-01-02T09:00:00.000000Z"
+                );
+                // a subtraction removes 08:00 in Tokyo on Tuesday 2024-01-02, 2024-01-01T23:00Z
+                assertIntrinsicRowsInBothOrders(
+                        "ts NOT IN '2024-01-02T08:00@Asia/Tokyo#Tue'",
+                        " AND ",
+                        "ts IN '$today..$today+3d'",
+                        "95\t2024-01-01T00:00:00.000000Z\t2024-01-04T23:00:00.000000Z"
+                );
+                assertIntrinsicRowsInBothOrders(
+                        "ts NOT IN '[2024-01-02,2024-01-03]'",
+                        " AND ",
+                        "ts IN '$today..$today+3d'",
+                        "48\t2024-01-01T00:00:00.000000Z\t2024-01-04T23:00:00.000000Z"
+                );
+                // a union adds 08:00 in Tokyo on Wednesday 2024-01-03, 2024-01-02T23:00Z
+                assertIntrinsicRowsInBothOrders(
+                        "ts IN '2024-01-03T08:00@Asia/Tokyo#Wed'",
+                        " OR ",
+                        "ts IN '$today'",
+                        "25\t2024-01-01T00:00:00.000000Z\t2024-01-02T23:00:00.000000Z"
+                );
+                assertIntrinsicRowsInBothOrders(
+                        "ts IN '[2024-01-02,2024-01-03]T08:00'",
+                        " OR ",
+                        "ts IN '$today'",
+                        "26\t2024-01-01T00:00:00.000000Z\t2024-01-03T08:00:00.000000Z"
+                );
+
+                // London clocks spring forward on 2024-03-31: the daily 09:00 is 09:00Z, then 08:00Z
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-03-30T12:00:00.000000Z"));
+                assertIntrinsicRowsInBothOrders(
+                        "ts IN '2024-03-30T09:00@Europe/London;1h;1d;3'",
+                        " AND ",
+                        "ts IN '$today..$today+10d'",
+                        "3\t2024-03-30T09:00:00.000000Z\t2024-04-01T08:00:00.000000Z"
+                );
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testTickExprThatExpandsToNothingInRowFilter() throws Exception {
+        // An OR with a condition that is not a timestamp interval keeps the IN in the row filter.
+        // A tick expression with no interval at all, here a day filter that drops its only day,
+        // never matches, and the JIT compiles it to a comparison that is always false.
+        assertMemoryLeak(() -> {
+            // hourly rows from 2024-01-01T00:00 to 2024-01-04T23:00, in ts and in ts2
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts,
+                               timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts2
+                        FROM long_sequence(96)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final int jitMode = sqlExecutionContext.getJitMode();
+            try {
+                for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                    sqlExecutionContext.setJitMode(mode);
+                    final String groupBy = mode == SqlJitMode.JIT_MODE_ENABLED && JitUtil.isJitSupported()
+                            ? "Async JIT Group By"
+                            : "Async Group By";
+                    assertFilterRows("ts IN '2024-01-02#Mon' OR ts > '2030-01-01'", groupBy, "0\t\t");
+                    assertFilterRows("ts NOT IN '2024-01-02#Mon' OR ts > '2030-01-01'", groupBy, "96\t2024-01-01T00:00:00.000000Z\t2024-01-04T23:00:00.000000Z");
+                    assertFilterRows("ts2 IN '2024-01-02#Mon'", groupBy, "0\t\t");
+                    assertFilterRows("ts2 NOT IN '2024-01-02#Mon'", groupBy, "96\t2024-01-01T00:00:00.000000Z\t2024-01-04T23:00:00.000000Z");
+                    assertFilterRows(
+                            "(ts IN '2024-01-02#Mon' OR ts IN '2024-01-03') AND ts IN '2024-01-[03..04]'",
+                            "Interval forward scan",
+                            "24\t2024-01-03T00:00:00.000000Z\t2024-01-03T23:00:00.000000Z"
+                    );
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    @Test
+    public void testTickExprOrWithEmptyFirstBranch() throws Exception {
+        // A union starts from its first branch. When that branch selects nothing, the union is
+        // the rest of the branches. 2024-01-02 is a Tuesday, not a Monday.
+        assertMemoryLeak(() -> {
+            createJanuaryAndSpringTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-01T12:00:00.000000Z"));
+            try {
+                final String january3 = "24\t2024-01-03T00:00:00.000000Z\t2024-01-03T23:00:00.000000Z";
+                assertIntrinsicRowsInBothOrders("ts IN '2024-01-02#Mon'", " OR ", "ts IN '2024-01-03'", january3);
+                assertIntrinsicRowsInBothOrders("ts IN '$today#Sat'", " OR ", "ts IN '2024-01-03'", january3);
+                assertIntrinsicRowsInBothOrders(
+                        "ts IN '2024-01-02#Mon'",
+                        " OR ",
+                        "ts IN '$today'",
+                        "24\t2024-01-01T00:00:00.000000Z\t2024-01-01T23:00:00.000000Z"
+                );
+                assertIntrinsicRowsInBothOrders(
+                        "ts IN '2024-01-02#Mon'",
+                        " OR ",
+                        "ts = '2024-01-03T05:00:00.000000Z'",
+                        "1\t2024-01-03T05:00:00.000000Z\t2024-01-03T05:00:00.000000Z"
+                );
+                assertIntrinsicRowsInBothOrders(
+                        "ts IN '2024-01-02#Mon'",
+                        " OR ",
+                        "ts = now()",
+                        "1\t2024-01-01T12:00:00.000000Z\t2024-01-01T12:00:00.000000Z"
+                );
+                // a condition that selects nothing after the union still empties it
+                assertIntrinsicRows("(ts IN '2024-01-02#Mon' OR ts IN '2024-01-03') AND ts IN '2024-01-04'", "0\t\t");
+            } finally {
+                setCurrentMicros(-1);
             }
         });
     }
@@ -687,6 +879,18 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 """);
     }
 
+    private static void createJanuaryAndSpringTable() throws SqlException {
+        // hourly rows from 2024-01-01T00:00 to 2024-01-10T23:00, and from 2024-03-28T00:00 to
+        // 2024-04-03T23:00, across the London spring-forward change on 2024-03-31
+        execute("""
+                CREATE TABLE t AS (
+                    SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts
+                    FROM long_sequence(240)
+                ) TIMESTAMP(ts) PARTITION BY DAY
+                """);
+        execute("INSERT INTO t SELECT timestamp_sequence('2024-03-28T00:00:00.000000Z', 3_600_000_000L) ts FROM long_sequence(168)");
+    }
+
     private static String insertEveryTenMinutes(String from, int count) {
         return "INSERT INTO t SELECT ts, ts FROM (SELECT '" + from + "'::timestamp + (x - 1) * 600_000_000 ts FROM long_sequence(" + count + "))";
     }
@@ -719,6 +923,38 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                     .mutateStepwise(steps);
         } finally {
             setCurrentMicros(-1);
+        }
+    }
+
+    private void assertFilterRows(String condition, String expectedPlan, String expectedRow) throws Exception {
+        assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE " + condition)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining(expectedPlan)
+                .returns("count\tmin\tmax\n" + expectedRow + "\n");
+    }
+
+    private void assertIntrinsicRows(String condition, String expectedRow) throws Exception {
+        assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE " + condition)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\tmin\tmax\n" + expectedRow + "\n");
+    }
+
+    /**
+     * Asserts the rows of {@code a join b} and of {@code b join a}. Both conditions narrow the
+     * interval scan, which reads no partition at all when they select nothing.
+     */
+    private void assertIntrinsicRowsInBothOrders(String a, String join, String b, String expectedRow) throws Exception {
+        for (String condition : new String[]{a + join + b, b + join + a}) {
+            assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE " + condition)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining(expectedRow.startsWith("0\t") ? "" : "Interval forward scan")
+                    .returns("count\tmin\tmax\n" + expectedRow + "\n");
         }
     }
 

@@ -4180,6 +4180,9 @@ public final class WhereClauseParser implements Mutable {
         final int savedIntrinsicValue = model.intrinsicValue;
         if (extractOrTimestampIntervals(timestampDriver, model, node, true, functionParser, metadata, executionContext)) {
             orIntrinsicNodes.clear();
+            // The first branch seeds the union with an intersection, which marks the model FALSE
+            // when that branch selects nothing. The union of all the branches decides instead.
+            model.intrinsicValue = model.isIntervalSetEmpty() ? IntrinsicModel.FALSE : savedIntrinsicValue;
             return true;
         }
         revertNodes(orIntrinsicNodes);
