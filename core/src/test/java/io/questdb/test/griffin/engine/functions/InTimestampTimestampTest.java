@@ -236,6 +236,54 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateVariableIntervalLimit() throws Exception {
+        // A literal with a date variable evaluates its IR when the query runs, and must stop at the
+        // interval limit where the parser stops
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:30:00.000000Z"));
+            try {
+                final String tickExpr = "[$today..$today + 2000d]T09:00";
+                final String error = "Date range expansion produces too many intervals (max 1024)";
+                assertExceptionNoLeakCheck("SELECT count() FROM t WHERE ts IN '" + tickExpr + "'", 34, error);
+                // the OR keeps the IN in the row filter
+                assertExceptionNoLeakCheck("SELECT count() FROM t WHERE ts IN '" + tickExpr + "' OR ts = 0", 34, error);
+                // a bind variable fails in the row filter too
+                bindVariableService.clear();
+                bindVariableService.setStr(0, tickExpr);
+                assertExceptionNoLeakCheck("SELECT count() FROM t WHERE ts IN $1 OR ts = 0", -1, error);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testDateVariableLiteralTimeShapes() throws Exception {
+        // A literal with a date variable compiles to a form that re-evaluates for every query. Time
+        // brackets and element suffixes must evaluate the same way as in a bind variable.
+        assertMemoryLeak(() -> {
+            // a row every ten minutes on 2024-01-02
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-01-02T00:00:00.000000Z', 600_000_000L) ts
+                        FROM long_sequence(144)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z"));
+            // the minutes 01:30 and 02:30
+            assertTickExprMatches("[$today]T[01,02]:30", "2\t2024-01-02T01:30:00.000000Z\t2024-01-02T02:30:00.000000Z");
+            // the minutes 01:00, 01:30, 02:00 and 02:30
+            assertTickExprMatches("[$today]T[01..02]:[00,30]", "4\t2024-01-02T01:00:00.000000Z\t2024-01-02T02:30:00.000000Z");
+            // 10:30 at +02:00 is 08:30Z
+            assertTickExprMatches("[$today]T[10:30@+02:00,11:00]", "2\t2024-01-02T08:30:00.000000Z\t2024-01-02T11:00:00.000000Z");
+            // 2024-01-02 is a Tuesday
+            assertTickExprMatches("[$today#Tue]", "144\t2024-01-02T00:00:00.000000Z\t2024-01-02T23:50:00.000000Z");
+            assertTickExprMatches("[$today#Mon, $yesterday]", "0\t\t");
+        });
+    }
+
+    @Test
     public void testDateVariableNowAtMidnight() throws Exception {
         // https://github.com/questdb/questdb/issues/8083
         // $now and expressions on it stay points in time when they land exactly on midnight
@@ -338,31 +386,6 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDateVariableLiteralTimeShapes() throws Exception {
-        // A literal with a date variable compiles to a form that re-evaluates for every query. Time
-        // brackets and element suffixes must evaluate the same way as in a bind variable.
-        assertMemoryLeak(() -> {
-            // a row every ten minutes on 2024-01-02
-            execute("""
-                    CREATE TABLE t AS (
-                        SELECT timestamp_sequence('2024-01-02T00:00:00.000000Z', 600_000_000L) ts
-                        FROM long_sequence(144)
-                    ) TIMESTAMP(ts) PARTITION BY DAY
-                    """);
-            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z"));
-            // the minutes 01:30 and 02:30
-            assertTickExprMatches("[$today]T[01,02]:30", "2\t2024-01-02T01:30:00.000000Z\t2024-01-02T02:30:00.000000Z");
-            // the minutes 01:00, 01:30, 02:00 and 02:30
-            assertTickExprMatches("[$today]T[01..02]:[00,30]", "4\t2024-01-02T01:00:00.000000Z\t2024-01-02T02:30:00.000000Z");
-            // 10:30 at +02:00 is 08:30Z
-            assertTickExprMatches("[$today]T[10:30@+02:00,11:00]", "2\t2024-01-02T08:30:00.000000Z\t2024-01-02T11:00:00.000000Z");
-            // 2024-01-02 is a Tuesday
-            assertTickExprMatches("[$today#Tue]", "144\t2024-01-02T00:00:00.000000Z\t2024-01-02T23:50:00.000000Z");
-            assertTickExprMatches("[$today#Mon, $yesterday]", "0\t\t");
-        });
-    }
-
-    @Test
     public void testDateVariableRangeWithTimeListInDstGap() throws Exception {
         // On 2024-03-31 London clocks skip from 01:00 to 02:00 local time, and $now - 2h = 01:40
         // local falls in that hour. The range compares the slots with it in local time: today's
@@ -429,8 +452,9 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testDstGapIntervalBindVariable() throws Exception {
-        // London springs forward from 01:00 GMT to 02:00 BST on 2024-03-31, so 01:10 local
-        // does not exist: the 55 minutes start at the transition, 01:00 UTC
+        // London springs forward from 01:00 GMT to 02:00 BST on 2024-03-31, so local times from
+        // 01:00 to 01:59 do not exist: the interval starts at the transition, 01:00 UTC, and keeps
+        // the five minutes from 02:00 BST that exist
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t AS (
@@ -441,7 +465,7 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
             final ObjList<BindVarTuple> cases = new ObjList<>();
             cases.add(BindVarTuple.ok(
                     "starts in the gap",
-                    "count\tmin\tmax\n55\t2024-03-31T01:00:00.000000Z\t2024-03-31T01:54:00.000000Z\n",
+                    "count\tmin\tmax\n5\t2024-03-31T01:00:00.000000Z\t2024-03-31T01:04:00.000000Z\n",
                     bindVariableService -> bindVariableService.setStr(0, "2024-03-31T01:10@Europe/London;55m")
             ));
             assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1")
@@ -449,6 +473,37 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .expectSize()
                     .assertBinds(cases);
+        });
+    }
+
+    @Test
+    public void testDstOverlapTickExpr() throws Exception {
+        // On 2024-10-27 Berlin clocks fall back from 03:00 CEST to 02:00 CET at 01:00Z, so local
+        // times from 02:00 to 02:59 happen twice. A literal, which compiles, and a bind variable,
+        // which the parser evaluates, must both select the rows of both occurrences.
+        assertMemoryLeak(() -> {
+            // a row every ten minutes from 2024-10-26T20:00Z to 2024-10-28T01:50Z
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-10-26T20:00:00.000000Z', 600_000_000L) ts
+                        FROM long_sequence(180)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-10-27T12:00:00.000000Z"));
+            try {
+                // 02:30 local time is 00:30Z in CEST and 01:30Z in CET
+                final String minute = "2\t2024-10-27T00:30:00.000000Z\t2024-10-27T01:30:00.000000Z";
+                assertTickExprMatches("[$today]T02:30@Europe/Berlin", minute);
+                assertTickExprBindVariableMatches("[$today]T02:30@Europe/Berlin", minute);
+                assertTickExprMatches("2024-10-27T02:30@Europe/Berlin", minute);
+                // every minute of the day covers its 25 hours, the same as the day itself
+                final String day = "150\t2024-10-26T22:00:00.000000Z\t2024-10-27T22:50:00.000000Z";
+                assertTickExprMatches("[$today]T[00..23]:[00..59]@Europe/Berlin", day);
+                assertTickExprBindVariableMatches("[$today]T[00..23]:[00..59]@Europe/Berlin", day);
+                assertTickExprMatches("$today@Europe/Berlin", day);
+            } finally {
+                setCurrentMicros(-1);
+            }
         });
     }
 

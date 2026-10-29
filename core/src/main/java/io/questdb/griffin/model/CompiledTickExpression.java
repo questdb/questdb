@@ -62,6 +62,9 @@ import io.questdb.std.str.StringSink;
  *   <li>STATIC (tag 01): 3 longs — tag, lo, hi</li>
  *   <li>RANGE (tag 10): 2 longs — tag+isBusinessDay+startExpr, endExpr</li>
  * </ul>
+ * {@link #evaluate} runs the steps of the parser in the same order, and stops at the interval
+ * limit where the parser stops, with the same error.
+ * <p>
  * An expression that the IR cannot represent exactly has no IR: {@link #evaluate} parses it with
  * {@link IntervalUtils#parseTickExpr} instead, the way a bind variable is parsed, so that a
  * literal and a bind variable with the same expression always produce the same intervals.
@@ -93,7 +96,7 @@ public class CompiledTickExpression extends UntypedFunction {
     private static final long TAG_MASK = 0xC000_0000_0000_0000L;
     private static final int SUNDAY = 7;
 
-    // set only for an expression without IR
+    // the interval limits, and the parser for an expression without IR
     private final CairoConfiguration configuration;
     private final DateLocale dateLocale;
     private final int dayFilterMask;
@@ -108,7 +111,7 @@ public class CompiledTickExpression extends UntypedFunction {
     private final LongList ir;
     // set only for an expression without IR
     private final StringSink parseSink;
-    // set only for an expression without IR
+    // the position of the expression, for errors
     private final int position;
     private final int timeOverrideCount;
     private final TimestampDriver timestampDriver;
@@ -118,21 +121,23 @@ public class CompiledTickExpression extends UntypedFunction {
 
     CompiledTickExpression(
             TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
             LongList ir,
             CharSequence expression,
+            int position,
             TimeZoneRules tzRules,
             DateLocale dateLocale,
             LongList exchangeSchedule
     ) {
         this.timestampDriver = timestampDriver;
+        this.configuration = configuration;
         this.ir = ir;
         this.expression = expression.toString();
+        this.position = position;
         this.tzRules = tzRules;
         this.dateLocale = dateLocale;
         this.exchangeSchedule = exchangeSchedule;
-        this.configuration = null;
         this.parseSink = null;
-        this.position = 0;
 
         // Pre-decode header and section offsets
         long header = ir.getQuick(0);
@@ -203,34 +208,31 @@ public class CompiledTickExpression extends UntypedFunction {
             parse(outIntervals);
             return;
         }
-        int outStart = outIntervals.size();
+        final int outStart = outIntervals.size();
 
-        // Phase 1: Emit intervals for each element
+        // Emit the intervals of each element, and run its day filter and timezone steps on them,
+        // or on the intervals of each day of a range
         int pos = elemOff;
         for (int i = 0; i < elemCount; i++) {
             long word = ir.getQuick(pos);
             long tag = word & TAG_MASK;
             if (tag == TAG_SINGLE_VAR) {
+                final int elementStart = outIntervals.size();
                 emitSingleVar(word, outIntervals);
+                applyElementSteps(outIntervals, elementStart);
                 pos++;
             } else if (tag == TAG_STATIC) {
+                final int elementStart = outIntervals.size();
                 outIntervals.add(ir.getQuick(pos + 1), ir.getQuick(pos + 2));
+                applyElementSteps(outIntervals, elementStart);
                 pos += 3;
             } else {
-                emitRange(word, ir.getQuick(pos + 1), outIntervals);
+                emitRange(word, ir.getQuick(pos + 1), outIntervals, outStart);
                 pos += 2;
             }
         }
 
-        // Phase 2: Apply day filter (before timezone conversion, in local time)
-        if (dayFilterMask != 0 && exchangeSchedule == null) {
-            applyDayFilter(outIntervals, outStart);
-        }
-
-        // Phase 3: Apply timezone conversion
-        applyTimezone(outIntervals, outStart);
-
-        // Phase 4: Apply exchange schedule filter + optional duration
+        // The tick calendar filter and its duration apply to the whole result, in UTC
         if (exchangeSchedule != null) {
             IntervalUtils.applyTickCalendarFilter(timestampDriver, exchangeSchedule, outIntervals, outStart);
             if (hasDurationWithExchange) {
@@ -238,9 +240,9 @@ public class CompiledTickExpression extends UntypedFunction {
             }
         }
 
-        // Phase 5: Sort and merge overlapping intervals
+        // Sort and merge the intervals, then check the final count, as the parser does
         if (outIntervals.size() > outStart + 2) {
-            IntervalUtils.unionBracketExpandedIntervals(outIntervals, outStart);
+            unionAndCheckLimit(outIntervals, outStart, "Bracket expansion");
         }
     }
 
@@ -331,6 +333,17 @@ public class CompiledTickExpression extends UntypedFunction {
         }
     }
 
+    /**
+     * Runs the day filter, in local time, and the timezone steps on the intervals from
+     * {@code startIndex} on, which belong to one element, or one day of a range.
+     */
+    private void applyElementSteps(LongList out, int startIndex) {
+        if (dayFilterMask != 0 && exchangeSchedule == null) {
+            applyDayFilter(out, startIndex);
+        }
+        applyTimezone(out, startIndex);
+    }
+
     private void applyTimezone(LongList out, int startIndex) {
         long numericTzOffset = ir.getQuick(1);
         int size = out.size();
@@ -339,9 +352,7 @@ public class CompiledTickExpression extends UntypedFunction {
                 out.setQuick(i, out.getQuick(i) - numericTzOffset);
             }
         } else if (tzRules != null) {
-            for (int i = startIndex; i < size; i += 2) {
-                IntervalUtils.localIntervalToUtc(timestampDriver, tzRules, out, i);
-            }
+            IntervalUtils.localIntervalsToUtc(tzRules, out, startIndex, 2);
         }
     }
 
@@ -389,7 +400,7 @@ public class CompiledTickExpression extends UntypedFunction {
         }
     }
 
-    private void emitRange(long startEncoded, long endEncoded, LongList out) {
+    private void emitRange(long startEncoded, long endEncoded, LongList out, int outStart) {
         long start = evaluateExpr(startEncoded);
         long end = evaluateExpr(endEncoded);
         // The expression, not its value, decides whether an endpoint is a whole day or a point
@@ -398,14 +409,21 @@ public class CompiledTickExpression extends UntypedFunction {
         boolean isEndDay = DateVariableExpr.isDayLevel(endEncoded);
 
         if (!isStartDay && !isEndDay) {
+            final int rangeStart = out.size();
             out.add(start, end);
+            applyElementSteps(out, rangeStart);
             return;
         }
 
-        // Iterate the days of the range, then clip their intervals to the endpoint that is
-        // a point in time, if any. A whole-day endpoint covers its entire day.
-        boolean isBusinessDay = (startEncoded & RANGE_BD_BIT) != 0;
-        int outStart = out.size();
+        // Iterate the days of the range, and clip their intervals to the endpoint that is a point
+        // in time, if any. A whole-day endpoint covers its entire day. Like the parser, run the
+        // steps of each day on its intervals, then merge all intervals so far once there are
+        // enough of them, and stop when the merged ones exceed the limit.
+        final boolean isBusinessDay = (startEncoded & RANGE_BD_BIT) != 0;
+        final boolean isClipped = !isStartDay || !isEndDay;
+        final long clipLo = isStartDay ? Long.MIN_VALUE : start;
+        final long clipHi = isEndDay ? Long.MAX_VALUE : end;
+        final int mergeThreshold = configuration.getSqlIntervalIncrementalMergeThreshold();
         long currentDay = timestampDriver.startOfDay(start, 0);
         long endDay = timestampDriver.startOfDay(end, 0);
         while (currentDay <= endDay) {
@@ -416,16 +434,16 @@ public class CompiledTickExpression extends UntypedFunction {
                     continue;
                 }
             }
+            final int dayStart = out.size();
             emitDayInterval(currentDay, out);
+            if (isClipped) {
+                IntervalUtils.clipIntervals(out, dayStart, clipLo, clipHi);
+            }
+            applyElementSteps(out, dayStart);
+            if ((out.size() - outStart) / 2 >= mergeThreshold) {
+                unionAndCheckLimit(out, outStart, "Date range expansion");
+            }
             currentDay = timestampDriver.addDays(currentDay, 1);
-        }
-        if (!isStartDay || !isEndDay) {
-            IntervalUtils.clipIntervals(
-                    out,
-                    outStart,
-                    isStartDay ? Long.MIN_VALUE : start,
-                    isEndDay ? Long.MAX_VALUE : end
-            );
         }
     }
 
@@ -473,6 +491,20 @@ public class CompiledTickExpression extends UntypedFunction {
      * so that Phase 3 (applyTimezone) can convert it back to UTC correctly.
      * Used for per-element timezone entries that are already in UTC.
      */
+    /**
+     * Sorts and merges the intervals from {@code outStart} on, and fails when more of them remain
+     * than the limit, as the parser does after each day of a date variable range, and at the end.
+     */
+    private void unionAndCheckLimit(LongList out, int outStart, String expansion) {
+        IntervalUtils.unionBracketExpandedIntervals(out, outStart);
+        final int maxIntervals = configuration.getSqlIntervalMaxIntervalsAfterMerge();
+        if ((out.size() - outStart) / 2 > maxIntervals) {
+            out.setPos(outStart);
+            throw CairoException.nonCritical().position(position)
+                    .put(expansion).put(" produces too many intervals (max ").put(maxIntervals).put(')');
+        }
+    }
+
     private long utcToGlobalLocal(long utc) {
         long numericTzOffset = ir.getQuick(1);
         if (numericTzOffset != Long.MIN_VALUE) {

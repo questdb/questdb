@@ -88,7 +88,6 @@ public final class IntervalUtils {
             new FiberLocal<>(() -> new ObjectStackPool<>(PendingSteps::new, 4));
     private static final FiberLocal<StringSink> tlSink1 = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<StringSink> tlSink2 = new FiberLocal<>(StringSink::new);
-    private static final FiberLocal<LongList> tlTzBound = new FiberLocal<>(LongList::new);
 
     /**
      * Formats a timestamp as "YYYY-MM-DD" into the given sink.
@@ -326,8 +325,10 @@ public final class IntervalUtils {
 
         return new CompiledTickExpression(
                 timestampDriver,
+                configuration,
                 irList,
                 seq.subSequence(lo, lim),
+                position,
                 tzRules,
                 configuration.getDefaultDateLocale(),
                 exchangeSchedule
@@ -1442,6 +1443,23 @@ public final class IntervalUtils {
     }
 
     /**
+     * Appends a piece of the interval at {@code index}, which {@link #localIntervalsToUtc} split.
+     * In the dynamic format the piece copies the encoding of the interval, and carries the
+     * operation that the intervals of an expansion after the first carry.
+     */
+    private static void addConvertedPiece(LongList intervals, int index, int stride, long lo, long hi) {
+        final int pieceIndex = intervals.size();
+        intervals.add(lo, hi);
+        if (stride == STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
+            intervals.add(
+                    intervals.getQuick(index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX),
+                    intervals.getQuick(index + PERIOD_COUNT_INDEX)
+            );
+            setEncodedOperation(intervals, pieceIndex, getEffectiveOp(getEncodedOperation(intervals, index), false));
+        }
+    }
+
+    /**
      * Adds a duration string to a timestamp. Supports multi-unit format like "5h3m31s".
      * Supported units: y (years), M (months), w (weeks), d (days), h (hours),
      * m (minutes), s (seconds), T (millis), u (micros), n (nanos).
@@ -1791,7 +1809,7 @@ public final class IntervalUtils {
             }
 
             if (steps.isClipped && steps.isClippedInUtc) {
-                clipDateRangeIntervals(out, lo, steps.clipLo, steps.clipHi, operation, applyEncoded, outSizeBeforeExpansion, errorPos);
+                clipIntervalsToWindows(out, lo, steps.clipWindows, operation, applyEncoded, outSizeBeforeExpansion, errorPos);
             }
         }
 
@@ -1805,17 +1823,11 @@ public final class IntervalUtils {
     /**
      * Applies timezone conversion to all intervals in the output list from outSizeBeforeConversion to end.
      * This converts local timestamps to UTC. Handles both numeric offsets (+03:00) and named
-     * timezones (Europe/London).
+     * timezones (Europe/London). An unbounded end, Long.MIN_VALUE or Long.MAX_VALUE, stays unbounded.
      * <p>
-     * <b>DST gap handling:</b> When the lo timestamp falls within a DST gap (a period that
-     * doesn't exist in local time, e.g., 2:30 AM on spring-forward day), both lo and hi are
-     * adjusted forward by the same offset to preserve the interval width. For example, if
-     * clocks jump from 2:00 AM to 3:00 AM, a query for the minute 2:30 AM will be adjusted
-     * to the minute 3:00 AM (both lo and hi shift by 30 minutes).
-     * This behavior is consistent with {@code TimestampFloorFromOffsetFunctionFactory}.
-     * <p>
-     * <b>DST overlap handling:</b> When a local timestamp falls within a DST overlap (a period
-     * that occurs twice, e.g., during fall-back), the daylight saving timezone offset is used.
+     * A named timezone converts an interval to the instants whose local time falls in it, which
+     * takes care of DST changes, see {@link #localIntervalsToUtc}. Where clocks fall back, an
+     * interval can turn into two or three, so the number of intervals can grow.
      *
      * @param timestampDriver         the timestamp driver
      * @param out                     the interval list
@@ -1852,8 +1864,14 @@ public final class IntervalUtils {
                 numericOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(l));
                 // Numeric offset - simple subtraction loop
                 for (int i = outSizeBeforeConversion; i < currentSize; i += stride) {
-                    out.setQuick(i, out.getQuick(i) - numericOffset);
-                    out.setQuick(i + 1, out.getQuick(i + 1) - numericOffset);
+                    final long lo = out.getQuick(i);
+                    final long hi = out.getQuick(i + 1);
+                    if (lo != Long.MIN_VALUE) {
+                        out.setQuick(i, lo - numericOffset);
+                    }
+                    if (hi != Long.MAX_VALUE) {
+                        out.setQuick(i + 1, hi - numericOffset);
+                    }
                 }
             } else {
                 // Named timezone - get timezone rules
@@ -1861,10 +1879,7 @@ public final class IntervalUtils {
                         Numbers.decodeLowInt(dateLocale.matchZone(tz, tzLo, tzHi)),
                         timestampDriver.getTZRuleResolution()
                 );
-                // Named timezone - handle DST gaps
-                for (int i = outSizeBeforeConversion; i < currentSize; i += stride) {
-                    localIntervalToUtc(timestampDriver, tzRules, out, i);
-                }
+                localIntervalsToUtc(tzRules, out, outSizeBeforeConversion, stride);
             }
         } catch (NumericException e) {
             throw SqlException.$(position, "invalid timezone: ").put(tz, tzLo, tzHi);
@@ -1914,16 +1929,67 @@ public final class IntervalUtils {
         // When clipping dropped the first interval of the expansion, the interval that took
         // its place carries UNION and must carry the operation instead
         if (startIndex == outSizeBeforeExpansion && writeIndex > startIndex) {
-            final int index = startIndex + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX;
-            final long encoded = out.getQuick(index);
-            final short periodType = Numbers.decodeHighShort(Numbers.decodeLowInt(encoded));
-            out.setQuick(
-                    index,
-                    Numbers.encodeLowHighInts(
-                            Numbers.encodeLowHighShorts(getEffectiveOp(operation, true), periodType),
-                            Numbers.decodeHighInt(encoded)
-                    )
-            );
+            setEncodedOperation(out, startIndex, getEffectiveOp(operation, true));
+        }
+    }
+
+    /**
+     * Clips the intervals from {@code startIndex} on to a list of windows, sorted and apart, and
+     * drops the ones that fall outside all of them, the way {@link #clipDateRangeIntervals} clips
+     * to one window. An interval that spans the space between two windows splits, and in dynamic
+     * mode its later pieces carry the operation of a further interval of the expansion.
+     */
+    private static void clipIntervalsToWindows(
+            LongList out,
+            int startIndex,
+            LongList windows,
+            short operation,
+            boolean applyEncoded,
+            int outSizeBeforeExpansion,
+            int errorPos
+    ) throws SqlException {
+        if (windows.size() == 2) {
+            clipDateRangeIntervals(out, startIndex, windows.getQuick(0), windows.getQuick(1), operation, applyEncoded, outSizeBeforeExpansion, errorPos);
+            return;
+        }
+
+        // write the clipped intervals after the others, then move them into place
+        final int stride = applyEncoded ? 2 : STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+        final int size = out.size();
+        for (int i = startIndex; i < size; i += stride) {
+            if (!applyEncoded && decodePeriodType(out, i) != PeriodType.NONE) {
+                // clipping a repeating interval would need its repetitions expanded
+                throw SqlException.$(errorPos, "Repeating interval is not supported in a date variable range with a time of day");
+            }
+            final long lo = out.getQuick(i);
+            final long hi = out.getQuick(i + 1);
+            boolean isFirstPiece = true;
+            for (int w = 0, n = windows.size(); w < n; w += 2) {
+                final long windowLo = windows.getQuick(w);
+                final long windowHi = windows.getQuick(w + 1);
+                if (hi >= windowLo && lo <= windowHi) {
+                    final int pieceIndex = out.size();
+                    out.add(Math.max(lo, windowLo), Math.min(hi, windowHi));
+                    if (!applyEncoded) {
+                        out.add(out.getQuick(i + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX), out.getQuick(i + PERIOD_COUNT_INDEX));
+                        if (!isFirstPiece) {
+                            setEncodedOperation(out, pieceIndex, getEffectiveOp(getEncodedOperation(out, i), false));
+                        }
+                    }
+                    isFirstPiece = false;
+                }
+            }
+        }
+        final int clippedSize = out.size() - size;
+        for (int k = 0; k < clippedSize; k++) {
+            out.setQuick(startIndex + k, out.getQuick(size + k));
+        }
+        out.setPos(startIndex + clippedSize);
+
+        // When clipping dropped the first interval of the expansion, the interval that took
+        // its place carries UNION and must carry the operation instead
+        if (!applyEncoded && startIndex == outSizeBeforeExpansion && clippedSize > 0) {
+            setEncodedOperation(out, startIndex, getEffectiveOp(operation, true));
         }
     }
 
@@ -3977,10 +4043,6 @@ public final class IntervalUtils {
         }
         final boolean isClipped = enclosingSteps != null && enclosingSteps.isClipped;
         final boolean isDayFiltered = enclosingSteps != null && enclosingSteps.isDayFiltered;
-        // the range endpoints in UTC, for the slots with their own timezone, set on first use
-        boolean hasUtcClip = false;
-        long utcClipLo = Long.MIN_VALUE;
-        long utcClipHi = Long.MAX_VALUE;
 
         // Check once if suffix contains brackets that need expansion (same for all elements)
         boolean hasSuffixBrackets = false;
@@ -4067,22 +4129,16 @@ public final class IntervalUtils {
                     if (isClipped) {
                         slotSteps.isClipped = true;
                         if (tzLo >= 0) {
-                            if (!hasUtcClip) {
-                                utcClipLo = enclosingSteps.clipLo;
-                                utcClipHi = enclosingSteps.clipHi;
-                                if (enclosingSteps.tzLo >= 0) {
-                                    if (utcClipLo != Long.MIN_VALUE) {
-                                        utcClipLo = localToUtc(timestampDriver, configuration, utcClipLo, enclosingSteps.tzSeq, enclosingSteps.tzLo, enclosingSteps.tzHi, errorPos);
-                                    }
-                                    if (utcClipHi != Long.MAX_VALUE) {
-                                        utcClipHi = localToUtc(timestampDriver, configuration, utcClipHi, enclosingSteps.tzSeq, enclosingSteps.tzLo, enclosingSteps.tzHi, errorPos);
-                                    }
-                                }
-                                hasUtcClip = true;
-                            }
+                            // The slot keeps the instants whose local time in the timezone of the
+                            // range falls between the range endpoints. Where clocks fall back, an
+                            // endpoint repeats, so these instants can form up to three windows.
                             slotSteps.isClippedInUtc = true;
-                            slotSteps.clipLo = utcClipLo;
-                            slotSteps.clipHi = utcClipHi;
+                            final LongList clipWindows = slotSteps.clipWindows;
+                            clipWindows.clear();
+                            clipWindows.add(enclosingSteps.clipLo, enclosingSteps.clipHi);
+                            if (enclosingSteps.tzLo >= 0) {
+                                applyTimezoneToIntervals(timestampDriver, configuration, clipWindows, 0, enclosingSteps.tzSeq, enclosingSteps.tzLo, enclosingSteps.tzHi, errorPos, true);
+                            }
                         } else {
                             slotSteps.clipLo = enclosingSteps.clipLo;
                             slotSteps.clipHi = enclosingSteps.clipHi;
@@ -4520,26 +4576,6 @@ public final class IntervalUtils {
     }
 
     /**
-     * Converts a local timestamp to UTC with the timezone in tzSeq[tzLo, tzHi), the same way
-     * {@link #applyTimezoneToIntervals} converts an interval.
-     */
-    private static long localToUtc(
-            TimestampDriver timestampDriver,
-            CairoConfiguration configuration,
-            long timestamp,
-            CharSequence tzSeq,
-            int tzLo,
-            int tzHi,
-            int errorPos
-    ) throws SqlException {
-        final LongList bound = tlTzBound.get();
-        bound.clear();
-        bound.add(timestamp, timestamp);
-        applyTimezoneToIntervals(timestampDriver, configuration, bound, 0, tzSeq, tzLo, tzHi, errorPos, true);
-        return bound.getQuick(0);
-    }
-
-    /**
      * Unions intervals in the range [startIndex, end) with each other.
      * Pre-existing intervals at [0, startIndex) are preserved unchanged.
      * Bracket values may be in any order (e.g., [20,10,15]), so we sort first.
@@ -4947,6 +4983,23 @@ public final class IntervalUtils {
         throw SqlException.$(position, "Invalid day name: ").put(seq, lo, hi);
     }
 
+    /**
+     * Sets the operation of the interval at {@code index} in the dynamic format, keeping its period
+     * type and the rest of its encoding.
+     */
+    private static void setEncodedOperation(LongList intervals, int index, short operation) {
+        final int encodedIndex = index + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX;
+        final long encoded = intervals.getQuick(encodedIndex);
+        final short periodType = Numbers.decodeHighShort(Numbers.decodeLowInt(encoded));
+        intervals.setQuick(
+                encodedIndex,
+                Numbers.encodeLowHighInts(
+                        Numbers.encodeLowHighShorts(operation, periodType),
+                        Numbers.decodeHighInt(encoded)
+                )
+        );
+    }
+
     static int append(LongList list, int writePoint, long lo, long hi) {
         if (writePoint > 0) {
             long prevHi = list.getQuick(2 * writePoint - 1) + 1;
@@ -5103,28 +5156,145 @@ public final class IntervalUtils {
     }
 
     /**
-     * Converts the local interval at {@code intervals[index]} and {@code intervals[index + 1]} to UTC
-     * with the rules of a named timezone. A local time in a DST gap, where clocks spring forward, does
-     * not exist. An interval that starts in the gap moves to start at the transition and keeps its
-     * width, so the minute 02:30 of a 02:00 to 03:00 gap becomes the minute 03:00. An interval that
-     * only ends in the gap converts its end with the offset from before the gap, which keeps its width
-     * in real time. In a DST overlap, where clocks fall back, a local time converts with the daylight
-     * saving offset.
+     * Converts the local intervals from {@code startIndex} on to UTC with the rules of a named
+     * timezone. A local interval stands for the instants whose local time falls in it:
+     * <ul>
+     * <li>Where clocks fall back, local times repeat, and an interval covers both occurrences of
+     * the repeated times in it. When one of its ends repeats, the instants between the two
+     * occurrences of that end fall outside it, so it turns into two intervals, or three when both
+     * of its ends repeat, at different transitions.</li>
+     * <li>Where clocks spring forward, local times are skipped. An interval that starts in the
+     * skipped time starts at the transition, and one that ends in it ends right before the
+     * transition. An interval that falls entirely in the skipped time, which no instant matches,
+     * moves to start at the transition and keeps its width, so the minute 02:30 of a 02:00 to 03:00
+     * gap becomes the minute 03:00.</li>
+     * </ul>
+     * An unbounded end, Long.MIN_VALUE or Long.MAX_VALUE, stays unbounded. The intervals that the
+     * conversion adds go after the others. In the static format, {@code stride} 2, the intervals
+     * from {@code startIndex} on are then sorted and merged. In the dynamic format, {@code stride}
+     * 4, an added interval copies the encoding of the interval it comes from, with the operation
+     * that the intervals of an expansion after the first carry, see {@link #getEffectiveOp}. A
+     * repeating interval in the dynamic format, whose repetitions the runtime computes in UTC,
+     * stays one interval, from the first occurrence of its start to the first occurrence of its end.
      */
-    static void localIntervalToUtc(TimestampDriver timestampDriver, TimeZoneRules tzRules, LongList intervals, int index) {
-        final long lo = intervals.getQuick(index);
-        final long hi = intervals.getQuick(index + 1);
-        final long loUtc = timestampDriver.toUTC(lo, tzRules);
-        // In a gap, the local offset is the one from before the gap, which no UTC time has. Unlike
-        // getDstGapOffset(), which is 0 at the first instant of the gap, this catches the whole gap.
-        if (tzRules.getOffset(loUtc) != tzRules.getLocalOffset(lo)) {
-            // getDstGapOffset() is the distance into the gap, so this is the transition instant
-            final long transition = loUtc - tzRules.getDstGapOffset(lo);
-            intervals.setQuick(index, transition);
-            intervals.setQuick(index + 1, transition + (hi - lo));
-        } else {
-            intervals.setQuick(index, loUtc);
-            intervals.setQuick(index + 1, timestampDriver.toUTC(hi, tzRules));
+    static void localIntervalsToUtc(TimeZoneRules tzRules, LongList intervals, int startIndex, int stride) {
+        final int size = intervals.size();
+        // getNextDST() gives the same transition for every instant from nextTransitionFrom up to the
+        // transition, so the ends that fall there reuse it
+        long nextTransitionFrom = Long.MAX_VALUE;
+        long nextTransition = Long.MIN_VALUE;
+        long offsetAfterNextTransition = 0;
+        for (int i = startIndex; i < size; i += stride) {
+            final long lo = intervals.getQuick(i);
+            final long hi = intervals.getQuick(i + 1);
+
+            // the first instant whose local time is lo or later
+            long start = Long.MIN_VALUE;
+            // When lo repeats, the instants from the transition to the second occurrence of lo
+            // fall outside the interval
+            long loTransition = Long.MIN_VALUE;
+            long loRepeat = Long.MIN_VALUE;
+            if (lo != Long.MIN_VALUE) {
+                // getLocalOffset() resolves a repeated local time to its first occurrence, and a
+                // skipped one to the offset from before the transition, which no instant has there
+                final long offset = tzRules.getLocalOffset(lo);
+                start = lo - offset;
+                if (tzRules.getOffset(start) != offset) {
+                    // getDstGapOffset() is the distance into the gap, so this is the transition
+                    start -= tzRules.getDstGapOffset(lo);
+                } else {
+                    if (start < nextTransitionFrom || start >= nextTransition) {
+                        nextTransitionFrom = start;
+                        nextTransition = tzRules.getNextDST(start);
+                        offsetAfterNextTransition = nextTransition != Long.MAX_VALUE ? tzRules.getOffset(nextTransition) : offset;
+                    }
+                    if (offsetAfterNextTransition < offset && lo - offsetAfterNextTransition >= nextTransition) {
+                        loTransition = nextTransition;
+                        loRepeat = lo - offsetAfterNextTransition;
+                    }
+                }
+            }
+
+            // the last instant whose local time is hi or earlier
+            long end = Long.MAX_VALUE;
+            // When hi repeats, the instants from the first occurrence of hi to the transition fall
+            // outside the interval
+            long hiFirst = Long.MIN_VALUE;
+            long hiTransition = Long.MIN_VALUE;
+            if (hi != Long.MAX_VALUE) {
+                final long offset = tzRules.getLocalOffset(hi);
+                end = hi - offset;
+                if (tzRules.getOffset(end) != offset) {
+                    // right before the transition
+                    end -= tzRules.getDstGapOffset(hi) + 1;
+                } else {
+                    if (end < nextTransitionFrom || end >= nextTransition) {
+                        nextTransitionFrom = end;
+                        nextTransition = tzRules.getNextDST(end);
+                        offsetAfterNextTransition = nextTransition != Long.MAX_VALUE ? tzRules.getOffset(nextTransition) : offset;
+                    }
+                    if (offsetAfterNextTransition < offset && hi - offsetAfterNextTransition >= nextTransition) {
+                        hiFirst = end;
+                        hiTransition = nextTransition;
+                        end = hi - offsetAfterNextTransition;
+                    }
+                }
+            }
+
+            if (start > end) {
+                // no instant has a local time in the interval
+                intervals.setQuick(i, start);
+                intervals.setQuick(i + 1, start + (hi - lo));
+                continue;
+            }
+            if (stride == STATIC_LONGS_PER_DYNAMIC_INTERVAL && decodePeriodType(intervals, i) != PeriodType.NONE) {
+                intervals.setQuick(i, start);
+                intervals.setQuick(i + 1, hiTransition != Long.MIN_VALUE ? hiFirst : end);
+                continue;
+            }
+
+            // The instants between start and end that fall outside the interval: up to two holes,
+            // in order. When both ends repeat at the same transition, their holes are adjacent.
+            final boolean hasLoHole = loRepeat > loTransition;
+            final boolean hasHiHole = hiTransition > hiFirst + 1;
+            long hole1Lo = Long.MAX_VALUE;
+            long hole1Hi = Long.MAX_VALUE;
+            long hole2Lo = Long.MAX_VALUE;
+            long hole2Hi = Long.MAX_VALUE;
+            if (hasLoHole && hasHiHole) {
+                if (loTransition == hiTransition) {
+                    hole1Lo = hiFirst + 1;
+                    hole1Hi = loRepeat - 1;
+                } else {
+                    hole1Lo = loTransition;
+                    hole1Hi = loRepeat - 1;
+                    hole2Lo = hiFirst + 1;
+                    hole2Hi = hiTransition - 1;
+                }
+            } else if (hasLoHole) {
+                hole1Lo = loTransition;
+                hole1Hi = loRepeat - 1;
+            } else if (hasHiHole) {
+                hole1Lo = hiFirst + 1;
+                hole1Hi = hiTransition - 1;
+            }
+
+            if (hole1Lo == Long.MAX_VALUE) {
+                intervals.setQuick(i, start);
+                intervals.setQuick(i + 1, end);
+                continue;
+            }
+            intervals.setQuick(i, start);
+            intervals.setQuick(i + 1, hole1Lo - 1);
+            if (hole2Lo == Long.MAX_VALUE) {
+                addConvertedPiece(intervals, i, stride, hole1Hi + 1, end);
+            } else {
+                addConvertedPiece(intervals, i, stride, hole1Hi + 1, hole2Lo - 1);
+                addConvertedPiece(intervals, i, stride, hole2Hi + 1, end);
+            }
+        }
+        if (stride == 2 && intervals.size() > size) {
+            unionBracketExpandedIntervals(intervals, startIndex);
         }
     }
 
@@ -5188,6 +5358,8 @@ public final class IntervalUtils {
      * steps yet.
      */
     private static class PendingSteps implements Mutable {
+        // the UTC windows of a clip that runs after the timezone step, sorted and apart
+        final LongList clipWindows = new LongList(4);
         long clipHi;
         long clipLo;
         int dayFilterMask;
@@ -5199,7 +5371,7 @@ public final class IntervalUtils {
         // and timezone steps of this element on them
         boolean hasTimeList;
         boolean isClipped;
-        // the clip endpoints are in UTC, and the clip runs after the timezone step
+        // the clip runs after the timezone step, to clipWindows
         boolean isClippedInUtc;
         boolean isDayFiltered;
         // an element of a date list, or a day of a date variable range, rather than a time list element
@@ -5213,6 +5385,7 @@ public final class IntervalUtils {
 
         @Override
         public void clear() {
+            clipWindows.clear();
             clipHi = 0;
             clipLo = 0;
             dayFilterMask = 0;

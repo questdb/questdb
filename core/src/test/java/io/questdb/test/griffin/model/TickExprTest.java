@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.model;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TimestampDriver;
@@ -780,9 +781,13 @@ public class TickExprTest {
 
     @Test
     public void testCompiledTickExprDstFallBack() throws SqlException {
-        // Nov 3, 2024 in America/New_York: clocks fall back at 2:00 AM EDT
-        // T01:30 occurs twice (overlap) — code uses daylight time offset
-        assertCompiledTickExprWithNow("$todayT01:30@America/New_York", "2024-11-03T12:00:00.000000Z");
+        // Nov 3, 2024 in America/New_York: clocks fall back at 2:00 AM EDT, so 01:30 happens twice,
+        // at 05:30Z and at 06:30Z, and the expression covers both
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-11-03T05:30:00.000000Z, hi=2024-11-03T05:30:59.999999Z},{lo=2024-11-03T06:30:00.000000Z, hi=2024-11-03T06:30:59.999999Z}]",
+                "$todayT01:30@America/New_York",
+                "2024-11-03T12:00:00.000000Z"
+        );
     }
 
     @Test
@@ -1011,6 +1016,22 @@ public class TickExprTest {
     @Test
     public void testCompiledTickExprEmptyElementInDateList() {
         assertCompileTickExprError("[$today,, $tomorrow]", "Empty element in date list");
+    }
+
+    @Test
+    public void testCompiledTickExprIntervalLimit() throws SqlException {
+        // A literal with a date variable evaluates through its IR, which must stop at the
+        // interval limit where the parser stops, with the same error. The parser checks the
+        // merged intervals after each day of a date variable range, and the final result.
+        final String now = "2024-01-02T10:30:00.000000Z";
+        assertParsedAndCompiledErrorWithNow("[$today..$today + 2000d]T09:00", now, "Date range expansion produces too many intervals (max 1024)");
+        assertParsedAndCompiledErrorWithNow("[$today - 2000d..$now]T09:30;1h", now, "Date range expansion produces too many intervals (max 1024)");
+        assertParsedAndCompiledErrorWithNow("$today..$today + 600dT[09:00,15:00]", now, "Date range expansion produces too many intervals (max 1024)");
+        // a single day with 1,100 separate seconds reaches the limit only in the final result
+        assertParsedAndCompiledErrorWithNow("[$today]T[00:00:00,00:00:02,00:00:04,00:00:06,00:00:08,00:00:10,00:00:12,00:00:14,00:00:16,00:00:18,00:00:20,00:00:22,00:00:24,00:00:26,00:00:28,00:00:30,00:00:32,00:00:34,00:00:36,00:00:38,00:00:40,00:00:42,00:00:44,00:00:46,00:00:48,00:00:50,00:00:52,00:00:54,00:00:56,00:00:58,00:01:00,00:01:02,00:01:04,00:01:06,00:01:08,00:01:10,00:01:12,00:01:14,00:01:16,00:01:18,00:01:20,00:01:22,00:01:24,00:01:26,00:01:28,00:01:30,00:01:32,00:01:34,00:01:36,00:01:38,00:01:40,00:01:42,00:01:44,00:01:46,00:01:48,00:01:50,00:01:52,00:01:54,00:01:56,00:01:58,00:02:00,00:02:02,00:02:04,00:02:06,00:02:08,00:02:10,00:02:12,00:02:14,00:02:16,00:02:18,00:02:20,00:02:22,00:02:24,00:02:26,00:02:28,00:02:30,00:02:32,00:02:34,00:02:36,00:02:38,00:02:40,00:02:42,00:02:44,00:02:46,00:02:48,00:02:50,00:02:52,00:02:54,00:02:56,00:02:58,00:03:00,00:03:02,00:03:04,00:03:06,00:03:08,00:03:10,00:03:12,00:03:14,00:03:16,00:03:18,00:03:20,00:03:22,00:03:24,00:03:26,00:03:28,00:03:30,00:03:32,00:03:34,00:03:36,00:03:38,00:03:40,00:03:42,00:03:44,00:03:46,00:03:48,00:03:50,00:03:52,00:03:54,00:03:56,00:03:58,00:04:00,00:04:02,00:04:04,00:04:06,00:04:08,00:04:10,00:04:12,00:04:14,00:04:16,00:04:18,00:04:20,00:04:22,00:04:24,00:04:26,00:04:28,00:04:30,00:04:32,00:04:34,00:04:36,00:04:38,00:04:40,00:04:42,00:04:44,00:04:46,00:04:48,00:04:50,00:04:52,00:04:54,00:04:56,00:04:58,00:05:00,00:05:02,00:05:04,00:05:06,00:05:08,00:05:10,00:05:12,00:05:14,00:05:16,00:05:18,00:05:20,00:05:22,00:05:24,00:05:26,00:05:28,00:05:30,00:05:32,00:05:34,00:05:36,00:05:38,00:05:40,00:05:42,00:05:44,00:05:46,00:05:48,00:05:50,00:05:52,00:05:54,00:05:56,00:05:58,00:06:00,00:06:02,00:06:04,00:06:06,00:06:08,00:06:10,00:06:12,00:06:14,00:06:16,00:06:18,00:06:20,00:06:22,00:06:24,00:06:26,00:06:28,00:06:30,00:06:32,00:06:34,00:06:36,00:06:38,00:06:40,00:06:42,00:06:44,00:06:46,00:06:48,00:06:50,00:06:52,00:06:54,00:06:56,00:06:58,00:07:00,00:07:02,00:07:04,00:07:06,00:07:08,00:07:10,00:07:12,00:07:14,00:07:16,00:07:18,00:07:20,00:07:22,00:07:24,00:07:26,00:07:28,00:07:30,00:07:32,00:07:34,00:07:36,00:07:38,00:07:40,00:07:42,00:07:44,00:07:46,00:07:48,00:07:50,00:07:52,00:07:54,00:07:56,00:07:58,00:08:00,00:08:02,00:08:04,00:08:06,00:08:08,00:08:10,00:08:12,00:08:14,00:08:16,00:08:18,00:08:20,00:08:22,00:08:24,00:08:26,00:08:28,00:08:30,00:08:32,00:08:34,00:08:36,00:08:38,00:08:40,00:08:42,00:08:44,00:08:46,00:08:48,00:08:50,00:08:52,00:08:54,00:08:56,00:08:58,00:09:00,00:09:02,00:09:04,00:09:06,00:09:08,00:09:10,00:09:12,00:09:14,00:09:16,00:09:18,00:09:20,00:09:22,00:09:24,00:09:26,00:09:28,00:09:30,00:09:32,00:09:34,00:09:36,00:09:38,00:09:40,00:09:42,00:09:44,00:09:46,00:09:48,00:09:50,00:09:52,00:09:54,00:09:56,00:09:58,00:10:00,00:10:02,00:10:04,00:10:06,00:10:08,00:10:10,00:10:12,00:10:14,00:10:16,00:10:18,00:10:20,00:10:22,00:10:24,00:10:26,00:10:28,00:10:30,00:10:32,00:10:34,00:10:36,00:10:38,00:10:40,00:10:42,00:10:44,00:10:46,00:10:48,00:10:50,00:10:52,00:10:54,00:10:56,00:10:58,00:11:00,00:11:02,00:11:04,00:11:06,00:11:08,00:11:10,00:11:12,00:11:14,00:11:16,00:11:18,00:11:20,00:11:22,00:11:24,00:11:26,00:11:28,00:11:30,00:11:32,00:11:34,00:11:36,00:11:38,00:11:40,00:11:42,00:11:44,00:11:46,00:11:48,00:11:50,00:11:52,00:11:54,00:11:56,00:11:58,00:12:00,00:12:02,00:12:04,00:12:06,00:12:08,00:12:10,00:12:12,00:12:14,00:12:16,00:12:18,00:12:20,00:12:22,00:12:24,00:12:26,00:12:28,00:12:30,00:12:32,00:12:34,00:12:36,00:12:38,00:12:40,00:12:42,00:12:44,00:12:46,00:12:48,00:12:50,00:12:52,00:12:54,00:12:56,00:12:58,00:13:00,00:13:02,00:13:04,00:13:06,00:13:08,00:13:10,00:13:12,00:13:14,00:13:16,00:13:18,00:13:20,00:13:22,00:13:24,00:13:26,00:13:28,00:13:30,00:13:32,00:13:34,00:13:36,00:13:38,00:13:40,00:13:42,00:13:44,00:13:46,00:13:48,00:13:50,00:13:52,00:13:54,00:13:56,00:13:58,00:14:00,00:14:02,00:14:04,00:14:06,00:14:08,00:14:10,00:14:12,00:14:14,00:14:16,00:14:18,00:14:20,00:14:22,00:14:24,00:14:26,00:14:28,00:14:30,00:14:32,00:14:34,00:14:36,00:14:38,00:14:40,00:14:42,00:14:44,00:14:46,00:14:48,00:14:50,00:14:52,00:14:54,00:14:56,00:14:58,00:15:00,00:15:02,00:15:04,00:15:06,00:15:08,00:15:10,00:15:12,00:15:14,00:15:16,00:15:18,00:15:20,00:15:22,00:15:24,00:15:26,00:15:28,00:15:30,00:15:32,00:15:34,00:15:36,00:15:38,00:15:40,00:15:42,00:15:44,00:15:46,00:15:48,00:15:50,00:15:52,00:15:54,00:15:56,00:15:58,00:16:00,00:16:02,00:16:04,00:16:06,00:16:08,00:16:10,00:16:12,00:16:14,00:16:16,00:16:18,00:16:20,00:16:22,00:16:24,00:16:26,00:16:28,00:16:30,00:16:32,00:16:34,00:16:36,00:16:38,00:16:40,00:16:42,00:16:44,00:16:46,00:16:48,00:16:50,00:16:52,00:16:54,00:16:56,00:16:58,00:17:00,00:17:02,00:17:04,00:17:06,00:17:08,00:17:10,00:17:12,00:17:14,00:17:16,00:17:18,00:17:20,00:17:22,00:17:24,00:17:26,00:17:28,00:17:30,00:17:32,00:17:34,00:17:36,00:17:38,00:17:40,00:17:42,00:17:44,00:17:46,00:17:48,00:17:50,00:17:52,00:17:54,00:17:56,00:17:58,00:18:00,00:18:02,00:18:04,00:18:06,00:18:08,00:18:10,00:18:12,00:18:14,00:18:16,00:18:18,00:18:20,00:18:22,00:18:24,00:18:26,00:18:28,00:18:30,00:18:32,00:18:34,00:18:36,00:18:38,00:18:40,00:18:42,00:18:44,00:18:46,00:18:48,00:18:50,00:18:52,00:18:54,00:18:56,00:18:58,00:19:00,00:19:02,00:19:04,00:19:06,00:19:08,00:19:10,00:19:12,00:19:14,00:19:16,00:19:18,00:19:20,00:19:22,00:19:24,00:19:26,00:19:28,00:19:30,00:19:32,00:19:34,00:19:36,00:19:38,00:19:40,00:19:42,00:19:44,00:19:46,00:19:48,00:19:50,00:19:52,00:19:54,00:19:56,00:19:58,00:20:00,00:20:02,00:20:04,00:20:06,00:20:08,00:20:10,00:20:12,00:20:14,00:20:16,00:20:18,00:20:20,00:20:22,00:20:24,00:20:26,00:20:28,00:20:30,00:20:32,00:20:34,00:20:36,00:20:38,00:20:40,00:20:42,00:20:44,00:20:46,00:20:48,00:20:50,00:20:52,00:20:54,00:20:56,00:20:58,00:21:00,00:21:02,00:21:04,00:21:06,00:21:08,00:21:10,00:21:12,00:21:14,00:21:16,00:21:18,00:21:20,00:21:22,00:21:24,00:21:26,00:21:28,00:21:30,00:21:32,00:21:34,00:21:36,00:21:38,00:21:40,00:21:42,00:21:44,00:21:46,00:21:48,00:21:50,00:21:52,00:21:54,00:21:56,00:21:58,00:22:00,00:22:02,00:22:04,00:22:06,00:22:08,00:22:10,00:22:12,00:22:14,00:22:16,00:22:18,00:22:20,00:22:22,00:22:24,00:22:26,00:22:28,00:22:30,00:22:32,00:22:34,00:22:36,00:22:38,00:22:40,00:22:42,00:22:44,00:22:46,00:22:48,00:22:50,00:22:52,00:22:54,00:22:56,00:22:58,00:23:00,00:23:02,00:23:04,00:23:06,00:23:08,00:23:10,00:23:12,00:23:14,00:23:16,00:23:18,00:23:20,00:23:22,00:23:24,00:23:26,00:23:28,00:23:30,00:23:32,00:23:34,00:23:36,00:23:38,00:23:40,00:23:42,00:23:44,00:23:46,00:23:48,00:23:50,00:23:52,00:23:54,00:23:56,00:23:58,00:24:00,00:24:02,00:24:04,00:24:06,00:24:08,00:24:10,00:24:12,00:24:14,00:24:16,00:24:18,00:24:20,00:24:22,00:24:24,00:24:26,00:24:28,00:24:30,00:24:32,00:24:34,00:24:36,00:24:38,00:24:40,00:24:42,00:24:44,00:24:46,00:24:48,00:24:50,00:24:52,00:24:54,00:24:56,00:24:58,00:25:00,00:25:02,00:25:04,00:25:06,00:25:08,00:25:10,00:25:12,00:25:14,00:25:16,00:25:18,00:25:20,00:25:22,00:25:24,00:25:26,00:25:28,00:25:30,00:25:32,00:25:34,00:25:36,00:25:38,00:25:40,00:25:42,00:25:44,00:25:46,00:25:48,00:25:50,00:25:52,00:25:54,00:25:56,00:25:58,00:26:00,00:26:02,00:26:04,00:26:06,00:26:08,00:26:10,00:26:12,00:26:14,00:26:16,00:26:18,00:26:20,00:26:22,00:26:24,00:26:26,00:26:28,00:26:30,00:26:32,00:26:34,00:26:36,00:26:38,00:26:40,00:26:42,00:26:44,00:26:46,00:26:48,00:26:50,00:26:52,00:26:54,00:26:56,00:26:58,00:27:00,00:27:02,00:27:04,00:27:06,00:27:08,00:27:10,00:27:12,00:27:14,00:27:16,00:27:18,00:27:20,00:27:22,00:27:24,00:27:26,00:27:28,00:27:30,00:27:32,00:27:34,00:27:36,00:27:38,00:27:40,00:27:42,00:27:44,00:27:46,00:27:48,00:27:50,00:27:52,00:27:54,00:27:56,00:27:58,00:28:00,00:28:02,00:28:04,00:28:06,00:28:08,00:28:10,00:28:12,00:28:14,00:28:16,00:28:18,00:28:20,00:28:22,00:28:24,00:28:26,00:28:28,00:28:30,00:28:32,00:28:34,00:28:36,00:28:38,00:28:40,00:28:42,00:28:44,00:28:46,00:28:48,00:28:50,00:28:52,00:28:54,00:28:56,00:28:58,00:29:00,00:29:02,00:29:04,00:29:06,00:29:08,00:29:10,00:29:12,00:29:14,00:29:16,00:29:18,00:29:20,00:29:22,00:29:24,00:29:26,00:29:28,00:29:30,00:29:32,00:29:34,00:29:36,00:29:38,00:29:40,00:29:42,00:29:44,00:29:46,00:29:48,00:29:50,00:29:52,00:29:54,00:29:56,00:29:58,00:30:00,00:30:02,00:30:04,00:30:06,00:30:08,00:30:10,00:30:12,00:30:14,00:30:16,00:30:18,00:30:20,00:30:22,00:30:24,00:30:26,00:30:28,00:30:30,00:30:32,00:30:34,00:30:36,00:30:38,00:30:40,00:30:42,00:30:44,00:30:46,00:30:48,00:30:50,00:30:52,00:30:54,00:30:56,00:30:58,00:31:00,00:31:02,00:31:04,00:31:06,00:31:08,00:31:10,00:31:12,00:31:14,00:31:16,00:31:18,00:31:20,00:31:22,00:31:24,00:31:26,00:31:28,00:31:30,00:31:32,00:31:34,00:31:36,00:31:38,00:31:40,00:31:42,00:31:44,00:31:46,00:31:48,00:31:50,00:31:52,00:31:54,00:31:56,00:31:58,00:32:00,00:32:02,00:32:04,00:32:06,00:32:08,00:32:10,00:32:12,00:32:14,00:32:16,00:32:18,00:32:20,00:32:22,00:32:24,00:32:26,00:32:28,00:32:30,00:32:32,00:32:34,00:32:36,00:32:38,00:32:40,00:32:42,00:32:44,00:32:46,00:32:48,00:32:50,00:32:52,00:32:54,00:32:56,00:32:58,00:33:00,00:33:02,00:33:04,00:33:06,00:33:08,00:33:10,00:33:12,00:33:14,00:33:16,00:33:18,00:33:20,00:33:22,00:33:24,00:33:26,00:33:28,00:33:30,00:33:32,00:33:34,00:33:36,00:33:38,00:33:40,00:33:42,00:33:44,00:33:46,00:33:48,00:33:50,00:33:52,00:33:54,00:33:56,00:33:58,00:34:00,00:34:02,00:34:04,00:34:06,00:34:08,00:34:10,00:34:12,00:34:14,00:34:16,00:34:18,00:34:20,00:34:22,00:34:24,00:34:26,00:34:28,00:34:30,00:34:32,00:34:34,00:34:36,00:34:38,00:34:40,00:34:42,00:34:44,00:34:46,00:34:48,00:34:50,00:34:52,00:34:54,00:34:56,00:34:58,00:35:00,00:35:02,00:35:04,00:35:06,00:35:08,00:35:10,00:35:12,00:35:14,00:35:16,00:35:18,00:35:20,00:35:22,00:35:24,00:35:26,00:35:28,00:35:30,00:35:32,00:35:34,00:35:36,00:35:38,00:35:40,00:35:42,00:35:44,00:35:46,00:35:48,00:35:50,00:35:52,00:35:54,00:35:56,00:35:58,00:36:00,00:36:02,00:36:04,00:36:06,00:36:08,00:36:10,00:36:12,00:36:14,00:36:16,00:36:18,00:36:20,00:36:22,00:36:24,00:36:26,00:36:28,00:36:30,00:36:32,00:36:34,00:36:36,00:36:38]", now, "Bracket expansion produces too many intervals (max 1024)");
+        // a range that merges below the limit is fine
+        assertCompiledTickExprWithNow("[$today..$today + 2000d]", now);
+        assertCompiledTickExprWithNow("[$today..$today + 500d]T[09:00,15:00]", now);
     }
 
     @Test
@@ -2431,11 +2452,12 @@ public class TickExprTest {
     @Test
     public void testDateListWithDenseTimeSuffixAndDstOverlap() throws SqlException {
         // London falls back from BST to GMT at 02:00 on 2024-10-27, so each local minute from
-        // 01:00 to 01:59 happens twice and converts with the summer time offset, as it does
-        // when no merge happens. The 1440 minutes reach the incremental merge threshold
-        // (256 intervals), and the result must not depend on where the merges happen:
-        // listing the hours in another order gives the same intervals.
-        final String expected = "[{lo=2024-10-26T23:00:00.000000Z, hi=2024-10-27T00:59:59.999999Z},{lo=2024-10-27T02:00:00.000000Z, hi=2024-10-27T23:59:59.999999Z}]";
+        // 01:00 to 01:59 happens twice, and covers both of its occurrences. The 1440 minutes
+        // cover the whole local day, 25 hours, the same as the day itself. They reach the
+        // incremental merge threshold (256 intervals), and the result must not depend on where
+        // the merges happen: listing the hours in another order gives the same intervals.
+        final String expected = "[{lo=2024-10-26T23:00:00.000000Z, hi=2024-10-27T23:59:59.999999Z}]";
+        assertBracketInterval(expected, "2024-10-27@Europe/London");
         assertBracketInterval(expected, "[2024-10-27]T[00..23]:[00..59]@Europe/London");
         assertBracketInterval(expected, "[2024-10-27]T[02..23,00,01]:[00..59]@Europe/London");
         assertBracketInterval(expected, "2024-10-27T[00..23]:[00..59]@Europe/London");
@@ -6616,11 +6638,10 @@ public class TickExprTest {
     @Test
     public void testTimezoneDstGapHiOnlyInGap() throws SqlException {
         // On March 10, 2024 at 2:00 AM in America/New_York, clocks spring forward to 3:00 AM.
-        // The ;2m duration extends the interval from 01:59 EST into the gap. lo = 01:59:00 EST
-        // = 06:59:00 UTC. hi = 02:00:59.999999 local does not exist, and converts with the offset
-        // from before the gap, so the interval stays 2 minutes long in real time.
+        // The ;2m duration extends the interval from 01:59 EST into the gap. Local times from
+        // 02:00 on do not exist, so the interval ends right before the transition, 07:00 UTC.
         assertBracketInterval(
-                "[{lo=2024-03-10T06:59:00.000000Z, hi=2024-03-10T07:00:59.999999Z}]",
+                "[{lo=2024-03-10T06:59:00.000000Z, hi=2024-03-10T06:59:59.999999Z}]",
                 "2024-03-10T01:59@America/New_York;2m"
         );
     }
@@ -6629,19 +6650,21 @@ public class TickExprTest {
     public void testTimezoneDstGapIntervalStartsInGap() throws SqlException {
         // On March 31, 2024, London clocks spring forward from 01:00 GMT to 02:00 BST, so local
         // times from 01:00 to 01:59:59.999999 do not exist. An interval that starts in the gap
-        // moves to start at the transition, 01:00 UTC, and keeps its width: 55 minutes.
+        // starts at the transition, 01:00 UTC. 01:10 to 02:04:59.999999 local time keeps the
+        // five minutes from 02:00 BST that exist.
         assertBracketInterval(
-                "[{lo=2024-03-31T01:00:00.000000Z, hi=2024-03-31T01:54:59.999999Z}]",
+                "[{lo=2024-03-31T01:00:00.000000Z, hi=2024-03-31T01:04:59.999999Z}]",
                 "2024-03-31T01:10@Europe/London;55m"
         );
-        // the first instant of the gap does not exist either
+        // No instant has a local time from 01:00 to 01:29:59.999999, so the interval moves to start
+        // at the transition and keeps its width
         assertBracketInterval(
                 "[{lo=2024-03-31T01:00:00.000000Z, hi=2024-03-31T01:29:59.999999Z}]",
                 "2024-03-31T01:00@Europe/London;30m"
         );
         // New York springs forward from 02:00 EST to 03:00 EDT, 07:00 UTC
         assertBracketInterval(
-                "[{lo=2024-03-10T07:00:00.000000Z, hi=2024-03-10T07:54:59.999999Z}]",
+                "[{lo=2024-03-10T07:00:00.000000Z, hi=2024-03-10T07:04:59.999999Z}]",
                 "2024-03-10T02:10@America/New_York;55m"
         );
         // both paths share the conversion
@@ -6650,15 +6673,113 @@ public class TickExprTest {
     }
 
     @Test
-    public void testTimezoneDstOverlapFallBack() throws SqlException {
-        // Test DST overlap (fall back) - Nov 3, 2024 in America/New_York
-        // At 2:00 AM EDT, clocks fall back to 1:00 AM EST
-        // So 1:30 AM occurs twice - the code uses daylight time (EDT) offset
-        // 1:30 AM EDT = 05:30 UTC
-        // During overlap, daylight time (EDT = UTC-4) is used
-        assertBracketInterval(
-                "[{lo=2024-11-03T05:30:00.000000Z, hi=2024-11-03T05:30:59.999999Z}]",
+    public void testTimezoneDstGapRangeStartsInGap() throws SqlException {
+        // On 2024-03-31 London clocks skip from 01:00 to 02:00 local time, and $now - 2h = 01:20
+        // local falls in that hour. The range starts at the transition, 01:00Z, and ends with the
+        // day, at 23:59:59.999999 BST.
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-03-31T01:00:00.000000Z, hi=2024-03-31T22:59:59.999999Z}]",
+                "[$now - 2h..$today]@Europe/London",
+                "2024-03-31T03:20:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testTimezoneDstGapWholeDayAtMidnight() throws SqlException {
+        // Some timezones spring forward at midnight, so the day starts at 01:00 local time, and
+        // has 23 hours
+        assertBracketInterval("[{lo=2024-09-08T04:00:00.000000Z, hi=2024-09-09T02:59:59.999999Z}]", "2024-09-08@America/Santiago");
+        assertBracketInterval("[{lo=2024-03-10T05:00:00.000000Z, hi=2024-03-11T03:59:59.999999Z}]", "2024-03-10@America/Havana");
+        assertBracketInterval("[{lo=2024-03-30T22:00:00.000000Z, hi=2024-03-31T20:59:59.999999Z}]", "2024-03-31@Asia/Beirut");
+        assertBracketInterval("[{lo=2024-04-25T22:00:00.000000Z, hi=2024-04-26T20:59:59.999999Z}]", "2024-04-26@Africa/Cairo");
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-09-08T04:00:00.000000Z, hi=2024-09-09T02:59:59.999999Z}]",
+                "$today@America/Santiago",
+                "2024-09-08T12:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testTimezoneDstOverlapApplyEncodedFalse() throws SqlException {
+        // Dynamic mode keeps both occurrences of a repeated local time: the first interval
+        // carries the operation, the second UNION
+        assertEncodedInterval(
+                "[{lo=2024-11-03T05:30:00.000000Z, hi=2024-11-03T05:30:59.999999Z},{lo=2024-11-03T06:30:00.000000Z, hi=2024-11-03T06:30:59.999999Z}]",
                 "2024-11-03T01:30@America/New_York"
+        );
+        assertEncodedOperations(2);
+        // a subtraction subtracts both
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        out.clear();
+        parseTickExpr(timestampDriver, "2024-11-03T01:30@America/New_York", 0, 33, 0, out, IntervalOperation.SUBTRACT, false);
+        Assert.assertEquals(2 * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL, out.size());
+        Assert.assertEquals(IntervalOperation.SUBTRACT, IntervalUtils.getEncodedOperation(out, 0));
+        Assert.assertEquals(IntervalOperation.SUBTRACT, IntervalUtils.getEncodedOperation(out, IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL));
+    }
+
+    @Test
+    public void testTimezoneDstOverlapFallBack() throws SqlException {
+        // On Nov 3, 2024 in America/New_York, at 2:00 AM EDT clocks fall back to 1:00 AM EST, so
+        // 1:30 AM happens twice: at 05:30 UTC in EDT, and at 06:30 UTC in EST. The minute covers
+        // both.
+        assertBracketInterval(
+                "[{lo=2024-11-03T05:30:00.000000Z, hi=2024-11-03T05:30:59.999999Z},{lo=2024-11-03T06:30:00.000000Z, hi=2024-11-03T06:30:59.999999Z}]",
+                "2024-11-03T01:30@America/New_York"
+        );
+    }
+
+    @Test
+    public void testTimezoneDstOverlapIntervalShapes() throws SqlException {
+        // On 2024-10-27 Berlin clocks fall back from 03:00 CEST to 02:00 CET at 01:00Z, so local
+        // times from 02:00 to 02:59:59.999999 happen twice, at 00:00Z to 00:59:59.999999Z and at
+        // 01:00Z to 01:59:59.999999Z. An interval covers the instants whose local time falls in it.
+        // 02:30 to 03:29:59.999999 local time: 02:30 to 02:59 in CEST, then 02:30 to 03:29 in CET
+        assertBracketInterval(
+                "[{lo=2024-10-27T00:30:00.000000Z, hi=2024-10-27T00:59:59.999999Z},{lo=2024-10-27T01:30:00.000000Z, hi=2024-10-27T02:29:59.999999Z}]",
+                "2024-10-27T02:30@Europe/Berlin;1h"
+        );
+        // 01:30 to 02:29:59.999999 local time: 01:30 to 02:29 in CEST, then 02:00 to 02:29 in CET
+        assertBracketInterval(
+                "[{lo=2024-10-26T23:30:00.000000Z, hi=2024-10-27T00:29:59.999999Z},{lo=2024-10-27T01:00:00.000000Z, hi=2024-10-27T01:29:59.999999Z}]",
+                "2024-10-27T01:30@Europe/Berlin;1h"
+        );
+        // the whole repeated hour
+        assertBracketInterval(
+                "[{lo=2024-10-27T00:00:00.000000Z, hi=2024-10-27T01:59:59.999999Z}]",
+                "2024-10-27T02:00@Europe/Berlin;1h"
+        );
+        // Both ends repeat, a year apart: Berlin falls back at 01:00Z on 2025-10-26 too
+        assertBracketInterval(
+                "[{lo=2024-10-27T00:30:00.000000Z, hi=2024-10-27T00:59:59.999999Z}," +
+                        "{lo=2024-10-27T01:30:00.000000Z, hi=2025-10-26T00:44:59.999999Z}," +
+                        "{lo=2025-10-26T01:00:00.000000Z, hi=2025-10-26T01:44:59.999999Z}]",
+                "2024-10-27T02:30@Europe/Berlin;364d15m"
+        );
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-10-27T00:30:00.000000Z, hi=2024-10-27T00:59:59.999999Z},{lo=2024-10-27T01:30:00.000000Z, hi=2024-10-27T02:29:59.999999Z}]",
+                "$todayT02:30@Europe/Berlin;1h",
+                "2024-10-27T12:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testTimezoneDstOverlapTimeListSlotClip() throws SqlException {
+        // On 2024-10-27 Berlin clocks fall back at 01:00Z, and $now = 02:30 local time happens
+        // twice, at 00:30Z and at 01:30Z. A slot with its own timezone is a point in time, which
+        // the range compares with the instants whose Berlin time falls in it. In Tokyo, 09:45 is
+        // 00:45Z, 10:00 is 01:00Z and 10:45 is 01:45Z.
+        final String now = "2024-10-27T02:30:00.000000Z";
+        // from 02:30 Berlin time on: 00:30Z to 00:59:59.999999Z, and from 01:30Z on
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-10-27T00:45:00.000000Z, hi=2024-10-27T00:45:59.999999Z},{lo=2024-10-27T01:45:00.000000Z, hi=2024-10-27T01:45:59.999999Z}]",
+                "[$now..$today]T[09:45@Asia/Tokyo,10:00@Asia/Tokyo,10:45@Asia/Tokyo]@Europe/Berlin",
+                now
+        );
+        // up to 02:30 Berlin time: up to 00:30Z, and 01:00Z to 01:30Z
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-10-27T01:00:00.000000Z, hi=2024-10-27T01:00:59.999999Z}]",
+                "[$today..$now]T[09:45@Asia/Tokyo,10:00@Asia/Tokyo,10:45@Asia/Tokyo]@Europe/Berlin",
+                now
         );
     }
 
@@ -7201,6 +7322,26 @@ public class TickExprTest {
      * Asserts that both the parse path ({@code parseTickExpr}) and the compiled path
      * ({@link CompiledTickExpression#evaluate}) produce the expected intervals for the given "now".
      */
+    private void assertParsedAndCompiledErrorWithNow(String expression, String nowTimestamp, String expectedError) throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral(nowTimestamp);
+        out.clear();
+        try {
+            parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, now);
+            Assert.fail("parse should fail: " + expression);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+        }
+        out.clear();
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+            compiled.evaluate(out, now);
+            Assert.fail("evaluation should fail: " + expression);
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+        }
+    }
+
     private void assertParsedAndCompiledWithNow(String expected, String expression, String nowTimestamp) throws SqlException {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final long now = timestampDriver.parseFloorLiteral(nowTimestamp);
