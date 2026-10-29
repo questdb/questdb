@@ -96,7 +96,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     ) throws SqlException {
         boolean autoIncludeTs = compiler.getEngine().getConfiguration().isPostingIndexAutoIncludeTimestamp();
         if (selectText != null) {
-            return new CreateTableOperationImpl(
+            CreateTableOperationImpl op = new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
                     tableNameExpr.position,
@@ -123,6 +123,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     tableKind,
                     autoIncludeTs
             );
+            return op;
         }
 
         if (likeTableNameExpr != null) {
@@ -132,7 +133,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             if (likeTableNameToken == null) {
                 throw SqlException.tableDoesNotExist(likeTableNameExpr.position, likeTableNameExpr.token);
             }
-            return new CreateTableOperationImpl(
+            final CreateTableOperationImpl op = new CreateTableOperationImpl(
                     Chars.toString(sqlText),
                     Chars.toString(tableNameExpr.token),
                     tableNameExpr.position,
@@ -144,9 +145,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     likeTableNameExpr.position,
                     ignoreIfExists
             );
+            return op;
         }
 
-        return new CreateTableOperationImpl(
+        CreateTableOperationImpl op = new CreateTableOperationImpl(
                 Chars.toString(sqlText),
                 Chars.toString(tableNameExpr.token),
                 tableNameExpr.position,
@@ -167,6 +169,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 walEnabled,
                 autoIncludeTs
         );
+        return op;
     }
 
     @Override

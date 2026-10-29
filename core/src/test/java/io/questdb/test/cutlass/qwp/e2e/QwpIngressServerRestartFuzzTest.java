@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp.e2e;
 
+import io.questdb.PropertyKey;
 import io.questdb.client.Sender;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -451,15 +452,32 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                     // carries the dictionary from id 0 -- so it re-registers the symbols by
                     // itself and masks a broken catch-up completely. Trimmed, nothing replays,
                     // and phase 2's bare ids have nowhere else to come from.
+                    //
+                    // Deterministic: drain() returns once the client has the acks, which is
+                    // what lets the cursor trim phase 1 -- the property the comment above
+                    // documents as load-bearing for this test.
+                    //
+                    // The ack barrier comes before the WAL drain below, not after it. The
+                    // server acks a frame only once its rows are committed, so drain()
+                    // returning means the sequencer txn is published and drainable. flush()
+                    // alone promises nothing about the server.
+                    Assert.assertTrue("phase-1 acks must reach the client before the bounce",
+                            sender.drain(30_000));
+
+                    // Apply the committed txn, and retry the drain, not just the assertion:
+                    // drainWalQueue() makes a single pass, and nothing applies the WAL in the
+                    // background here (RestartableQwpServer's pool gets
+                    // WorkerPoolUtils.setupWriterJobs, which assigns no ApplyWal2TableJob). A
+                    // drain that misses the commit leaves the writer frontier behind the
+                    // sequencer until the next drain, so the drain lives inside the retried body.
+                    //
+                    // engine.awaitTable() does not fit that body: it waits on a frontier only a
+                    // drain can move, and it reports the timeout as a CairoException, which
+                    // assertEventually does not catch (it retries on AssertionError only).
                     TestUtils.assertEventually(() -> {
                         drainWalQueue();
                         assertRowCount(rowsPerPhase);
                     });
-                    // Deterministic: drain() returns once the client has the acks, which is
-                    // what lets the cursor trim phase 1 -- the property the comment above
-                    // documents as load-bearing for this test.
-                    Assert.assertTrue("phase-1 acks must reach the client before the bounce",
-                            sender.drain(30_000));
 
                     // Bounce the server. Same port. The sender keeps the same
                     // sfDir and CursorSendEngine; the wire path needs to reconnect.
@@ -482,6 +500,69 @@ public class QwpIngressServerRestartFuzzTest extends AbstractCairoTest {
                 assertTagsIntact();
             }
         });
+    }
+
+    /**
+     * ADAPTIVE with a 50ms group-commit window, through the same-sender-survives-restart path. The local
+     * durable-ack frontier ({@code getLocalDurableSeqTxn}) advances only when the batched {@code fdatasync} fires,
+     * so at the bounce the sender's store-and-forward cursor holds a larger un-acked window than under NOSYNC or
+     * SYNC and replays it on reconnect. {@code DEDUP UPSERT KEYS(ts, id)} collapses the resent tail, so every row
+     * written across the bounce is present exactly once. Only the QWP server bounces; the engine, its WAL and the
+     * frontier persist, so this covers the client's replay against the lagging ack, not power-loss recovery.
+     */
+    @Test
+    public void testSameSenderReplaysUnackedAcrossRestartUnderAdaptiveW50ms() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "50000"); // W = 50ms group-commit window
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+        try {
+            assertMemoryLeak(() -> {
+                createTargetTable();
+                int port = RestartableQwpServer.pickFreePort();
+                String sfDir = freshSfDir("adaptive-w50-same-sender");
+
+                try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
+                    server.start();
+
+                    int rowsPerPhase = 500;
+                    // Under the lagging adaptive ack, close() and flush() must wait for
+                    // the batched fdatasync to ack the tail, so the reconnect and the
+                    // final drain get generous windows.
+                    String connect = "ws::addr=localhost:" + port + ";sf_dir=" + sfDir
+                            + ";reconnect_max_duration_millis=120000;close_flush_timeout_millis=120000;";
+                    try (Sender sender = Sender.fromConfig(connect)) {
+                        // Phase 1: write, flush. Some of this tail is sent but not yet
+                        // durably acked, still inside the open 50ms window.
+                        writeRows(sender, /*idBase*/ 0L, rowsPerPhase, 1_700_000_000_000_000_000L);
+                        sender.flush();
+
+                        // Bounce the server. Same port, same sfDir/cursor: the SF cursor
+                        // replays every frame the server had not yet acked.
+                        server.stop();
+                        server.start();
+
+                        // Phase 2: the same sender keeps working across the bounce.
+                        writeRows(sender, /*idBase*/ rowsPerPhase, rowsPerPhase,
+                                1_700_000_000_000_000_000L + (long) rowsPerPhase * 1000L);
+                        sender.flush();
+                    }
+
+                    drainWalQueue();
+                    engine.awaitTable(TABLE_NAME, 30, TimeUnit.SECONDS);
+                    // No loss and no surviving duplicate: exactly the rows written.
+                    assertRowCount(2L * rowsPerPhase);
+                    assertQuery(
+                            "SELECT count_distinct(id) cnt FROM " + TABLE_NAME)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("cnt\n" + (2L * rowsPerPhase) + "\n");
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+        }
     }
 
     @Test

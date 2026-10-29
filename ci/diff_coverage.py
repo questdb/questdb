@@ -19,11 +19,12 @@ Java coverage comes from JaCoCo through `-P jacoco`, as in CI.
 
 Rust coverage comes from LLVM source-based coverage, with branch coverage
 (-Zcoverage-options=branch; the qdbr toolchain is nightly). The script builds
-an instrumented libquestdbr, puts it in the dev-library slot that Os.java loads
-in preference to the shipped binary (core/target/classes/io/questdb/rust/),
-runs the Java tests so that every JNI call is counted, runs the unit tests of
-each changed crate, and merges the profiles. The dev slot is restored
-afterwards, and on the next run if this one was interrupted.
+an instrumented libquestdbr, puts it where Os.java loads libquestdbr from and
+Maven's build of the crate writes it (core/target/classes/io/questdb/bin/
+<platform>/), runs the Java tests with -DskipNative, so that Maven neither
+removes nor rebuilds it, and every JNI call is counted, runs the unit tests of
+each changed crate, and merges the profiles. The library it replaced is
+restored afterwards, and on the next run if this one was interrupted.
 
 Branches include each condition of && and || (JaCoCo counts them per line;
 for Rust, branch coverage records each operand's true and false outcome).
@@ -268,7 +269,7 @@ def run_coverage(root, cov_dir, tests, java_files, rust_files, args):
             objects.append(build_instrumented_rust_lib(root, cov_dir, rust))
             install_dev_rust_lib(root, cov_dir, objects[0])
         try:
-            run_maven_tests(root, cov_dir, tests, args)
+            run_maven_tests(root, cov_dir, tests, args, bool(rust))
         finally:
             if rust:
                 restore_dev_rust_lib(root, cov_dir)
@@ -343,11 +344,14 @@ def check_client_installed(root):
                          f'never with "clean").')
 
 
-def run_maven_tests(root, cov_dir, tests, args):
+def run_maven_tests(root, cov_dir, tests, args, is_rust_lib_installed):
     log = cov_dir / 'mvn-test.log'
     # incremental_compile has compiled everything; this keeps Maven from recompiling the module
     cmd = ['mvn', '-f', 'core/pom.xml', 'test', '-P', 'jacoco', f'-Dtest={tests}',
            '-Dsurefire.failIfNoSpecifiedTests=false', incremental_compile.QUICK]
+    if is_rust_lib_installed:
+        # Maven's build of the crate would replace the instrumented library with an uninstrumented one
+        cmd.append('-DskipNative')
     if args.ignore_test_failures:
         cmd.append('-Dmaven.test.failure.ignore=true')
     cmd += args.maven_arg
@@ -431,8 +435,15 @@ def build_instrumented_rust_lib(root, cov_dir, rust):
     return lib
 
 
+def rust_platform_dir():
+    # core/pom.xml's platform.dir.name, the <os>-<arch> directory Os.java loads libquestdbr from
+    os_name = 'darwin' if platform.system() == 'Darwin' else 'linux'
+    arch = 'aarch64' if platform.machine().lower() in ('arm64', 'aarch64') else 'x86-64'
+    return f'{os_name}-{arch}'
+
+
 def dev_slot(root):
-    return root / 'core/target/classes/io/questdb/rust' / rust_lib_name()
+    return root / 'core/target/classes/io/questdb/bin' / rust_platform_dir() / rust_lib_name()
 
 
 def install_dev_rust_lib(root, cov_dir, lib):
@@ -440,7 +451,7 @@ def install_dev_rust_lib(root, cov_dir, lib):
     existed = slot.exists()
     if existed:
         shutil.copy2(slot, cov_dir / ('saved-' + slot.name))
-    (cov_dir / 'dev-slot.json').write_text(json.dumps({'existed': existed}))
+    (cov_dir / 'dev-slot.json').write_text(json.dumps({'existed': existed, 'slot': str(slot)}))
     slot.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(lib, slot)
 
@@ -449,9 +460,14 @@ def restore_dev_rust_lib(root, cov_dir):
     state = cov_dir / 'dev-slot.json'
     if not state.exists():
         return
-    slot = dev_slot(root)
-    saved = cov_dir / ('saved-' + slot.name)
-    if json.loads(state.read_text())['existed'] and saved.exists():
+    recorded = json.loads(state.read_text())
+    # The state file names the slot it saved; without one it predates the move of the slot, and the
+    # library it saved belongs to a directory that nothing loads from any more
+    slot = Path(recorded['slot']) if 'slot' in recorded else None
+    saved = cov_dir / ('saved-' + rust_lib_name())
+    if slot is None:
+        saved.unlink(missing_ok=True)
+    elif recorded['existed'] and saved.exists():
         shutil.move(saved, slot)
     elif slot.exists():
         slot.unlink()

@@ -1104,6 +1104,8 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
     @Test
     public void testVacuumPurgesOrphanCoverInfoFile() throws Exception {
+        // Covers VACUUM, not durability: under adaptive VACUUM keeps the files a save point names until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // An orphan .pci file, the only file left of a stale instance of s, as an earlier version could
         // leave it: s.pci.1 where s has the column name txn NONE, and s.pci where UPDATE moved s past
         // NONE. VACUUM removes it from native and parquet partitions and from the default partition of a
@@ -1178,6 +1180,8 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
     @Test
     public void testVacuumPurgesOrphanIndexFilesOfEveryPartition() throws Exception {
+        // Covers VACUUM, not durability: under adaptive VACUUM keeps the files a save point names until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // UPDATE with an open reader leaves the old instance of each updated column in every partition.
         // The test then deletes the column file of each, and the .pk of s, so that only these remain:
         // the .pci, .pv and .pc files of s, the .k and .v files of b, the .i files of w and str, and
@@ -1303,6 +1307,8 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
     @Test
     public void testVacuumPurgesPostingFilesOfReAddedColumn() throws Exception {
+        // Covers VACUUM, not durability: under adaptive VACUUM keeps the files a save point names until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // s is dropped while a reader holds the table, so its NONE instance stays on disk, and added back
         // as a new instance T. VACUUM removes the NONE files and keeps those of T.
         assertMemoryLeak(() -> {
@@ -1416,6 +1422,8 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
     @Test
     public void testVacuumPurgesStaleRootSymbolFilesOfTxnNone() throws Exception {
+        // Covers VACUUM, not durability: under adaptive VACUUM keeps the files a save point names until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // A symbol capacity change before the first commit writes the symbol table files of txn 0 next
         // to the CREATE TABLE ones of txn NONE. VACUUM purges the NONE files in the table root, also for
         // a POSTING column, whose root files carry no posting index.
@@ -1550,6 +1558,8 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
     @Test
     public void testVacuumKeepsLivePostingFilesOfReIndexedColumn() throws Exception {
+        // Covers VACUUM, not durability: under adaptive VACUUM keeps the files a save point names until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // DROP INDEX moves s to a new instance L, whose purge of instance NONE the full purge queue drops,
         // and ADD INDEX TYPE POSTING INCLUDE indexes L. VACUUM removes the files of NONE and keeps L.
         assertMemoryLeak(() -> {
@@ -1586,6 +1596,8 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
     @Test
     public void testVacuumPurgesPostingFilesOfDroppedColumn() throws Exception {
+        // Covers VACUUM, not durability: under adaptive VACUUM keeps the files a save point names until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // DROP COLUMN s, whose purge the full purge queue drops, leaves every file of s in the partitions,
         // the POSTING files among them, and the symbol table files in the table root. VACUUM removes them.
         assertMemoryLeak(() -> {
@@ -1687,6 +1699,8 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
     @Test
     public void testVacuumPurgesStalePostingAfterRefusedPurge() throws Exception {
+        // Covers VACUUM, not durability: under adaptive VACUUM keeps the files a save point names until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // DROP INDEX with a reader open defers the purge of instance NONE of s, and DROP PARTITION of
         // another day changes the truncate version of the table, so the purge job refuses the purge.
         // VACUUM removes the files of NONE.
@@ -1729,11 +1743,15 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
 
     @Test
     public void testVacuumPurgesStalePostingFilesUnderLiveBitmapColumn() throws Exception {
+        // Covers VACUUM, not durability: under adaptive VACUUM keeps the files a save point names until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertVacuumPurgesStalePostingFilesOfInstanceNone(true);
     }
 
     @Test
     public void testVacuumPurgesStalePostingFilesUnderNonIndexedColumn() throws Exception {
+        // Covers VACUUM, not durability: under adaptive VACUUM keeps the files a save point names until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertVacuumPurgesStalePostingFilesOfInstanceNone(false);
     }
 

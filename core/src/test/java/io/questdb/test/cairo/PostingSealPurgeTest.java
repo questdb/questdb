@@ -59,6 +59,8 @@ import io.questdb.test.tools.LogCapture;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static org.junit.Assert.*;
 
@@ -786,23 +788,23 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReopenEnqueuesOrphansFromPriorIncarnation() throws Exception {
-        // A distressed writer can seal a generation at a table txn the table never
-        // commits to (txnAtSeal > the committed table txn). Reopening and arming the
-        // recovery walk via setCurrentTableTxn must drop that abandoned chain entry
-        // and enqueue its orphan .pv/.pc for purge: of() -> runRecoveryWalkIfRequested
-        // -> chain.recoveryDropAbandoned -> scheduleOrphanPurge. (v1's writer-open
-        // directory scan, logOrphanSealedFiles, is gone -- v2 routes orphan cleanup
-        // through the chain; the chain-level mechanics are covered by
+    public void testReopenUnlinksOrphansFromPriorIncarnation() throws Exception {
+        // A distressed writer, or a crash recovery that rewinds the table, can leave a
+        // generation sealed at a table txn the table never commits to (txnAtSeal > the
+        // committed table txn). Reopening and arming the recovery walk via
+        // setCurrentTableTxn must drop that abandoned chain entry and unlink its orphan
+        // .pv/.pc: of() -> runRecoveryWalkIfRequested -> chain.recoveryDropAbandoned ->
+        // unlinkAbandonedSealFiles. The chain-level mechanics are covered by
         // PostingIndexChainWriterTest's testRecoveryDropAbandoned* set, so this pins
-        // only the PostingIndexWriter.of() glue: that an armed reopen actually queues
-        // the orphan rather than leaving it on disk.)
+        // only the PostingIndexWriter.of() glue: that an armed reopen removes the orphan
+        // rather than leaving it on disk, and keeps the committed generation.
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
                 final String name = "ps_purge_orphan";
                 final int plen = path.size();
                 FilesFacade ff = configuration.getFilesFacade();
                 long abandonedSealTxn;
+                long committedSealTxn;
                 try (PostingIndexWriter writer = new PostingIndexWriter(configuration)) {
                     writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, true);
 
@@ -814,6 +816,9 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                     writer.setMaxValue(7);
                     writer.commit();
                     writer.seal();
+                    committedSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                            ff, PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE));
+                    path.trimTo(plen);
 
                     // A second sealed entry at table txn 2 that the table txn never
                     // advanced to: the abandoned/distressed attempt recovery must drop.
@@ -832,14 +837,64 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                     path.trimTo(plen);
 
                     // Reopen from disk and arm the recovery walk at table txn 1: the
-                    // txnAtSeal=2 entry is abandoned (2 > 1) -> dropped + its orphan queued.
+                    // txnAtSeal=2 entry is abandoned (2 > 1) -> dropped + its orphan unlinked.
                     writer.setCurrentTableTxn(1L);
                     writer.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, false);
 
-                    assertTrue(
-                            "the armed recovery walk must enqueue the abandoned entry's orphan",
-                            writer.getPendingPurgesSizeForTesting() >= 1);
+                    assertFalse("the armed recovery walk must unlink the abandoned entry's orphan", ff.exists(
+                            PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, abandonedSealTxn)));
+                    assertTrue("the committed generation must stay", ff.exists(
+                            PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, committedSealTxn)));
+                    path.trimTo(plen);
+                    assertEquals("nothing left for the purge job", 0, writer.getPendingPurgesSizeForTesting());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testRetryPassIsBoundedWhenPurgeTakesLongerThanBackoff() throws Exception {
+        final AtomicInteger clockReads = new AtomicInteger();
+        final boolean[] isMeasuring = {false};
+        // Each attempt outlasts the retry delay, as on a slow or instrumented filesystem. Freeze after 100
+        // reads so the broken loop terminates too: the regression fails by work count, not by a timeout.
+        testMicrosClock = () -> isMeasuring[0] ? Math.min(clockReads.incrementAndGet(), 100) * 100L : currentMicros;
+        assertMemoryLeak(() -> {
+            assertFalse(configuration.disableColumnPurgeJob());
+            TableToken token = createPostingTable("bounded_retries");
+            FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = partitionPathFor(token);
+                 PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                 TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
+                int partitionPathLen = path.size();
+                long firstSeal = writeAndSeal(path, "first");
+                long secondSeal = writeAndSeal(path, "second");
+                assertTrue(scoreboard.acquireTxn(0, 3L));
+                try {
+                    publishPurgeTask(token, "first", firstSeal, 10L);
+                    publishPurgeTask(token, "second", secondSeal, 10L);
+                    isMeasuring[0] = true;
+                    try {
+                        job.run();
+                    } finally {
+                        isMeasuring[0] = false;
+                    }
+                    assertTrue("one run must not keep retrying pinned tasks: " + clockReads.get(), clockReads.get() < 20);
+                    assertEquals("both pinned tasks must remain queued", 2, job.getOutstandingPurgeTasks());
+                    assertTrue("first sealed .pv must survive while pinned", ff.exists(PostingIndexUtils.valueFileName(
+                            path.trimTo(partitionPathLen), "first", COLUMN_NAME_TXN_NONE, firstSeal)));
+                    assertTrue("second sealed .pv must survive while pinned", ff.exists(PostingIndexUtils.valueFileName(
+                            path.trimTo(partitionPathLen), "second", COLUMN_NAME_TXN_NONE, secondSeal)));
+                } finally {
+                    scoreboard.releaseTxn(0, 3L);
+                }
+                setCurrentMicros(20_000L);
+                job.run();
+                assertFalse("first sealed .pv must be purged after readers release it", ff.exists(PostingIndexUtils.valueFileName(
+                        path.trimTo(partitionPathLen), "first", COLUMN_NAME_TXN_NONE, firstSeal)));
+                assertFalse("second sealed .pv must be purged after readers release it", ff.exists(PostingIndexUtils.valueFileName(
+                        path.trimTo(partitionPathLen), "second", COLUMN_NAME_TXN_NONE, secondSeal)));
+                assertEquals("both tasks must purge after readers release them", 0, job.getOutstandingPurgeTasks());
             }
         });
     }

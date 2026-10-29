@@ -1892,6 +1892,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testConvertToNativeTxnFailureWalApply() throws Exception {
+        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
+        // directory a conversion replaced, until it moves on
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // WAL table, s, bt and st added after 5 of 8 rows of parquet partition 2024-01-01. The _cv commit
         // of CONVERT TO NATIVE lands, the _txn commit fails: the table suspends with the committed state
         // of before the CONVERT, and RESUME WAL applies it.
@@ -1935,6 +1938,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testConcurrentReaderDuringInPlaceIndexUpdate() throws Exception {
+        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
+        // directory a conversion replaced, until it moves on
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // a reader thread opens its index cursor, the main thread commits, then the reader iterates
         setInPlaceParquetO3Properties();
         assertMemoryLeak(() -> {
@@ -2006,6 +2012,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testFormatParquetLateRowVersionsOnce() throws Exception {
+        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
+        // directory a conversion replaced, until it moves on
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // A late row into the last partition of a FORMAT PARQUET table moves each indexed column to one
         // new index version. With a reader pinned the old version goes through one purge task per column,
         // without one the commit removes it.
@@ -2243,6 +2252,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testInPlaceIndexVersionTxnCommitFailureWal() throws Exception {
+        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
+        // directory a conversion replaced, until it moves on
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // WAL: the _cv commit lands, the _txn commit fails and suspends the table. The writer reopen
         // restores _cv to the committed _txn, and the retry at the same txn builds the new index
         // version again over the files the failed attempt left.
@@ -2647,6 +2659,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testRepeatedInPlaceMergesKeepEachCursorSnapshot() throws Exception {
+        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
+        // directory a conversion replaced, until it moves on
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // Two merges while one cursor stays open and a second one opens between them. Each cursor
         // returns its snapshot, and the purges remove exactly the replaced versions of both columns.
         setInPlaceParquetO3Properties();
@@ -2723,6 +2738,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testInPlaceIndexVersionAcrossRestartAndSchemaChanges() throws Exception {
+        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
+        // directory a conversion replaced, until it moves on
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // The new index version survives a writer and reader restart, a purge job restart, and the
         // operations that follow the column version: RENAME COLUMN, CONVERT TO NATIVE, DROP INDEX.
         setInPlaceParquetO3Properties();
@@ -2775,6 +2793,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testInPlaceIndexVersionPurgeDuringCheckpoint() throws Exception {
+        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
+        // directory a conversion replaced, until it moves on
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // With a checkpoint in progress the merge leaves the old index version to the async purge, even
         // with no reader, and the purge removes it once the checkpoint is released. The table is created
         // after the checkpoint starts, so the checkpoint pins no txn of it.
@@ -3448,6 +3469,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testInPlaceIndexVersionDropIndex() throws Exception {
+        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
+        // directory a conversion replaced, until it moves on
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // DROP INDEX after a merge removes both index versions once the purge runs
         setInPlaceParquetO3Properties();
         assertMemoryLeak(() -> {
@@ -3637,27 +3661,42 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testStaleIndexCursorKeysAcrossInPlaceO3Bitmap() throws Exception {
+        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
+        // directory a conversion replaced, until it moves on
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertStaleIndexCursorsAcrossInPlaceO3("INDEX");
     }
 
     @Test
     public void testStaleIndexCursorKeysAcrossInPlaceO3BitmapCapacity2() throws Exception {
+        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
+        // directory a conversion replaced, until it moves on
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // two values per block: every key spans several value blocks, and case B appends across a block boundary
         assertStaleIndexCursorsAcrossInPlaceO3("INDEX CAPACITY 2");
     }
 
     @Test
     public void testStaleIndexCursorKeysAcrossInPlaceO3Posting() throws Exception {
+        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
+        // directory a conversion replaced, until it moves on
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertStaleIndexCursorsAcrossInPlaceO3("INDEX TYPE POSTING");
     }
 
     @Test
     public void testStaleIndexCursorKeysAcrossInPlaceO3PostingCovering() throws Exception {
+        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
+        // directory a conversion replaced, until it moves on
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertStaleIndexCursorsAcrossInPlaceO3("INDEX TYPE POSTING INCLUDE (v)");
     }
 
     @Test
     public void testAttachedForeignIndexVersionBelowTxnO3Middle() throws Exception {
+        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
+        // directory a conversion replaced, until it moves on
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // foreign version 2 below the merge's txn 3: the merge names the new version 3, as for a partition the table built
         assertAttachedForeignIndexVersionO3Merge(2, 3);
     }
@@ -3979,6 +4018,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testAttachedForeignIndexVersionConvertToNative() throws Exception {
+        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
+        // directory a conversion replaced, until it moves on
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // CONVERT TO NATIVE after a merge into the attached partition writes s and its index under the
         // _cv name 32 into the native directory and purges the parquet one. Native O3 commits into the
         // middle and after the end then maintain that index.

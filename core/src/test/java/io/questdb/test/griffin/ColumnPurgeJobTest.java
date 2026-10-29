@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -258,9 +259,13 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             }
 
 
+            // Under adaptive the save points still name the versions the UPDATE of up_part_o3_2 left, one task per
+            // column, so the startup purge keeps those tasks: it writes them back to the truncated log and queues
+            // them for the running job.
+            final int heldTaskCount = engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE ? 3 : 0;
             String purgeLogTableName;
             try (ColumnPurgeJob purgeJob = createPurgeJob()) {
-                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals(heldTaskCount, purgeJob.getOutstandingPurgeTasks());
                 purgeLogTableName = purgeJob.getLogTableName();
             }
 
@@ -277,11 +282,12 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                             1970-01-05T02:00:00.000000Z\t100\tabcd\tD\tEE
                             """, timestampType.getTypeName()));
 
-            // cleaned everything, table is truncated
-            assertQuery(purgeLogTableName)
+            // the log is truncated, apart from the held tasks
+            assertQuery("SELECT count_distinct(column_name) columns, count(completed) completed FROM '" + purgeLogTableName + "'")
                     .noLeakCheck()
-                    .timestamp("ts")
-                    .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("columns\tcompleted\n" + heldTaskCount + "\t0\n");
 
             // Check logging is ok. This test reproduces logging failure because of exception in the middle of logging.
             // The result can be that this loop never finishes.
@@ -495,6 +501,75 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         .timestamp("ts")
                         .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
                 Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeDropsFailedDeleteAfterRestart() throws Exception {
+        // The startup purge keeps only a task a save point holds. A task left unfinished by a failed delete goes with
+        // the log truncate, as it always has: its file stays on disk until VACUUM TABLE.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            final String failingFile = "1970-01-03.1" + Files.SEPARATOR + "str.i";
+            final AtomicBoolean failRemove = new AtomicBoolean();
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public boolean removeQuiet(LPSZ name) {
+                    if (Utf8s.endsWithAscii(name, failingFile) && failRemove.compareAndSet(true, false)) {
+                        return false;
+                    }
+                    return super.removeQuiet(name);
+                }
+            };
+
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute("CREATE TABLE up_part_o3 AS" +
+                        " (SELECT timestamp_sequence('1970-01-01T02', 24 * 60 * 60 * 1_000_000L)::" + timestampType.getTypeName() + " ts," +
+                        " x," +
+                        " rnd_str('a', 'b', 'c', 'd') str," +
+                        " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                        " rnd_symbol('1', '2', '3', '4') sym2" +
+                        " FROM long_sequence(5)), INDEX(sym2)" +
+                        " TIMESTAMP(ts) PARTITION BY DAY");
+
+                execute("INSERT INTO up_part_o3 " +
+                        " SELECT timestamp_sequence('1970-01-02T01', 24 * 60 * 60 * 1_000_000L) ts," +
+                        " x," +
+                        " rnd_str('a', 'b', 'c', 'd') str," +
+                        " rnd_symbol('A', 'B', 'C', 'D') sym1," +
+                        " rnd_symbol('1', '2', '3', '4') sym2" +
+                        " FROM long_sequence(3)");
+
+                try (TableReader rdr = getReader("up_part_o3")) {
+                    update("UPDATE up_part_o3 SET x = 100, str = 'abcd', sym2 = 'EE' WHERE ts >= '1970-01-03'");
+
+                    runPurgeJob(purgeJob);
+                    rdr.openPartition(0);
+                }
+            }
+
+            try (Path path = new Path()) {
+                final String[] partitions = new String[]{"1970-01-03.1", "1970-01-04.1", "1970-01-05"};
+                assertFilesExist(partitions, path, "up_part_o3", "", true);
+
+                failRemove.set(true);
+                final String purgeLogTableName;
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    Assert.assertFalse("startup purge tried the delete", failRemove.get());
+                    Assert.assertEquals("tasks kept for a retry", 0, purgeJob.getOutstandingPurgeTasks());
+                    purgeLogTableName = purgeJob.getLogTableName();
+                }
+
+                path.of(configuration.getDbRoot()).concat(engine.verifyTableName("up_part_o3")).concat(failingFile).$();
+                Assert.assertTrue(Utf8s.toString(path), TestFilesFacadeImpl.INSTANCE.exists(path.$()));
+                assertFilesExist(new String[]{"1970-01-04.1", "1970-01-05"}, path, "up_part_o3", "", false);
+
+                assertQuery(purgeLogTableName)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("ts\ttable_name\tcolumn_name\ttable_id\ttruncate_version\tcolumnType\ttable_partition_by\tupdated_txn\tcolumn_version\tpartition_timestamp\tpartition_name_txn\tcompleted\n");
             }
         });
     }
@@ -955,6 +1030,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeCompletedBeforeTruncateIsNotReportedAsRefused() throws Exception {
+        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
+        // and the directory of a dropped partition, until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // The purge of the first UPDATE completes before DROP PARTITION, and the purge of the second UPDATE
         // waits for a reader until after it. The purge log holds the rows of both with the truncate version
         // from before DROP PARTITION and marks them all completed, but the job refuses only the second
@@ -1004,6 +1082,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRefusedByTruncateAfterPartialRemoval() throws Exception {
+        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
+        // and the directory of a dropped partition, until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // The job removes sym.d of instance NONE of sym in 1970-01-01, fails to remove its sym.k and
         // purges the other partitions. DROP PARTITION follows, and the job refuses the retry: it reports
         // the entry of 1970-01-01 only, whose sym.k and sym.v stay. The entry of 1970-01-03 has no files
@@ -1050,6 +1131,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRefusedByTruncateAfterPartialRemovalOfPostingIndex() throws Exception {
+        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
+        // and the directory of a dropped partition, until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // The job fails to remove a sealed .pv file of instance NONE of sym in each partition, and
         // removes sym.d and sym.pk. DROP PARTITION follows, and the job refuses the retry: the scan for
         // sealed files finds the .pv files, so it reports the entries of 1970-01-01 and 1970-01-03, whose
@@ -1175,6 +1259,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRefusedByTruncateReportsEachEntryWithFiles() throws Exception {
+        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
+        // and the directory of a dropped partition, until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // Two UPDATEs run while a reader holds the table, and DROP PARTITION follows. The job refuses the
         // purges of both and reports each entry of instance NONE and of the instance of the first UPDATE
         // in the partitions that DROP PARTITION keeps. The entries of the dropped partition have no files
@@ -1226,6 +1313,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRefusedByTruncateReportsSymbolRootFiles() throws Exception {
+        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
+        // and the directory of a dropped partition, until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // RENAME COLUMN of sym runs while a reader holds the table, and DROP PARTITION follows. The job
         // refuses the purge of the old name and reports its entries: the symbol table files in the table
         // root and the column files in the partitions that DROP PARTITION keeps. All of them stay.
@@ -1460,6 +1550,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRetryAfterMetaSwapReplayedOnRestart() throws Exception {
+        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
+        // and the directory of a dropped partition, until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertPurgeRetriesEntryDuringMetaSwap(true);
     }
 
@@ -1972,6 +2065,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRemovesPostingCoverFilesOfNameTxnZero() throws Exception {
+        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
+        // and the directory of a dropped partition, until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // s is the first column added to the empty table t_z, so its column name txn is 0, and its .pc
         // files carry the token 0 that txn NONE also writes: s.pc<N>.0[.<covered txn>].<seal>. An
         // earlier version left a superseded seal of s on disk, planted here by name. Each change moves
@@ -2084,6 +2180,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRetriesPostingCoverInfoFile() throws Exception {
+        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
+        // and the directory of a dropped partition, until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // UPDATE with a reader open leaves the old instance of sym in the last three of five partitions.
         // The purge job cannot remove the .pci file of the old instance in the middle one of them, once
         // or three times in a row: each failed run keeps the task, and the next run removes the file
@@ -2169,6 +2268,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRetriesPostingCoverInfoFileAfterUpdateWithoutReader() throws Exception {
+        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
+        // and the directory of a dropped partition, until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // No reader holds the old instance of sym, so the writer purges it during UPDATE. It cannot
         // remove the .pci file in the middle one of the three updated partitions and hands the purge to
         // the purge job, whose first run removes the file.
@@ -2300,6 +2402,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRetriesPostingCoverInfoFileOfNameTxnZero() throws Exception {
+        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
+        // and the directory of a dropped partition, until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // DROP INDEX with a reader open leaves instance 0 of s in both partitions. The purge job cannot
         // remove s.pci.0 in the first partition the first time and removes it on the retry.
         final AtomicReference<String> failingFileSuffix = new AtomicReference<>();
@@ -2361,6 +2466,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testReplayedPurgeRefusedByTruncateReportsEntries() throws Exception {
+        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
+        // and the directory of a dropped partition, until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // The purge job closes with the purge of UPDATE incomplete in its log, and DROP PARTITION follows.
         // A new purge job replays the purge, refuses it, reports each entry in the partitions that DROP
         // PARTITION keeps, leaves the files there and truncates the log.
@@ -3515,6 +3623,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testReplayedPurgeRemovesPostingFilesOfDroppedIndexOfEveryTableKind() throws Exception {
+        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
+        // and the directory of a dropped partition, until it moves on
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             final String[] dropIndex = {"sym", "ALTER TABLE t_replay ALTER COLUMN sym DROP INDEX"};
             assertReplayedPurgeOfChangedIndex("PARTITION BY DAY WAL", "POSTING INCLUDE (x)", dropIndex);
