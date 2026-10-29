@@ -1920,6 +1920,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Swaps in a Parquet partition compacted off a {@link TableReader} snapshot, holding this writer only for the
      * metadata-only swap.
      *
+     * @param staleColumnTops writer indexes of the columns whose stale column top the swap zeroes, see
+     *                        {@link ParquetPartitionSwapCommand#getStaleColumnTops()}
      * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if stale or the open transaction may write to it
      */
     public void swapCompactedParquetPartition(
@@ -1928,7 +1930,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long expectedParquetFileSize,
             long expectedMetadataVersion,
             long newParquetFileSize,
-            boolean isFullyMaterialized
+            boolean isFullyMaterialized,
+            IntList staleColumnTops
     ) {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
@@ -2012,6 +2015,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (isFullyMaterialized) {
             // Every column was copied from row 0 into the new file, so no column has a top.
             zeroColumnTopsAfterFullMaterialization(partitionTimestamp, partitionRowCount, true);
+        } else {
+            // QuestDB 9.3.4 - 10.0.1 merged O3 rows into the file and reset every column top inside it, but not
+            // in _cv. The copy keeps the file's columns as they are, so they start at row 0. The metadata version
+            // check above keeps the writer indexes valid.
+            for (int i = 0, n = staleColumnTops.size(); i < n; i++) {
+                final int columnIndex = staleColumnTops.getQuick(i);
+                if (metadata.getColumnType(columnIndex) > 0 && columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex) != 0) {
+                    LOG.info().$("zeroing stale parquet column top [table=").$(tableToken)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                            .$(", column=").$safe(metadata.getColumnName(columnIndex))
+                            .I$();
+                    columnVersionWriter.upsertColumnTop(partitionTimestamp, columnIndex, 0);
+                }
+            }
         }
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());

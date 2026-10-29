@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.wal.MetadataService;
+import io.questdb.std.IntList;
 import io.questdb.tasks.TableWriterTask;
 
 /**
@@ -33,6 +34,7 @@ import io.questdb.tasks.TableWriterTask;
  * and {@link O3PartitionJob#compactParquetPartition} - without ever holding the writer for the copy itself.
  */
 public class ParquetPartitionSwapCommand implements CompactionSwapCommand {
+    private final IntList staleColumnTops = new IntList();
     private long correlationId = -1L;
     private long expectedMetadataVersion;
     private long expectedParquetFileSize;
@@ -54,7 +56,8 @@ public class ParquetPartitionSwapCommand implements CompactionSwapCommand {
                     expectedParquetFileSize,
                     expectedMetadataVersion,
                     newParquetFileSize,
-                    isFullyMaterialized
+                    isFullyMaterialized,
+                    staleColumnTops
             );
         } finally {
             isApplied = true;
@@ -104,6 +107,15 @@ public class ParquetPartitionSwapCommand implements CompactionSwapCommand {
 
     public long getPartitionTimestamp() {
         return partitionTimestamp;
+    }
+
+    /**
+     * The writer indexes of the columns whose stale {@code _cv} top the swap zeroes: every column the file carries
+     * with a non-zero top, when QuestDB 9.3.4 - 10.0.1 left a value inside one of them. Empty for a folder whose
+     * tops are sound. Filled by {@code PartitionCompactionScanJob} off the reader snapshot the copy is built from.
+     */
+    public IntList getStaleColumnTops() {
+        return staleColumnTops;
     }
 
     @Override
@@ -169,6 +181,7 @@ public class ParquetPartitionSwapCommand implements CompactionSwapCommand {
         this.newParquetFileSize = -1L;
         this.isFullyMaterialized = false;
         this.isIndexRowMapDropped = false;
+        this.staleColumnTops.clear();
         this.isApplied = false;
     }
 

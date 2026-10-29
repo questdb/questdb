@@ -2451,6 +2451,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                     reader.getTxFile(),
                     partitionIndex,
                     reader.getMetadata(),
+                    reader.getColumnVersionReader(),
                     reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata()
             );
         }

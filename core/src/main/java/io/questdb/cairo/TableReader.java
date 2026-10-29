@@ -71,6 +71,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = PARTITIONS_SLOT_OFFSET_NAME_TXN + 1;
     private static final int PARTITIONS_SLOT_OFFSET_FORMAT = PARTITIONS_SLOT_OFFSET_COLUMN_VERSION + 1;
     private static final int PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
+    // _cv version and parquet file size a parquet partition's indexes were last found valid at, see checkParquetIndexes()
+    private static final int PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV = PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN + 1;
+    private static final int PARTITIONS_SLOT_OFFSET_INDEX_CHECK_PARQUET_SIZE = PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
     private final BitSet activeColumns = new BitSet();
@@ -375,6 +378,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public IndexReader getIndexReader(int partitionIndex, int columnIndex, int direction) {
+        if (getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET) {
+            checkParquetIndexes(partitionIndex, columnIndex);
+        }
         final int columnBase = getColumnBase(partitionIndex);
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
@@ -901,6 +907,76 @@ public class TableReader implements Closeable, SymbolTableSource {
         return false;
     }
 
+    /**
+     * Fails the query when the index of {@code columnIndex} on a parquet partition does not cover the partition's
+     * data. QuestDB 9.3.4 - 10.0.1 merged O3 rows into parquet partitions without resetting the column tops in
+     * {@code _cv}, and built the index from that stale top: rows inside it are missing from the index (and from the
+     * covered values of a covering index), and the index readers answer them as NULL. {@code PartitionCompactionScanJob}
+     * repairs such a partition: it rebuilds its indexes and zeroes the stale tops.
+     * <p>
+     * Lazy and per partition: runs on the first index use of the partition, checks every indexed column of it, and
+     * remembers a clean result against the {@code _cv} version and the parquet file size. Only the {@code _pm}
+     * statistics are read - a column must hold nothing but NULLs inside its top.
+     */
+    private void checkParquetIndexes(int partitionIndex, int columnIndex) {
+        final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+        final long columnVersion = columnVersionReader.getVersion();
+        final long parquetFileSize = txFile.getPartitionParquetFileSize(partitionIndex);
+        if (openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV) == columnVersion
+                && openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_PARQUET_SIZE) == parquetFileSize) {
+            return;
+        }
+
+        final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
+        long partitionRowCount = getPartitionRowCount(partitionIndex);
+        if (partitionRowCount < 0) {
+            partitionRowCount = getPartitionRowCountFromMetadata(partitionIndex);
+        }
+        boolean allValid = true;
+        parquetMetaReader.of(getParquetMetadataAddr(partitionIndex), getParquetMetadataSize(partitionIndex));
+        try {
+            if (!parquetMetaReader.resolveFooter(parquetFileSize)) {
+                throw CairoException.critical(0).put("invalid _pm file: failed to resolve footer [table=")
+                        .put(tableToken.getTableName()).put(", parquetFileSize=").put(parquetFileSize).put(']');
+            }
+            for (int i = 0; i < columnCount; i++) {
+                if (!metadata.isColumnIndexed(i)) {
+                    continue;
+                }
+                int staleColumnIndex = hasDataInsideColumnTop(partitionTimestamp, partitionRowCount, i) ? i : -1;
+                final IntList coveredWriterIndices = metadata.getColumnMetadata(i).getCoveringColumnIndices();
+                if (coveredWriterIndices != null) {
+                    for (int c = 0, n = coveredWriterIndices.size(); c < n && staleColumnIndex < 0; c++) {
+                        final int coveredColumnIndex = getColumnIndexByWriterIndex(coveredWriterIndices.getQuick(c));
+                        if (coveredColumnIndex > -1 && hasDataInsideColumnTop(partitionTimestamp, partitionRowCount, coveredColumnIndex)) {
+                            staleColumnIndex = coveredColumnIndex;
+                        }
+                    }
+                }
+                if (staleColumnIndex > -1) {
+                    if (i == columnIndex) {
+                        final CairoException e = CairoException.critical(0)
+                                .put("index does not cover parquet partition data, partition compaction rebuilds it [table=")
+                                .put(tableToken.getTableName())
+                                .put(", partition=");
+                        formatErrorPartitionDirName(partitionIndex, e.message);
+                        e.put(", index=").put(metadata.getColumnName(i))
+                                .put(", column=").put(metadata.getColumnName(staleColumnIndex))
+                                .put(']');
+                        throw e;
+                    }
+                    allValid = false;
+                }
+            }
+        } finally {
+            parquetMetaReader.clear();
+        }
+        if (allValid) {
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV, columnVersion);
+            openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_PARQUET_SIZE, parquetFileSize);
+        }
+    }
+
     private void checkSchedulePurgeO3Partitions() {
         // In scoreboard V2, it is cheap to check that the txn released is not the max txn,
         // do it as a first step before more expensive checks.
@@ -1274,12 +1350,38 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    private int getColumnIndexByWriterIndex(int writerIndex) {
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getWriterIndex(i) == writerIndex) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private long getPartitionNameTxn(int partitionIndex) {
         return txFile.getPartitionNameTxn(partitionIndex);
     }
 
     private long getPartitionTimestamp(int partitionIndex) {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
+    }
+
+    /**
+     * Whether the parquet column holds a non-NULL value inside its {@code _cv} column top, judged from the {@code _pm}
+     * null counts alone. A column the file does not carry is not judged.
+     */
+    private boolean hasDataInsideColumnTop(long partitionTimestamp, long partitionRowCount, int columnIndex) {
+        final int parquetColumnIndex = parquetMetaReader.getColumnIndexById(metadata.getOriginalWriterIndex(columnIndex));
+        if (parquetColumnIndex < 0) {
+            return false;
+        }
+        long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, metadata.getWriterIndex(columnIndex));
+        if (columnTop < 0 || columnTop > partitionRowCount) {
+            // the column is absent from the partition
+            columnTop = partitionRowCount;
+        }
+        return parquetMetaReader.hasNonNullValuesInsideColumnTop(parquetColumnIndex, columnTop);
     }
 
     private void init() {
@@ -1328,6 +1430,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_FORMAT, isParquet ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV, -1);
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_PARQUET_SIZE, -1);
         }
         return openPartitionInfo;
     }
@@ -1356,6 +1460,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_CV, -1);
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_INDEX_CHECK_PARQUET_SIZE, -1);
         partitionCount++;
         LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", table=").$(tableToken)
                 .$(", timestamp=").$ts(ColumnType.getTimestampDriver(timestampType), timestamp).I$();

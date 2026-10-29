@@ -35,6 +35,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.datetime.Clock;
@@ -152,7 +153,8 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                             parquetFileSizeBefore,
                             ownerWriter.getMetadataVersion(),
                             parquetFileSizeBefore,
-                            false
+                            false,
+                            new IntList()
                     );
                     Assert.fail("the swap ran inside an open transaction");
                 } catch (TableReferenceOutOfDateException ignore) {
@@ -253,7 +255,8 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                             parquetFileSizeBefore,
                             ownerWriter.getMetadataVersion(),
                             parquetFileSizeBefore,
-                            false
+                            false,
+                            new IntList()
                     );
                     Assert.fail("the swap of the last partition ran around an open transaction");
                 } catch (TableReferenceOutOfDateException ignore) {
@@ -733,7 +736,8 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
                             fileSizeBefore,
                             ownerWriter.getMetadataVersion(),
                             fileSizeBefore,
-                            false
+                            false,
+                            new IntList()
                     );
                     Assert.fail("the swap replaced a partition written to since the snapshot");
                 } catch (TableReferenceOutOfDateException ignore) {

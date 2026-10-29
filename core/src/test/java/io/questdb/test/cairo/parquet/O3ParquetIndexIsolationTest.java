@@ -639,6 +639,7 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
                     reader.getTxFile(),
                     0,
                     reader.getMetadata(),
+                    reader.getColumnVersionReader(),
                     reader.getAndInitParquetPartitionDecoder(0).metadata()
             );
         }
