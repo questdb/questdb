@@ -115,7 +115,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testAdaptiveConvertToParquetWalFailedDataFsyncIsFailStop() throws Exception {
-        assertConvertToParquetSyncFailure("adaptive", true, new FsyncFailureFacade("produceParquetFromNative", 0, false));
+        assertConvertToParquetSyncFailure("adaptive", true, new FsyncFailureFacade("convertLogicalPartitionToParquet", 0, false));
     }
 
     @Test
@@ -212,7 +212,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testAsyncConvertToParquetNonWalFailedPmFsyncIsNotFailStop() throws Exception {
         // ASYNC fsyncs _pm and the partition directory but not data.parquet, so the first fsync is that of _pm
-        assertConvertToParquetSyncFailure("async", false, new FsyncFailureFacade("produceParquetFromNative", 0, false));
+        assertConvertToParquetSyncFailure("async", false, new FsyncFailureFacade("convertLogicalPartitionToParquet", 0, false));
     }
 
     @Test
@@ -472,23 +472,23 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testSyncConvertToParquetNonWalFailedDataFsyncIsFailStop() throws Exception {
-        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("produceParquetFromNative", 0, false));
+        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("convertLogicalPartitionToParquet", 0, false));
     }
 
     @Test
     public void testSyncConvertToParquetNonWalFailedDirFsyncIsFailStop() throws Exception {
         Assume.assumeFalse("a directory takes no fsync on Windows", Os.isWindows());
-        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("produceParquetFromNative", 2, false));
+        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("convertLogicalPartitionToParquet", 2, false));
     }
 
     @Test
     public void testSyncConvertToParquetNonWalFailedPmFsyncIsFailStop() throws Exception {
-        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("produceParquetFromNative", 1, false));
+        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("convertLogicalPartitionToParquet", 1, false));
     }
 
     @Test
     public void testSyncConvertToParquetNonWalFailedTxnMsyncIsFailStop() throws Exception {
-        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("commitTxWriter", 0, true));
+        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("commitTxWithStorageVersionSync", 0, true));
     }
 
     @Test
@@ -523,7 +523,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testSyncConvertToParquetWalFailedDataFsyncIsFailStop() throws Exception {
-        assertConvertToParquetSyncFailure("sync", true, new FsyncFailureFacade("produceParquetFromNative", 0, false));
+        assertConvertToParquetSyncFailure("sync", true, new FsyncFailureFacade("convertLogicalPartitionToParquet", 0, false));
     }
 
     @Test
@@ -1106,7 +1106,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
             @Override
             public void msync(long addr, long len, boolean async) {
-                if (isArmed && !async && isCalledFrom("commitTxWriter") && isCalledFrom(operation)) {
+                if (isArmed && !async && isCalledFrom("commitTxWithStorageVersionSync") && isCalledFrom(operation)) {
                     isArmed = false;
                     failureCount++;
                     // nothing of the new _txn reaches the device

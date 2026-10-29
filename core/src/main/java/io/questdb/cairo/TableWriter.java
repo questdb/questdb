@@ -3618,7 +3618,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             installStagedFile(stagingDirLen, partitionDirLen, PARQUET_PARTITION_NAME);
             installStagedFile(stagingDirLen, partitionDirLen, PARQUET_METADATA_FILE_NAME);
-            if (CommitMode.appliesColumnSync(effectiveCommitMode) && !Os.isWindows()) {
+            if (getFlushCommitMode() != CommitMode.NOSYNC && !Os.isWindows()) {
                 final long dirFd = ff.openRO(path.trimTo(partitionDirLen).$());
                 if (dirFd > -1) {
                     ff.fsyncAndClose(dirFd);
@@ -8030,7 +8030,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .put(']');
                 }
                 final ParquetPartitionConverter converter = getParquetPartitionConverter();
-                parquetFileSize = converter.convert(reader, lo, hi, other, seqTxn, bloomFilterColumns, bloomFilterFpp);
+                parquetFileSize = converter.convert(reader, lo, hi, other, seqTxn, getFlushCommitMode(), bloomFilterColumns, bloomFilterFpp);
                 if (converter.getRowCount() != liveRows) {
                     throw CairoException.critical(0)
                             .put("converted logical partition holds a different row count than _txn states [table=")

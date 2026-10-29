@@ -869,7 +869,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 seqTxn = reader.getSeqTxn();
             }
             final ParquetPartitionConverter converter = getParquetConverter();
-            final long parquetFileSize = converter.convert(reader, lo, hi, other, seqTxn, null, Double.NaN);
+            final long parquetFileSize = converter.convert(reader, lo, hi, other, seqTxn, engine.getResolvedCommitMode(), null, Double.NaN);
             if (converter.getRowCount() != liveRows) {
                 throw CairoException.critical(0)
                         .put("converted logical partition holds a different row count than _txn states [table=")

@@ -78,6 +78,7 @@ final class ParquetPartitionConverter implements QuietCloseable {
             int hi,
             Path dstPartitionDir,
             long seqTxn,
+            int commitMode,
             @Nullable CharSequence bloomFilterColumns,
             double bloomFilterFpp
     ) {
@@ -170,10 +171,14 @@ final class ParquetPartitionConverter implements QuietCloseable {
                 }
             }
             // The reader keeps every folder mapped until it is closed, so the frames stay valid up to the finish.
-            final boolean isSync = configuration.getCommitMode() != CommitMode.NOSYNC;
-            final long parquetFileSize = PartitionFrameEncoder.finish(writer, isSync);
-            if (isSync) {
-                // The encoder syncs both files; the _pm fd is ours, and new dir entries must be durable before _txn.
+            final long parquetFileSize = PartitionFrameEncoder.finish(writer, false);
+            // Persist both files and their dir entries before the caller commits _txn, as
+            // TableUtils.produceParquetFromNativeInto does: data.parquet before _pm, then the directory.
+            if (commitMode != CommitMode.NOSYNC) {
+                if (CommitMode.isPowerLossDurable(commitMode)) {
+                    dstPartitionDir.trimTo(dstDirLen).concat(TableUtils.PARQUET_PARTITION_NAME).$();
+                    TableUtils.fsyncFileDurable(ff, dstPartitionDir.$());
+                }
                 ff.fsync(parquetMetaFd);
                 if (!Os.isWindows()) {
                     dstPartitionDir.trimTo(dstDirLen).$();
