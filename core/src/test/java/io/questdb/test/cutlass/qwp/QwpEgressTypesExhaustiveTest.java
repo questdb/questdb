@@ -660,6 +660,63 @@ public class QwpEgressTypesExhaustiveTest extends AbstractReusedServerQwpEgressT
     }
 
     @Test
+    public void testDecimalSmallWidths() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // DECIMAL8/16/32 (precision <= 2, 4, 9) have no wire type of their own: egress
+                // widens them to DECIMAL64, keeping the column's scale and NULL. The d18 column
+                // makes it a mixed-width result next to a native DECIMAL64.
+                serverMain.execute("""
+                        CREATE TABLE t(
+                            d2 DECIMAL(2, 1),
+                            d4 DECIMAL(4, 2),
+                            d8 DECIMAL(8, 2),
+                            d9 DECIMAL(9, 3),
+                            d18 DECIMAL(18, 2),
+                            part_ts TIMESTAMP
+                        ) TIMESTAMP(part_ts) PARTITION BY DAY WAL
+                        """);
+                serverMain.execute("""
+                        INSERT INTO t VALUES
+                            (9.9m, 99.99m, 999999.99m, 999999.999m, 12.34m, 1::TIMESTAMP),
+                            (-9.9m, -99.99m, -999999.99m, -999999.999m, -12.34m, 2::TIMESTAMP),
+                            (-1.5m, -12.34m, -123.45m, -1.234m, -0.01m, 3::TIMESTAMP),
+                            (0m, 0m, 0m, 0m, 0m, 4::TIMESTAMP),
+                            (NULL, NULL, NULL, NULL, NULL, 5::TIMESTAMP)
+                        """);
+                serverMain.awaitTable("t");
+
+                final long[][] expected = {
+                        {99, 9_999, 99_999_999, 999_999_999, 1_234},
+                        {-99, -9_999, -99_999_999, -999_999_999, -1_234},
+                        {-15, -1_234, -12_345, -1_234, -1},
+                        {0, 0, 0, 0, 0},
+                        null
+                };
+                final int[] expectedScales = {1, 2, 2, 3, 2};
+                // Table scan takes the page-frame path, the casts the per-row record path.
+                assertSmallDecimals("SELECT d2, d4, d8, d9, d18 FROM t", expected, expectedScales);
+                assertSmallDecimals(
+                        """
+                                SELECT 9.9::DECIMAL(2,1) d2, -99.99::DECIMAL(4,2) d4, 12.34::DECIMAL(8,2) d8,
+                                    -999999.999::DECIMAL(9,3) d9, 12.34::DECIMAL(18,2) d18
+                                """,
+                        new long[][]{{99, -9_999, 1_234, -999_999_999, 1_234}},
+                        expectedScales
+                );
+                assertSmallDecimals(
+                        """
+                                SELECT NULL::DECIMAL(2,1) d2, NULL::DECIMAL(4,2) d4, NULL::DECIMAL(8,2) d8,
+                                    NULL::DECIMAL(9,3) d9, NULL::DECIMAL(18,2) d18
+                                """,
+                        new long[][]{null},
+                        expectedScales
+                );
+            }
+        });
+    }
+
+    @Test
     public void testDouble() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startEgressServer()) {
@@ -1689,6 +1746,58 @@ public class QwpEgressTypesExhaustiveTest extends AbstractReusedServerQwpEgressT
                 Assert.assertNull(values.get(3));
             }
         });
+    }
+
+    /**
+     * Runs {@code sql} and asserts every column arrives as DECIMAL64 with the given scales,
+     * and each row's unscaled values match {@code expected} (a {@code null} row means
+     * every cell in it is NULL).
+     */
+    private static void assertSmallDecimals(String sql, long[][] expected, int[] expectedScales) {
+        final int columnCount = expectedScales.length;
+        final List<long[]> rows = new ArrayList<>();
+        final byte[] wireTypes = new byte[columnCount];
+        final int[] scales = new int[columnCount];
+        try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+            client.connect();
+            client.execute(sql, new QwpColumnBatchHandler() {
+                @Override
+                public void onBatch(QwpColumnBatch batch) {
+                    for (int c = 0; c < columnCount; c++) {
+                        wireTypes[c] = batch.getColumnWireType(c);
+                        scales[c] = batch.getDecimalScale(c);
+                    }
+                    for (int r = 0; r < batch.getRowCount(); r++) {
+                        boolean isNullRow = batch.isNull(0, r);
+                        long[] row = isNullRow ? null : new long[columnCount];
+                        for (int c = 0; c < columnCount; c++) {
+                            Assert.assertEquals("row " + rows.size() + " col " + c, isNullRow, batch.isNull(c, r));
+                            if (!isNullRow) {
+                                row[c] = batch.getLongValue(c, r);
+                            }
+                        }
+                        rows.add(row);
+                    }
+                }
+
+                @Override
+                public void onEnd(long totalRows) {
+                }
+
+                @Override
+                public void onError(byte status, String message) {
+                    Assert.fail(message);
+                }
+            });
+        }
+        for (int c = 0; c < columnCount; c++) {
+            Assert.assertEquals("wire type col " + c, QwpConstants.TYPE_DECIMAL64, wireTypes[c]);
+        }
+        Assert.assertArrayEquals(expectedScales, scales);
+        Assert.assertEquals(expected.length, rows.size());
+        for (int r = 0; r < expected.length; r++) {
+            Assert.assertArrayEquals("row " + r, expected[r], rows.get(r));
+        }
     }
 
     /**
