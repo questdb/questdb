@@ -24,16 +24,20 @@
 
 package io.questdb.griffin.model;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UntypedFunction;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.str.StringSink;
 
 /**
  * A Function that represents a pre-parsed tick expression containing date variables
@@ -43,11 +47,14 @@ import io.questdb.std.datetime.TimeZoneRules;
  * <p>
  * IR layout:
  * <pre>
- *   ir[0]:                         header (counts + flags, see HDR_* constants)
+ *   ir[0]:                         header (flags, see HDR_* constants)
  *   ir[1]:                         numericTzOffset (Long.MIN_VALUE if not numeric)
- *   ir[2 .. 2+D):                  duration parts (encoded unit+value)
- *   ir[2+D .. 2+D+3T):             time override triples (offset, width, zoneMatch)
- *   ir[2+D+3T .. end):             elements
+ *   ir[2]:                         D, the number of duration parts
+ *   ir[3]:                         T, the number of time overrides
+ *   ir[4]:                         the number of elements
+ *   ir[5 .. 5+D):                  duration parts (encoded unit+value)
+ *   ir[5+D .. 5+D+3T):             time override triples (offset, width, zoneMatch)
+ *   ir[5+D+3T .. end):             elements
  * </pre>
  * Element encodings (tag in bits 63-62, expr in bits 59-0):
  * <ul>
@@ -55,6 +62,9 @@ import io.questdb.std.datetime.TimeZoneRules;
  *   <li>STATIC (tag 01): 3 longs — tag, lo, hi</li>
  *   <li>RANGE (tag 10): 2 longs — tag+isBusinessDay+startExpr, endExpr</li>
  * </ul>
+ * An expression that the IR cannot represent exactly has no IR: {@link #evaluate} parses it with
+ * {@link IntervalUtils#parseTickExpr} instead, the way a bind variable is parsed, so that a
+ * literal and a bind variable with the same expression always produce the same intervals.
  */
 public class CompiledTickExpression extends UntypedFunction {
     // ---- Element tag (bits 63-62) ----
@@ -62,13 +72,16 @@ public class CompiledTickExpression extends UntypedFunction {
     static final long TAG_RANGE = 0x8000_0000_0000_0000L;
     static final long TAG_SINGLE_VAR = 0x0000_0000_0000_0000L;
     static final long TAG_STATIC = 0x4000_0000_0000_0000L;
+    // ---- Section counts (ir[2..4]), a long each, so that no count is ever truncated ----
+    static final int IR_DURATION_PART_COUNT_INDEX = 2;
+    static final int IR_ELEMENT_COUNT_INDEX = 4;
+    static final int IR_TIME_OVERRIDE_COUNT_INDEX = 3;
 
     // ---- Header (ir[0]) bit layout ----
     private static final long HDR_DAY_MASK = 0x7FL;
-    private static final int HDR_DUR_SHIFT = 40;
     private static final long HDR_DWE_BIT = 1L << 23;
-    private static final int HDR_ELEM_SHIFT = 56;
-    private static final int HDR_TO_SHIFT = 48;
+    // ---- Sections: duration parts, then time overrides, then elements ----
+    private static final int IR_DURATION_PARTS_INDEX = 5;
 
     // ---- Expr encoding (bits 59-0) ----
     private static final long IR_BD_BIT = 1L << 57;
@@ -80,6 +93,8 @@ public class CompiledTickExpression extends UntypedFunction {
     private static final long TAG_MASK = 0xC000_0000_0000_0000L;
     private static final int SUNDAY = 7;
 
+    // set only for an expression without IR
+    private final CairoConfiguration configuration;
     private final DateLocale dateLocale;
     private final int dayFilterMask;
     private final int durationOff;
@@ -89,7 +104,12 @@ public class CompiledTickExpression extends UntypedFunction {
     private final LongList exchangeSchedule;
     private final String expression;
     private final boolean hasDurationWithExchange;
+    // null for an expression without IR, which evaluate() parses
     private final LongList ir;
+    // set only for an expression without IR
+    private final StringSink parseSink;
+    // set only for an expression without IR
+    private final int position;
     private final int timeOverrideCount;
     private final TimestampDriver timestampDriver;
     private final int toOff;
@@ -110,30 +130,57 @@ public class CompiledTickExpression extends UntypedFunction {
         this.tzRules = tzRules;
         this.dateLocale = dateLocale;
         this.exchangeSchedule = exchangeSchedule;
+        this.configuration = null;
+        this.parseSink = null;
+        this.position = 0;
 
         // Pre-decode header and section offsets
         long header = ir.getQuick(0);
-        this.elemCount = (int) ((header >>> HDR_ELEM_SHIFT) & 0xFF);
-        this.timeOverrideCount = (int) ((header >>> HDR_TO_SHIFT) & 0xFF);
-        this.durationPartCount = (int) ((header >>> HDR_DUR_SHIFT) & 0xFF);
         this.hasDurationWithExchange = (header & HDR_DWE_BIT) != 0;
         this.dayFilterMask = (int) (header & HDR_DAY_MASK);
-        this.durationOff = 2;
-        this.toOff = 2 + durationPartCount;
+        this.durationPartCount = (int) ir.getQuick(IR_DURATION_PART_COUNT_INDEX);
+        this.timeOverrideCount = (int) ir.getQuick(IR_TIME_OVERRIDE_COUNT_INDEX);
+        this.elemCount = (int) ir.getQuick(IR_ELEMENT_COUNT_INDEX);
+        this.durationOff = IR_DURATION_PARTS_INDEX;
+        this.toOff = durationOff + durationPartCount;
         this.elemOff = toOff + timeOverrideCount * 3;
+    }
+
+    /**
+     * An expression that the IR cannot represent exactly. {@link #evaluate} parses it at every
+     * evaluation with the captured "now".
+     */
+    CompiledTickExpression(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            CharSequence expression,
+            int position
+    ) {
+        this.timestampDriver = timestampDriver;
+        this.configuration = configuration;
+        this.expression = expression.toString();
+        this.position = position;
+        this.parseSink = new StringSink();
+        this.ir = null;
+        this.tzRules = null;
+        this.dateLocale = null;
+        this.exchangeSchedule = null;
+        this.hasDurationWithExchange = false;
+        this.dayFilterMask = 0;
+        this.durationPartCount = 0;
+        this.timeOverrideCount = 0;
+        this.elemCount = 0;
+        this.durationOff = 0;
+        this.toOff = 0;
+        this.elemOff = 0;
     }
 
     static long encodeDuration(char unit, int value) {
         return ((long) (unit & 0xFFFF) << 32) | (value & 0xFFFFFFFFL);
     }
 
-    static long encodeHeader(int elemCount, int timeOverrideCount, int durationPartCount,
-                             boolean hasDurationWithExchange, int dayFilterMask) {
-        return ((long) (elemCount & 0xFF) << HDR_ELEM_SHIFT)
-                | ((long) (timeOverrideCount & 0xFF) << HDR_TO_SHIFT)
-                | ((long) (durationPartCount & 0xFF) << HDR_DUR_SHIFT)
-                | (hasDurationWithExchange ? HDR_DWE_BIT : 0L)
-                | (dayFilterMask & HDR_DAY_MASK);
+    static long encodeHeader(boolean hasDurationWithExchange, int dayFilterMask) {
+        return (hasDurationWithExchange ? HDR_DWE_BIT : 0L) | (dayFilterMask & HDR_DAY_MASK);
     }
 
     /**
@@ -148,10 +195,14 @@ public class CompiledTickExpression extends UntypedFunction {
 
     /**
      * Evaluates the tick expression using the captured "now" timestamp and appends
-     * the resulting [lo, hi] interval pairs to outIntervals. Pure long arithmetic,
-     * no string parsing.
+     * the resulting [lo, hi] interval pairs to outIntervals. With IR this is pure long
+     * arithmetic, without IR it parses the expression.
      */
     public void evaluate(LongList outIntervals) {
+        if (ir == null) {
+            parse(outIntervals);
+            return;
+        }
         int outStart = outIntervals.size();
 
         // Phase 1: Emit intervals for each element
@@ -289,24 +340,7 @@ public class CompiledTickExpression extends UntypedFunction {
             }
         } else if (tzRules != null) {
             for (int i = startIndex; i < size; i += 2) {
-                long lo = out.getQuick(i);
-                long hi = out.getQuick(i + 1);
-
-                long adjustedLo = lo;
-                long adjustedHi = hi;
-                long gapDuration = tzRules.getDstGapOffset(lo);
-                if (gapDuration != 0) {
-                    adjustedLo = lo + gapDuration;
-                    adjustedHi = hi + gapDuration;
-                } else {
-                    gapDuration = tzRules.getDstGapOffset(hi);
-                    if (gapDuration != 0) {
-                        adjustedHi = hi + gapDuration;
-                    }
-                }
-
-                out.setQuick(i, timestampDriver.toUTC(adjustedLo, tzRules));
-                out.setQuick(i + 1, timestampDriver.toUTC(adjustedHi, tzRules));
+                IntervalUtils.localIntervalToUtc(timestampDriver, tzRules, out, i);
             }
         }
     }
@@ -406,6 +440,31 @@ public class CompiledTickExpression extends UntypedFunction {
                     IntervalUtils.resolveDurationHi(timestamp, endExclusive));
         } else {
             out.add(timestamp, timestamp);
+        }
+    }
+
+    /**
+     * Parses the expression the same way as a bind variable. compileTickExpr() has parsed it once
+     * already, so only an error that depends on "now" can surface here, such as a range whose
+     * start passes its end.
+     */
+    private void parse(LongList outIntervals) {
+        try {
+            IntervalUtils.parseTickExpr(
+                    timestampDriver,
+                    configuration,
+                    expression,
+                    0,
+                    expression.length(),
+                    position,
+                    outIntervals,
+                    IntervalOperation.INTERSECT,
+                    parseSink,
+                    true,
+                    now
+            );
+        } catch (SqlException e) {
+            throw CairoException.nonCritical().position(e.getPosition()).put(e.getFlyweightMessage());
         }
     }
 

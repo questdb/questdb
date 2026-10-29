@@ -229,7 +229,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // so that cached queries always use the current time.
         // compileTickExpr() validates the expression at compile time and returns
         // a CompiledTickExpression that re-evaluates on each query execution.
-        if (containsDateVariable(seq, lo, lim)) {
+        if (DateExpressionEvaluator.containsDateVariable(seq, lo, lim)) {
             CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                     timestampDriver, configuration, seq, lo, lim, position);
             intersectCompiledTickExpr(compiled);
@@ -603,7 +603,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
         // so that cached queries always use the current time.
-        if (containsDateVariable(seq, lo, lim)) {
+        if (DateExpressionEvaluator.containsDateVariable(seq, lo, lim)) {
             CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                     timestampDriver, configuration, seq, lo, lim, position);
             subtractCompiledTickExpr(compiled);
@@ -673,7 +673,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
         // so that cached queries always use the current time.
-        if (containsDateVariable(seq, lo, lim)) {
+        if (DateExpressionEvaluator.containsDateVariable(seq, lo, lim)) {
             CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                     timestampDriver, configuration, seq, lo, lim, position);
             unionCompiledTickExpr(compiled);
@@ -782,15 +782,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
             return value < 0 ? Numbers.LONG_NULL : Long.MAX_VALUE;
         }
         return result;
-    }
-
-    private static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
-        for (int i = lo; i < lim - 1; i++) {
-            if (seq.charAt(i) == '$' && DateExpressionEvaluator.isDateVariable(seq, i, lim)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static long subtractSaturating(long value, long offset) {

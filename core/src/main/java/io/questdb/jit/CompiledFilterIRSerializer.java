@@ -45,6 +45,7 @@ import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.bind.NamedParameterLinkFunction;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
+import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Chars;
@@ -4813,8 +4814,20 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private void serializeInTimestampRange(int position) throws SqlException {
         predicateContext.currentInSerialization = true;
 
-        final CharSequence token = predicateContext.inOperationNode.rhs.token;
+        final ExpressionNode rhs = predicateContext.inOperationNode.rhs;
+        final CharSequence token = rhs.token;
         final CharSequence intervalEx = token == null || SqlKeywords.isNullKeyword(token) ? null : GenericLexer.unquote(token);
+        if (intervalEx != null) {
+            final int dateVariableIndex = DateExpressionEvaluator.indexOfDateVariable(intervalEx, 0, intervalEx.length());
+            if (dateVariableIndex != -1) {
+                // A date variable resolves against the time of each execution, but the IR carries the
+                // interval as constants, which a cached plan would keep forever. The Java filter
+                // evaluates the expression on every execution instead.
+                throw SqlException.position(rhs.position + (Chars.isQuoted(token) ? 1 : 0) + dateVariableIndex)
+                        .put("unsupported date variable in interval: ")
+                        .put(token);
+            }
+        }
 
         final LongList intervals = predicateContext.inIntervals;
         IntervalUtils.parseTickExprAndIntersect(

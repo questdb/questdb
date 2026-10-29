@@ -209,6 +209,30 @@ public class DateExpressionEvaluator {
     }
 
     /**
+     * Returns whether seq[lo..lim) holds a date variable anywhere. See {@link #indexOfDateVariable}.
+     */
+    public static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
+        return indexOfDateVariable(seq, lo, lim) != -1;
+    }
+
+    /**
+     * Returns the index of the first date variable in seq[lo..lim), or -1 when it holds none.
+     * <p>
+     * A TICK expression with a date variable resolves against the time of each execution, so a
+     * plan must not fold it into constants when it compiles; it evaluates the expression on every
+     * execution, through {@link IntervalUtils#compileTickExpr}, instead. Consumers that choose
+     * between the two use this method, so that they agree on which expressions are which.
+     */
+    public static int indexOfDateVariable(CharSequence seq, int lo, int lim) {
+        for (int i = lo; i < lim - 1; i++) {
+            if (seq.charAt(i) == '$' && isDateVariable(seq, i, lim)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
      * Checks whether the characters at seq[lo..lim) start with a known date
      * variable ({@code $now}, {@code $today}, {@code $yesterday}, {@code $tomorrow})
      * followed by a non-letter boundary. Case-insensitive, zero-allocation.

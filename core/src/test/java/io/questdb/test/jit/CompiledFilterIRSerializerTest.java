@@ -3086,6 +3086,34 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertOrderingComparisonRejected("asymbol", "SYMBOL");
     }
 
+    @Test
+    public void testUnsupportedTimestampInDateVariable() throws Exception {
+        // A date variable resolves against the time of each execution, while the IR carries the
+        // interval as constants fixed at compile time, so the filter must stay in Java
+        final String[] intervals = {
+                "'$today'",
+                "'$now'",
+                "'$TODAY..$NOW'",
+                "'$now - 1h..$now'",
+                "'$yesterday;2h'",
+                "'$todayT09:30;1h'",
+                "'[$now - 2h..$now]@America/New_York'",
+                "'$today..$today + 7d#workday'"
+        };
+        for (String column : new String[]{"atimestamp", "atimestampns"}) {
+            for (String interval : intervals) {
+                for (String filter : new String[]{column + " in " + interval, "along = 42 and " + column + " not in " + interval}) {
+                    try {
+                        serialize(filter);
+                        Assert.fail("JIT compiled an interval with a date variable: " + filter);
+                    } catch (SqlException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "date variable");
+                    }
+                }
+            }
+        }
+    }
+
     @Test(expected = SqlException.class)
     public void testUnsupportedTrueConstantInNumericContext() throws Exception {
         serialize("along = true");

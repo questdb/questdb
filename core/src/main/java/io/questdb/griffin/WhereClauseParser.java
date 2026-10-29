@@ -40,6 +40,8 @@ import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.model.AliasTranslator;
+import io.questdb.griffin.model.CompiledTickExpression;
+import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.IntervalOperation;
@@ -1804,6 +1806,11 @@ public final class WhereClauseParser implements Mutable {
      * {@code in()} semantics rather than a single point. The interval is inverted onto the
      * timestamp axis for partition pruning while the predicate is kept as a residual row filter
      * unless the inversion is exact, so a wider-than-exact inversion can never drop matching rows.
+     * <p>
+     * A TICK expression with a date variable resolves against the time of each execution, so
+     * {@link TimestampMonotonicInverter} inverts it when the scan opens, and the predicate stays
+     * a residual filter, as for any runtime bound. The few such expressions that
+     * {@link IntervalUtils#compileTickExpr} cannot compile keep the static inversion.
      */
     private boolean analyzeMonotonicTimestampInInterval(
             IntrinsicModel model,
@@ -1814,7 +1821,7 @@ public final class WhereClauseParser implements Mutable {
             RecordMetadata metadata,
             SqlExecutionContext executionContext
     ) {
-        final Function head = compileMonotonicChain(operandNode, functionParser, metadata, executionContext);
+        Function head = compileMonotonicChain(operandNode, functionParser, metadata, executionContext);
         if (head == null) {
             return false;
         }
@@ -1825,6 +1832,35 @@ public final class WhereClauseParser implements Mutable {
                 return false;
             }
             final TimestampDriver outDriver = ColumnType.getTimestampDriver(outType);
+            if (DateExpressionEvaluator.containsDateVariable(inArg.token, 1, inArg.token.length() - 1)) {
+                CompiledTickExpression tickExpr = null;
+                try {
+                    tickExpr = IntervalUtils.compileTickExpr(
+                            outDriver,
+                            executionContext.getCairoEngine().getConfiguration(),
+                            inArg.token,
+                            1,
+                            inArg.token.length() - 1,
+                            inArg.position
+                    );
+                } catch (SqlException | CairoException e) {
+                    // The compiled form does not support every expression the static parser below
+                    // accepts, and in() rejects such an expression, so only the static inversion can
+                    // run it. It keeps doing so, frozen at compile time as before.
+                }
+                if (tickExpr != null) {
+                    if (foldInvertProbe(head) == MonotonicTimestampFunction.NONE) {
+                        Misc.free(tickExpr);
+                        return false;
+                    }
+                    final TimestampMonotonicInverter inverter = new TimestampMonotonicInverter(head, tickExpr, outDriver);
+                    head = null; // ownership transferred to the inverter
+                    model.intersectMonotonicTimestamp(inverter);
+                    // the expression may resolve to a list when the scan opens, which the inverter does
+                    // not narrow, so the predicate stays a residual filter
+                    return false;
+                }
+            }
             tempInIntervals.clear();
             try {
                 IntervalUtils.parseTickExpr(

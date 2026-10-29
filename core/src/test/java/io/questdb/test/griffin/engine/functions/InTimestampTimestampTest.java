@@ -33,6 +33,7 @@ import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVarTuple;
+import io.questdb.test.tools.MutationStep;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -124,6 +125,117 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateListWithDenseTimeExpansionAndDayFilter() throws Exception {
+        // The minute expansion emits 1440 intervals per date, past the incremental merge
+        // threshold (256). 2024-01-03 is a Wednesday and 2024-01-04 a Thursday, so #Wed keeps
+        // 2024-01-03 only.
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            final String expectedRow = "24\t2024-01-03T00:00:00.000000Z\t2024-01-03T23:00:00.000000Z";
+            // the hour expansion stays below the threshold
+            assertTickExprMatches("[2024-01-03,2024-01-04]T[00..23]#Wed", expectedRow);
+            assertTickExprMatches("[2024-01-03,2024-01-04]T[00..23]:[00..59]#Wed", expectedRow);
+            assertTickExprBindVariableMatches("[2024-01-03,2024-01-04]T[00..23]:[00..59]#Wed", expectedRow);
+        });
+    }
+
+    @Test
+    public void testDateListWithDenseTimeExpansionAndTimezone() throws Exception {
+        // The minute expansion emits 1440 intervals per date, past the incremental merge
+        // threshold (256). +02:00 shifts both dates two hours back, so the list covers
+        // 2024-01-01T22:00Z to 2024-01-03T21:59:59.999999Z.
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            final String expectedRow = "48\t2024-01-01T22:00:00.000000Z\t2024-01-03T21:00:00.000000Z";
+            // the hour expansion stays below the threshold
+            assertTickExprMatches("[2024-01-02,2024-01-03]T[00..23]@+02:00", expectedRow);
+            assertTickExprMatches("[2024-01-02,2024-01-03]T[00..23]:[00..59]@+02:00", expectedRow);
+            assertTickExprBindVariableMatches("[2024-01-02,2024-01-03]T[00..23]:[00..59]@+02:00", expectedRow);
+        });
+    }
+
+    @Test
+    public void testDateVariableInCachedCountFilterFollowsNow() throws Exception {
+        // count() takes the count-only filter, which the JIT compiles apart from the row filter
+        assertCachedFilterFollowsNow(
+                "SELECT count() FROM t WHERE ts2 IN '$today..$now'",
+                """
+                        count
+                        61
+                        """,
+                """
+                        count
+                        91
+                        """
+        );
+    }
+
+    @Test
+    public void testDateVariableInCachedFilterFollowsDayChange() throws Exception {
+        // A cached plan must move to the next day along with $today, rather than keep matching
+        // the day it compiled on
+        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+        try {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            final ObjList<MutationStep> steps = new ObjList<>();
+            steps.add(MutationStep.of(
+                    insertEveryTenMinutes("2024-01-02T00:00:00.000000Z", 61),
+                    """
+                            count\tmin\tmax
+                            61\t2024-01-02T00:00:00.000000Z\t2024-01-02T10:00:00.000000Z
+                            """
+            ));
+            steps.add(MutationStep.of(
+                    () -> setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-03T10:00:00.000000Z")),
+                    insertEveryTenMinutes("2024-01-03T00:00:00.000000Z", 61),
+                    """
+                            count\tmin\tmax
+                            61\t2024-01-03T00:00:00.000000Z\t2024-01-03T10:00:00.000000Z
+                            """
+            ));
+            assertQuery("SELECT count(), min(ts2), max(ts2) FROM t WHERE ts2 IN '$today'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .ddl("CREATE TABLE t (ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
+                    .mutateStepwise(steps);
+        } finally {
+            setCurrentMicros(-1);
+        }
+    }
+
+    @Test
+    public void testDateVariableInCachedFilterFollowsNow() throws Exception {
+        // ts2 is not the designated timestamp, so the IN stays in the row filter
+        assertCachedFilterFollowsNow(
+                "SELECT count(), max(ts2) FROM t WHERE ts2 IN '$today..$now'",
+                """
+                        count\tmax
+                        61\t2024-01-02T10:00:00.000000Z
+                        """,
+                """
+                        count\tmax
+                        91\t2024-01-02T15:00:00.000000Z
+                        """
+        );
+    }
+
+    @Test
+    public void testDateVariableInCachedOrFilterFollowsNow() throws Exception {
+        // the OR keeps the IN on the designated timestamp out of the interval scan, in the row filter
+        assertCachedFilterFollowsNow(
+                "SELECT count(), max(ts) FROM t WHERE ts IN '$today..$now' OR ts > '2030-01-01'",
+                """
+                        count\tmax
+                        61\t2024-01-02T10:00:00.000000Z
+                        """,
+                """
+                        count\tmax
+                        91\t2024-01-02T15:00:00.000000Z
+                        """
+        );
+    }
+
+    @Test
     public void testDateVariableNowAtMidnight() throws Exception {
         // https://github.com/questdb/questdb/issues/8083
         // $now and expressions on it stay points in time when they land exactly on midnight
@@ -136,6 +248,35 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T00:00:00.000000Z"));
             assertTickExprMatches("$now - 2h..$now", "3\t2024-01-01T22:00:00.000000Z\t2024-01-02T00:00:00.000000Z");
             assertTickExprMatches("$now", "1\t2024-01-02T00:00:00.000000Z\t2024-01-02T00:00:00.000000Z");
+        });
+    }
+
+    @Test
+    public void testDateVariableRangeElementDayFilterBindVariable() throws Exception {
+        // the range's own day filter keeps the Mondays: 2024-01-01 and 2024-01-08
+        assertMemoryLeak(() -> {
+            // hourly rows from 2024-01-01T00:00 to 2024-01-14T23:00
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts
+                        FROM long_sequence(336)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-01T12:00:00.000000Z"));
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
+                    "range with its own day filter",
+                    """
+                            count\tmin\tmax
+                            48\t2024-01-01T00:00:00.000000Z\t2024-01-08T23:00:00.000000Z
+                            """,
+                    bindVariableService -> bindVariableService.setStr(0, "[$today..$today+7d#Mon]")
+            ));
+            assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .assertBinds(cases);
         });
     }
 
@@ -157,6 +298,129 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
             assertTickExprMatches("$yesterday + 12h..$today", "36\t2024-01-01T12:00:00.000000Z\t2024-01-02T23:00:00.000000Z");
             assertTickExprMatches("$today + 6h..$today + 24h", "19\t2024-01-02T06:00:00.000000Z\t2024-01-03T00:00:00.000000Z");
             assertTickExprMatches("$today..$now", "11\t2024-01-02T00:00:00.000000Z\t2024-01-02T10:00:00.000000Z");
+        });
+    }
+
+    @Test
+    public void testDateVariableRangeWithDenseTimeExpansion() throws Exception {
+        // The minute expansion emits 1440 intervals per day, past the incremental merge
+        // threshold (256). A literal with a date variable compiles to a CompiledTickExpression,
+        // which rejects a numeric expansion in the time of day, so a bind variable carries
+        // these expressions to the parser.
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            // $yesterday is Tuesday 2024-01-02 and $today Wednesday 2024-01-03
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-03T10:00:00.000000Z"));
+            try {
+                // the hour expansion stays below the threshold
+                assertTickExprBindVariableMatches(
+                        "[$yesterday..$today]T[00..23]#Tue",
+                        "24\t2024-01-02T00:00:00.000000Z\t2024-01-02T23:00:00.000000Z"
+                );
+                assertTickExprBindVariableMatches(
+                        "[$yesterday..$today]T[00..23]:[00..59]#Tue",
+                        "24\t2024-01-02T00:00:00.000000Z\t2024-01-02T23:00:00.000000Z"
+                );
+                // +02:00 shifts both days two hours back
+                assertTickExprBindVariableMatches(
+                        "[$yesterday..$today]T[00..23]:[00..59]@+02:00",
+                        "48\t2024-01-01T22:00:00.000000Z\t2024-01-03T21:00:00.000000Z"
+                );
+                // $now ends the range at 10:00 today
+                assertTickExprBindVariableMatches(
+                        "[$yesterday..$now]T[00..23]:[00..59]",
+                        "35\t2024-01-02T00:00:00.000000Z\t2024-01-03T10:00:00.000000Z"
+                );
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testDateVariableLiteralTimeShapes() throws Exception {
+        // A literal with a date variable compiles to a form that re-evaluates for every query. Time
+        // brackets and element suffixes must evaluate the same way as in a bind variable.
+        assertMemoryLeak(() -> {
+            // a row every ten minutes on 2024-01-02
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-01-02T00:00:00.000000Z', 600_000_000L) ts
+                        FROM long_sequence(144)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z"));
+            // the minutes 01:30 and 02:30
+            assertTickExprMatches("[$today]T[01,02]:30", "2\t2024-01-02T01:30:00.000000Z\t2024-01-02T02:30:00.000000Z");
+            // the minutes 01:00, 01:30, 02:00 and 02:30
+            assertTickExprMatches("[$today]T[01..02]:[00,30]", "4\t2024-01-02T01:00:00.000000Z\t2024-01-02T02:30:00.000000Z");
+            // 10:30 at +02:00 is 08:30Z
+            assertTickExprMatches("[$today]T[10:30@+02:00,11:00]", "2\t2024-01-02T08:30:00.000000Z\t2024-01-02T11:00:00.000000Z");
+            // 2024-01-02 is a Tuesday
+            assertTickExprMatches("[$today#Tue]", "144\t2024-01-02T00:00:00.000000Z\t2024-01-02T23:50:00.000000Z");
+            assertTickExprMatches("[$today#Mon, $yesterday]", "0\t\t");
+        });
+    }
+
+    @Test
+    public void testDenseTickExprBindVariable() throws Exception {
+        // A bind variable goes through the parse path, which merges the expanded intervals
+        // once they reach the incremental merge threshold (256 intervals). The merge must not
+        // move the intervals that the clip to $now, or the timezone of an element, has yet
+        // to process.
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            // only an interval made of stale values would match this row
+            execute("INSERT INTO t VALUES ('1970-01-01T00:40:00.000000Z')");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:30:00.000000Z"));
+
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            addTickExprBindCase(cases, "[$now..$tomorrow]T[00..23]:[00..59]", "37\t2024-01-02T11:00:00.000000Z\t2024-01-03T23:00:00.000000Z");
+            addTickExprBindCase(cases, "[$yesterday..$now]T[00..23]:[00..59]", "35\t2024-01-01T00:00:00.000000Z\t2024-01-02T10:00:00.000000Z");
+            // the first second of every minute from 09:00 to 12:59, which matches the rows at 09:00 to 12:00
+            addTickExprBindCase(cases, "[$tomorrow, $yesterday..$now]T[09..12]:[00..59]:00", "10\t2024-01-01T09:00:00.000000Z\t2024-01-03T12:00:00.000000Z");
+            // 2024-01-01 at +02:00 runs from 2023-12-31T22:00Z to 2024-01-01T21:59:59.999999Z
+            addTickExprBindCase(cases, "[2024-01-03, 2024-01-01@+02:00]T[00..23]:[00..59]", "46\t2024-01-01T00:00:00.000000Z\t2024-01-03T23:00:00.000000Z");
+            // the five minutes are 06:00Z to 10:00Z
+            addTickExprBindCase(cases, "2024-01-02T[10:00,09:00,08:00,11:00,12:00]:[00..59]@+02:00", "5\t2024-01-02T06:00:00.000000Z\t2024-01-02T10:00:00.000000Z");
+
+            // the IN on the designated timestamp becomes an interval scan
+            assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .assertBinds(cases);
+            // the OR keeps the IN in the row filter
+            assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1 OR ts = 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .assertBinds(cases);
+        });
+    }
+
+    @Test
+    public void testDstGapIntervalBindVariable() throws Exception {
+        // London springs forward from 01:00 GMT to 02:00 BST on 2024-03-31, so 01:10 local
+        // does not exist: the 55 minutes start at the transition, 01:00 UTC
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-03-31T00:00:00.000000Z', 60_000_000L) ts
+                        FROM long_sequence(180)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
+                    "starts in the gap",
+                    "count\tmin\tmax\n55\t2024-03-31T01:00:00.000000Z\t2024-03-31T01:54:00.000000Z\n",
+                    bindVariableService -> bindVariableService.setStr(0, "2024-03-31T01:10@Europe/London;55m")
+            ));
+            assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .assertBinds(cases);
         });
     }
 
@@ -203,6 +467,30 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .expectSize()
                 .assertBinds(cases);
+    }
+
+    @Test
+    public void testIntervalLiteralCompilesToOver255Elements() throws Exception {
+        // The literal compiles to 481 elements: $today and 480 half-hourly intervals that do not
+        // merge, more than the compiled expression could once count
+        assertMemoryLeak(() -> {
+            // rows every 30 minutes from 2024-01-01T00:00 to 2024-01-10T23:30
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 1_800_000_000L) ts
+                        FROM long_sequence(480)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-03-01T12:00:00.000000Z"));
+            assertQuery("SELECT count() FROM t WHERE ts IN '[$today,2024-01-[01..10]T[00..23]:[00,30]]'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            480
+                            """);
+        });
     }
 
     @Test
@@ -277,6 +565,14 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         });
     }
 
+    private static void addTickExprBindCase(ObjList<BindVarTuple> cases, String tickExpr, String expectedRow) {
+        cases.add(BindVarTuple.ok(
+                tickExpr,
+                "count\tmin\tmax\n" + expectedRow + "\n",
+                bindVariableService -> bindVariableService.setStr(0, tickExpr)
+        ));
+    }
+
     private static void createHourlyTable() throws SqlException {
         // hourly rows from 2024-01-01T00:00 to 2024-01-04T23:00
         execute("""
@@ -285,6 +581,61 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                     FROM long_sequence(96)
                 ) TIMESTAMP(ts) PARTITION BY DAY
                 """);
+    }
+
+    private static String insertEveryTenMinutes(String from, int count) {
+        return "INSERT INTO t SELECT ts, ts FROM (SELECT '" + from + "'::timestamp + (x - 1) * 600_000_000 ts FROM long_sequence(" + count + "))";
+    }
+
+    /**
+     * Compiles the query once at 10:00, runs it, then runs the same factory again at 15:00 after more rows
+     * arrive. The table also holds a row at 23:00 that $now never reaches.
+     */
+    private void assertCachedFilterFollowsNow(String query, String expectedAt10, String expectedAt15) throws Exception {
+        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+        try {
+            // The JIT is the path that compiles the filter to native code, so pin it on
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            final ObjList<MutationStep> steps = new ObjList<>();
+            // a row every 10 minutes from midnight to 10:00
+            steps.add(MutationStep.of(insertEveryTenMinutes("2024-01-02T00:00:00.000000Z", 61), expectedAt10));
+            // and from 10:10 to 15:00, written after the factory compiled
+            steps.add(MutationStep.of(
+                    () -> setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T15:00:00.000000Z")),
+                    insertEveryTenMinutes("2024-01-02T10:10:00.000000Z", 30),
+                    expectedAt15
+            ));
+            assertQuery(query)
+                    .noRandomAccess()
+                    .expectSize()
+                    .ddl(
+                            "CREATE TABLE t (ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                            "INSERT INTO t VALUES ('2024-01-02T23:00:00.000000Z', '2024-01-02T23:00:00.000000Z')"
+                    )
+                    .mutateStepwise(steps);
+        } finally {
+            setCurrentMicros(-1);
+        }
+    }
+
+    private void assertTickExprBindVariableMatches(String tickExpr, String expectedRow) throws Exception {
+        final String expected = "count\tmin\tmax\n" + expectedRow + "\n";
+        bindVariableService.clear();
+        bindVariableService.setStr(0, tickExpr);
+        // the interval scan parses the bind variable when the query executes
+        assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("Interval forward scan")
+                .returns(expected);
+        // the OR keeps the IN in the row filter, which parses the bind variable on its own
+        assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1 OR ts > '2030-01-01'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("Frame forward scan")
+                .returns(expected);
     }
 
     private void assertTickExprMatches(String tickExpr, String expectedRow) throws Exception {

@@ -36,6 +36,7 @@ import io.questdb.std.FiberLocal;
 import io.questdb.std.Interval;
 import io.questdb.std.LongGroupSort;
 import io.questdb.std.LongList;
+import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjectStackPool;
@@ -83,6 +84,8 @@ public final class IntervalUtils {
     private static final FiberLocal<LongList> tlExchangeFilterTemp = new FiberLocal<>(LongList::new);
     private static final FiberLocal<ObjectStackPool<StringSink>> tlExpansionSinks =
             new FiberLocal<>(() -> new ObjectStackPool<>(StringSink::new, 2));
+    private static final FiberLocal<ObjectStackPool<PendingSteps>> tlPendingSteps =
+            new FiberLocal<>(() -> new ObjectStackPool<>(PendingSteps::new, 4));
     private static final FiberLocal<StringSink> tlSink1 = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<StringSink> tlSink2 = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<LongList> tlTzBound = new FiberLocal<>(LongList::new);
@@ -139,9 +142,11 @@ public final class IntervalUtils {
      * {@link CompiledTickExpression} with all suffix data pre-parsed so that
      * runtime evaluation uses only long arithmetic (no string parsing).
      * <p>
-     * The expression is also validated at compile time by running
-     * {@link #parseTickExpr} with the current timestamp. This ensures
-     * structural errors are caught early.
+     * When the IR cannot represent the expression exactly, see {@link #isCompilable},
+     * the returned expression parses it with {@link #parseTickExpr} at every evaluation
+     * instead, the same way as a bind variable. This method then validates the
+     * expression by parsing it with the current timestamp, so that structural errors
+     * are caught at compile time either way.
      *
      * @param timestampDriver the timestamp driver determining precision
      * @param configuration   the Cairo configuration
@@ -261,11 +266,27 @@ public final class IntervalUtils {
         // 3b: Find duration semicolon
         int durationSemicolon = compileFindCharOrNeg1(effectiveSeq, suffixLo, durationHi, ';');
 
+        // Time overrides span from the suffix start to the timezone or duration
+        int timeLo = suffixLo;
+        int timeHi = compileSuffixTimeHi(tzMarkerPos, durationSemicolon, durationHi);
+
+        if (!isCompilable(effectiveSeq, elemListLo, elemListHi, isBareVar, timeLo, timeHi, durationSemicolon)) {
+            // Parse the expression now, so that an error surfaces when the SQL compiles
+            tmp.clear();
+            parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, tmp,
+                    IntervalOperation.INTERSECT, tlCompileSink3.get(), true, timestampDriver.getTicks());
+            tmp.clear();
+            return new CompiledTickExpression(timestampDriver, configuration, seq.subSequence(lo, lim), position);
+        }
+
         // Build IR using LongList — no manual capacity management, no shift hack.
-        // Layout: [header, numericTz, durationParts..., timeOverrides..., elements...]
+        // Layout: [header, numericTz, section counts..., durationParts..., timeOverrides..., elements...]
         LongList irList = new LongList(64);
         irList.add(0L);               // [0] header placeholder
         irList.add(numericTzOffset);   // [1] numeric timezone offset
+        irList.add(0L);               // [2] duration part count placeholder
+        irList.add(0L);               // [3] time override count placeholder
+        irList.add(0L);               // [4] element count placeholder
 
         // 3c: Duration parts
         int durationPartCount = 0;
@@ -275,8 +296,6 @@ public final class IntervalUtils {
         boolean hasDurationWithExchange = exchangeSchedule != null && durationPartCount > 0;
 
         // 3d: Time overrides
-        int timeLo = suffixLo;
-        int timeHi = compileSuffixTimeHi(tzMarkerPos, durationSemicolon, durationHi);
 
         // Second sink for parsing (sink may be effectiveSeq)
         StringSink parseSink = (effectiveSeq == sink) ? tlCompileSink2.get() : sink;
@@ -299,16 +318,11 @@ public final class IntervalUtils {
                 position, irList, parseSink, tmp
         );
 
-        // Phase 5: Finalize header and extract IR array
-        irList.setQuick(0,
-                CompiledTickExpression.encodeHeader(
-                        elemCount,
-                        timeOverrideCount,
-                        durationPartCount,
-                        hasDurationWithExchange,
-                        dayFilterMask
-                )
-        );
+        // Phase 5: Finalize header and section counts
+        irList.setQuick(0, CompiledTickExpression.encodeHeader(hasDurationWithExchange, dayFilterMask));
+        irList.setQuick(CompiledTickExpression.IR_DURATION_PART_COUNT_INDEX, durationPartCount);
+        irList.setQuick(CompiledTickExpression.IR_TIME_OVERRIDE_COUNT_INDEX, timeOverrideCount);
+        irList.setQuick(CompiledTickExpression.IR_ELEMENT_COUNT_INDEX, elemCount);
 
         return new CompiledTickExpression(
                 timestampDriver,
@@ -905,8 +919,8 @@ public final class IntervalUtils {
 
             // Find where the date variable expression ends (before suffix like T, @, ;)
             // Note: '#' (day filter) is already stripped from effectiveSeq at this point
-            // Note: 'T' is only a time suffix if followed by a digit (e.g., T09:30)
-            // This allows variable names containing 'T' like $TOMORROW
+            // Note: 'T' is only a time suffix if followed by a digit (e.g., T09:30) or a bracket
+            // (e.g., T[09:00,14:30]). This allows variable names containing 'T' like $TOMORROW
             // Note: ',' is a stop character - comma lists require brackets
             int exprEnd = effectiveSeqLo;
             while (exprEnd < effectiveSeqLim) {
@@ -915,8 +929,7 @@ public final class IntervalUtils {
                 if (c == '@' || c == ';' || c == ',') {
                     break;
                 }
-                // 'T' is only a time suffix if followed by a digit
-                if (c == 'T' && exprEnd + 1 < effectiveSeqLim && Chars.isAsciiDigit(effectiveSeq.charAt(exprEnd + 1))) {
+                if (c == 'T' && isTimeSuffixStart(effectiveSeq, exprEnd + 1, effectiveSeqLim)) {
                     break;
                 }
                 exprEnd++;
@@ -1150,7 +1163,26 @@ public final class IntervalUtils {
 
         StringSink expansionSink = tlSink1.get();
         expansionSink.clear();
+        // The day filter, timezone and tick calendar steps of the expression. The incremental merge
+        // of the bracket expansion runs them early on the intervals it is about to merge.
+        final ObjectStackPool<PendingSteps> stepsPool = tlPendingSteps.get();
+        final PendingSteps expressionSteps = stepsPool.next();
         try {
+            expressionSteps.isElement = true;
+            expressionSteps.lo = outSize;
+            expressionSteps.isDayFiltered = dayFilterMask != 0 && exchangeSchedule == null;
+            expressionSteps.dayFilterMask = dayFilterMask;
+            expressionSteps.isMultiDayIgnored = hasDatePrecision(parseSeq, parseLo, parseDateLim);
+            if (tzMarkerPos >= 0) {
+                expressionSteps.tzSeq = effectiveSeq;
+                expressionSteps.tzLo = tzLo;
+                expressionSteps.tzHi = tzHi;
+            }
+            expressionSteps.exchangeSchedule = exchangeSchedule;
+            expressionSteps.durationSeq = effectiveSeq;
+            expressionSteps.durationLo = semicolonPos >= 0 ? semicolonPos + 1 : -1;
+            expressionSteps.durationLim = effectiveSeqLim;
+
             boolean hadTimeListBracket = expandBracketsRecursive(
                     timestampDriver,
                     configuration,
@@ -1165,35 +1197,17 @@ public final class IntervalUtils {
                     0,
                     applyEncoded,
                     outSize,
+                    expressionSteps,
                     effectiveSeq, // globalTzSeq - sequence with timezone
                     tzLo,         // globalTzLo
                     tzHi          // globalTzHi
             );
-            // Day filter applies BEFORE timezone conversion (based on local time)
-            if (dayFilterMask != 0 && exchangeSchedule == null) {
-                if (applyEncoded) {
-                    applyDayFilter(
-                            timestampDriver,
-                            out,
-                            outSize,
-                            dayFilterMask,
-                            hasDatePrecision(parseSeq, parseLo, parseDateLim)
-                    );
-                } else {
-                    // Dynamic mode: store day filter mask for runtime evaluation
-                    setDayFilterMaskOnEncodedIntervals(out, outSize, dayFilterMask);
-                }
-            }
-            // Apply timezone conversion if present AND no time list brackets were processed
-            // (time list brackets handle their own timezone internally)
-            if (tzMarkerPos >= 0 && !hadTimeListBracket) {
-                applyTimezoneToIntervals(timestampDriver, configuration, out, outSize, effectiveSeq, tzLo, tzHi, position, applyEncoded);
-            }
-            // Tick calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
-            if (exchangeSchedule != null) {
-                applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, effectiveSeq,
-                        semicolonPos >= 0 ? semicolonPos + 1 : -1, effectiveSeqLim, position);
-            }
+            // Time list brackets handle their own timezone internally, and mark the expression so
+            // that its steps skip the timezone
+            assert expressionSteps.hasTimeList == hadTimeListBracket;
+            // Day filter applies BEFORE timezone conversion (based on local time), tick calendar
+            // filter AFTER it (intersects with UTC trading hours)
+            applyPendingSteps(timestampDriver, configuration, out, expressionSteps, operation, applyEncoded, outSize, position);
             // In static mode, union all bracket-expanded intervals with each other
             // (they were added without union during expansion)
             if (applyEncoded && out.size() > outSize + 2) {
@@ -1210,6 +1224,8 @@ public final class IntervalUtils {
             // Unwind output on error
             out.setPos(outSize);
             throw e;
+        } finally {
+            stepsPool.release(expressionSteps);
         }
     }
 
@@ -1735,6 +1751,60 @@ public final class IntervalUtils {
     }
 
     /**
+     * Runs the clip, day filter, timezone and tick calendar steps of an element on its intervals
+     * from {@code steps.lo} on, in that order. Each step processes every interval on its own, so
+     * running the steps on the intervals in several batches gives the same result as one run.
+     */
+    private static void applyPendingSteps(
+            TimestampDriver timestampDriver,
+            CairoConfiguration configuration,
+            LongList out,
+            PendingSteps steps,
+            short operation,
+            boolean applyEncoded,
+            int outSizeBeforeExpansion,
+            int errorPos
+    ) throws SqlException {
+        final int lo = steps.lo;
+        if (steps.isClipped) {
+            long clipLo = steps.clipLo;
+            long clipHi = steps.clipHi;
+            if (steps.hasTimeList && steps.tzLo >= 0) {
+                // Time list brackets have converted their intervals to UTC already,
+                // so the endpoint needs the same conversion
+                if (clipLo != Long.MIN_VALUE) {
+                    clipLo = localToUtc(timestampDriver, configuration, clipLo, steps.tzSeq, steps.tzLo, steps.tzHi, errorPos);
+                }
+                if (clipHi != Long.MAX_VALUE) {
+                    clipHi = localToUtc(timestampDriver, configuration, clipHi, steps.tzSeq, steps.tzLo, steps.tzHi, errorPos);
+                }
+            }
+            clipDateRangeIntervals(out, lo, clipLo, clipHi, operation, applyEncoded, outSizeBeforeExpansion, errorPos);
+        }
+
+        // Day filter applies BEFORE timezone conversion (based on local time)
+        if (steps.isDayFiltered) {
+            if (applyEncoded) {
+                applyDayFilter(timestampDriver, out, lo, steps.dayFilterMask, steps.isMultiDayIgnored);
+            } else {
+                // Dynamic mode: store day filter mask for runtime evaluation
+                setDayFilterMaskOnEncodedIntervals(out, lo, steps.dayFilterMask);
+            }
+        }
+
+        // An element whose intervals come from a time list has its timezone applied already
+        if (steps.tzLo >= 0 && !(steps.isElement && steps.hasTimeList)) {
+            applyTimezoneToIntervals(timestampDriver, configuration, out, lo, steps.tzSeq, steps.tzLo, steps.tzHi, errorPos, applyEncoded);
+        }
+
+        // Tick calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
+        if (steps.exchangeSchedule != null) {
+            applyExchangeFilterAndDuration(timestampDriver, steps.exchangeSchedule, out, lo, steps.durationSeq,
+                    steps.durationLo, steps.durationLim, errorPos);
+        }
+    }
+
+    /**
      * Applies timezone conversion to all intervals in the output list from outSizeBeforeConversion to end.
      * This converts local timestamps to UTC. Handles both numeric offsets (+03:00) and named
      * timezones (Europe/London).
@@ -1795,26 +1865,7 @@ public final class IntervalUtils {
                 );
                 // Named timezone - handle DST gaps
                 for (int i = outSizeBeforeConversion; i < currentSize; i += stride) {
-                    long lo = out.getQuick(i);
-                    long hi = out.getQuick(i + 1);
-
-                    long adjustedLo = lo;
-                    long adjustedHi = hi;
-                    long gapDuration = tzRules.getDstGapOffset(lo);
-                    if (gapDuration != 0) {
-                        // lo is in a DST gap - adjust both lo and hi forward by the same amount
-                        adjustedLo = lo + gapDuration;
-                        adjustedHi = hi + gapDuration;
-                    } else {
-                        // lo is not in a gap, but hi might be (edge case: interval spans gap boundary)
-                        gapDuration = tzRules.getDstGapOffset(hi);
-                        if (gapDuration != 0) {
-                            adjustedHi = hi + gapDuration;
-                        }
-                    }
-
-                    out.setQuick(i, timestampDriver.toUTC(adjustedLo, tzRules));
-                    out.setQuick(i + 1, timestampDriver.toUTC(adjustedHi, tzRules));
+                    localIntervalToUtc(timestampDriver, tzRules, out, i);
                 }
             }
         } catch (NumericException e) {
@@ -2063,7 +2114,8 @@ public final class IntervalUtils {
     }
 
     /**
-     * Finds the end of a bare variable expression (stops at '@', ';', or 'T' followed by digit).
+     * Finds the end of a bare variable expression (stops at '@', ';', or 'T' followed by a digit
+     * or a bracket).
      */
     private static int compileFindBareVarEnd(CharSequence seq, int from, int lim) {
         int pos = from;
@@ -2072,7 +2124,7 @@ public final class IntervalUtils {
             if (c == '@' || c == ';') {
                 break;
             }
-            if (c == 'T' && pos + 1 < lim && Chars.isAsciiDigit(seq.charAt(pos + 1))) {
+            if (c == 'T' && isTimeSuffixStart(seq, pos + 1, lim)) {
                 break;
             }
             pos++;
@@ -2166,7 +2218,7 @@ public final class IntervalUtils {
                     timestampDriver, configuration, parseSink,
                     0, parseSink.length(), parseSink.length(),
                     position, tmp, IntervalOperation.INTERSECT,
-                    expansionSink, 0, true, 0,
+                    expansionSink, 0, true, 0, null,
                     null, -1, -1
             );
         } else {
@@ -2375,24 +2427,35 @@ public final class IntervalUtils {
             }
         }
 
-        if (elemHasBrackets) {
-            StringSink expansionSink = tlCompileSink3.get();
-            expansionSink.clear();
-            expandBracketsRecursive(
-                    timestampDriver, configuration, parseSink,
-                    0, dateLimInSink, parseSink.length(),
-                    position, tmp, IntervalOperation.INTERSECT,
-                    expansionSink, 0, true, 0,
-                    null, -1, -1
-            );
-        } else {
-            parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT);
-            applyLastEncodedInterval(timestampDriver, tmp);
-        }
-
-        // Day filter in local time (before tz conversion)
-        if (dayFilterMask != 0 && exchangeSchedule == null && tmp.size() >= 2) {
-            applyDayFilter(timestampDriver, tmp, 0, dayFilterMask, hasDatePrecision(effectiveSeq, es, ee));
+        // Day filter in local time (before tz conversion). The incremental merge of the bracket
+        // expansion runs it early on the intervals it is about to merge, the same way as when
+        // parseTickExpr() expands the element.
+        final ObjectStackPool<PendingSteps> stepsPool = tlPendingSteps.get();
+        final PendingSteps elementSteps = stepsPool.next();
+        try {
+            elementSteps.isElement = true;
+            elementSteps.isDayFiltered = dayFilterMask != 0 && exchangeSchedule == null;
+            elementSteps.dayFilterMask = dayFilterMask;
+            elementSteps.isMultiDayIgnored = hasDatePrecision(effectiveSeq, es, ee);
+            if (elemHasBrackets) {
+                StringSink expansionSink = tlCompileSink3.get();
+                expansionSink.clear();
+                expandBracketsRecursive(
+                        timestampDriver, configuration, parseSink,
+                        0, dateLimInSink, parseSink.length(),
+                        position, tmp, IntervalOperation.INTERSECT,
+                        expansionSink, 0, true, 0, elementSteps,
+                        null, -1, -1
+                );
+            } else {
+                parseIntervalSuffix(timestampDriver, parseSink, 0, parseSink.length(), position, tmp, IntervalOperation.INTERSECT);
+                applyLastEncodedInterval(timestampDriver, tmp);
+            }
+            if (tmp.size() >= 2) {
+                applyPendingSteps(timestampDriver, configuration, tmp, elementSteps, IntervalOperation.INTERSECT, true, 0, position);
+            }
+        } finally {
+            stepsPool.release(elementSteps);
         }
 
         // Append TAG_STATIC entries to IR
@@ -2669,6 +2732,11 @@ public final class IntervalUtils {
      * The sink accumulates the expanded string as recursion proceeds. Each call restores
      * the sink to its entry state before returning, allowing the parent to continue
      * iterating through other values.
+     * <p>
+     * {@code pendingSteps} holds the clip, day filter, timezone and tick calendar steps that the
+     * enclosing elements apply once their expansion completes, or is null. The incremental merge
+     * applies them before it sorts and unions the list, so it never combines an interval with
+     * one that has not been through its steps yet.
      *
      * @return true if any time list brackets were processed, false otherwise
      */
@@ -2687,6 +2755,7 @@ public final class IntervalUtils {
             int depth,
             boolean applyEncoded,
             int outSizeBeforeExpansion,
+            @Nullable PendingSteps pendingSteps, // steps of the enclosing elements, null if none
             CharSequence globalTzSeq, // original sequence containing timezone (for applying global TZ)
             int globalTzLo,           // start of global timezone in globalTzSeq (-1 if none)
             int globalTzHi            // end of global timezone in globalTzSeq (-1 if none)
@@ -2754,7 +2823,7 @@ public final class IntervalUtils {
                         timestampDriver, configuration, seq,
                         bracketStart, bracketEnd, fullLim, errorPos, out, operation,
                         sink, startLen, afterPrefixLen,
-                        applyEncoded, outSizeBeforeExpansion,
+                        applyEncoded, outSizeBeforeExpansion, pendingSteps,
                         globalTzSeq, globalTzLo, globalTzHi
                 );
                 sink.clear(startLen);
@@ -2774,6 +2843,7 @@ public final class IntervalUtils {
                     afterPrefixLen,
                     applyEncoded,
                     outSizeBeforeExpansion,
+                    pendingSteps,
                     globalTzSeq,
                     globalTzLo,
                     globalTzHi
@@ -2861,7 +2931,7 @@ public final class IntervalUtils {
                 if (expandBracketsRecursive(
                         timestampDriver, configuration, seq, bracketEnd + 1, dateLim, fullLim,
                         errorPos, out, operation, sink, depth + 1, applyEncoded, outSizeBeforeExpansion,
-                        globalTzSeq, globalTzLo, globalTzHi
+                        pendingSteps, globalTzSeq, globalTzLo, globalTzHi
                 )) {
                     foundTimeListBracket = true;
                 }
@@ -2872,13 +2942,17 @@ public final class IntervalUtils {
                 if (applyEncoded) {
                     int intervalCount = (out.size() - outSizeBeforeExpansion) / 2;
                     if (intervalCount >= configuration.getSqlIntervalIncrementalMergeThreshold()) {
-                        unionBracketExpandedIntervals(out, outSizeBeforeExpansion);
-                        // Check if we still exceed max limit after merging
-                        intervalCount = (out.size() - outSizeBeforeExpansion) / 2;
-                        int maxIntervalsAfterMerge = configuration.getSqlIntervalMaxIntervalsAfterMerge();
-                        if (intervalCount > maxIntervalsAfterMerge) {
-                            throw SqlException.$(errorPos, "Bracket expansion produces too many intervals (max ")
-                                    .put(maxIntervalsAfterMerge).put(')');
+                        // The merge reorders and unions the intervals from outSizeBeforeExpansion on, so
+                        // first run the steps that the enclosing elements would apply to them later
+                        for (PendingSteps steps = pendingSteps; steps != null; steps = steps.parent) {
+                            applyPendingSteps(timestampDriver, configuration, out, steps, operation, true, outSizeBeforeExpansion, errorPos);
+                        }
+                        // mergeAndValidateIntervals() checks the limit after merging, and skips the union when
+                        // the steps left fewer than two intervals
+                        mergeAndValidateIntervals(configuration, out, outSizeBeforeExpansion, errorPos);
+                        // the intervals expanded from now on still need the steps
+                        for (PendingSteps steps = pendingSteps; steps != null; steps = steps.parent) {
+                            steps.lo = out.size();
                         }
                     }
                 }
@@ -3170,13 +3244,19 @@ public final class IntervalUtils {
                 }
 
                 // Find where the time part of suffix ends (at ';' or '@' or end)
-                // Suffix format: T10:00, T10:00;1h, T10:00@TZ, T10:00@TZ;1h
+                // Suffix format: T10:00, T10:00;1h, T10:00@TZ, T10:00@TZ;1h, T[10:00@TZ,11:00]
                 int suffixTimeEnd = suffixStart;
                 if (suffixStart < lim && seq.charAt(suffixStart) == 'T') {
-                    // Find where time ends (at ';', '@', or end)
+                    // Find where time ends (at ';', '@', or end). The slots of a time list may carry
+                    // their own timezone, so an '@' inside brackets does not end the time.
+                    int bracketDepth = 0;
                     while (suffixTimeEnd < lim) {
                         char sc = seq.charAt(suffixTimeEnd);
-                        if (sc == ';' || sc == '@') {
+                        if (sc == '[') {
+                            bracketDepth++;
+                        } else if (sc == ']') {
+                            bracketDepth--;
+                        } else if (bracketDepth == 0 && (sc == ';' || sc == '@')) {
                             break;
                         }
                         suffixTimeEnd++;
@@ -3285,81 +3365,79 @@ public final class IntervalUtils {
                     }
                 }
 
-                if (hasBrackets) {
-                    // Element has field expansion brackets - use existing recursive expansion
-                    // Find where semicolon would be in the expanded string
-                    int expandedLim = sink.length();
-                    int dateLim = expandedLim;
-                    for (int j = 0; j < expandedLim; j++) {
-                        char ch = sink.charAt(j);
-                        if (ch == ';') {
-                            // Semicolon always appears after brackets close (in suffix like T[09,14]:30;1h)
-                            dateLim = j;
-                            break;
+                // The day filter, timezone and tick calendar steps of this element. The incremental
+                // merge of the bracket expansion runs them early on the intervals it is about to merge.
+                final ObjectStackPool<PendingSteps> stepsPool = tlPendingSteps.get();
+                final PendingSteps elementSteps = stepsPool.next();
+                try {
+                    elementSteps.isElement = true;
+                    elementSteps.lo = outSizeBeforeElement;
+                    elementSteps.isDayFiltered = activeDayFilterMask != 0 && activeExchangeSchedule == null;
+                    elementSteps.dayFilterMask = activeDayFilterMask;
+                    // Only expand to individual days if the element is an imprecise date (year/month)
+                    // Precise dates (with day component) should just be filtered, not expanded
+                    elementSteps.isMultiDayIgnored = hasDatePrecision(elementSeq, resolvedElementStart, effectiveElementEnd);
+                    elementSteps.tzSeq = activeTzSeq;
+                    elementSteps.tzLo = activeTzLo;
+                    elementSteps.tzHi = activeTzHi;
+                    elementSteps.exchangeSchedule = activeExchangeSchedule;
+                    elementSteps.durationSeq = seq;
+                    elementSteps.durationLo = globalDurationSemicolon >= 0 ? globalDurationSemicolon + 1 : -1;
+                    elementSteps.durationLim = lim;
+
+                    if (hasBrackets) {
+                        // Element has field expansion brackets - use existing recursive expansion
+                        // Find where semicolon would be in the expanded string
+                        int expandedLim = sink.length();
+                        int dateLim = expandedLim;
+                        for (int j = 0; j < expandedLim; j++) {
+                            char ch = sink.charAt(j);
+                            if (ch == ';') {
+                                // Semicolon always appears after brackets close (in suffix like T[09,14]:30;1h)
+                                dateLim = j;
+                                break;
+                            }
                         }
-                    }
 
-                    final ObjectStackPool<StringSink> sinks = tlExpansionSinks.get();
-                    final StringSink expansionSink = sinks.next();
-                    final boolean hadTimeListBracket;
-                    try {
-                        hadTimeListBracket = expandBracketsRecursive(
-                                timestampDriver,
-                                configuration,
-                                sink,
-                                0,
-                                dateLim,
-                                sink.length(),
-                                errorPos,
-                                out,
-                                operation,
-                                expansionSink,
-                                0,
-                                applyEncoded,
-                                outSizeBeforeExpansion,
-                                activeTzSeq,   // tzSeq - for time list TZ fallback
-                                activeTzLo,    // tzLo
-                                activeTzHi     // tzHi
-                        );
-                    } finally {
-                        sinks.release(expansionSink);
-                    }
-                    // If time list brackets were processed, they handled TZ internally
-                    if (hadTimeListBracket) {
-                        activeTzLo = -1; // Clear to skip TZ application below
-                    }
-                } else {
-                    // No brackets - parse directly
-                    parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
-                }
-
-                // Day filter applies BEFORE timezone conversion (based on local time)
-                if (activeDayFilterMask != 0 && activeExchangeSchedule == null) {
-                    if (applyEncoded) {
-                        // Only expand to individual days if the element is an imprecise date (year/month)
-                        // Precise dates (with day component) should just be filtered, not expanded
-                        applyDayFilter(
-                                timestampDriver,
-                                out,
-                                outSizeBeforeElement,
-                                activeDayFilterMask,
-                                hasDatePrecision(elementSeq, resolvedElementStart, effectiveElementEnd)
-                        );
+                        final ObjectStackPool<StringSink> sinks = tlExpansionSinks.get();
+                        final StringSink expansionSink = sinks.next();
+                        final boolean hadTimeListBracket;
+                        try {
+                            hadTimeListBracket = expandBracketsRecursive(
+                                    timestampDriver,
+                                    configuration,
+                                    sink,
+                                    0,
+                                    dateLim,
+                                    sink.length(),
+                                    errorPos,
+                                    out,
+                                    operation,
+                                    expansionSink,
+                                    0,
+                                    applyEncoded,
+                                    outSizeBeforeExpansion,
+                                    elementSteps,
+                                    activeTzSeq,   // tzSeq - for time list TZ fallback
+                                    activeTzLo,    // tzLo
+                                    activeTzHi     // tzHi
+                            );
+                        } finally {
+                            sinks.release(expansionSink);
+                        }
+                        // If time list brackets were processed, they handled TZ internally, and
+                        // marked the element so that its steps skip the TZ
+                        assert elementSteps.hasTimeList == hadTimeListBracket;
                     } else {
-                        // Dynamic mode: store day filter mask for runtime evaluation
-                        setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeElement, activeDayFilterMask);
+                        // No brackets - parse directly
+                        parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
                     }
-                }
 
-                // Apply timezone conversion if present (per-element or global) and NOT already handled by time list
-                if (activeTzLo >= 0) {
-                    applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, activeTzSeq, activeTzLo, activeTzHi, errorPos, applyEncoded);
-                }
-
-                // Tick calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
-                if (activeExchangeSchedule != null) {
-                    applyExchangeFilterAndDuration(timestampDriver, activeExchangeSchedule, out, outSizeBeforeElement, seq,
-                            globalDurationSemicolon >= 0 ? globalDurationSemicolon + 1 : -1, lim, errorPos);
+                    // Day filter applies BEFORE timezone conversion (based on local time), tick calendar
+                    // filter AFTER it (intersects with UTC trading hours)
+                    applyPendingSteps(timestampDriver, configuration, out, elementSteps, operation, applyEncoded, outSizeBeforeExpansion, errorPos);
+                } finally {
+                    stepsPool.release(elementSteps);
                 }
 
                 elementStart = i + 1;
@@ -3644,84 +3722,74 @@ public final class IntervalUtils {
                 }
             }
 
-            if (hasBrackets) {
-                int expandedLim = sink.length();
-                int dateLim = expandedLim;
-                for (int j = 0; j < expandedLim; j++) {
-                    char ch = sink.charAt(j);
-                    if (ch == ';') {
-                        dateLim = j;
-                        break;
-                    }
-                }
+            // The clip, day filter, timezone and tick calendar steps of this day. The incremental
+            // merge of the bracket expansion runs them early on the intervals it is about to merge.
+            final ObjectStackPool<PendingSteps> stepsPool = tlPendingSteps.get();
+            final PendingSteps daySteps = stepsPool.next();
+            try {
+                daySteps.isElement = true;
+                daySteps.lo = outSizeBeforeElement;
+                daySteps.isClipped = isClipped;
+                daySteps.clipLo = clipLo;
+                daySteps.clipHi = clipHi;
+                daySteps.isDayFiltered = activeDayFilterMask != 0 && activeExchangeSchedule == null;
+                daySteps.dayFilterMask = activeDayFilterMask;
+                // expandMultiDay=false: appendDate always produces full "YYYY-MM-DD" dates
+                daySteps.isMultiDayIgnored = true;
+                daySteps.tzSeq = activeTzSeq;
+                daySteps.tzLo = activeTzLo;
+                daySteps.tzHi = activeTzHi;
+                daySteps.exchangeSchedule = activeExchangeSchedule;
+                daySteps.durationSeq = seq;
+                daySteps.durationLo = durationSemicolon >= 0 ? durationSemicolon + 1 : -1;
+                daySteps.durationLim = lim;
 
-                final ObjectStackPool<StringSink> sinks = tlExpansionSinks.get();
-                final StringSink expansionSink = sinks.next();
-                try {
-                    hadTimeListBracket = expandBracketsRecursive(
-                            timestampDriver,
-                            configuration,
-                            sink,
-                            0,
-                            dateLim,
-                            sink.length(),
-                            errorPos,
-                            out,
-                            operation,
-                            expansionSink,
-                            0,
-                            applyEncoded,
-                            outSizeBeforeExpansion,
-                            activeTzSeq,
-                            activeTzLo,
-                            activeTzHi
-                    );
-                } finally {
-                    sinks.release(expansionSink);
-                }
-            } else {
-                parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
-            }
-
-            if (isClipped) {
-                long dayClipLo = clipLo;
-                long dayClipHi = clipHi;
-                if (hadTimeListBracket && activeTzLo >= 0) {
-                    // Time list brackets have converted their intervals to UTC already,
-                    // so the endpoint needs the same conversion
-                    if (dayClipLo != Long.MIN_VALUE) {
-                        dayClipLo = localToUtc(timestampDriver, configuration, dayClipLo, activeTzSeq, activeTzLo, activeTzHi, errorPos);
+                if (hasBrackets) {
+                    int expandedLim = sink.length();
+                    int dateLim = expandedLim;
+                    for (int j = 0; j < expandedLim; j++) {
+                        char ch = sink.charAt(j);
+                        if (ch == ';') {
+                            dateLim = j;
+                            break;
+                        }
                     }
-                    if (dayClipHi != Long.MAX_VALUE) {
-                        dayClipHi = localToUtc(timestampDriver, configuration, dayClipHi, activeTzSeq, activeTzLo, activeTzHi, errorPos);
-                    }
-                }
-                clipDateRangeIntervals(out, outSizeBeforeElement, dayClipLo, dayClipHi, operation, applyEncoded, outSizeBeforeExpansion, errorPos);
-            }
-            if (hadTimeListBracket) {
-                // time list brackets have applied the timezone already
-                activeTzLo = -1;
-            }
 
-            // Day filter applies BEFORE timezone conversion (based on local time)
-            if (activeDayFilterMask != 0 && activeExchangeSchedule == null) {
-                if (applyEncoded) {
-                    // expandMultiDay=false: appendDate always produces full "YYYY-MM-DD" dates
-                    applyDayFilter(timestampDriver, out, outSizeBeforeElement, dayFilterMask, true);
+                    final ObjectStackPool<StringSink> sinks = tlExpansionSinks.get();
+                    final StringSink expansionSink = sinks.next();
+                    try {
+                        hadTimeListBracket = expandBracketsRecursive(
+                                timestampDriver,
+                                configuration,
+                                sink,
+                                0,
+                                dateLim,
+                                sink.length(),
+                                errorPos,
+                                out,
+                                operation,
+                                expansionSink,
+                                0,
+                                applyEncoded,
+                                outSizeBeforeExpansion,
+                                daySteps,
+                                activeTzSeq,
+                                activeTzLo,
+                                activeTzHi
+                        );
+                    } finally {
+                        sinks.release(expansionSink);
+                    }
                 } else {
-                    setDayFilterMaskOnEncodedIntervals(out, outSizeBeforeElement, dayFilterMask);
+                    parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
                 }
-            }
+                // Time list brackets have applied the timezone already, and marked the day so that
+                // its steps skip the timezone and clip to UTC bounds
+                assert daySteps.hasTimeList == hadTimeListBracket;
 
-            // Apply timezone conversion
-            if (activeTzLo >= 0) {
-                applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, activeTzSeq, activeTzLo, activeTzHi, errorPos, applyEncoded);
-            }
-
-            // Tick calendar filter applies AFTER timezone conversion (intersects with UTC trading hours)
-            if (activeExchangeSchedule != null) {
-                applyExchangeFilterAndDuration(timestampDriver, activeExchangeSchedule, out, outSizeBeforeElement, seq,
-                        durationSemicolon >= 0 ? durationSemicolon + 1 : -1, lim, errorPos);
+                applyPendingSteps(timestampDriver, configuration, out, daySteps, operation, applyEncoded, outSizeBeforeExpansion, errorPos);
+            } finally {
+                stepsPool.release(daySteps);
             }
 
             // Incremental merge: when interval count exceeds threshold, merge to bound memory
@@ -3812,6 +3880,7 @@ public final class IntervalUtils {
             int afterPrefixLen,
             boolean applyEncoded,
             int outSizeBeforeExpansion,
+            @Nullable PendingSteps pendingSteps,
             CharSequence globalTzSeq,
             int globalTzLo,
             int globalTzHi
@@ -3823,7 +3892,7 @@ public final class IntervalUtils {
             // Not a recognized month-level date — fall back to normal expansion
             expandTimeListBracket(timestampDriver, configuration, seq,
                     bracketStart, bracketEnd, fullLim, errorPos, out, operation,
-                    sink, afterPrefixLen, applyEncoded, outSizeBeforeExpansion,
+                    sink, afterPrefixLen, applyEncoded, outSizeBeforeExpansion, pendingSteps,
                     globalTzSeq, globalTzLo, globalTzHi);
             return;
         }
@@ -3842,7 +3911,7 @@ public final class IntervalUtils {
             int newPrefixLen = sink.length();
             expandTimeListBracket(timestampDriver, configuration, seq,
                     bracketStart, bracketEnd, fullLim, errorPos, out, operation,
-                    sink, newPrefixLen, applyEncoded, outSizeBeforeExpansion,
+                    sink, newPrefixLen, applyEncoded, outSizeBeforeExpansion, pendingSteps,
                     globalTzSeq, globalTzLo, globalTzHi);
         }
     }
@@ -3865,6 +3934,7 @@ public final class IntervalUtils {
      * @param sinkPrefixLen          length of prefix to preserve in sink
      * @param applyEncoded           if true, converts to simple format
      * @param outSizeBeforeExpansion size of out before expansion started
+     * @param pendingSteps           steps of the enclosing elements, null if none
      * @param globalTzSeq            original sequence containing timezone (for applying global TZ)
      * @param globalTzLo             start of global timezone in globalTzSeq (-1 if none)
      * @param globalTzHi             end of global timezone in globalTzSeq (-1 if none)
@@ -3883,11 +3953,21 @@ public final class IntervalUtils {
             int sinkPrefixLen,
             boolean applyEncoded,
             int outSizeBeforeExpansion,
+            @Nullable PendingSteps pendingSteps,
             CharSequence globalTzSeq,
             int globalTzLo,
             int globalTzHi
     ) throws SqlException {
         int i = bracketStart + 1;
+
+        // The time list converts its intervals to UTC, so the enclosing element must not convert
+        // them again, and clips them to UTC bounds
+        for (PendingSteps steps = pendingSteps; steps != null; steps = steps.parent) {
+            if (steps.isElement) {
+                steps.hasTimeList = true;
+                break;
+            }
+        }
 
         // Check once if suffix contains brackets that need expansion (same for all elements)
         boolean hasSuffixBrackets = false;
@@ -3966,38 +4046,60 @@ public final class IntervalUtils {
                         }
                     }
 
-                    // Recursively expand brackets in the suffix
-                    expandBracketsRecursive(
-                            timestampDriver,
-                            configuration,
-                            sink,
-                            // intervalStart
-                            0,              // pos
-                            expandedDateLim,
-                            sink.length(),
-                            errorPos,
-                            out,
-                            operation,
-                            recursionSink,
-                            0,              // depth
-                            applyEncoded,
-                            outSizeBeforeExpansion,
-                            globalTzSeq,
-                            tzLo >= 0 ? -1 : globalTzLo,  // Skip global TZ if per-element TZ
-                            tzLo >= 0 ? -1 : globalTzHi
-                    );
+                    // Recursively expand brackets in the suffix. When this element has a timezone,
+                    // the expansion may merge before the timezone below runs, so it takes the
+                    // timezone as a pending step.
+                    final PendingSteps elementSteps;
+                    if (tzLo >= 0 || globalTzLo >= 0) {
+                        elementSteps = tlPendingSteps.get().next();
+                        elementSteps.parent = pendingSteps;
+                        elementSteps.lo = outSizeBeforeElement;
+                        elementSteps.tzSeq = tzLo >= 0 ? seq : globalTzSeq;
+                        elementSteps.tzLo = tzLo >= 0 ? tzLo : globalTzLo;
+                        elementSteps.tzHi = tzLo >= 0 ? tzHi : globalTzHi;
+                    } else {
+                        elementSteps = null;
+                    }
+                    try {
+                        expandBracketsRecursive(
+                                timestampDriver,
+                                configuration,
+                                sink,
+                                // intervalStart
+                                0,              // pos
+                                expandedDateLim,
+                                sink.length(),
+                                errorPos,
+                                out,
+                                operation,
+                                recursionSink,
+                                0,              // depth
+                                applyEncoded,
+                                outSizeBeforeExpansion,
+                                elementSteps != null ? elementSteps : pendingSteps,
+                                globalTzSeq,
+                                tzLo >= 0 ? -1 : globalTzLo,  // Skip global TZ if per-element TZ
+                                tzLo >= 0 ? -1 : globalTzHi
+                        );
+                        // Apply the timezone to the intervals that the merge has not processed yet
+                        if (elementSteps != null) {
+                            applyPendingSteps(timestampDriver, configuration, out, elementSteps, operation, applyEncoded, outSizeBeforeExpansion, errorPos);
+                        }
+                    } finally {
+                        tlPendingSteps.get().release(elementSteps);
+                    }
                 } else {
                     // No brackets in suffix - parse directly
                     parseExpandedInterval(timestampDriver, sink, errorPos, out, operation, applyEncoded, outSizeBeforeExpansion);
-                }
 
-                // Apply timezone: per-element takes precedence, then global fallback
-                if (tzLo >= 0) {
-                    // Per-element timezone
-                    applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, seq, tzLo, tzHi, errorPos, applyEncoded);
-                } else if (globalTzLo >= 0) {
-                    // Global timezone as fallback
-                    applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, globalTzSeq, globalTzLo, globalTzHi, errorPos, applyEncoded);
+                    // Apply timezone: per-element takes precedence, then global fallback
+                    if (tzLo >= 0) {
+                        // Per-element timezone
+                        applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, seq, tzLo, tzHi, errorPos, applyEncoded);
+                    } else if (globalTzLo >= 0) {
+                        // Global timezone as fallback
+                        applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeElement, globalTzSeq, globalTzLo, globalTzHi, errorPos, applyEncoded);
+                    }
                 }
 
                 // Reset sink to prefix for next element
@@ -4189,6 +4291,15 @@ public final class IntervalUtils {
         return false;
     }
 
+    private static boolean hasTimeOfDay(CharSequence seq, int lo, int hi) {
+        for (int i = lo; i < hi - 1; i++) {
+            if (seq.charAt(i) == 'T' && Chars.isAsciiDigit(seq.charAt(i + 1))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Checks if a date expression ends with "bd" (business days).
      * Used to determine if a range should iterate business days or calendar days.
@@ -4220,6 +4331,100 @@ public final class IntervalUtils {
      * @param lim end of string
      * @return true if this is a date list, false if it's field expansion
      */
+    /**
+     * Returns whether {@link CompiledTickExpression}'s IR represents the expression exactly. The IR
+     * holds a single time or a plain time list per day, so it cannot represent numeric brackets
+     * in the time ({@code T[09..17]:30}), brackets after a time list ({@code T[09:00,10:00]:[15,45]})
+     * or a time list slot with its own timezone ({@code T[09:00@Asia/Tokyo]}). It also cannot
+     * represent an element with its own timezone or day filter ({@code [$today#Mon]}), a static
+     * element under a time list or with a time of its own under a time override, or a month or year
+     * element with a duration, which {@link #parseTickExpr} expands day by day.
+     */
+    private static boolean isCompilable(
+            CharSequence seq,
+            int elemListLo,
+            int elemListHi,
+            boolean isBareVar,
+            int timeLo,
+            int timeHi,
+            int durationSemicolon
+    ) {
+        boolean hasTimeList = false;
+        for (int i = timeLo; i < timeHi; i++) {
+            if (seq.charAt(i) == '[') {
+                // only a time list right after 'T', with plain times and nothing after it
+                if (i != timeLo + 1) {
+                    return false;
+                }
+                int bracketEnd = -1;
+                for (int j = i + 1; j < timeHi; j++) {
+                    final char c = seq.charAt(j);
+                    if (c == ']') {
+                        bracketEnd = j;
+                        break;
+                    }
+                    if (c == '@' || c == '[' || (c == '.' && j + 1 < timeHi && seq.charAt(j + 1) == '.')) {
+                        return false;
+                    }
+                }
+                if (bracketEnd < 0 || !isTimeListBracket(seq, i, bracketEnd)) {
+                    // an unclosed bracket fails either way, and a bracket without ':' is a numeric expansion
+                    return bracketEnd < 0;
+                }
+                for (int j = bracketEnd + 1; j < timeHi; j++) {
+                    if (!Chars.isAsciiWhitespace(seq.charAt(j))) {
+                        return false;
+                    }
+                }
+                hasTimeList = true;
+                break;
+            }
+        }
+        if (isBareVar) {
+            return true;
+        }
+
+        int depth = 0;
+        int elementStart = elemListLo;
+        for (int i = elemListLo; i <= elemListHi; i++) {
+            final char c = i < elemListHi ? seq.charAt(i) : ',';
+            if (c == '[') {
+                depth++;
+            } else if (c == ']') {
+                depth--;
+            } else if (depth == 0) {
+                if (c == '@' || c == '#') {
+                    // the element has its own timezone or day filter
+                    return false;
+                }
+                if (c == ',') {
+                    int es = elementStart;
+                    int ee = i;
+                    while (es < ee && Chars.isAsciiWhitespace(seq.charAt(es))) {
+                        es++;
+                    }
+                    while (ee > es && Chars.isAsciiWhitespace(seq.charAt(ee - 1))) {
+                        ee--;
+                    }
+                    if (es < ee && seq.charAt(es) != '$') {
+                        // a static element
+                        if (hasTimeList) {
+                            return false;
+                        }
+                        if (timeLo < timeHi && hasTimeOfDay(seq, es, ee)) {
+                            return false;
+                        }
+                        if (durationSemicolon >= 0 && !hasDatePrecision(seq, es, ee)) {
+                            return false;
+                        }
+                    }
+                    elementStart = i + 1;
+                }
+            }
+        }
+        return true;
+    }
+
     private static boolean isDateList(CharSequence seq, int lo, int lim) {
         // Find the matching ']' for the opening '['
         int depth = 1;
@@ -4262,6 +4467,19 @@ public final class IntervalUtils {
             }
         }
         return false;
+    }
+
+    /**
+     * Returns whether the character after a 'T' in a bare date variable expression starts its time
+     * part, either a time of day (T09:30) or a bracket (T[09:00,14:30], T[09..17]:30). A variable
+     * name has neither, so 'T' inside one, as in $TOMORROW, does not end the expression.
+     */
+    private static boolean isTimeSuffixStart(CharSequence seq, int index, int lim) {
+        if (index >= lim) {
+            return false;
+        }
+        final char c = seq.charAt(index);
+        return Chars.isAsciiDigit(c) || c == '[';
     }
 
     /**
@@ -4830,9 +5048,11 @@ public final class IntervalUtils {
 
     /**
      * Clips the [lo, hi] pairs from {@code startIndex} on to [{@code clipLo}, {@code clipHi}]
-     * and drops the pairs that fall entirely outside it.
+     * and drops the pairs that fall entirely outside it. {@code startIndex} must not exceed
+     * the size of the list, otherwise the list would grow over stale values.
      */
     static void clipIntervals(LongList intervals, int startIndex, long clipLo, long clipHi) {
+        assert startIndex <= intervals.size() : "clip start beyond the list, index=" + startIndex + ", size=" + intervals.size();
         int writeIndex = startIndex;
         for (int readIndex = startIndex, n = intervals.size(); readIndex < n; readIndex += 2) {
             final long lo = intervals.getQuick(readIndex);
@@ -4843,6 +5063,32 @@ public final class IntervalUtils {
             }
         }
         intervals.setPos(writeIndex);
+    }
+
+    /**
+     * Converts the local interval at {@code intervals[index]} and {@code intervals[index + 1]} to UTC
+     * with the rules of a named timezone. A local time in a DST gap, where clocks spring forward, does
+     * not exist. An interval that starts in the gap moves to start at the transition and keeps its
+     * width, so the minute 02:30 of a 02:00 to 03:00 gap becomes the minute 03:00. An interval that
+     * only ends in the gap converts its end with the offset from before the gap, which keeps its width
+     * in real time. In a DST overlap, where clocks fall back, a local time converts with the daylight
+     * saving offset.
+     */
+    static void localIntervalToUtc(TimestampDriver timestampDriver, TimeZoneRules tzRules, LongList intervals, int index) {
+        final long lo = intervals.getQuick(index);
+        final long hi = intervals.getQuick(index + 1);
+        final long loUtc = timestampDriver.toUTC(lo, tzRules);
+        // In a gap, the local offset is the one from before the gap, which no UTC time has. Unlike
+        // getDstGapOffset(), which is 0 at the first instant of the gap, this catches the whole gap.
+        if (tzRules.getOffset(loUtc) != tzRules.getLocalOffset(lo)) {
+            // getDstGapOffset() is the distance into the gap, so this is the transition instant
+            final long transition = loUtc - tzRules.getDstGapOffset(lo);
+            intervals.setQuick(index, transition);
+            intervals.setQuick(index + 1, transition + (hi - lo));
+        } else {
+            intervals.setQuick(index, loUtc);
+            intervals.setQuick(index + 1, timestampDriver.toUTC(hi, tzRules));
+        }
     }
 
     static void replaceHiLoInterval(long lo, long hi, short operation, LongList out) {
@@ -4894,5 +5140,56 @@ public final class IntervalUtils {
         }
 
         out.setPos(writeIdx);
+    }
+
+    /**
+     * The clip, day filter, timezone and tick calendar steps of an element of a date list, a day
+     * of a date variable range, or an element of a time list, for the intervals from {@code lo}
+     * on. The element runs them once its expansion completes. In static mode, the incremental
+     * merge runs the steps of all enclosing elements first, then moves {@code lo} past the merged
+     * intervals, so that it never combines an interval with one that has not been through its
+     * steps yet.
+     */
+    private static class PendingSteps implements Mutable {
+        long clipHi;
+        long clipLo;
+        int dayFilterMask;
+        int durationLim;
+        int durationLo;
+        CharSequence durationSeq;
+        LongList exchangeSchedule;
+        // a time list converted the intervals of this element to UTC
+        boolean hasTimeList;
+        boolean isClipped;
+        boolean isDayFiltered;
+        // an element of a date list, or a day of a date variable range, rather than a time list element
+        boolean isElement;
+        boolean isMultiDayIgnored;
+        int lo;
+        PendingSteps parent;
+        int tzHi;
+        int tzLo;
+        CharSequence tzSeq;
+
+        @Override
+        public void clear() {
+            clipHi = 0;
+            clipLo = 0;
+            dayFilterMask = 0;
+            durationLim = 0;
+            durationLo = -1;
+            durationSeq = null;
+            exchangeSchedule = null;
+            hasTimeList = false;
+            isClipped = false;
+            isDayFiltered = false;
+            isElement = false;
+            isMultiDayIgnored = false;
+            lo = 0;
+            parent = null;
+            tzHi = -1;
+            tzLo = -1;
+            tzSeq = null;
+        }
     }
 }
