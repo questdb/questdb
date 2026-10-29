@@ -120,6 +120,8 @@ public class PropServerConfigurationTest {
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
         FilesFacade ff = configuration.getCairoConfiguration().getFilesFacade();
 
+        Assert.assertEquals(60_000L, configuration.getCairoConfiguration().getAdaptiveEpochIntervalMs());
+        Assert.assertEquals(5_000_000L, configuration.getCairoConfiguration().getAdaptiveEpochMaxRows());
         Assert.assertFalse(configuration.getCairoConfiguration().getLogLevelVerbose());
         Assert.assertEquals("Z", configuration.getCairoConfiguration().getLogTimestampTimezone());
         Assert.assertEquals(500, configuration.getHttpServerConfiguration().getAcceptLoopTimeout());
@@ -205,7 +207,13 @@ public class PropServerConfigurationTest {
 
         Assert.assertTrue(configuration.getCairoConfiguration().getLogSqlQueryProgressExe());
 
+        // The shipped default, which the whole product reads through CommitMode.DEFAULT. The test suite
+        // runs adaptive regardless, so this assertion is about what a user gets, not what the tests
+        // exercise.
         Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
+        Assert.assertEquals(CommitMode.DEFAULT, configuration.getCairoConfiguration().getCommitMode());
+        // RPO of the adaptive group commit out of the box.
+        Assert.assertEquals(50_000L, configuration.getCairoConfiguration().getAdaptiveCommitGroupWindowUs());
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
@@ -555,6 +563,20 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testInvalidCairoCommitModeFailsClosed() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath(), "adaptve");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail("a commit-mode typo must not silently downgrade the database to nosync");
+        } catch (ServerConfigurationException expected) {
+            TestUtils.assertContains(expected.getMessage(), "invalid configuration value");
+            TestUtils.assertContains(expected.getMessage(), PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath());
+            TestUtils.assertContains(expected.getMessage(), "adaptve");
+        }
+    }
+
+    @Test
     public void testCommitIntervalDefault() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("line.tcp.commit.interval.default", "0");
@@ -568,6 +590,15 @@ public class PropServerConfigurationTest {
         properties.setProperty("line.tcp.commit.interval.default", "1000");
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
+    }
+
+    @Test
+    public void testBatchedColumnSyncForceDisable() throws Exception {
+        // cairo.adaptive.epoch.column.sync.batched=false disables the batched save point column flush.
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED.getPropertyPath(), "false");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getCairoConfiguration().isAdaptiveEpochColumnSyncBatched());
     }
 
     @Test
@@ -3618,6 +3649,13 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isCheckpointRecoveryEnabled());
 
         Assert.assertEquals(CommitMode.ASYNC, configuration.getCommitMode());
+        // Adaptive settings, checked here so the CairoConfigurationWrapper arm proves the wrapper delegates
+        // them: every one of these is a default method on CairoConfiguration, so a missed delegation compiles.
+        Assert.assertEquals(12345, configuration.getAdaptiveEpochIntervalMs());
+        Assert.assertEquals(123456, configuration.getAdaptiveEpochMaxRows());
+        Assert.assertEquals(7777, configuration.getAdaptiveCommitGroupWindowUs());
+        Assert.assertFalse(configuration.isAdaptiveEpochFlushOnClose());
+        Assert.assertFalse(configuration.isAdaptiveEpochColumnSyncBatched());
         Assert.assertEquals(12, configuration.getCreateAsSelectRetryCount());
         Assert.assertEquals(16, configuration.getViewLexerPoolCapacity());
         Assert.assertFalse(configuration.isMatViewEnabled());
