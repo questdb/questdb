@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordChain;
+import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -41,9 +42,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.StreamGroupByMap;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -57,17 +60,25 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     private final VirtualRecord record;
     private final StreamGroupByMap segmentMap;
     private final FlyweightPackedMapValue source;
+    private final ObjList<StreamGroupByMap> spanMaps = new ObjList<>();
+    private final IntList spanSlots = new IntList();
     private final long stride;
     private final FlyweightPackedMapValue value;
+    private long chainLastKey;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private long cursor = -1;
     private boolean done;
+    private MapRecordCursor emitCursor;
+    private StreamGroupByMap emitMap;
     private int frameIndex = -1;
     private int frameLimit = -1;
     private PageFrameSequence<AsyncStreamGroupByAtom> frameSequence;
-    private boolean hasPartial;
-    private long lastKey;
-    private MapRecordCursor mapCursor;
+    private boolean hasOpenKey;
+    private boolean hasOpenSpans;
+    private boolean isChainPending;
+    private boolean isChainRowPending;
+    private boolean isOpenCollected;
+    private long openKey;
     private boolean prepared;
     private long resultOffset;
     private RecordChain resultRecords;
@@ -101,7 +112,10 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
             frameSequence = null;
             results = null;
             resultRecords = null;
-            mapCursor = null;
+            emitCursor = null;
+            emitMap = null;
+            spanMaps.clear();
+            spanSlots.clear();
             memory.close();
             memory.setMemoryTracker(null);
             Function.cursorClosed(nonGroupByFunctions);
@@ -164,9 +178,10 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         collect(false);
         frameSequence.toTop();
         frameSequence.getAtom().toTop();
+        releaseSpanMaps();
         frameIndex = -1;
         done = false;
-        mapCursor = null;
+        resetSegments();
     }
 
     void of(PageFrameSequence<AsyncStreamGroupByAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {
@@ -177,14 +192,56 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         cursor = -1;
         results = null;
         resultRecords = null;
-        mapCursor = null;
-        hasPartial = false;
+        emitCursor = null;
+        emitMap = null;
+        spanMaps.clear();
+        spanSlots.clear();
+        resetSegments();
         if (segmentMap == null) {
             memory.setMemoryTracker(executionContext.getMemoryTracker());
             memory.ensureCapacity(stride);
             value.of(memory.getAddress());
         }
         Function.init(nonGroupByFunctions, frameSequence.getSymbolTableSource(), executionContext, null);
+    }
+
+    private void closeOpenSegment() {
+        hasOpenKey = false;
+        emitMap = segmentMap;
+        if (hasOpenSpans) {
+            final AsyncStreamGroupByAtom atom = frameSequence.getAtom();
+            final GroupByFunctionsUpdater updater = atom.getUpdater(-1);
+            atom.takeSpanMaps(openKey, spanMaps, spanSlots);
+            final int n = spanMaps.size();
+            assert n > 0;
+            int largest = 0;
+            for (int i = 1; i < n; i++) {
+                if (spanMaps.getQuick(i).size() > spanMaps.getQuick(largest).size()) {
+                    largest = i;
+                }
+            }
+            final StreamGroupByMap dest = spanMaps.getQuick(largest);
+            spanMaps.setQuick(largest, spanMaps.getQuick(0));
+            spanMaps.setQuick(0, dest);
+            final int destSlot = spanSlots.getQuick(largest);
+            spanSlots.setQuick(largest, spanSlots.getQuick(0));
+            spanSlots.setQuick(0, destSlot);
+            for (int i = n - 1; i > 0; i--) {
+                final StreamGroupByMap map = spanMaps.getQuick(i);
+                mergeInto(dest, map, updater);
+                atom.releaseSpanMap(spanSlots.getQuick(i), map);
+                spanMaps.setPos(i);
+                spanSlots.setPos(i);
+            }
+            if (isOpenCollected) {
+                mergeInto(dest, segmentMap, updater);
+            }
+            emitMap = dest;
+        }
+        hasOpenSpans = false;
+        isOpenCollected = false;
+        emitCursor = emitMap.getCursor();
+        segmentMap.getRecord().of(emitCursor.getRecord());
     }
 
     private void collect(boolean force) {
@@ -194,51 +251,119 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         }
         results = null;
         resultRecords = null;
-        hasPartial = false;
     }
 
     private boolean hasNextSegment() {
         circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-        if (mapCursor != null && mapCursor.hasNext()) {
-            return true;
-        }
-        if (done) {
-            return false;
-        }
-        if (!nextPartial()) {
-            done = true;
-            return false;
-        }
-        final long key = segmentMap.getSegmentKey(resultRecords.getRecord());
-        if (key != lastKey) {
-            // Only the last segment can continue in the next frame.
-            segmentMap.getRecord().of(resultRecords.getRecord());
-            hasPartial = false;
-            mapCursor = null;
-            return true;
-        }
-        segmentMap.clear(key);
-        do {
-            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-            segmentMap.merge(resultRecords.getRecord());
-            hasPartial = false;
-            if (!nextPartial()) {
-                done = true;
-                break;
+        while (true) {
+            if (emitCursor != null) {
+                if (emitCursor.hasNext()) {
+                    emitMap.putSegmentKey(emitCursor.getRecord());
+                    return true;
+                }
+                releaseSpanMaps();
             }
-        } while (key == segmentMap.getSegmentKey(resultRecords.getRecord()));
-        mapCursor = segmentMap.getCursor();
-        return mapCursor.hasNext();
+            if (isChainPending) {
+                if (isChainRowPending || resultRecords.hasNext()) {
+                    isChainRowPending = false;
+                    final Record chainRecord = resultRecords.getRecord();
+                    final long key = segmentMap.getSegmentKey(chainRecord);
+                    if (key != chainLastKey) {
+                        segmentMap.getRecord().of(chainRecord);
+                        return true;
+                    }
+                    segmentMap.clear(key);
+                    final GroupByFunctionsUpdater updater = frameSequence.getAtom().getUpdater(-1);
+                    do {
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                        segmentMap.merge(chainRecord, updater);
+                    } while (resultRecords.hasNext());
+                    hasOpenKey = true;
+                    openKey = key;
+                    isOpenCollected = true;
+                }
+                isChainPending = false;
+            }
+            if (done) {
+                return false;
+            }
+            if (!nextSegments()) {
+                done = true;
+                if (hasOpenKey) {
+                    closeOpenSegment();
+                }
+            }
+        }
+    }
+
+    private void mergeInto(StreamGroupByMap dest, StreamGroupByMap map, GroupByFunctionsUpdater updater) {
+        final MapRecordCursor mapCursor = map.getCursor();
+        final MapRecord mapRecord = mapCursor.getRecord();
+        while (mapCursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            dest.merge(mapRecord, updater);
+        }
     }
 
     private boolean nextPartial() {
-        if (hasPartial || (resultRecords != null && resultRecords.hasNext())) {
-            hasPartial = true;
-            return true;
-        }
         if (results != null && resultOffset < results.size()) {
             return true;
         }
+        PageFrameReduceTask task;
+        while ((task = nextTask()) != null) {
+            results = task.getGroupByValues();
+            resultOffset = 0;
+            if (results.size() > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean nextSegments() {
+        PageFrameReduceTask task;
+        do {
+            task = nextTask();
+            if (task == null) {
+                return false;
+            }
+        } while (task.getGroupBySegmentCount() == 0);
+        final long first = task.getGroupByFirstKey();
+        if (hasOpenKey && openKey != first) {
+            closeOpenSegment();
+        }
+        if (task.getGroupBySegmentCount() == 1) {
+            if (!hasOpenKey) {
+                hasOpenKey = true;
+                openKey = first;
+            }
+            hasOpenSpans = true;
+            return true;
+        }
+        resultRecords = task.getGroupByRecords();
+        chainLastKey = task.getGroupByLastKey();
+        isChainPending = true;
+        if (hasOpenKey) {
+            if (!isOpenCollected) {
+                segmentMap.clear(first);
+                isOpenCollected = true;
+            }
+            final GroupByFunctionsUpdater updater = frameSequence.getAtom().getUpdater(-1);
+            while (resultRecords.hasNext()) {
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                final Record chainRecord = resultRecords.getRecord();
+                if (segmentMap.getSegmentKey(chainRecord) != first) {
+                    isChainRowPending = true;
+                    break;
+                }
+                segmentMap.merge(chainRecord, updater);
+            }
+            closeOpenSegment();
+        }
+        return true;
+    }
+
+    private PageFrameReduceTask nextTask() {
         collect(false);
         if (!prepared) {
             frameSequence.prepareForDispatch();
@@ -265,21 +390,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
                     collect(false);
                     continue;
                 }
-                if (segmentMap != null) {
-                    resultRecords = task.getGroupByRecords();
-                    lastKey = task.getGroupByLastKey();
-                    if (resultRecords.hasNext()) {
-                        hasPartial = true;
-                        return true;
-                    }
-                } else {
-                    results = task.getGroupByValues();
-                    resultOffset = 0;
-                    if (results.size() > 0) {
-                        return true;
-                    }
-                }
-                collect(false);
+                return task;
             } else if (cursor == -2) {
                 break;
             } else {
@@ -289,6 +400,25 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         if (!frameSequence.isActive()) {
             throw frameSequence.buildInterruptionException();
         }
-        return false;
+        return null;
+    }
+
+    private void releaseSpanMaps() {
+        emitCursor = null;
+        emitMap = null;
+        final AsyncStreamGroupByAtom atom = frameSequence.getAtom();
+        for (int i = 0, n = spanMaps.size(); i < n; i++) {
+            atom.releaseSpanMap(spanSlots.getQuick(i), spanMaps.getQuick(i));
+        }
+        spanMaps.clear();
+        spanSlots.clear();
+    }
+
+    private void resetSegments() {
+        hasOpenKey = false;
+        hasOpenSpans = false;
+        isOpenCollected = false;
+        isChainPending = false;
+        isChainRowPending = false;
     }
 }

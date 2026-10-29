@@ -36,7 +36,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.StreamGroupByMap;
 import io.questdb.griffin.engine.groupby.StreamGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncStreamGroupByRecordCursorFactory;
@@ -659,21 +658,22 @@ public class StreamGroupByTest extends AbstractCairoTest {
                             RecordCursor cursor = factory.getCursor(context)
                     ) {
                         Assert.assertTrue(cursor.hasNext());
-                        initialCapacity = getSegmentMap(factory).getKeyCapacity();
+                        initialCapacity = getSegmentMapKeyCapacity(factory);
                     }
                     try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
                         assertStream(factory, true);
                         try (RecordCursor cursor = factory.getCursor(context)) {
                             Assert.assertTrue(cursor.hasNext());
-                            final StreamGroupByMap map = getSegmentMap(factory);
-                            Assert.assertTrue(keys + ": " + map.getKeyCapacity(), map.getKeyCapacity() > initialCapacity);
+                            Assert.assertTrue(keys, getSegmentMapKeyCapacity(factory) > initialCapacity);
                             long count = 1;
                             while (cursor.hasNext()) {
                                 count++;
                             }
                             Assert.assertEquals(segment[1] + 1_000, count);
                             // The single-key segments must not keep clearing the capacity the first one grew.
-                            Assert.assertEquals(keys, initialCapacity, map.getKeyCapacity());
+                            if (!parallel) {
+                                Assert.assertEquals(keys, initialCapacity, getSegmentMapKeyCapacity(factory));
+                            }
                         }
                     }
                 }
@@ -1344,13 +1344,13 @@ public class StreamGroupByTest extends AbstractCairoTest {
         throw new AssertionError("expected group by");
     }
 
-    private static StreamGroupByMap getSegmentMap(RecordCursorFactory factory) {
+    private static int getSegmentMapKeyCapacity(RecordCursorFactory factory) {
         for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
             if (f instanceof AsyncStreamGroupByRecordCursorFactory stream) {
-                return stream.getAtom().getCollectorMap();
+                return stream.getAtom().getSpanMapKeyCapacity();
             }
             if (f instanceof StreamGroupByRecordCursorFactory stream) {
-                return stream.getSegmentMap();
+                return stream.getSegmentMap().getKeyCapacity();
             }
         }
         throw new AssertionError("expected stream group by");

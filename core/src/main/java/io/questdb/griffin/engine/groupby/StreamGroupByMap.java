@@ -62,9 +62,12 @@ public final class StreamGroupByMap implements QuietCloseable {
     private static final int SHRINK_RATIO = 8;
     private final DirectLongList batchRows;
     private final int batchSize;
+    private final IntList columnCrossIndex;
     private final ObjList<GroupByFunction> functions;
     private final RecordSink inputSink;
     private final Map map;
+    private final ArrayColumnTypes mapKeyTypes;
+    private final ArrayColumnTypes mapValueTypes;
     private final DirectLongList mergeMemory;
     private final RecordSink mergeSink;
     private final SelectedRecord record;
@@ -98,12 +101,12 @@ public final class StreamGroupByMap implements QuietCloseable {
         segmentType = keyTypes.getColumnType(streamKeyIndex);
         batchSize = configuration.getGroupByBatchSize();
         try {
-            final ArrayColumnTypes mapKeyTypes = new ArrayColumnTypes();
-            final ArrayColumnTypes mapValueTypes = new ArrayColumnTypes().addAll(valueTypes);
+            mapKeyTypes = new ArrayColumnTypes();
+            mapValueTypes = new ArrayColumnTypes().addAll(valueTypes);
             mapValueTypes.add(segmentType);
             final ListColumnFilter inputColumns = new ListColumnFilter();
             final ObjList<Function> inputFunctions = new ObjList<>();
-            final IntList columnCrossIndex = new IntList();
+            columnCrossIndex = new IntList();
             for (int i = 0; i < segmentIndex; i++) {
                 columnCrossIndex.add(i);
             }
@@ -136,6 +139,32 @@ public final class StreamGroupByMap implements QuietCloseable {
             mergeSink = RecordSinkFactory.getInstance(configuration, asm, stateTypes, mergeColumns);
             stateSink = RecordSinkFactory.getInstance(configuration, asm, stateTypes, stateColumns);
             valueSink = RecordValueSinkFactory.getInstance(asm, stateTypes, valueColumns);
+            value = new FlyweightPackedMapValue(mapValueTypes);
+            record = new SelectedRecord(columnCrossIndex);
+            map = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, true, false);
+            mergeMemory = new DirectLongList((value.getSizeInBytes() + 7) / 8, MemoryTag.NATIVE_FAST_MAP, true);
+            batchRows = new DirectLongList(batchSize, MemoryTag.NATIVE_FAST_MAP, true);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
+    }
+
+    private StreamGroupByMap(CairoConfiguration configuration, StreamGroupByMap prototype) {
+        functions = prototype.functions;
+        updater = prototype.updater;
+        segmentIndex = prototype.segmentIndex;
+        segmentType = prototype.segmentType;
+        batchSize = prototype.batchSize;
+        columnCrossIndex = prototype.columnCrossIndex;
+        mapKeyTypes = prototype.mapKeyTypes;
+        mapValueTypes = prototype.mapValueTypes;
+        stateTypes = prototype.stateTypes;
+        inputSink = prototype.inputSink;
+        mergeSink = prototype.mergeSink;
+        stateSink = prototype.stateSink;
+        valueSink = prototype.valueSink;
+        try {
             value = new FlyweightPackedMapValue(mapValueTypes);
             record = new SelectedRecord(columnCrossIndex);
             map = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, true, false);
@@ -236,7 +265,11 @@ public final class StreamGroupByMap implements QuietCloseable {
         return stateTypes;
     }
 
-    public void merge(Record source) {
+    public boolean isOpen() {
+        return map.isOpen();
+    }
+
+    public void merge(Record source, GroupByFunctionsUpdater updater) {
         final MapKey key = map.withKey();
         mergeSink.copy(source, key);
         final MapValue dest = key.createValue();
@@ -250,6 +283,14 @@ public final class StreamGroupByMap implements QuietCloseable {
         }
     }
 
+    public StreamGroupByMap newInstance(CairoConfiguration configuration) {
+        return new StreamGroupByMap(configuration, this);
+    }
+
+    public void putSegmentKey(MapRecord record) {
+        GroupByUtils.setStreamGroupByKey(record.getValue(), segmentIndex, segmentType, segmentKey);
+    }
+
     public void reopen(MemoryTracker tracker) {
         map.setMemoryTracker(tracker);
         mergeMemory.setMemoryTracker(tracker);
@@ -257,6 +298,10 @@ public final class StreamGroupByMap implements QuietCloseable {
         map.reopen();
         initialKeyCapacity = map.getKeyCapacity();
         map.setBatchEmptyValue(updater);
+    }
+
+    public long size() {
+        return map.size();
     }
 
     public void update(Record record, long rowId) {

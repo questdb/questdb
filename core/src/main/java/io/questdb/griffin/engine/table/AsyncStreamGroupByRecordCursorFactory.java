@@ -222,17 +222,26 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                 final StreamGroupByMap map = atom.getMap(slot);
                 final RecordChain results = atom.getResultRecords(task);
                 long previous = -1;
-                for (long row = 0; row < rowCount; ) {
+                long segmentCount = 0;
+                for (long row = 0; row < rowCount; segmentCount++) {
                     circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     record.setFilteredRowIndex(rows == null ? row : rows.get(row), row);
                     final long key = keyFunction.getLong(record);
                     final long end = findGroupEnd(record, rows, keyFunction, key, row, rowCount);
-                    map.clear(key);
-                    map.aggregate(record, rows, row, end, baseRowId, isBatch, circuitBreaker);
-                    previous = map.appendTo(results, previous, circuitBreaker);
+                    if (row == 0) {
+                        task.setGroupByFirstKey(key);
+                    }
+                    if (row == 0 && end == rowCount) {
+                        atom.acquireSpanMap(slot, key).aggregate(record, rows, row, end, baseRowId, isBatch, circuitBreaker);
+                    } else {
+                        map.clear(key);
+                        map.aggregate(record, rows, row, end, baseRowId, isBatch, circuitBreaker);
+                        previous = map.appendTo(results, previous, circuitBreaker);
+                    }
                     task.setGroupByLastKey(key);
                     row = end;
                 }
+                task.setGroupBySegmentCount(segmentCount);
                 results.toTop();
                 return;
             }

@@ -50,8 +50,12 @@ import io.questdb.griffin.engine.groupby.StreamGroupByMap;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.TestOnly;
 
 public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner {
     private final int[] batchColumnIndexes;
@@ -69,9 +73,11 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
     private final ObjList<StreamGroupByMap> perWorkerMaps;
     private final ObjList<GroupByFunctionsUpdater> perWorkerUpdaters;
     private final ObjList<FlyweightPackedMapValue> perWorkerValues;
+    private final ObjList<SpanMaps> spanMaps;
     private final ArrayColumnTypes stateTypes;
     private final GroupByFunctionsUpdater updater;
     private final FlyweightPackedMapValue value;
+    private MemoryTracker memoryTracker;
 
     public AsyncStreamGroupByAtom(
             CairoConfiguration configuration,
@@ -128,14 +134,19 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
                 collectorMap = new StreamGroupByMap(configuration, asm, baseMetadata, columnFilter, keyTypes, valueTypes,
                         streamKeyIndex, keyFunctions, groupByFunctions, updater);
                 perWorkerMaps = new ObjList<>(workerCount);
+                spanMaps = new ObjList<>(workerCount + 1);
+                spanMaps.add(new SpanMaps(ownerMap));
                 for (int i = 0; i < workerCount; i++) {
-                    perWorkerMaps.add(new StreamGroupByMap(configuration, asm, baseMetadata, columnFilter, keyTypes, valueTypes,
-                            streamKeyIndex, perWorkerKeys == null ? keyFunctions : perWorkerKeys.getQuick(i),
-                            getFunctions(i), getUpdater(i)));
+                    final StreamGroupByMap map = new StreamGroupByMap(configuration, asm, baseMetadata, columnFilter, keyTypes,
+                            valueTypes, streamKeyIndex, perWorkerKeys == null ? keyFunctions : perWorkerKeys.getQuick(i),
+                            getFunctions(i), getUpdater(i));
+                    perWorkerMaps.add(map);
+                    spanMaps.add(new SpanMaps(map));
                 }
             } else {
                 ownerMap = collectorMap = null;
                 perWorkerMaps = null;
+                spanMaps = null;
             }
         } catch (Throwable th) {
             Misc.free(this, th);
@@ -175,6 +186,10 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
         CairoException.rethrowCleanupFailure(th);
     }
 
+    public StreamGroupByMap acquireSpanMap(int slot, long key) {
+        return spanMaps.getQuick(slot + 1).acquire(configuration, memoryTracker, key);
+    }
+
     public int[] getBatchColumnIndexes() {
         return batchColumnIndexes;
     }
@@ -207,6 +222,15 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
     @Override
     public PerWorkerLocks getPerWorkerLocks() {
         return locks;
+    }
+
+    @TestOnly
+    public int getSpanMapKeyCapacity() {
+        int capacity = 0;
+        for (int i = 0, n = spanMaps.size(); i < n; i++) {
+            capacity = Math.max(capacity, spanMaps.getQuick(i).getKeyCapacity());
+        }
+        return capacity;
     }
 
     public RecordChain getResultRecords(PageFrameReduceTask task) {
@@ -250,10 +274,11 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
         }
         if (ownerMap != null) {
             try {
-                ownerMap.reopen(executionContext.getMemoryTracker());
-                collectorMap.reopen(executionContext.getMemoryTracker());
+                memoryTracker = executionContext.getMemoryTracker();
+                ownerMap.reopen(memoryTracker);
+                collectorMap.reopen(memoryTracker);
                 for (int i = 0, n = perWorkerMaps.size(); i < n; i++) {
-                    perWorkerMaps.getQuick(i).reopen(executionContext.getMemoryTracker());
+                    perWorkerMaps.getQuick(i).reopen(memoryTracker);
                 }
             } catch (Throwable th) {
                 closeMaps(th);
@@ -270,9 +295,28 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
         locks.releaseSlot(slot);
     }
 
+    public void releaseSpanMap(int slot, StreamGroupByMap map) {
+        spanMaps.getQuick(slot + 1).release(map);
+    }
+
+    public void takeSpanMaps(long key, ObjList<StreamGroupByMap> maps, IntList slots) {
+        for (int i = 0, n = spanMaps.size(); i < n; i++) {
+            final StreamGroupByMap map = spanMaps.getQuick(i).take(key);
+            if (map != null) {
+                maps.add(map);
+                slots.add(i - 1);
+            }
+        }
+    }
+
     public void toTop() {
         if (filterContext != null) {
             filterContext.toTop();
+        }
+        if (spanMaps != null) {
+            for (int i = 0, n = spanMaps.size(); i < n; i++) {
+                spanMaps.getQuick(i).releaseAll();
+            }
         }
         GroupByUtils.toTop(groupByFunctions);
         GroupByUtils.toTop(keyFunctions);
@@ -296,6 +340,11 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
                 th = Misc.freeBestEffort(th, perWorkerMaps.getQuick(i));
             }
         }
+        if (spanMaps != null) {
+            for (int i = 0, n = spanMaps.size(); i < n; i++) {
+                th = spanMaps.getQuick(i).close(th);
+            }
+        }
         return th;
     }
 
@@ -304,6 +353,83 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
             if (PerWorkerFunctionList.isOwned(functions, i)) {
                 functions.getQuick(i).cursorClosed();
             }
+        }
+    }
+
+    // The reducing thread and the owner share the lists; a slot only adds to segments the owner has not taken.
+    private static class SpanMaps {
+        private final ObjList<StreamGroupByMap> freeMaps = new ObjList<>();
+        private final ObjList<StreamGroupByMap> maps = new ObjList<>();
+        private final LongList openKeys = new LongList();
+        private final ObjList<StreamGroupByMap> openMaps = new ObjList<>();
+        private final StreamGroupByMap prototype;
+
+        private SpanMaps(StreamGroupByMap prototype) {
+            this.prototype = prototype;
+        }
+
+        private StreamGroupByMap acquire(CairoConfiguration configuration, MemoryTracker memoryTracker, long key) {
+            final StreamGroupByMap map;
+            synchronized (this) {
+                final int index = openKeys.indexOf(key);
+                if (index > -1) {
+                    return openMaps.getQuick(index);
+                }
+                if (freeMaps.size() > 0) {
+                    map = freeMaps.getLast();
+                    freeMaps.setPos(freeMaps.size() - 1);
+                } else {
+                    map = prototype.newInstance(configuration);
+                    maps.add(map);
+                }
+                openKeys.add(key);
+                openMaps.add(map);
+            }
+            if (!map.isOpen()) {
+                map.reopen(memoryTracker);
+            }
+            map.clear(key);
+            return map;
+        }
+
+        private synchronized Throwable close(Throwable th) {
+            for (int i = 0, n = maps.size(); i < n; i++) {
+                th = Misc.freeBestEffort(th, maps.getQuick(i));
+            }
+            openKeys.clear();
+            openMaps.clear();
+            freeMaps.clear();
+            freeMaps.addAll(maps);
+            return th;
+        }
+
+        private synchronized int getKeyCapacity() {
+            int capacity = 0;
+            for (int i = 0, n = maps.size(); i < n; i++) {
+                capacity = Math.max(capacity, maps.getQuick(i).getKeyCapacity());
+            }
+            return capacity;
+        }
+
+        private synchronized void release(StreamGroupByMap map) {
+            freeMaps.add(map);
+        }
+
+        private synchronized void releaseAll() {
+            freeMaps.addAll(openMaps);
+            openKeys.clear();
+            openMaps.clear();
+        }
+
+        private synchronized StreamGroupByMap take(long key) {
+            final int index = openKeys.indexOf(key);
+            if (index < 0) {
+                return null;
+            }
+            final StreamGroupByMap map = openMaps.getQuick(index);
+            openKeys.removeIndex(index);
+            openMaps.remove(index);
+            return map;
         }
     }
 }
