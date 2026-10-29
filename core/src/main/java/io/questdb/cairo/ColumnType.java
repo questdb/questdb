@@ -792,6 +792,7 @@ public final class ColumnType {
     private static boolean isBuiltInWideningCast0(short fromTag, short toTag) {
         boolean isNumericWidening = (fromTag >= BYTE && toTag >= BYTE && toTag <= DOUBLE && fromTag < toTag)
                 && (fromTag != BYTE || (toTag != CHAR && toTag != DATE && toTag != TIMESTAMP)) // exception #1: cannot widen byte to char/temporal
+                && (fromTag != SHORT || toTag != CHAR) // exception #1b: cannot widen short to char either, there is no lossless conversion and no copier support
                 && (fromTag != SHORT || (toTag != DATE && toTag != TIMESTAMP)) // exception #2: cannot widen short to temporal
                 && (fromTag != CHAR || (toTag != DATE && toTag != TIMESTAMP)); // exception #3: cannot widen char to temporal
 
@@ -836,7 +837,9 @@ public final class ColumnType {
                 case GEOBYTE, GEOSHORT, GEOINT, GEOLONG, TIMESTAMP, LONG256 -> true;
                 default -> false;
             };
-            case BYTE -> toTag == CHAR || toTag == DATE || toTag == TIMESTAMP;
+            // note: BYTE -> CHAR is deliberately excluded. There is no lossless/sensible conversion
+            // from a numeric byte value to a CHAR (unlike CHAR -> BYTE, which takes the char code).
+            case BYTE -> toTag == DATE || toTag == TIMESTAMP;
             case SHORT -> toTag == DATE || toTag == TIMESTAMP;
             case SYMBOL -> toTag == TIMESTAMP;
             default -> false;
@@ -845,11 +848,17 @@ public final class ColumnType {
 
     private static boolean isNarrowingCast(int fromType, int toType) {
         final boolean isTargetDecimal = isDecimal(toType);
-        return (fromType == DOUBLE && (toType == FLOAT || (toType >= BYTE && toType <= LONG)))
-                || (fromType == FLOAT && ((toType >= BYTE && toType <= LONG) || toType == DATE || isTimestamp(toType)))
-                || (fromType == LONG && toType >= BYTE && toType <= INT)
-                || (fromType == DATE && toType >= BYTE && toType <= INT)
-                || (isTimestamp(fromType) && ((toType >= BYTE && toType <= INT) || toType == DATE))
+        // note: numeric -> CHAR narrowing (other than the dedicated SHORT/CHAR special-case handled
+        // elsewhere) is deliberately excluded below (toType != CHAR guards). There is no sensible
+        // lossy conversion from BYTE/INT/LONG/DATE/TIMESTAMP/FLOAT/DOUBLE numeric values into a CHAR,
+        // and the row copiers have no implementation for it (see RecordToRowCopierUtils /
+        // LoopingRecordToRowCopier). Treat these the same as INT -> CHAR, which already requires an
+        // unsupported-cast error at compile time.
+        return (fromType == DOUBLE && (toType == FLOAT || (toType >= BYTE && toType <= LONG && toType != CHAR)))
+                || (fromType == FLOAT && ((toType >= BYTE && toType <= LONG && toType != CHAR) || toType == DATE || isTimestamp(toType)))
+                || (fromType == LONG && toType >= BYTE && toType <= INT && toType != CHAR)
+                || (fromType == DATE && toType >= BYTE && toType <= INT && toType != CHAR)
+                || (isTimestamp(fromType) && ((toType >= BYTE && toType <= INT && toType != CHAR) || toType == DATE))
                 || (fromType == INT && toType >= BYTE && toType <= SHORT)
                 || (fromType == SHORT && toType == BYTE)
                 || (fromType == CHAR && toType == BYTE)
