@@ -127,11 +127,11 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         final long srcAuxAddr = sourceColumn.getContiguousAuxAddr(isFileSource ? sourceRowHi : sourceHi);
         final long targetDataOffset = getDataAppendOffsetBytes(appendOffsetRowCount);
         final long srcDataOffset = columnTypeDriver.getDataVectorOffset(srcAuxAddr, sourceLo);
-        assert (sourceLo == 0 && srcDataOffset == 0) || (sourceLo > 0 && srcDataOffset >= columnTypeDriver.getDataVectorMinEntrySize() && srcDataOffset < 1L << 40);
+        assert (sourceLo == 0 && srcDataOffset == 0) || (sourceLo > 0 && srcDataOffset >= columnTypeDriver.getDataVectorMinEntrySize() && srcDataOffset < TableUtils.MAX_VAR_COLUMN_DATA_SIZE);
         final long srcDataSize = columnTypeDriver.getDataVectorSize(srcAuxAddr, sourceLo, sourceHi - 1);
 
         if (srcDataSize > 0) {
-            assert srcDataSize < 1L << 40;
+            assert srcDataSize < TableUtils.MAX_VAR_COLUMN_DATA_SIZE;
             appendData(sourceColumn, isFileSource, isFileSource ? sourceRowHi : sourceHi, srcDataOffset, srcDataSize, targetDataOffset, commitMode);
         }
 

@@ -164,7 +164,7 @@ public class StringTypeDriver implements ColumnTypeDriver {
         long auxFileOffset = getAuxVectorOffset(row + 1);
         long dataOffset = row > -1 ? ff.readNonNegativeLong(auxFd, auxFileOffset) : 0;
 
-        if (dataOffset < 0 || dataOffset > 1L << 40 || (row > -1 && dataOffset == 0)) {
+        if (dataOffset < 0 || dataOffset > TableUtils.MAX_VAR_COLUMN_DATA_SIZE || (row > -1 && dataOffset == 0)) {
             throw CairoException.critical(ff.errno())
                     .put("Invalid variable file length offset read from offset file [auxFd=").put(auxFd)
                     .put(", offset=").put(auxFileOffset)

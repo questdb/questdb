@@ -124,6 +124,8 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final int MAX_SYMBOL_NULL_SCAN_ROWS = 1 << 20;
+    // 32 TiB, sanity bound for var-size column data file size in a single partition
+    public static final long MAX_VAR_COLUMN_DATA_SIZE = 1L << 45;
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
     public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
@@ -2093,7 +2095,7 @@ public final class TableUtils {
                             partitionDescriptor.setSecondaryColumnAddr(auxVectorAddr, auxVectorSize);
 
                             final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxVectorAddr, columnRowCount - 1);
-                            if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
+                            if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= MAX_VAR_COLUMN_DATA_SIZE) {
                                 LOG.critical().$("Invalid var len column size [column=").$safe(columnName)
                                         .$(", size=").$(dataSize)
                                         .$(", path=").$(path)

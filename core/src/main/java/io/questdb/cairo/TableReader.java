@@ -1957,7 +1957,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         // to find out what memory to map of the data file.
                         auxMem = openOrCreateColumnMemory(path, columns, secondaryIndex, auxMem, auxSize);
                         long dataSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), columnRowCount - 1);
-                        if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
+                        if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= TableUtils.MAX_VAR_COLUMN_DATA_SIZE) {
                             LOG.critical().$("Invalid var len column size [column=").$safe(name)
                                     .$(", size=").$(dataSize)
                                     .$(", path=").$(path)
