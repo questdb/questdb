@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
@@ -329,6 +330,9 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     @Test
     public void testShowPartitionsDetachedPartitionPlusAttachable() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // no links in windows
+        // Freeze automatic save points: the ATTACH itself must remove the sources it attached.
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, Long.MAX_VALUE);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 0);
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(tableName);
@@ -365,6 +369,15 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2023-02', '2023-03'", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
+                if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+                    // The writer writes into an attached partition's files in place, and they are its source's
+                    // files, so the ATTACH takes the save points that cover it in both generations before it
+                    // returns, and the second deletes the sources it attached.
+                    assertQuery("SELECT name FROM table_partitions('" + tableName + "') WHERE attachable ORDER BY name")
+                            .noLeakCheck()
+                            .sizeMayVary()
+                            .returns("name\n2023-04.attachable\n");
+                }
             }
             assertShowPartitions(
                     """

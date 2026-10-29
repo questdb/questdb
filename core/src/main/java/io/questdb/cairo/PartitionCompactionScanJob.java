@@ -565,7 +565,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         continue;
                     }
                     final long rowOffset = readerGeometry.getPieceRowOffset(partitionIndex, p);
-                    FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, -1L, configuration.getCommitMode());
+                    FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, -1L, engine.getResolvedCommitMode());
                 }
             } finally {
                 path.trimTo(tableRootLen);
@@ -622,6 +622,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             collectStaleParquetColumnTops(reader, partitionIndex, partitionTimestamp, parquetFileSize, command.getStaleColumnTops());
             O3PartitionJob.compactParquetPartition(
                     configuration,
+                    engine.getResolvedCommitMode(),
                     ff,
                     tableToken,
                     reader.getMetadata(),
@@ -760,7 +761,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                                     continue;
                                 }
                                 final long rowOffset = readerGeometry.getPieceRowOffset(partitionIndex, p);
-                                FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, -1L, configuration.getCommitMode());
+                                FrameAlgebra.append(targetFrame, sourceFrame, rowOffset, rowOffset + rowCount, -1L, engine.getResolvedCommitMode());
                                 copiedRows += rowCount;
                             }
                         }
@@ -773,7 +774,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                             rewriteRanges.clear();
                             rewriteRanges.add(0L, rowCount);
                             targetFrame.reserve(copiedRows + rowCount, sourceFrame, rewriteRanges, null, null);
-                            FrameAlgebra.append(targetFrame, sourceFrame, 0, rowCount, -1L, configuration.getCommitMode());
+                            FrameAlgebra.append(targetFrame, sourceFrame, 0, rowCount, -1L, engine.getResolvedCommitMode());
                         }
                         copiedRows += rowCount;
                     }
@@ -1545,6 +1546,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         reader.getColumnVersionReader(),
                         symbolTableProvider,
                         configuration,
+                        engine.getResolvedCommitMode(),
                         null,
                         Double.NaN,
                         parquetBloomFilterIndexes,

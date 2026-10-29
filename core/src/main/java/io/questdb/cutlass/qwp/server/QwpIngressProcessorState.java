@@ -28,7 +28,10 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cutlass.http.ConnectionAware;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
@@ -37,12 +40,14 @@ import io.questdb.cutlass.line.tcp.QwpWalAppender;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
+import io.questdb.cutlass.qwp.protocol.QwpMessageHeader;
 import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
+import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -134,17 +139,36 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private final CharSequenceLongHashMap durableProgressSnapshot = new CharSequenceLongHashMap();
     private final CairoEngine engine;
     private final StringSink error = new StringSink();
+    // Released TableIncarnation objects, reused so steady-state durable-ack tracking allocates nothing.
+    private final ObjList<TableIncarnation> incarnationPool = new ObjList<>();
     private final CharSequenceLongHashMap lastDurableSeqTxns = new CharSequenceLongHashMap();
+    // Watermark of the additive LOCAL stream (LOCAL|REPLICATED grants only):
+    // highest local-fsync seqTxn already reported per table via
+    // STATUS_LOCAL_DURABLE_ACK. Never consulted for coverage and never pruned
+    // by the local stream itself -- see onDurableAckSent.
+    private final CharSequenceLongHashMap lastLocalDurableSeqTxns = new CharSequenceLongHashMap();
+    // Snapshot of the additive LOCAL stream's progress, sibling of
+    // durableProgressSnapshot; populated by collectDurableProgress when both
+    // tiers are granted.
+    private final CharSequenceLongHashMap localDurableProgressSnapshot = new CharSequenceLongHashMap();
     private final long maxBufferSize;
     private final int maxResponseErrorMessageLength;
     private final CharSequenceLongHashMap pendingAckSeqTxns = new CharSequenceLongHashMap();
-    private final CharSequenceObjHashMap<String> pendingDurableDirNames = new CharSequenceObjHashMap<>();
+    // Wire seqTxn of the latest commit per table name that no durable ack has covered yet, for the
+    // name's current incarnation (tableIncarnations). Older incarnations still owed an ack sit in
+    // retiredIncarnations.
     private final CharSequenceLongHashMap pendingDurableSeqTxns = new CharSequenceLongHashMap();
     private final StringSink rejectMsg = new StringSink();
+    // Earlier incarnations of a table name (drop + re-create, or rename + re-create) whose commits this
+    // connection still owes a durable ack, oldest first. Empty in steady state; see recordCommittedTable.
+    private final ObjList<TableIncarnation> retiredIncarnations = new ObjList<>();
     private final StringSink roleChangeCloseReason = new StringSink();
     private final CharSequenceLongHashMap resumeAckSeqTxns = new CharSequenceLongHashMap();
     private final ConnectionSymbolCache symbolCache = new ConnectionSymbolCache();
-    private final CharSequenceObjHashMap<String> tableDirNames = new CharSequenceObjHashMap<>();
+    // Per table name, the directory this connection last committed to and how that incarnation's
+    // seqTxns map onto the wire. Kept for the connection's lifetime -- the client keeps its per-name
+    // watermarks just as long -- and populated only when durable ack is enabled.
+    private final CharSequenceObjHashMap<TableIncarnation> tableIncarnations = new CharSequenceObjHashMap<>();
     private long bufferAddress;
     private int bufferPosition;
     private int bufferSize;
@@ -159,6 +183,12 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private long deferredErrorSequence = -1;
     private byte deferredErrorStatus;
     private boolean durableAckEnabled;
+    // Connection's granted durability tier set (DurabilityTier bitmask). The
+    // strongest granted tier drives the primary durable-ack cycle -- frontier
+    // selection, coverage, pruning. When both tiers are granted, an additive
+    // LOCAL stream reports the local-fsync frontier separately via
+    // STATUS_LOCAL_DURABLE_ACK -- see collectDurableProgress.
+    private int durableAckTiers = DurabilityTier.NONE;
     private long fd = -1;
     // Whether onHeadersReady wrote the 101 bytes into the send buffer but
     // deferred the actual rawSocket.send to onRequestComplete. Set true in
@@ -170,6 +200,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     private boolean handshakeFlushPending;
     private long highestProcessedSequence = -1;
     private boolean isDurableProgressSnapshotFullyUploaded;
+    // True while the durable-ack frame being sent (or parked mid-send) belongs
+    // to the additive LOCAL stream of a LOCAL|REPLICATED grant. onDurableAckSent
+    // consults it to advance the correct stream's watermark; it survives a
+    // blocked send so the resume path advances the right stream too.
+    private boolean isSendingLocalDurableAck;
     private long lastAckedSequence = -1;
     private long messageSequence;
     private byte negotiatedVersion = QwpConstants.VERSION;
@@ -184,8 +219,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // / SEND_STATE_RESUME_DURABLE_ACK_THEN_CLOSE_RESPONSE), or -1 when no
     // client-close continuation is armed. Reset on onDisconnected().
     private int pendingCloseResponseCode = -1;
-    // Set when a batch is refused because the node just flipped to a read-only
-    // replica (an in-place PRIMARY->REPLICA demote). A TRANSIENT failover, not a
+    // Set when a message or commit is refused because the node just flipped to a
+    // read-only replica (an in-place PRIMARY->REPLICA demote). A TRANSIENT failover, not a
     // permanent auth failure -- the upgrade processor closes the connection with a
     // reconnect-eligible code instead of sending a SECURITY_ERROR that a
     // store-and-forward client would treat as a terminal HALT.
@@ -241,7 +276,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // reset by a successful commitAll and by onDisconnected().
     private long firstRowlessDeferredSequence = -1;
     // True when the message currently being processed appended at least one row.
-    // Reset at the top of every processMessage(), so it describes THIS frame and
+    // Reset at the top of every prepareMessage(), so it describes THIS frame and
     // not the connection. A frame that registers symbols and nothing else -- the
     // client's dictionary-chunk frames, which carry tableCount=0 and
     // FLAG_DEFER_COMMIT -- leaves it false.
@@ -262,6 +297,39 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // committed. Enforced in setHighestProcessedSequence as a last resort; the
     // upgrade processor's ack path must not attempt the advance to begin with.
     private boolean uncommittedDeferredRows;
+    // Commit batch: consecutive plain single-block frames for one WAL table, from one
+    // receive pass, whose rows are appended to commitBatchTud's writer and committed
+    // together, as one WAL txn. A commit is a sequencer txn, a txn-log record, an
+    // ack-watermark step and an apply-job unit of work, which one-row frames cannot
+    // amortize. The frames' sequences stay out of the cumulative-ack watermark until
+    // that commit. The upgrade processor commits the batch when the receive pass
+    // drains, at the first data frame that cannot join
+    // (isPreparedMessageJoinableToCommitBatch), and before any other frame: a
+    // deferred frame, a durable-ack poll, a control frame, a fragment or an
+    // oversized frame. The batch stays below the max-uncommitted-rows cap, so it
+    // needs no bound of its own. Reset by clear(), which rolls the rows back.
+    //
+    // While a batch is pending nothing but the batch commit touches the batch's
+    // writer: a joining frame skips the table lookup and cannot create columns, so
+    // it only appends its block or cancels it, and nothing evicts the batch's cache
+    // entry. A positive check that the writer still holds exactly the batch's rows
+    // (isCommitBatchIntact), not a report from every path that might commit or
+    // discard rows, decides whether the batch may be acknowledged.
+    private long commitBatchRows;
+    // The table's sequencer txn tracker, fetched at the batch's first join.
+    private SeqTxnTracker commitBatchTracker;
+    private WalTableUpdateDetails commitBatchTud;
+    private WalWriter commitBatchWriter;
+    private long firstCommitBatchSequence = -1;
+    // The table the current frame appended rows to, null if none. Set by
+    // processPreparedMessage and processPreparedJoiningMessage.
+    private WalTableUpdateDetails frameRowTud;
+    private boolean isPreparedSingleBlock;
+    private long lastCommitBatchSequence = -1;
+    private QwpMessageCursor preparedMessageCursor;
+    // Row count of the prepared message's only table block; 0 unless single-block.
+    private int preparedRowCount;
+    private QwpTableBlockCursor preparedTableBlock;
     private int sendState = SEND_STATE_READY;
     private QwpStreamingDecoder streamingDecoder;
     private QwpTudCache tudCache;
@@ -336,6 +404,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         error.clear();
         currentStatus = Status.OK;
         bufferPosition = 0;
+        clearPreparedMessage();
         streamingDecoder.reset();
         handshakeFlushPending = false;
         pendingHandshakeBytes = 0;
@@ -344,6 +413,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         // the deferred group is gone, its frames were never acked, and the
         // client replays them from its acked watermark.
         uncommittedDeferredRows = false;
+        resetCommitBatch();
     }
 
     /**
@@ -355,12 +425,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         error.clear();
         currentStatus = Status.OK;
         bufferPosition = 0;
+        clearPreparedMessage();
         streamingDecoder.reset();
         roleChangeClosePending = false;
     }
 
     @Override
     public void close() {
+        clearPreparedMessage();
         final var tudCacheToFree = tudCache;
         tudCache = null;
         Throwable cleanupFailure = Misc.freeBestEffort(null, tudCacheToFree);
@@ -388,35 +460,232 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * {@link #isDurableProgressSnapshotFullyUploaded()} until the next call.
      * The caller must consume the map before the next call.
      * <p>
+     * The primary snapshot reads the frontier of the strongest granted tier ({@link #durableAckTiers}):
+     * <ul>
+     *   <li>{@link DurabilityTier#REPLICATED} granted: {@link DurableAckRegistry#getReplicatedDurableSeqTxn(CharSequence)},
+     *       uploaded to an object store (Enterprise replication only)</li>
+     *   <li>otherwise ({@link DurabilityTier#LOCAL}): {@link DurableAckRegistry#getLocalDurableSeqTxn(CharSequence)},
+     *       fdatasynced to local disk (ADAPTIVE tables)</li>
+     * </ul>
+     * It does not take the max of both: the local frontier is never behind the replicated one, so a max would
+     * downgrade a REPLICATED client's guarantee to LOCAL.
+     * <p>
+     * When both tiers are granted, the same traversal also fills the additive LOCAL stream's snapshot
+     * ({@link #getLocalDurableProgressSnapshot()}) from the local frontier. That stream is an early progress
+     * signal: it never decides coverage and never prunes the pending set; the replicated stream owns both.
+     * <p>
+     * Reported values are wire seqTxns (see {@link #recordCommittedTable}) and never exceed the
+     * connection's own pending value for the table, so a registry sentinel such as Enterprise's
+     * {@code Long.MAX_VALUE} drop marker never reaches the client. A directory the registry reports as
+     * {@link DurableAckRegistry#TABLE_GONE} covers everything this connection committed to it.
+     * <p>
      * Only iterates tables with outstanding durable work, not every table
      * the connection has ever written to.
      */
     public CharSequenceLongHashMap collectDurableProgress(DurableAckRegistry registry) {
         durableProgressSnapshot.clear();
+        localDurableProgressSnapshot.clear();
         isDurableProgressSnapshotFullyUploaded = true;
         if (!durableAckEnabled) {
             return durableProgressSnapshot;
         }
+        // Primary frontier: the strongest granted tier, as in isDurableWorkFullyCovered, so the fused coverage
+        // result below answers the same question that predicate does.
+        final boolean isReplicatedPrimary = DurabilityTier.hasReplicated(durableAckTiers);
+        final boolean hasAdditiveLocalStream = isReplicatedPrimary && DurabilityTier.hasLocal(durableAckTiers);
         ObjList<CharSequence> tableNames = pendingDurableSeqTxns.keys();
         for (int i = 0, n = tableNames.size(); i < n; i++) {
             CharSequence tableName = tableNames.getQuick(i);
-            String dirName = pendingDurableDirNames.get(tableName);
-            if (dirName == null) {
+            TableIncarnation incarnation = tableIncarnations.get(tableName);
+            if (incarnation == null) {
                 isDurableProgressSnapshotFullyUploaded = false;
                 continue;
             }
-            long uploadedSeqTxn = registry.getDurablyUploadedSeqTxn(dirName);
-            if (uploadedSeqTxn < pendingDurableSeqTxns.get(tableName)) {
+            final long pendingSeqTxn = pendingDurableSeqTxns.get(tableName);
+            final long coveredSeqTxn = resolveCoveredSeqTxn(registry, isReplicatedPrimary, tableName, incarnation, pendingSeqTxn);
+            if (coveredSeqTxn < pendingSeqTxn) {
                 isDurableProgressSnapshotFullyUploaded = false;
             }
-            if (uploadedSeqTxn >= 0) {
-                long lastSent = lastDurableSeqTxns.get(tableName);
-                if (uploadedSeqTxn > lastSent) {
-                    durableProgressSnapshot.put(tableName, uploadedSeqTxn);
+            if (coveredSeqTxn > lastDurableSeqTxns.get(tableName)) {
+                durableProgressSnapshot.put(tableName, coveredSeqTxn);
+            }
+            if (hasAdditiveLocalStream) {
+                final long localSeqTxn = resolveCoveredSeqTxn(registry, false, tableName, incarnation, pendingSeqTxn);
+                if (localSeqTxn > lastLocalDurableSeqTxns.get(tableName)) {
+                    localDurableProgressSnapshot.put(tableName, localSeqTxn);
                 }
             }
         }
         return durableProgressSnapshot;
+    }
+
+    /**
+     * Abandons the commit batch whose rows cannot be acknowledged: pins the
+     * cumulative-ack watermark below its first frame, so the client replays the whole
+     * batch, and distresses the table cache, so the next {@link #clear()} frees every
+     * writer and rolls the batch's rows back. The caller owes that {@code clear()} and
+     * the response; capture the error and the role-change flag first, because
+     * {@code clear()} resets both.
+     */
+    public void abandonCommitBatch() {
+        markSequenceUnresolved(firstCommitBatchSequence);
+        tudCache.setDistressed();
+        resetCommitBatch();
+    }
+
+    /**
+     * Adds the frame just appended by {@link #processPreparedJoiningMessage()} to the
+     * commit batch and reports whether the batch is still intact. A false return
+     * means the batch's rows cannot be acknowledged; see {@link #abandonCommitBatch()}.
+     */
+    public boolean addToCommitBatch(long seq) {
+        commitBatchRows += preparedRowCount;
+        lastCommitBatchSequence = seq;
+        return isCommitBatchIntact();
+    }
+
+    /**
+     * Clears this frame's error so the following batch commit reports its own.
+     * Used only to commit the batch the frame failed after.
+     * <p>
+     * The role-change flag is part of that error: the read-only gate sets it with
+     * the refusal, and a demote that reverts before the batch's commit leaves the
+     * commit successful. The caller has already captured the flag for the close
+     * it owes this frame; left set here, it would report the successful commit
+     * as failed and pin the ack watermark below rows the WAL holds, so the
+     * client's replay after the close would duplicate them.
+     */
+    public void clearErrorForBatchSalvage() {
+        error.clear();
+        currentStatus = Status.OK;
+        roleChangeClosePending = false;
+    }
+
+    /**
+     * Commits the commit batch and, on success, advances the cumulative-ack watermark
+     * over it. The commit runs only while the batch is intact; on any failure this
+     * state is in error, with {@code roleChangeClosePending} set for a read-only
+     * refusal, the batch is still pending, and the caller takes the batch-lost path
+     * ({@link #abandonCommitBatch()}).
+     */
+    public boolean commitBatch() {
+        if (!isCommitBatchIntact()) {
+            LOG.error().$('[').$(fd).$("] commit batch rows are not intact [firstSeq=").$(firstCommitBatchSequence)
+                    .$(", lastSeq=").$(lastCommitBatchSequence).I$();
+            reject(Status.INTERNAL_ERROR, "commit batch rows are not intact, cannot acknowledge", fd);
+            return false;
+        }
+        try {
+            tudCache.commitBatch(commitBatchTud, committedTxnConsumer);
+        } catch (Throwable th) {
+            tudCache.setDistressed();
+            LOG.error().$('[').$(fd).$("] commit batch error: ").$(th).$();
+            rejectCommitError(th);
+            return false;
+        }
+        final long lastSeq = lastCommitBatchSequence;
+        resetCommitBatch();
+        setHighestProcessedSequence(lastSeq);
+        return true;
+    }
+
+    public long getFirstCommitBatchSequence() {
+        return firstCommitBatchSequence;
+    }
+
+    public boolean isCommitBatchPending() {
+        return firstCommitBatchSequence != -1;
+    }
+
+    /**
+     * True when the commit batch's rows are exactly what its writer holds
+     * uncommitted: the writer is still the cache's entry for the table, healthy, not
+     * mid columnar write, and holds {@code commitBatchRows} uncommitted rows.
+     */
+    public boolean isCommitBatchIntact() {
+        return isCommitBatchWriterIntact() && tudCache.isCachedEntry(commitBatchTud);
+    }
+
+    /**
+     * True when appending the prepared message can touch nothing but the batch
+     * writer's uncommitted rows; a message that is not admitted is a batch boundary.
+     * The structure-version check cuts the batch at another connection's ALTER,
+     * RENAME or DROP, the settled-schema check rules out column creation, and the
+     * row cap keeps the appender from committing the batch on its own. Checks
+     * identity only: it acquires, refreshes and evicts nothing.
+     */
+    public boolean isPreparedMessageJoinableToCommitBatch() {
+        if (!isCommitBatchPending() || !isOk() || isDeferCommit() || !isPreparedSingleBlock || preparedRowCount <= 0
+                || !Utf8s.equalsIgnoreCaseAscii(commitBatchTud.getTableNameUtf8(), preparedTableBlock.getTableNameUtf8())
+                || !isCommitBatchWriterIntact()) {
+            return false;
+        }
+        if (commitBatchTracker == null) {
+            commitBatchTracker = engine.getTableSequencerAPI().getTxnTracker(commitBatchTud.getTableToken());
+        }
+        return commitBatchTracker.getStructureVersion() == commitBatchWriter.getMetadataVersion()
+                && !commitBatchTracker.isDropped()
+                && walAppender.isSchemaSettled(preparedTableBlock.getSchema(), commitBatchWriter)
+                && commitBatchRows + preparedRowCount < commitBatchTud.getMetaMaxUncommittedRows();
+    }
+
+    /**
+     * Appends the prepared message, which {@link #isPreparedMessageJoinableToCommitBatch()}
+     * admitted, to the commit batch's writer with column creation refused. A
+     * failure cancels the block's rows (the appender's columnar write rollback) and
+     * leaves this state in error; the batch's rows stay as they were.
+     */
+    public void processPreparedJoiningMessage() {
+        if (!isOk() || preparedTableBlock == null) {
+            return;
+        }
+        final QwpTableBlockCursor tableBlock = preparedTableBlock;
+        preparedTableBlock = null;
+        final long lastSeqTxn = commitBatchWriter.getLastSeqTxn();
+        try {
+            walAppender.appendToWalStreaming(securityContext, tableBlock, commitBatchTud, false);
+            messageAppendedRows = true;
+            frameRowTud = commitBatchTud;
+        } catch (Throwable e) {
+            rejectMessageError(e);
+        }
+        assert commitBatchWriter.getLastSeqTxn() == lastSeqTxn : "a joining frame committed or altered the batch writer";
+    }
+
+    /**
+     * Forgets the commit batch: its rows were committed, or are being rolled back.
+     * The caller owns the watermark consequences.
+     */
+    public void resetCommitBatch() {
+        commitBatchRows = 0;
+        commitBatchTracker = null;
+        commitBatchTud = null;
+        commitBatchWriter = null;
+        firstCommitBatchSequence = -1;
+        lastCommitBatchSequence = -1;
+    }
+
+    /**
+     * Opens a commit batch with the plain frame just processed on the normal path,
+     * instead of committing it. Requires the writer's uncommitted rows to be exactly
+     * this frame's, which also turns away a frame the appender already committed at
+     * the max-uncommitted-rows cap.
+     */
+    public boolean tryOpenCommitBatch(long seq) {
+        assert !isCommitBatchPending();
+        if (!isOk() || roleChangeClosePending || isDeferCommit() || !isPreparedSingleBlock || preparedRowCount <= 0
+                || frameRowTud == null || uncommittedDeferredRows || firstRowlessDeferredSequence != -1
+                || !(frameRowTud.getWriter() instanceof WalWriter walWriter)
+                || walWriter.getUncommittedRowCount() != preparedRowCount) {
+            return false;
+        }
+        commitBatchTud = frameRowTud;
+        commitBatchWriter = walWriter;
+        commitBatchRows = preparedRowCount;
+        commitBatchTracker = null;
+        firstCommitBatchSequence = seq;
+        lastCommitBatchSequence = seq;
+        return true;
     }
 
     public void commit() {
@@ -464,6 +733,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return size;
     }
 
+    public int computeLocalDurableAckPayloadSize() {
+        int size = 1 + 2;
+        ObjList<CharSequence> keys = localDurableProgressSnapshot.keys();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            size += 2 + Utf8s.utf8Bytes(keys.getQuick(i)) + 8;
+        }
+        return size;
+    }
+
     public int getDeferredCloseCode() {
         return deferredCloseCode;
     }
@@ -486,6 +764,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public CharSequenceLongHashMap getDurableProgressSnapshot() {
         return durableProgressSnapshot;
+    }
+
+    public CharSequenceLongHashMap getLocalDurableProgressSnapshot() {
+        return localDurableProgressSnapshot;
     }
 
     public String getErrorText() {
@@ -552,7 +834,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     /**
      * True when this connection has committed seqTxns whose durable-upload
      * coverage has not yet been fully acked. Unlike
-     * {@link #isDurableWorkFullyUploaded} this reads only local state, so it is
+     * {@link #isDurableWorkFullyCovered} this reads only local state, so it is
      * immune to the registry advancing concurrently under a demote drain.
      */
     public boolean hasPendingDurableWork() {
@@ -587,12 +869,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return uncommittedDeferredRows;
     }
 
+    /**
+     * True while a rowless FLAG_DEFER_COMMIT frame is withheld and blocks ack
+     * coverage until {@link #commit()} closes its group -- see
+     * {@link #markRowlessDeferredSequence(long)}.
+     */
+    public boolean hasWithheldRowlessDeferredFrame() {
+        return firstRowlessDeferredSequence != -1;
+    }
+
     public boolean isDeferCommit() {
-        if (bufferPosition >= QwpConstants.HEADER_SIZE) {
-            byte flags = Unsafe.getByte(bufferAddress + QwpConstants.HEADER_OFFSET_FLAGS);
-            return (flags & QwpConstants.FLAG_DEFER_COMMIT) != 0;
-        }
-        return false;
+        return QwpMessageHeader.isDeferCommit(bufferAddress, bufferPosition);
     }
 
     public boolean isDurableAckEnabled() {
@@ -735,6 +1022,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * True once the server's CLOSE frame is on the wire: the connection either
+     * awaits the client's close echo or drains inbound bytes. RFC 6455 permits
+     * no frame after that CLOSE.
+     */
+    public boolean hasSentClose() {
+        return closeEchoDeadline != -1 || closeDrainDeadline != -1;
+    }
+
+    /**
      * Returns the full-coverage result produced by the most recent
      * {@link #collectDurableProgress(DurableAckRegistry)} traversal.
      */
@@ -744,22 +1040,34 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     /**
      * True when every seqTxn this connection has committed but not yet durably
-     * acked is covered by the registry's durable-upload watermark -- i.e. a
-     * durable ack flushed right now would advance the client's replay watermark
-     * past ALL of this connection's committed work, leaving no replay window.
+     * acked is covered by the durability frontier of this connection's
+     * strongest granted tier ({@link #durableAckTiers}), so a durable ack flushed at this point
+     * would advance the client's replay watermark past all of this connection's
+     * committed work, leaving no replay window.
      * Trivially true when nothing is pending (or durable ack is disabled:
      * {@code pendingDurableSeqTxns} is only populated when enabled).
      * <p>
      * This coverage-only traversal exists for the send-blocked path, where
      * {@code durableProgressSnapshot} may belong to an in-flight durable ACK
      * and must remain unchanged until {@link #onDurableAckSent()} consumes it.
+     * <p>
+     * Uses the same frontier selection as {@link #collectDurableProgress}, which builds the final durable ack
+     * from the negotiated tier's frontier: the predicate asks whether that ack covers everything. The
+     * replicated frontier of a {@link DurabilityTier#LOCAL} connection in OSS is always {@code -1}, so testing
+     * it here would keep the predicate false and make every role-change close wait out the full
+     * {@link #ROLE_CHANGE_CLOSE_UPLOAD_GRACE_MICROS} grace.
      */
-    public boolean isDurableWorkFullyUploaded(DurableAckRegistry registry) {
+    public boolean isDurableWorkFullyCovered(DurableAckRegistry registry) {
+        final boolean isReplicatedTier = DurabilityTier.hasReplicated(durableAckTiers);
         ObjList<CharSequence> tableNames = pendingDurableSeqTxns.keys();
         for (int i = 0, n = tableNames.size(); i < n; i++) {
             CharSequence tableName = tableNames.getQuick(i);
-            String dirName = pendingDurableDirNames.get(tableName);
-            if (dirName == null || registry.getDurablyUploadedSeqTxn(dirName) < pendingDurableSeqTxns.get(tableName)) {
+            TableIncarnation incarnation = tableIncarnations.get(tableName);
+            if (incarnation == null) {
+                return false;
+            }
+            final long pendingSeqTxn = pendingDurableSeqTxns.get(tableName);
+            if (resolveCoveredSeqTxn(registry, isReplicatedTier, tableName, incarnation, pendingSeqTxn) < pendingSeqTxn) {
                 return false;
             }
         }
@@ -1006,6 +1314,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * Marks which stream the next durable-ack frame belongs to. Set before
+     * each send; a blocked send keeps the value so the resume path
+     * advances the right stream's watermark in {@link #onDurableAckSent()}.
+     */
+    public void setSendingLocalDurableAck(boolean isLocalStream) {
+        this.isSendingLocalDurableAck = isLocalStream;
+    }
+
+    /**
      * Records a successful durable-ack send. Updates lastDurableSeqTxns
      * from the current durableProgressSnapshot so that the next
      * collectDurableProgress() only reports further advances. Removes
@@ -1013,32 +1330,43 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * up to or exceeded the committed seqTxn.
      */
     public void onDurableAckSent() {
+        if (isSendingLocalDurableAck) {
+            // Additive LOCAL stream: advance its watermark only. Pruning of the
+            // pending set belongs to the replicated (laggard) stream -- the
+            // local frontier always runs ahead of replicated coverage.
+            ObjList<CharSequence> localKeys = localDurableProgressSnapshot.keys();
+            for (int i = 0, n = localKeys.size(); i < n; i++) {
+                CharSequence tableName = localKeys.getQuick(i);
+                lastLocalDurableSeqTxns.put(tableName, localDurableProgressSnapshot.get(tableName));
+            }
+            isSendingLocalDurableAck = false;
+            return;
+        }
         ObjList<CharSequence> keys = durableProgressSnapshot.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             CharSequence tableName = keys.getQuick(i);
             long durableSeqTxn = durableProgressSnapshot.get(tableName);
+            if (retiredIncarnations.size() > 0) {
+                releaseReportedIncarnations(tableName, durableSeqTxn);
+            }
             if (durableSeqTxn >= pendingDurableSeqTxns.get(tableName)) {
-                // Watermark caught up — prune all per-table tracking so
-                // these maps don't grow one entry per unique table name
-                // for the connection's lifetime. A later commit to the
-                // same table re-populates via recordCommittedTable; the
-                // drop-recreate check there treats an absent entry the
-                // same as a first-sight and still works correctly.
-                int dirIdx = pendingDurableDirNames.keyIndex(tableName);
-                if (dirIdx < 0) {
-                    pendingDurableDirNames.removeAt(dirIdx);
-                }
+                // Watermark caught up: prune the per-table pending
+                // tracking so these maps don't grow one entry per unique
+                // table name for the connection's lifetime. A later commit
+                // to the same table re-populates via recordCommittedTable.
+                // tableIncarnations keeps its entry: it anchors the name's
+                // wire seqTxns for as long as the client keeps its watermark.
                 int seqIdx = pendingDurableSeqTxns.keyIndex(tableName);
                 if (seqIdx < 0) {
                     pendingDurableSeqTxns.removeAt(seqIdx);
                 }
-                int tdnIdx = tableDirNames.keyIndex(tableName);
-                if (tdnIdx < 0) {
-                    tableDirNames.removeAt(tdnIdx);
-                }
                 int ldsIdx = lastDurableSeqTxns.keyIndex(tableName);
                 if (ldsIdx < 0) {
                     lastDurableSeqTxns.removeAt(ldsIdx);
+                }
+                int llsIdx = lastLocalDurableSeqTxns.keyIndex(tableName);
+                if (llsIdx < 0) {
+                    lastLocalDurableSeqTxns.removeAt(llsIdx);
                 }
             } else {
                 // Pending still ahead of durable watermark — remember
@@ -1080,14 +1408,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         // Drop any durable-ack state; the connection is going away, so even if
         // uploads complete later, there is nobody left to notify.
         durableAckEnabled = false;
+        durableAckTiers = DurabilityTier.NONE;
         pendingAckSeqTxns.clear();
-        pendingDurableDirNames.clear();
         pendingDurableSeqTxns.clear();
         resumeAckSeqTxns.clear();
         lastDurableSeqTxns.clear();
+        lastLocalDurableSeqTxns.clear();
         durableProgressSnapshot.clear();
+        localDurableProgressSnapshot.clear();
         isDurableProgressSnapshotFullyUploaded = false;
-        tableDirNames.clear();
+        isSendingLocalDurableAck = false;
+        releaseIncarnations();
 
         // Log cache stats before clearing (only if there were any lookups)
         long hits = symbolCache.getCacheHits();
@@ -1249,51 +1580,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         sendState = SEND_STATE_READY;
     }
 
-    public void processMessage() {
+    public void prepareMessage() {
+        clearPreparedMessage();
+        frameRowTud = null;
+        messageAppendedRows = false;
         if (bufferPosition == 0 || !isOk()) {
             return;
         }
-
-        messageAppendedRows = false;
         try {
-            // Re-check the LIVE write-refusal state on every batch. A QWP ingress connection
-            // caches its SecurityContext (and a per-table WAL writer) at handshake time, so a
-            // connection opened while this node was PRIMARY would otherwise keep writing after an
-            // in-place PRIMARY-to-REPLICA switch flips the node read-only -- the cached state
-            // bypasses per-write authorization entirely. Consulting engine.isReadOnlyMode() here
-            // closes that boundary race: the instant the node starts demoting (the dynamic
-            // read-only-replica flag flips FIRST in the switch cascade), the whole batch is
-            // refused. HOW it is refused depends on WHY the node is read-only -- see
-            // isStaticReadOnlyInstance() for the contract.
-            if (engine.isReadOnlyMode()) {
-                if (isStaticReadOnlyInstance()) {
-                    // Statically read-only (readonly=true in the server config): a permanent
-                    // property of this process, not a role transition. The role-change close
-                    // is WRONG here because its 421 backstop does not exist -- the upgrade
-                    // gate rejects only ROLE_REPLICA / ROLE_PRIMARY_CATCHUP, and a statically
-                    // read-only node keeps reporting its upgrade-eligible role (STANDALONE on
-                    // OSS) forever. A store-and-forward client treats the resulting
-                    // NORMAL_CLOSURE close as orderly (no NACK, no poison strike, no typed
-                    // terminal) and would reconnect-replay in a silent infinite loop, its
-                    // producer never learning of the misconfiguration. Answer with the typed
-                    // SECURITY_ERROR NACK instead: the client latches it as terminal and
-                    // surfaces it loudly.
-                    reject(Status.SECURITY_ERROR, CairoException.READ_ONLY_ACCESS_MESSAGE, fd);
-                    return;
-                }
-                // INVARIANT B: role-derived read-only means an in-place PRIMARY-to-REPLICA
-                // demote is underway -- a TRANSIENT failover (the node can be promoted
-                // back / a sibling primary may exist), NOT a permanent auth failure. Do
-                // not reject the batch as an authorization error (which maps to
-                // SECURITY_ERROR and a store-and-forward client treats as a terminal
-                // HALT). Flag the connection for a reconnect-eligible close instead: the
-                // client reconnects, hits the 421 role reject on the now-replica
-                // endpoint, and retries from SF until a primary is reachable.
-                roleChangeClosePending = true;
-                reject(Status.NOT_ACCEPTING_WRITES, CairoException.READ_ONLY_ACCESS_MESSAGE, fd);
+            if (!isLiveWriteAllowed()) {
                 return;
             }
-
             // Verify the message version matches what was negotiated during the upgrade
             if (bufferPosition >= QwpConstants.HEADER_SIZE) {
                 byte messageVersion = Unsafe.getByte(bufferAddress + QwpConstants.HEADER_OFFSET_VERSION);
@@ -1307,7 +1604,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             }
 
             // Decode using streaming decoder with delta symbol dictionary support
-            QwpMessageCursor messageCursor = streamingDecoder.decode(
+            preparedMessageCursor = streamingDecoder.decode(
                     bufferAddress, bufferPosition, connectionSymbolDict);
 
             // A redefined client symbol dictionary (orphan-adoption replays a
@@ -1317,14 +1614,36 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             // sender's keys. Drop it so symbols re-resolve against the
             // refreshed dictionary; the watermark check alone cannot catch a
             // remap that adds no new table symbols.
-            if (messageCursor.isSymbolDictRedefined()) {
+            if (preparedMessageCursor.isSymbolDictRedefined()) {
                 symbolCache.clear();
             }
 
-            // Process each table block using streaming cursors
-            while (messageCursor.hasNextTable()) {
-                QwpTableBlockCursor tableBlock = messageCursor.nextTable();
+            preparedTableBlock = preparedMessageCursor.hasNextTable() ? preparedMessageCursor.nextTable() : null;
+            isPreparedSingleBlock = preparedTableBlock != null && !preparedMessageCursor.hasNextTable();
+            preparedRowCount = isPreparedSingleBlock ? preparedTableBlock.getRowCount() : 0;
+        } catch (Throwable e) {
+            rejectMessageError(e);
+        }
+    }
 
+    @TestOnly
+    public void processMessage() {
+        prepareMessage();
+        processPreparedMessage();
+    }
+
+    public void processPreparedMessage() {
+        if (!isOk() || preparedMessageCursor == null) {
+            return;
+        }
+        try {
+            // A boundary commit may separate preparation from engine access.
+            if (!isLiveWriteAllowed()) {
+                return;
+            }
+            QwpTableBlockCursor tableBlock = preparedTableBlock;
+            preparedTableBlock = null;
+            while (tableBlock != null) {
                 WalTableUpdateDetails tud = tudCache.getTableUpdateDetails(
                         securityContext,
                         tableBlock.getTableNameUtf8(),
@@ -1343,28 +1662,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                 // metadata-change retry resets row iteration.
                 final boolean blockHasRows = tableBlock.getRowCount() > 0;
                 walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
-                messageAppendedRows |= blockHasRows;
+                if (blockHasRows) {
+                    messageAppendedRows = true;
+                    frameRowTud = tud;
+                }
+                tableBlock = preparedMessageCursor.hasNextTable() ? preparedMessageCursor.nextTable() : null;
             }
-
-        } catch (QwpParseException e) {
-            if (e.getErrorCode() != QwpParseException.ErrorCode.DELTA_DICT_GAP) {
-                streamingDecoder.releaseCachedResources();
-            }
-            LOG.error().$('[').$(fd).$("] QWP v1 parse error: ").$(e.getFlyweightMessage()).$();
-            reject(statusForParseError(e.getErrorCode()), e.getFlyweightMessage(), fd);
-        } catch (CommitFailedException e) {
-            LOG.error().$('[').$(fd).$("] commit failed: ").$(e.getMessage()).$();
-            tudCache.setDistressed();
-            rejectCommitError(e.getReason());
-        } catch (CairoException e) {
-            LOG.error().$('[').$(fd).$("] cairo error: ").$(e.getFlyweightMessage()).$();
-            rejectCairoError(e);
         } catch (Throwable e) {
-            LOG.critical().$('[').$(fd).$("] unexpected error: ").$(e).$();
-            tudCache.setDistressed();
-            rejectMsg.clear();
-            rejectMsg.put("unexpected error: ").put(e.getMessage());
-            reject(Status.INTERNAL_ERROR, rejectMsg, fd);
+            rejectMessageError(e);
         }
     }
 
@@ -1419,6 +1724,14 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public void setDurableAckEnabled(boolean durableAckEnabled) {
         this.durableAckEnabled = durableAckEnabled;
+    }
+
+    public void setDurableAckTiers(int tiers) {
+        this.durableAckTiers = tiers;
+    }
+
+    public int getDurableAckTiers() {
+        return durableAckTiers;
     }
 
     public void setHandshakeFlushPending(boolean pending) {
@@ -1557,6 +1870,114 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return e.isCritical() ? Status.INTERNAL_ERROR : Status.NOT_ACCEPTING_WRITES;
     }
 
+    private static long readFrontier(DurableAckRegistry registry, boolean isReplicatedTier, CharSequence tableDirName) {
+        return isReplicatedTier
+                ? registry.getReplicatedDurableSeqTxn(tableDirName)
+                : registry.getLocalDurableSeqTxn(tableDirName);
+    }
+
+    /**
+     * The wire seqTxn of one incarnation that a registry frontier covers: its pending value when the
+     * frontier reaches it or the directory is gone, the frontier shifted into wire space while it is
+     * behind, -1 while nothing is covered. The comparison runs in the directory's own seqTxn space, so
+     * a sentinel frontier such as {@code Long.MAX_VALUE} never overflows the shift.
+     */
+    private static long toCoveredSeqTxn(long frontier, long seqTxnOffset, long pendingWireSeqTxn) {
+        if (frontier == DurableAckRegistry.TABLE_GONE || frontier >= pendingWireSeqTxn - seqTxnOffset) {
+            return pendingWireSeqTxn;
+        }
+        return frontier < 0 ? -1 : frontier + seqTxnOffset;
+    }
+
+    private TableIncarnation acquireIncarnation() {
+        final int n = incarnationPool.size();
+        return n > 0 ? incarnationPool.popLast() : new TableIncarnation();
+    }
+
+    // The intact checks that need no hash lookup, cheap enough for every joining frame.
+    // Admission leaves the cache-entry check to isCommitBatchIntact(): nothing evicts
+    // the entry while a batch is pending (see the commit batch fields).
+    private boolean isCommitBatchWriterIntact() {
+        return !tudCache.isDistressed()
+                && !commitBatchTud.isDropped()
+                && !commitBatchTud.isWriterInError()
+                && commitBatchTud.getWriter() == commitBatchWriter
+                && !commitBatchWriter.isDistressed()
+                && !commitBatchWriter.isInColumnarWrite()
+                && commitBatchWriter.getUncommittedRowCount() == commitBatchRows;
+    }
+
+    private boolean isLiveWriteAllowed() {
+        // Re-check the LIVE write-refusal state on every message. A QWP ingress connection
+        // caches its SecurityContext (and a per-table WAL writer) at handshake time, so a
+        // connection opened while this node was PRIMARY would otherwise keep writing after an
+        // in-place PRIMARY-to-REPLICA switch flips the node read-only -- the cached state
+        // bypasses per-write authorization entirely. Consulting engine.isReadOnlyMode() here
+        // closes that boundary race: the instant the node starts demoting (the dynamic
+        // read-only-replica flag flips FIRST in the switch cascade), the message is
+        // refused. HOW it is refused depends on WHY the node is read-only -- see
+        // isStaticReadOnlyInstance() for the contract.
+        if (engine.isReadOnlyMode()) {
+            if (isStaticReadOnlyInstance()) {
+                // Statically read-only (readonly=true in the server config): a permanent
+                // property of this process, not a role transition. The role-change close
+                // is WRONG here because its 421 backstop does not exist -- the upgrade
+                // gate rejects only ROLE_REPLICA / ROLE_PRIMARY_CATCHUP, and a statically
+                // read-only node keeps reporting its upgrade-eligible role (STANDALONE on
+                // OSS) forever. A store-and-forward client treats the resulting
+                // NORMAL_CLOSURE close as orderly (no NACK, no poison strike, no typed
+                // terminal) and would reconnect-replay in a silent infinite loop, its
+                // producer never learning of the misconfiguration. Answer with the typed
+                // SECURITY_ERROR NACK instead: the client latches it as terminal and
+                // surfaces it loudly.
+                reject(Status.SECURITY_ERROR, CairoException.READ_ONLY_ACCESS_MESSAGE, fd);
+                return false;
+            }
+            // INVARIANT B: role-derived read-only means an in-place PRIMARY-to-REPLICA
+            // demote is underway -- a TRANSIENT failover (the node can be promoted
+            // back / a sibling primary may exist), NOT a permanent auth failure. Do
+            // not reject the message as an authorization error (which maps to
+            // SECURITY_ERROR and a store-and-forward client treats as a terminal
+            // HALT). Flag the connection for a reconnect-eligible close instead: the
+            // client reconnects, hits the 421 role reject on the now-replica
+            // endpoint, and retries from SF until a primary is reachable.
+            roleChangeClosePending = true;
+            reject(Status.NOT_ACCEPTING_WRITES, CairoException.READ_ONLY_ACCESS_MESSAGE, fd);
+            return false;
+        }
+        return true;
+    }
+
+    private void clearPreparedMessage() {
+        preparedMessageCursor = null;
+        preparedTableBlock = null;
+        isPreparedSingleBlock = false;
+        preparedRowCount = 0;
+    }
+
+    private void rejectMessageError(Throwable th) {
+        if (th instanceof QwpParseException e) {
+            if (e.getErrorCode() != QwpParseException.ErrorCode.DELTA_DICT_GAP) {
+                streamingDecoder.releaseCachedResources();
+            }
+            LOG.error().$('[').$(fd).$("] QWP v1 parse error: ").$(e.getFlyweightMessage()).$();
+            reject(statusForParseError(e.getErrorCode()), e.getFlyweightMessage(), fd);
+        } else if (th instanceof CommitFailedException e) {
+            LOG.error().$('[').$(fd).$("] commit failed: ").$(e.getMessage()).$();
+            tudCache.setDistressed();
+            rejectCommitError(e.getReason());
+        } else if (th instanceof CairoException e) {
+            LOG.error().$('[').$(fd).$("] cairo error: ").$(e.getFlyweightMessage()).$();
+            rejectCairoError(e);
+        } else {
+            LOG.critical().$('[').$(fd).$("] unexpected error: ").$(th).$();
+            tudCache.setDistressed();
+            rejectMsg.clear();
+            rejectMsg.put("unexpected error: ").put(th.getMessage());
+            reject(Status.INTERNAL_ERROR, rejectMsg, fd);
+        }
+    }
+
     private void clearDeferredClose() {
         deferredCloseCode = -1;
         deferredCloseReason.clear();
@@ -1577,30 +1998,39 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         }
     }
 
+    /**
+     * Records a committed seqTxn for the OK ack and, when durable ack is enabled, for the durable ack.
+     * <p>
+     * Both frames name a table only by its name, and the client keeps one durable watermark per name for the
+     * connection's lifetime. A seqTxn belongs to one table directory, and a new directory under the same name
+     * (drop and auto-create, rename and create, REBASE WAL) restarts at a low seqTxn. Sent raw, it would sit at
+     * or below the client's watermark for the name: the client would trim the new table's frame on its OK,
+     * before it is durable, and a report of the new frontier would cover the old table's pending entries.
+     * <p>
+     * Durable-ack connections therefore see wire seqTxns: the table's own seqTxn plus an offset, chosen when
+     * the connection first commits to a new directory under the name, that puts the new values above every
+     * value reported for the name before. The first directory gets offset 0. An older directory still owed a
+     * durable ack moves to {@link #retiredIncarnations}, and {@link #resolveCoveredSeqTxn} reports it before
+     * the new one. The offsets live as long as the connection, like the client's watermarks.
+     */
     private void recordCommittedTable(String tableName, String tableDirName, long seqTxn) {
         if (seqTxn < 0) {
             return;
         }
-        pendingAckSeqTxns.put(tableName, seqTxn);
-        if (durableAckEnabled) {
-            String oldDirName = tableDirNames.get(tableName);
-            if (oldDirName != null && !oldDirName.equals(tableDirName)) {
-                // Table was dropped and re-created with a new dir name.
-                // Reset the durable watermark so the new incarnation's
-                // uploads are properly reported.
-                lastDurableSeqTxns.put(tableName, -1L);
-            }
-            tableDirNames.put(tableName, tableDirName);
-            pendingDurableDirNames.put(tableName, tableDirName);
-            pendingDurableSeqTxns.put(tableName, seqTxn);
+        if (!durableAckEnabled) {
+            pendingAckSeqTxns.put(tableName, seqTxn);
+            return;
         }
+        final long wireSeqTxn = toWireSeqTxn(tableName, tableDirName, seqTxn);
+        pendingAckSeqTxns.put(tableName, wireSeqTxn);
+        pendingDurableSeqTxns.put(tableName, wireSeqTxn);
     }
 
     /**
      * Whether this node is read-only STATICALLY -- {@code readonly=true}
      * ({@code READ_ONLY_INSTANCE}) in the server configuration -- as opposed to
      * DYNAMICALLY through the role an enterprise engine reports. The distinction
-     * decides the refusal shape for write batches on a read-only node:
+     * decides the refusal shape for writes on a read-only node:
      * <ul>
      * <li>Role-derived read-only ({@code engine.isReadOnlyMode()} true while this
      * flag is false; only reachable where an enterprise engine widens
@@ -1617,7 +2047,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      * read-only) the static answer wins: the node refuses writes regardless of
      * any future promote, so the terminal NACK is the truthful signal. (The
      * combination is unreachable mid-connection anyway -- a statically read-only
-     * node refuses the very first batch, before any role flip can land.)
+     * node refuses the very first message, before any role flip can land.)
      * <p>
      * The flag is immutable for the process lifetime (a {@code final} field of
      * the server configuration; the dynamic replica leg is a SEPARATE
@@ -1630,14 +2060,13 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
-     * Rejects a batch that failed with a {@link CairoException}, with Invariant B
-     * containment for the in-place demote race.
+     * Rejects a message or commit that failed with a {@link CairoException}, with
+     * Invariant B containment for the in-place demote race.
      * <p>
-     * The {@code engine.isReadOnlyMode()} gate at the top of
-     * {@link #processMessage()} re-checks the live role per batch, but the flag
-     * can flip BETWEEN that check and the WAL writer acquisition (or the commit)
-     * within the same batch. The deeper engine gates then refuse with
-     * {@code CairoException.readOnlyAccess()}, which
+     * The {@code engine.isReadOnlyMode()} gate in {@link #isLiveWriteAllowed()}
+     * re-checks the live role per message, but the flag can flip BETWEEN that
+     * check and the WAL writer acquisition or the commit. The deeper engine gates
+     * then refuse with {@code CairoException.readOnlyAccess()}, which
      * {@link #cairoExceptionStatus} would map to {@link Status#SECURITY_ERROR}
      * -- a status a store-and-forward client latches as a terminal HALT and
      * surfaces to its producer.
@@ -1691,6 +2120,92 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         reject(Status.INTERNAL_ERROR, rejectMsg, fd);
     }
 
+    private void releaseIncarnations() {
+        ObjList<CharSequence> tableNames = tableIncarnations.keys();
+        for (int i = 0, n = tableNames.size(); i < n; i++) {
+            incarnationPool.add(tableIncarnations.get(tableNames.getQuick(i)).clear());
+        }
+        tableIncarnations.clear();
+        for (int i = 0, n = retiredIncarnations.size(); i < n; i++) {
+            incarnationPool.add(retiredIncarnations.getQuick(i).clear());
+        }
+        retiredIncarnations.clear();
+    }
+
+    // Drops the retired incarnations of tableName that a sent durable ack of reportedSeqTxn covered.
+    private void releaseReportedIncarnations(CharSequence tableName, long reportedSeqTxn) {
+        for (int i = retiredIncarnations.size() - 1; i > -1; i--) {
+            final TableIncarnation retired = retiredIncarnations.getQuick(i);
+            if (retired.highestWireSeqTxn <= reportedSeqTxn && Chars.equals(retired.tableName, tableName)) {
+                retiredIncarnations.remove(i);
+                incarnationPool.add(retired.clear());
+            }
+        }
+    }
+
+    /**
+     * Returns the highest wire seqTxn of {@code tableName} that the tier's frontier lets this
+     * connection report, never more than {@code pendingSeqTxn}. The name's retired incarnations come
+     * first, oldest first: a report covers every lower value the client holds for the name, so nothing
+     * of a newer incarnation may be reported while an older one is still uncovered. The result reaches
+     * {@code pendingSeqTxn} exactly when all of the name's work is covered.
+     */
+    private long resolveCoveredSeqTxn(
+            DurableAckRegistry registry,
+            boolean isReplicatedTier,
+            CharSequence tableName,
+            TableIncarnation current,
+            long pendingSeqTxn
+    ) {
+        long coveredSeqTxn = -1;
+        for (int i = 0, n = retiredIncarnations.size(); i < n; i++) {
+            final TableIncarnation retired = retiredIncarnations.getQuick(i);
+            if (Chars.equals(retired.tableName, tableName)) {
+                final long retiredCoveredSeqTxn = toCoveredSeqTxn(
+                        readFrontier(registry, isReplicatedTier, retired.dirName),
+                        retired.seqTxnOffset,
+                        retired.highestWireSeqTxn
+                );
+                coveredSeqTxn = Math.max(coveredSeqTxn, retiredCoveredSeqTxn);
+                if (retiredCoveredSeqTxn < retired.highestWireSeqTxn) {
+                    return coveredSeqTxn;
+                }
+            }
+        }
+        return Math.max(
+                coveredSeqTxn,
+                toCoveredSeqTxn(readFrontier(registry, isReplicatedTier, current.dirName), current.seqTxnOffset, pendingSeqTxn)
+        );
+    }
+
+    // Maps a committed seqTxn of tableDirName to its wire seqTxn under tableName; see recordCommittedTable.
+    private long toWireSeqTxn(String tableName, String tableDirName, long seqTxn) {
+        final int index = tableIncarnations.keyIndex(tableName);
+        final TableIncarnation incarnation;
+        if (index > -1) {
+            incarnation = acquireIncarnation().of(null, tableDirName, 0);
+            tableIncarnations.putAt(index, tableName, incarnation);
+        } else {
+            incarnation = tableIncarnations.valueAtQuick(index);
+            if (!Chars.equals(incarnation.dirName, tableDirName)) {
+                // The name moved to another directory. If the old one is still owed a durable ack, keep
+                // tracking it until a sent ack covers it.
+                final int pendingIndex = pendingDurableSeqTxns.keyIndex(tableName);
+                if (pendingIndex < 0) {
+                    final TableIncarnation retired = acquireIncarnation()
+                            .of(tableName, incarnation.dirName, incarnation.seqTxnOffset);
+                    retired.highestWireSeqTxn = pendingDurableSeqTxns.valueAt(pendingIndex);
+                    retiredIncarnations.add(retired);
+                }
+                // Place the new directory's values above every value reported for the name so far.
+                incarnation.of(null, tableDirName, Math.max(0, incarnation.highestWireSeqTxn + 1 - seqTxn));
+            }
+        }
+        final long wireSeqTxn = seqTxn + incarnation.seqTxnOffset;
+        incarnation.highestWireSeqTxn = Math.max(incarnation.highestWireSeqTxn, wireSeqTxn);
+        return wireSeqTxn;
+    }
+
     public enum Status {
         OK,
         PARSE_ERROR,
@@ -1699,5 +2214,30 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         INTERNAL_ERROR,
         NOT_ACCEPTING_WRITES,
         DICTIONARY_GAP
+    }
+
+    /**
+     * One table directory written under a table name on this connection, and where its seqTxns sit on
+     * the wire. {@code highestWireSeqTxn} is the highest wire value recorded for it -- for a retired
+     * incarnation, the pending value it is still owed an ack for.
+     */
+    private static final class TableIncarnation {
+        String dirName;
+        long highestWireSeqTxn;
+        long seqTxnOffset;
+        // Set only on retired incarnations, which live outside the per-name map.
+        CharSequence tableName;
+
+        TableIncarnation clear() {
+            return of(null, null, 0);
+        }
+
+        TableIncarnation of(CharSequence tableName, String dirName, long seqTxnOffset) {
+            this.tableName = tableName;
+            this.dirName = dirName;
+            this.seqTxnOffset = seqTxnOffset;
+            this.highestWireSeqTxn = -1;
+            return this;
+        }
     }
 }
