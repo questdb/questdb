@@ -146,7 +146,21 @@ jobs:
           testset: "all"
           includeTests: "**/**Fuzz**"
           # Exclude cairo fuzz tests: run in windows-fuzz1
-          excludeTests: "**/cairo/fuzz/**"
+          # Exclude QWP fuzz tests: run in windows-fuzz3
+          excludeTests: "**/cairo/fuzz/**,**/cutlass/qwp/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-fuzz3:
+          # QWP fuzz tests, split from windows-fuzz2 in Oct 2026: under the
+          # adaptive commit mode windows-fuzz2 took 73-80 min against the
+          # 90-minute task cap (builds 278773, 278947), ~24 min of it QWP fuzz.
+          WEB_CONSOLE_PROFILE: ""
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.25"
+          testset: "all"
+          includeTests: "**/cutlass/qwp/**/*Fuzz*"
           javadoc_step: ""
           javadoc_profile: ""
         windows-cairo-1:
@@ -159,11 +173,12 @@ jobs:
           includeTests: "**/cairo/**"
           # Exclude O3 tests: run in windows-other-2
           # Exclude Fuzz tests: run in windows-fuzz1 (cairo/fuzz) and windows-fuzz2 (other fuzz)
-          # Exclude lv/mv/o3 subdirs: lv runs in windows-cairo-3, mv/o3 in
+          # Exclude lv/mv/o3 subdirs: lv runs in windows-cairo-4, mv/o3 in
           # windows-cairo-2. cairo/lv first moved off this group in Sep 2026:
           # cairo-1 had grown to 55 min against the 60-minute job cap (build
           # 267306 timed out ~90s from the end) while cairo-2 sat at 20 min.
-          excludeTests: "**/O3*Test**,**/**Fuzz**,**/cairo/lv/**,**/cairo/mv/**,**/cairo/o3/**"
+          # Exclude cairo/wal: run in windows-cairo-3
+          excludeTests: "**/O3*Test**,**/**Fuzz**,**/cairo/lv/**,**/cairo/mv/**,**/cairo/o3/**,**/cairo/wal/**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-cairo-2:
@@ -175,7 +190,7 @@ jobs:
           testset: "all"
           includeTests: "**/cairo/mv/**,**/cairo/o3/**"
           # Exclude Fuzz tests: run in windows-fuzz2.
-          # cairo/lv split off into windows-cairo-3 once the lv suite grew past
+          # cairo/lv split off into windows-cairo-4 once the lv suite grew past
           # ~25 min on the slow hosted Windows runner and lv+mv+o3 together
           # crossed the 60-minute job cap (build 280635 timed out in o3, with lv
           # alone ~25 min of the run).
@@ -183,6 +198,22 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
         windows-cairo-3:
+          # cairo/wal, split from windows-cairo-1 in Oct 2026: under the adaptive
+          # commit mode windows-cairo-1 took 85-90+ min against the 90-minute task
+          # cap (builds 278773, 278947), 30+ min of it cairo/wal.
+          WEB_CONSOLE_PROFILE: ""
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.25"
+          testset: "all"
+          includeTests: "**/cairo/wal/**"
+          # Exclude O3 tests: run in windows-other-2
+          # Exclude Fuzz tests: run in windows-fuzz2
+          excludeTests: "**/O3*Test**,**/**Fuzz**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-cairo-4:
           WEB_CONSOLE_PROFILE: ""
           imageName: "windows-latest"
           poolName: "Azure Pipelines"
@@ -219,11 +250,11 @@ jobs:
           jdk: "1.25"
           testset: "all"
           # Exclude griffin: run in windows-griffin-base and windows-griffin-sub
-          # Exclude cairo: run in windows-cairo-1, windows-cairo-2, windows-cairo-3, windows-fuzz1
+          # Exclude cairo: run in windows-cairo-1, windows-cairo-2, windows-cairo-3, windows-cairo-4, windows-fuzz1
           # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
           # Exclude pgwire: run in windows-pgwire
           # Exclude cutlass/http, cutlass/qwp, cutlass/text: run in windows-other-2
-          # Exclude Fuzz tests: run in windows-fuzz1 and windows-fuzz2
+          # Exclude Fuzz tests: run in windows-fuzz1, windows-fuzz2 and windows-fuzz3
           # Exclude O3 tests: run in windows-other-2
           excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/cutlass/http/**,**/cutlass/qwp/**,**/cutlass/text/**,**/**Fuzz**,**/O3*Test**"
           javadoc_step: ""
@@ -239,8 +270,8 @@ jobs:
           testset: "all"
           # Heavier cutlass groups (http, qwp, text) plus O3 tests; balances wall-clock with windows-other-1
           includeTests: "**/cutlass/http/**,**/cutlass/qwp/**,**/cutlass/text/**,**/O3*Test**"
-          # Exclude Fuzz tests: run in windows-fuzz2
-          # Exclude cairo/lv (runs in windows-cairo-3), cairo/o3 and cairo/mv
+          # Exclude Fuzz tests: run in windows-fuzz2 (QWP fuzz in windows-fuzz3)
+          # Exclude cairo/lv (runs in windows-cairo-4), cairo/o3 and cairo/mv
           # (run in windows-cairo-2). Only cairo/o3 holds O3*Test classes today;
           # the other two keep the invariant so a future O3*Test there cannot run
           # in both groups.
@@ -251,7 +282,11 @@ jobs:
     pool:
       vmImage: $(imageName)
       name: $(poolName)
-    timeoutInMinutes: 60
+    # 100, not 60: must stay above the 90-minute "Run tests" task ceiling passed to
+    # steps.yml below, with headroom for the checkout/cache/compile steps that run
+    # before it. A job ceiling at or below the task ceiling cancels the job before
+    # the task's own timeout can report which step overran.
+    timeoutInMinutes: 100
     variables:
       SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
       RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
@@ -264,3 +299,19 @@ jobs:
       TEST_REACTOR_ARGS: "-pl core -am"
     steps:
       - template: steps.yml
+        parameters:
+          # Each run puts one OS on ADAPTIVE and the other on NOSYNC, and the next
+          # run swaps them, so two consecutive runs give each OS both modes.
+          testCommitModeGroup: "macOS Windows"
+          testCommitModeMember: $(os)
+          # 90, not the 55 default: the adaptive commit mode, which Windows runs
+          # every other run, msyncs the sequencer log on every
+          # transaction, and the hosted Windows agents pay the most for that. In
+          # build 269349 windows-cairo-1, windows-cairo-2 and windows-fuzz2, all
+          # on adaptive, hit the old cap (49 / 23 / 32
+          # min on master) and every shard that did finish ran 1.5-1.8x its
+          # master time. The matrix job is shared with macOS, so the cap rises
+          # there too; it is a ceiling, not a target. When a Windows leg nears
+          # 75-80 minutes, split another shard rather than raise this cap
+          # (windows-cairo-3 and windows-fuzz3 came from that, Oct 2026).
+          testTimeoutInMinutes: 90
