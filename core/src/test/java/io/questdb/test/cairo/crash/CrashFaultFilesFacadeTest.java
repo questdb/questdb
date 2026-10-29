@@ -147,8 +147,8 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
                 Path old2 = new Path().of(root).concat("b").concat("y.d");
                 Path new2 = new Path().of(root).concat("a").concat("y.d")
         ) {
-            createEmptyFile(ff, old1);
-            createEmptyFile(ff, old2);
+            Assert.assertTrue(ff.touch(old1.$()));
+            Assert.assertTrue(ff.touch(old2.$()));
             Assert.assertEquals(Files.FILES_RENAME_OK, ff.hardLink(old1.$(), new1.$()));
             Assert.assertEquals(Files.FILES_RENAME_OK, ff.hardLink(old2.$(), new2.$()));
             final long fd1 = openAndWrite(ff, new1, (byte) 1);
@@ -228,11 +228,40 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
                 }
                 ff.powerLoss();
                 ff.crash(root);
-                assertFileBytes(old1, (byte) 2);
-                assertFileBytes(new1, (byte) 2);
-                assertFileBytes(old2, (byte) 3);
-                assertFileBytes(new2, (byte) 3);
+                assertFileBytes(kind.name(), old1, (byte) 2);
+                assertFileBytes(kind.name(), new1, (byte) 2);
+                assertFileBytes(kind.name(), old2, (byte) 3);
+                assertFileBytes(kind.name(), new2, (byte) 3);
             }
+        }
+    }
+
+    @Test
+    public void testCrashRestoresHardLinkSyncedThroughSource() throws Exception {
+        // Only the old names sync after the link, so the new names keep the copy they took at link time. The rollback
+        // restores the file from the old names' sync. WalWriter's symbol-map links work this way: the table writer
+        // syncs the files through the table's names, and the WAL only reads them.
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String root = newHardLinkRoot("hard-link-synced-through-source");
+        try (
+                Path old1 = new Path().of(root).concat("a").concat("x.d");
+                Path new1 = new Path().of(root).concat("b").concat("x.d");
+                Path old2 = new Path().of(root).concat("b").concat("y.d");
+                Path new2 = new Path().of(root).concat("a").concat("y.d")
+        ) {
+            writeAndSync(ff, old1, (byte) 1);
+            writeAndSync(ff, old2, (byte) 1);
+            Assert.assertEquals(Files.FILES_RENAME_OK, ff.hardLink(old1.$(), new1.$()));
+            Assert.assertEquals(Files.FILES_RENAME_OK, ff.hardLink(old2.$(), new2.$()));
+            ff.markDurableBaseline(root);
+            writeAndSync(ff, old1, (byte) 2);
+            writeAndSync(ff, old2, (byte) 3);
+            ff.powerLoss();
+            ff.crash(root);
+            assertFileBytes(old1, (byte) 2);
+            assertFileBytes(new1, (byte) 2);
+            assertFileBytes(old2, (byte) 3);
+            assertFileBytes(new2, (byte) 3);
         }
     }
 
@@ -245,7 +274,7 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
         final String dir = temp.newFolder("hard-link-new-name-removed").getAbsolutePath();
         ff.markDurableBaseline(dir);
         try (Path oldName = new Path().of(dir).concat("old.d"); Path newName = new Path().of(dir).concat("new.d")) {
-            createEmptyFile(ff, oldName);
+            Assert.assertTrue(ff.touch(oldName.$()));
             syncDirectory(ff, dir);
             Assert.assertEquals(Files.FILES_RENAME_OK, ff.hardLink(oldName.$(), newName.$()));
             final long fd = openAndWrite(ff, newName, (byte) 4);
@@ -266,7 +295,7 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
     @Test
     public void testCrashRestoresFileSyncedThroughUnsavedHardLink() throws Exception {
         // An fsync through a new name makes the file's bytes durable even though the new name itself is lost (its
-        // directory was never synced), so the old name shows what that fsync wrote.
+        // directory was never synced), so the old name shows what that fsync wrote, not the unsynced write after it.
         final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
         final String dir = temp.newFolder("hard-link-unsaved-new-name").getAbsolutePath();
         try (Path oldName = new Path().of(dir).concat("old.d"); Path newName = new Path().of(dir).concat("new.d")) {
@@ -274,6 +303,8 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
             ff.markDurableBaseline(dir);
             Assert.assertEquals(Files.FILES_RENAME_OK, ff.hardLink(oldName.$(), newName.$()));
             writeAndSync(ff, newName, (byte) 6);
+            final long fd = openAndWrite(ff, oldName, (byte) 7);
+            ff.close(fd);
             ff.powerLoss();
             ff.crash(dir);
             assertFileBytes(oldName, (byte) 6);
@@ -630,9 +661,14 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
     }
 
     private static void assertFileBytes(Path file, byte value) throws Exception {
+        assertFileBytes(null, file, value);
+    }
+
+    private static void assertFileBytes(String message, Path file, byte value) throws Exception {
         final byte[] expected = new byte[8];
         java.util.Arrays.fill(expected, value);
-        Assert.assertArrayEquals(expected, java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(file.toString())));
+        final byte[] actual = java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(file.toString()));
+        Assert.assertArrayEquals(message, expected, actual);
     }
 
     private void assertSyncfsNamespaceScope(boolean isWide) throws Exception {
@@ -680,12 +716,6 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
         }
     }
 
-    private static void createEmptyFile(CrashFaultFilesFacade ff, Path file) {
-        final long fd = ff.openRW(file.$(), CairoConfiguration.O_NONE);
-        Assert.assertTrue(fd > -1);
-        ff.close(fd);
-    }
-
     // Two directories, a and b. Each test links one pair of names from a to b and another from b to a, so in any order
     // the directory walk takes, crash() reaches one pair's old name last and the other pair's new name last.
     private String newHardLinkRoot(String folder) throws Exception {
@@ -706,6 +736,18 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
             Unsafe.free(buf, 8, MemoryTag.NATIVE_DEFAULT);
         }
         return fd;
+    }
+
+    private static void syncDirectory(CrashFaultFilesFacade ff, String dir) {
+        try (Path path = new Path().of(dir)) {
+            final long fd = ff.openRO(path.$());
+            Assert.assertTrue(fd > -1);
+            try {
+                ff.fsync(fd);
+            } finally {
+                ff.close(fd);
+            }
+        }
     }
 
     private static void syncThrough(CrashFaultFilesFacade ff, SyncKind kind, Path file, byte value) {
@@ -739,18 +781,6 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
             default -> {
                 ff.close(fd);
                 ff.markFileDurable(file.toString());
-            }
-        }
-    }
-
-    private static void syncDirectory(CrashFaultFilesFacade ff, String dir) {
-        try (Path path = new Path().of(dir)) {
-            final long fd = ff.openRO(path.$());
-            Assert.assertTrue(fd > -1);
-            try {
-                ff.fsync(fd);
-            } finally {
-                ff.close(fd);
             }
         }
     }
