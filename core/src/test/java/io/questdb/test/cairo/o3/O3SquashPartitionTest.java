@@ -275,10 +275,13 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMergeBelowColumnTopMidPartitionAsyncCommit() throws Exception {
+        assertMergeBelowColumnTopWithSync("async");
+    }
+
+    @Test
     public void testMergeBelowColumnTopMidPartitionSyncCommit() throws Exception {
-        // the copy job trims the column top scratch before it syncs the merged columns
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-        assertMergeBelowColumnTop(false, true);
+        assertMergeBelowColumnTopWithSync("sync");
     }
 
     @Test
@@ -2405,7 +2408,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     // mid partitions also check file sizes; the writer may resize the last partition's files
     private void assertMergeBelowColumnTop(boolean isLastPartition, boolean hasColumnData) throws Exception {
-        assertMemoryLeak(() -> {
+        assertMergeBelowColumnTop(isLastPartition, hasColumnData, ff);
+    }
+
+    private void assertMergeBelowColumnTop(boolean isLastPartition, boolean hasColumnData, FilesFacade ff) throws Exception {
+        engine.clear();
+        assertMemoryLeak(ff, () -> {
             executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
             execute("INSERT INTO x SELECT x::INT, '2020-02-03'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(1000)");
             execute("ALTER TABLE x ADD COLUMN l LONG");
@@ -2510,6 +2518,65 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                                     + (hasColumnData ? "1001\t1\tstring-value-1\tvarchar-value-1\t[1.0,-1.0]\n1100\t100\tstring-value-100\tvarchar-value-100\t[100.0,-100.0]\n" : "")
                     );
         });
+    }
+
+    private void assertMergeBelowColumnTopWithSync(String commitMode) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        final long mergedRows = 1_101;
+        final ObjList<String> files = new ObjList<>("l.d", "s.i", "v.i", "b.i", "a.i");
+        final long[] logicalSizes = {
+                mergedRows * Long.BYTES,
+                (mergedRows + 1) * Long.BYTES,
+                mergedRows * 2 * Long.BYTES,
+                (mergedRows + 1) * Long.BYTES,
+                mergedRows * 2 * Long.BYTES
+        };
+        final ConcurrentHashMap<Long, Integer> targetFds = new ConcurrentHashMap<>();
+        final Set<Integer> syncedColumns = ConcurrentHashMap.newKeySet();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean close(long fd) {
+                targetFds.remove(fd);
+                return super.close(fd);
+            }
+
+            @Override
+            public void fsync(long fd) {
+                final Integer column = targetFds.get(fd);
+                if (column != null) {
+                    final long size = length(fd);
+                    final long logicalSize = logicalSizes[column];
+                    Assert.assertTrue(files.getQuick(column) + " is shorter than its data at sync: " + size, size >= logicalSize);
+                    // Windows retries the trim after unmapping the destination; POSIX must trim before fsync.
+                    if (!Os.isWindows()) {
+                        Assert.assertTrue(files.getQuick(column) + " keeps column top scratch at sync: " + size, size <= Files.ceilPageSize(logicalSize));
+                    }
+                    syncedColumns.add(column);
+                }
+                super.fsync(fd);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                // Only the merge opens a new version of this partition; the source and next day do not match.
+                if (fd > -1 && Utf8s.containsAscii(name, Files.SEPARATOR + "2020-02-03.")) {
+                    final int fileLo = Utf8s.lastIndexOfAscii(name, Files.SEPARATOR) + 1;
+                    final int txnSuffix = Utf8s.indexOfAscii(name, fileLo, name.size(), '.', 2);
+                    for (int i = 0, n = files.size(); i < n; i++) {
+                        if (Utf8s.equalsAscii(files.getQuick(i), name, fileLo, txnSuffix < 0 ? name.size() : txnSuffix)) {
+                            targetFds.put(fd, i);
+                            break;
+                        }
+                    }
+                }
+                return fd;
+            }
+        };
+        assertMergeBelowColumnTop(false, true, ff);
+        for (int i = 0, n = files.size(); i < n; i++) {
+            Assert.assertTrue(files.getQuick(i) + " was not checked at sync time", syncedColumns.contains(i));
+        }
     }
 
     private void assertEpochPinnedSplitParentAppend(boolean dedup) throws Exception {
