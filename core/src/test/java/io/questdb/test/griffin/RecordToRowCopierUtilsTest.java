@@ -28,7 +28,6 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.IndexType;
@@ -60,11 +59,8 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
-import java.util.Arrays;
-import java.util.List;
 
 public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
 
@@ -1058,12 +1054,13 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
         });
     }
 
-    // Asserts that the copier is neither the single-method nor the looping fallback: the chunked generator names its
-    // chunk methods copy0, copy1, ..., and a split copier has at least two of them.
+    // Asserts that the copier is neither the single-method nor the looping fallback: a split copier has at least
+    // two chunk methods.
     private static void assertMultiChunkCopier(String context, RecordToRowCopier copier) {
-        Assert.assertFalse(context, copier instanceof LoopingRecordToRowCopier);
-        final List<String> methodNames = Arrays.stream(copier.getClass().getDeclaredMethods()).map(Method::getName).toList();
-        Assert.assertTrue(context + ": " + methodNames, methodNames.contains("copy0") && methodNames.contains("copy1"));
+        Assert.assertTrue(
+                context + ": " + copier.getClass().getName(),
+                RecordToRowCopierTestUtils.countChunkMethods(copier) >= 2
+        );
     }
 
     private static String chunkingPadColumns() {
@@ -1130,16 +1127,10 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                 TableReader src = getReader(srcTableName);
                 TableReader dst = getReader(dstTableName)
         ) {
-            final EntityColumnFilter columnFilter = new EntityColumnFilter();
-            columnFilter.of(dst.getMetadata().getColumnCount());
-            final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
-                    new BytecodeAssembler(),
-                    src.getMetadata(),
-                    dst.getMetadata(),
-                    columnFilter,
-                    configuration
+            assertMultiChunkCopier(
+                    srcTableName + " -> " + dstTableName,
+                    RecordToRowCopierTestUtils.generateInsertSelectCopier(src, dst, configuration)
             );
-            assertMultiChunkCopier(srcTableName + " -> " + dstTableName, copier);
         }
     }
 
