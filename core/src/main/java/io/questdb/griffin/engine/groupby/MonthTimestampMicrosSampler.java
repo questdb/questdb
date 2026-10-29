@@ -35,6 +35,11 @@ import static io.questdb.std.datetime.microtime.Micros.toMicros;
 public class MonthTimestampMicrosSampler implements TimestampSampler {
     // month index (12 * year + month - 1) of January 1970, the default grid anchor, as in Micros.floorMM()
     private static final long EPOCH_MONTH_INDEX = Micros.EPOCH_YEAR_0 * 12L;
+    // Bucket month of each month of the year, at indexes 1 to 12, when the stride divides 12. 12 * year is then a
+    // multiple of the stride, so the bucket month depends only on the month and anchorPhase.
+    private final int[] bucketMonths = new int[13];
+    // true when the stride divides 12, so round() can read bucket months from bucketMonths
+    private final boolean isYearAligned;
     private final int stepMonths;
     // Bucket starts fall on the months whose index (12 * year + month - 1) modulo stepMonths equals this value.
     private int anchorPhase;
@@ -45,7 +50,8 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
 
     public MonthTimestampMicrosSampler(int stepMonths) {
         this.stepMonths = stepMonths;
-        this.anchorPhase = Math.floorMod(EPOCH_MONTH_INDEX, stepMonths);
+        this.isYearAligned = 12 % stepMonths == 0;
+        setAnchorPhase(Math.floorMod(EPOCH_MONTH_INDEX, stepMonths));
     }
 
     @Override
@@ -89,9 +95,13 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
         final int y = Micros.getYear(shifted);
         final boolean isLeap = CommonUtils.isLeapYear(y);
         final int m = Micros.getMonthOfYear(shifted, y, isLeap);
-        // 12 * y + m - 1 - anchorPhase fits an int for any timestamp year; bucketMonth < 1 means that the bucket
-        // starts in an earlier year
-        final int bucketMonth = stepMonths == 1 ? m : m - Math.floorMod(12 * y + m - 1 - anchorPhase, stepMonths);
+        // Stride 1 uses the month itself, and other strides that divide 12 read the bucket month from the table,
+        // which skips the division. The remaining strides compute it from the month index, where
+        // 12 * y + m - 1 - anchorPhase fits an int for any timestamp year. bucketMonth < 1 means that the bucket
+        // starts in an earlier year.
+        final int bucketMonth = stepMonths == 1 ? m
+                : isYearAligned ? bucketMonths[m]
+                : m - Math.floorMod(12 * y + m - 1 - anchorPhase, stepMonths);
         if (bucketMonth > 0) {
             final long bucketStart = toMicros(y, isLeap, bucketMonth, startDay > 0 ? startDay : 1) + dayMod;
             // compare via subtraction, which stays correct when bucketStart overflows near Long.MAX_VALUE
@@ -103,7 +113,7 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
     @Override
     public void setOffset(long timestamp) {
         // the offset applies to the calendar grid, which starts on the first day of the month
-        this.anchorPhase = Math.floorMod(EPOCH_MONTH_INDEX, stepMonths);
+        setAnchorPhase(Math.floorMod(EPOCH_MONTH_INDEX, stepMonths));
         this.startDay = 0;
         this.dayMod = timestamp;
     }
@@ -113,7 +123,7 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
         final int y = Micros.getYear(timestamp);
         final boolean leap = CommonUtils.isLeapYear(y);
         final int m = Micros.getMonthOfYear(timestamp, y, leap);
-        this.anchorPhase = Math.floorMod(12L * y + m - 1, stepMonths);
+        setAnchorPhase(Math.floorMod(12L * y + m - 1, stepMonths));
         this.startDay = Micros.getDayOfMonth(timestamp, y, m, leap);
         long dayMod = timestamp % Micros.DAY_MICROS;
         if (dayMod < 0) {
@@ -175,5 +185,15 @@ public class MonthTimestampMicrosSampler implements TimestampSampler {
     private long roundFromEarlierYear(long value, long bucketMonthIndex) {
         final long bucketStart = bucketStart(bucketMonthIndex);
         return value - bucketStart < 0 ? bucketStart(bucketMonthIndex - stepMonths) : bucketStart;
+    }
+
+    // The only writer of anchorPhase. It rebuilds bucketMonths along with it, so the table never goes stale.
+    private void setAnchorPhase(int anchorPhase) {
+        this.anchorPhase = anchorPhase;
+        if (isYearAligned) {
+            for (int m = 1; m <= 12; m++) {
+                bucketMonths[m] = m - Math.floorMod(m - 1 - anchorPhase, stepMonths);
+            }
+        }
     }
 }

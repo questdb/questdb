@@ -377,7 +377,8 @@ public final class Micros {
         final int offsetYear = getYear(offset);
         final boolean isOffsetLeap = CommonUtils.isLeapYear(offsetYear);
         final int offsetMonth = getMonthOfYear(offset, offsetYear, isOffsetLeap);
-        // inlined getDayOfMonth(): the call measured slower in the TIMESTAMP_NS month floor benchmark
+        // inlined getDayOfMonth(), as in Nanos.floorMM(long, int, long), where the call measured slower in the
+        // TIMESTAMP_NS month floor benchmark
         final int offsetDay = (int) ((offset - yearMicros(offsetYear, isOffsetLeap)
                 - monthOfYearMicros(offsetMonth, isOffsetLeap)) / DAY_MICROS) + 1;
         final long offsetTime = getTimeMicros(offset);
@@ -578,7 +579,8 @@ public final class Micros {
         final int offsetYear = getYear(offset);
         final boolean isOffsetLeap = CommonUtils.isLeapYear(offsetYear);
         final int offsetMonth = getMonthOfYear(offset, offsetYear, isOffsetLeap);
-        // inlined getDayOfMonth(): the call measured slower in the TIMESTAMP_NS month floor benchmark
+        // inlined getDayOfMonth(), as in Nanos.floorMM(long, int, long), where the call measured slower in the
+        // TIMESTAMP_NS month floor benchmark
         final int offsetDay = (int) ((offset - yearMicros(offsetYear, isOffsetLeap)
                 - monthOfYearMicros(offsetMonth, isOffsetLeap)) / DAY_MICROS) + 1;
         final long offsetTime = getTimeMicros(offset);

@@ -37,6 +37,8 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -445,6 +447,54 @@ public class MonthTimestampSamplerTest {
     }
 
     @Test
+    public void testRoundMatchesJavaTimeOracle() throws Exception {
+        // round() must return the last bucket start at or before the value. java.time computes the expected bucket
+        // starts without the sampler: the anchor month plus a whole number of strides, on the anchor's day of month
+        // clamped to the month length, plus the anchor's time of day or the offset. One sampler per stride goes
+        // through all anchors and offsets in turn, and consecutive anchors fall in different months, so each
+        // setStart() and setOffset() call must replace the grid that the previous call set.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long dayUnits = timestampDriver.fromDays(1);
+        final long[] offsets = {
+                timestampDriver.fromMinutes(-60),
+                timestampDriver.fromMinutes(-(23 * 60 + 59)),
+                timestampDriver.fromMinutes(10 * 60),
+                timestampDriver.fromMinutes(47 * 60 + 58),
+                timestampDriver.fromMinutes(-(47 * 60 + 58)),
+                -1,
+        };
+        final int[] startDays = {1, 15, 28, 29, 30, 31};
+        final int[] strides = {1, 2, 3, 4, 5, 6, 7, 12, 24};
+        for (int stride : strides) {
+            final TimestampSampler sampler = timestampDriver.getTimestampSampler(stride, 'M', 0);
+            // an unconfigured sampler anchors its grid at January 1970
+            assertRoundMatchesJavaTimeOracle(sampler, stride, 12 * 1970, 1, 0);
+            int anchorCount = 0;
+            for (int startDay : startDays) {
+                for (int month = 1; month <= 12; month++) {
+                    // 12 * year modulo the stride differs between the two years for the strides that don't divide 12
+                    final int year = month % 2 == 0 ? 1965 : 2018;
+                    if (startDay > YearMonth.of(year, month).lengthOfMonth()) {
+                        continue;
+                    }
+                    final long timeOfDay = timestampDriver.fromMinutes(((month * 5 + startDay) % 24) * 60 + 17) + 3;
+                    sampler.setStart(LocalDate.of(year, month, startDay).toEpochDay() * dayUnits + timeOfDay);
+                    assertRoundMatchesJavaTimeOracle(sampler, stride, 12 * year + month - 1, startDay, timeOfDay);
+                    if (++anchorCount % 5 == 0) {
+                        // the offset grid starts on the first day of January 1970, shifted by the offset
+                        final long offset = offsets[(anchorCount / 5) % offsets.length];
+                        sampler.setOffset(offset);
+                        assertRoundMatchesJavaTimeOracle(sampler, stride, 12 * 1970, 1, offset);
+                    }
+                }
+            }
+            final long timeOfDay = timestampDriver.fromMinutes(8 * 60 + 30) + 1;
+            sampler.setStart(LocalDate.of(2024, 2, 29).toEpochDay() * dayUnits + timeOfDay);
+            assertRoundMatchesJavaTimeOracle(sampler, stride, 12 * 2024 + 1, 29, timeOfDay);
+        }
+    }
+
+    @Test
     public void testRoundNearEndOfTimestampRange() throws Exception {
         // The candidate bucket in the value's calendar month may start after the largest timestamp, overflowing a
         // long. round() must return the previous bucket.
@@ -719,8 +769,74 @@ public class MonthTimestampSamplerTest {
         }
     }
 
+    // Checks round() against JavaTimeMonthGrid for the values around the start of each month and around the grid's
+    // day and time in each month, which is a bucket start in the months of the grid, and for the middle of each
+    // month, in years before and after 1970.
+    private void assertRoundMatchesJavaTimeOracle(
+            TimestampSampler sampler,
+            int stride,
+            int anchorMonthIndex,
+            int startDay,
+            long timeOfDay
+    ) {
+        final long dayUnits = timestampType.getDriver().fromDays(1);
+        final JavaTimeMonthGrid grid = new JavaTimeMonthGrid(stride, anchorMonthIndex, startDay, timeOfDay, dayUnits);
+        final int[] monthIndexRanges = {12 * 1966, 12 * 1974, 12 * 2022, 12 * 2026};
+        for (int i = 0; i < monthIndexRanges.length; i += 2) {
+            for (long monthIndex = monthIndexRanges[i]; monthIndex < monthIndexRanges[i + 1]; monthIndex++) {
+                final long monthStart = grid.dayStart(monthIndex, 1);
+                final long gridInstant = grid.dayStart(monthIndex, startDay) + timeOfDay;
+                assertRoundMatchesJavaTimeOracle(sampler, grid, monthStart - 1);
+                assertRoundMatchesJavaTimeOracle(sampler, grid, monthStart);
+                assertRoundMatchesJavaTimeOracle(sampler, grid, monthStart + 14 * dayUnits + dayUnits / 2);
+                assertRoundMatchesJavaTimeOracle(sampler, grid, gridInstant - 1);
+                assertRoundMatchesJavaTimeOracle(sampler, grid, gridInstant);
+                assertRoundMatchesJavaTimeOracle(sampler, grid, gridInstant + 1);
+            }
+        }
+    }
+
+    private void assertRoundMatchesJavaTimeOracle(TimestampSampler sampler, JavaTimeMonthGrid grid, long value) {
+        final long expected = grid.floor(value);
+        final long actual = sampler.round(value);
+        if (actual != expected) {
+            Assert.fail("round(" + value + ") returned " + actual + " instead of " + expected + " on " + grid);
+        }
+    }
+
     private void assertRoundOfLargestTimestamps(TimestampSampler sampler, long expected) {
         Assert.assertEquals(expected, sampler.round(Long.MAX_VALUE));
         Assert.assertEquals(expected, sampler.round(Long.MAX_VALUE - 1));
+    }
+
+    // Bucket starts that java.time computes without the sampler: bucket k starts in the month with the index
+    // anchorMonthIndex + k * stride (12 * year + month - 1), on startDay or on the last day of a shorter month,
+    // timeOfDay after midnight. An offset grid starts on the first day of the month, and its timeOfDay is the
+    // offset, which can be negative or longer than a day.
+    private record JavaTimeMonthGrid(int stride, int anchorMonthIndex, int startDay, long timeOfDay, long dayUnits) {
+
+        long bucketStart(long k) {
+            return dayStart(anchorMonthIndex + k * stride, startDay) + timeOfDay;
+        }
+
+        // Returns the midnight of the day of month in the month with the given index, clamped to the month length.
+        long dayStart(long monthIndex, int dayOfMonth) {
+            final YearMonth yearMonth = YearMonth.of((int) Math.floorDiv(monthIndex, 12), (int) Math.floorMod(monthIndex, 12) + 1);
+            return yearMonth.atDay(Math.min(dayOfMonth, yearMonth.lengthOfMonth())).toEpochDay() * dayUnits;
+        }
+
+        // Returns the last bucket start at or before the value.
+        long floor(long value) {
+            final LocalDate date = LocalDate.ofEpochDay(Math.floorDiv(value, dayUnits));
+            final long monthIndex = 12L * date.getYear() + date.getMonthValue() - 1;
+            // start from the first bucket in a month after the value's month; offsets under two days move a bucket
+            // start at most to the end of the previous month, so the bucket after it starts after the value
+            long k = Math.floorDiv(monthIndex - anchorMonthIndex, stride) + 1;
+            while (bucketStart(k) > value) {
+                k--;
+            }
+            Assert.assertTrue(bucketStart(k + 1) > value);
+            return bucketStart(k);
+        }
     }
 }
