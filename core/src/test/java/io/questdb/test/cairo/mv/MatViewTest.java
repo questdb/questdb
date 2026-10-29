@@ -8005,7 +8005,7 @@ public class MatViewTest extends AbstractCairoTest {
 
     @Test
     public void testRefreshAcrossSplitParentAppendDedup() throws Exception {
-        // the O3 row is not a duplicate, its s differs
+        // Refresh across a base-table split with a nonduplicate dedup key: the O3 row's s differs.
         assertRefreshAcrossSplitParentAppend("CREATE TABLE base (s STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, s)", false);
     }
 
@@ -10642,8 +10642,7 @@ public class MatViewTest extends AbstractCairoTest {
                                 Assert.assertTrue(reader.getTxFile().isPartitionComposite(0));
                                 Assert.assertEquals(102, reader.getPartitionRowCountFromMetadata(0));
                             } else {
-                                // the pinned refresh reader forces the parent's last row and the new
-                                // row into a second split instead of an in-place append or a full copy
+                                // the parent's last row and the new row share the second split
                                 Assert.assertEquals(3, reader.getPartitionCount());
                                 Assert.assertEquals(79, reader.getPartitionRowCountFromMetadata(0));
                                 Assert.assertEquals(2, reader.getPartitionRowCountFromMetadata(1));

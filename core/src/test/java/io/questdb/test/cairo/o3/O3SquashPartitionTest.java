@@ -62,12 +62,12 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.Arrays;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
@@ -1435,15 +1435,20 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             );
             execute("INSERT INTO x (i, ts, l) VALUES (2_000_000, '2020-02-04', 1)");
 
-            final long[] columnFileSizes = new long[5];
-            for (int cycle = 0; cycle < columnFileSizes.length; cycle++) {
+            final long partitionTimestamp = timestampType.getDriver().parseFloorLiteral("2020-02-03");
+            for (int cycle = 0; cycle < 5; cycle++) {
                 // a late row just below the column top, close enough to the end that the partition resplits
                 execute("INSERT INTO x (i, ts) VALUES (" + (3_000_000 + cycle) + ", '2020-02-03'::TIMESTAMP + " + (990 - cycle) + " * 60_000_000L + 30_000_000L)");
-                columnFileSizes[cycle] = columnFileSize("x", "2020-02-03", "l");
+                try (TableReader reader = getReader("x")) {
+                    Assert.assertEquals(partitionTimestamp, reader.getPartitionTimestampByIndex(0));
+                    final long rowCount = reader.getPartitionRowCountFromMetadata(0);
+                    final int columnIndex = reader.getMetadata().getColumnIndex("l");
+                    final long columnTop = reader.getColumnVersionReader().getColumnTop(partitionTimestamp, reader.getMetadata().getWriterIndex(columnIndex));
+                    Assert.assertTrue("invalid column top: " + columnTop, columnTop >= 0 && columnTop <= rowCount);
+                    final long logicalSize = (rowCount - columnTop) * Long.BYTES;
+                    assertMergedColumnFileSize(reader, partitionTimestamp, reader.getTxFile().getPartitionNameTxn(0), "l", logicalSize);
+                }
             }
-            // allocation granularity differs between platforms, so the check bounds the growth instead of exact sizes
-            final long growth = columnFileSizes[columnFileSizes.length - 1] - columnFileSizes[0];
-            Assert.assertTrue("column file grows with every cycle: " + Arrays.toString(columnFileSizes), growth < columnFileSizes[0]);
 
             assertQuery("SELECT count() FROM x")
                     .noLeakCheck()
@@ -2323,10 +2328,24 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSquashOrphanSplitWithReaderAtLatestTxn() throws Exception {
+    public void testSquashOrphanSplitWithLatestReaderReleasedDuringSquash() throws Exception {
         // A split without a parent gets a fresh parent named with the in-flight txn. A reader at the latest
         // txn counted as pinning it, so the squash copied into a same-named directory and then purged it.
-        assertMemoryLeak(() -> {
+        AtomicReference<TableReader> latestReader = new AtomicReference<>();
+        AtomicBoolean hasReleasedReader = new AtomicBoolean();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (latestReader.get() != null && Utf8s.containsAscii(name, Files.SEPARATOR + "2020-02-04.")) {
+                    // The squash has selected its route, but has not processed the removal candidates yet.
+                    Misc.free(latestReader.getAndSet(null));
+                    hasReleasedReader.set(true);
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        engine.clear();
+        assertMemoryLeak(ff, () -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 * (1 << 10));
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
 
@@ -2335,8 +2354,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                             "SELECT" +
                             " x::INT i," +
                             " -x j," +
-                            " timestamp_sequence('2020-02-04T00', 60*1000000L)::" + timestampType.getTypeName() + " ts" +
-                            " FROM long_sequence(60*(23*2))" +
+                            " timestamp_sequence('2020-02-04T00', 60 * 1_000_000L)::" + timestampType.getTypeName() + " ts" +
+                            " FROM long_sequence(60 * (23 * 2))" +
                             ") TIMESTAMP (ts) PARTITION BY DAY",
                     sqlExecutionContext
             );
@@ -2345,8 +2364,8 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             // the first reader keeps the split apart from its parent
             try (TableReader ignore = getReader("x")) {
                 execute(
-                        "INSERT INTO x SELECT x::INT * 1000000 i, -x - 1000000L j," +
-                                " timestamp_sequence('2020-02-04T20:01', 1000000L) ts FROM long_sequence(200)",
+                        "INSERT INTO x SELECT x::INT * 1_000_000 i, -x - 1_000_000L j," +
+                                " timestamp_sequence('2020-02-04T20:01', 1_000_000L) ts FROM long_sequence(200)",
                         sqlExecutionContext
                 );
                 execute("ALTER TABLE x FORCE DROP PARTITION LIST '2020-02-04'", sqlExecutionContext);
@@ -2359,22 +2378,36 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                                         2020-02-04T20:01:00.000000Z\t439\t2020-02-04T200000-000001
                                         2020-02-05T00:00:00.000000Z\t1320\t2020-02-05
                                         """, timestampType.getTypeName()));
-
-                // the second reader holds the latest committed txn while the squash runs
-                try (TableReader ignore2 = getReader("x")) {
-                    execute("ALTER TABLE x SQUASH PARTITIONS", sqlExecutionContext);
-                }
-
-                assertQuery(partitionsSql)
-                        .noLeakCheck()
-                        .expectSize()
-                        .noRandomAccess()
-                        .returns("minTimestamp\tnumRows\tname\n" +
-                                replaceTimestampSuffix1("""
-                                        2020-02-04T20:01:00.000000Z\t439\t2020-02-04
-                                        2020-02-05T00:00:00.000000Z\t1320\t2020-02-05
-                                        """, timestampType.getTypeName()));
             }
+
+            // The orphan retains original rows 1202..1440 and the 200 inserted rows. Check their data
+            // without a timestamp filter: FORCE DROP left the table's min timestamp at the next day.
+            String dataSql = "SELECT timestamp_floor('d', ts) day, count(), sum(j) FROM x ORDER BY day";
+            String expectedData = replaceTimestampSuffix1("""
+                    day\tcount\tsum
+                    2020-02-04T00:00:00.000000Z\t439\t-200335819
+                    2020-02-05T00:00:00.000000Z\t1320\t-2772660
+                    """, timestampType.getTypeName());
+            assertQuery(dataSql).noLeakCheck().timestamp("day").expectSize().returns(expectedData);
+
+            latestReader.set(getReader("x"));
+            try {
+                execute("ALTER TABLE x SQUASH PARTITIONS", sqlExecutionContext);
+                Assert.assertTrue("the squash must release the latest reader before processing removal candidates", hasReleasedReader.get());
+            } finally {
+                Misc.free(latestReader.getAndSet(null));
+            }
+
+            assertQuery(partitionsSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("minTimestamp\tnumRows\tname\n" +
+                            replaceTimestampSuffix1("""
+                                    2020-02-04T20:01:00.000000Z\t439\t2020-02-04
+                                    2020-02-05T00:00:00.000000Z\t1320\t2020-02-05
+                                    """, timestampType.getTypeName()));
+            assertQuery(dataSql).noLeakCheck().timestamp("day").expectSize().returns(expectedData);
 
             // 439 squashed rows and 1320 in the next day; an interval scan would miss the squashed partition
             // because the force drop left the table's min timestamp at the next day
@@ -2579,7 +2612,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         }
     }
 
-    private void assertEpochPinnedSplitParentAppend(boolean dedup) throws Exception {
+    private void assertEpochPinnedSplitParentAppend(boolean isDedup) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
@@ -2588,7 +2621,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "CREATE TABLE x (i INT, s STRING, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL"
-                            + (dedup ? " DEDUP UPSERT KEYS(ts, i)" : ""),
+                            + (isDedup ? " DEDUP UPSERT KEYS(ts, i)" : ""),
                     timestampType.getTypeName()
             );
             execute("INSERT INTO x SELECT x::INT, 'str-' || x, '2020-02-03T10' FROM long_sequence(100)");
@@ -2961,18 +2994,18 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
         });
     }
 
-    private void assertPinnedSplitParentAppendAtMaxTimestamp(boolean canResplit) throws Exception {
+    private void assertPinnedSplitParentAppendAtMaxTimestamp(boolean isResplitAllowed) throws Exception {
         assertMemoryLeak(() -> {
             node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
             // rows at 16:00, 17:00 and 18:00; the re-split needs the rows before the parent's max
             // timestamp to outnumber the rows at it by more than 2x
-            final int at16 = canResplit ? 20 : 2;
-            final int at17 = canResplit ? 2 : 20;
+            final int at16 = isResplitAllowed ? 20 : 2;
+            final int at17 = isResplitAllowed ? 2 : 20;
             final int at18 = 2;
-            executeWithRewriteTimestamp("create table x (i int, str string, ts #TIMESTAMP) timestamp(ts) partition by DAY", timestampType.getTypeName());
-            execute("insert into x select cast(x as int), 'str-' || x, '2020-02-03T16' from long_sequence(" + at16 + ")");
-            execute("insert into x select cast(" + at16 + " + x as int), 'str-' || (" + at16 + " + x), '2020-02-03T17' from long_sequence(" + at17 + ")");
-            execute("insert into x select cast(" + (at16 + at17) + " + x as int), 'str-' || (" + (at16 + at17) + " + x), '2020-02-03T18' from long_sequence(" + at18 + ")");
+            executeWithRewriteTimestamp("CREATE TABLE x (i INT, str STRING, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("INSERT INTO x SELECT x::INT, 'str-' || x, '2020-02-03T16' FROM long_sequence(" + at16 + ")");
+            execute("INSERT INTO x SELECT (" + at16 + " + x)::INT, 'str-' || (" + at16 + " + x), '2020-02-03T17' FROM long_sequence(" + at17 + ")");
+            execute("INSERT INTO x SELECT (" + (at16 + at17) + " + x)::INT, 'str-' || (" + (at16 + at17) + " + x), '2020-02-03T18' FROM long_sequence(" + at18 + ")");
 
             final StringBuilder expected = new StringBuilder("i\tstr\tts\n");
             for (int i = at16 + 1; i <= at16 + at17 + at18; i++) {
@@ -2982,7 +3015,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
             final long parentNameTxn;
             try (
-                    RecordCursorFactory cursorFactory = select("select * from x where ts between '2020-02-03T17' and '2020-02-03T18'");
+                    RecordCursorFactory cursorFactory = select("SELECT * FROM x WHERE ts BETWEEN '2020-02-03T17' AND '2020-02-03T18'");
                     RecordCursor cursor = cursorFactory.getCursor(sqlExecutionContext)
             ) {
                 sink.clear();
@@ -2990,7 +3023,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 TestUtils.assertEquals(expectedStr, sink);
 
                 // split at 17:30: the parent keeps the rows up to 17:00
-                execute("insert into x values (1000000, 'split', '2020-02-03T17:30')");
+                execute("INSERT INTO x VALUES (1_000_000, 'split', '2020-02-03T17:30')");
                 try (TableReader reader = getReader("x")) {
                     Assert.assertEquals(2, reader.getPartitionCount());
                     Assert.assertEquals(at16 + at17, reader.getPartitionRowCountFromMetadata(0));
@@ -2999,9 +3032,9 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
                 // O3 row at exactly the parent's max timestamp; appending it in place would
                 // overwrite the row at 18:00 the pinned reader still reads from the parent
-                execute("insert into x values (1000001, 'X', '2020-02-03T17')");
+                execute("INSERT INTO x VALUES (1_000_001, 'X', '2020-02-03T17')");
                 try (TableReader reader = getReader("x")) {
-                    if (canResplit) {
+                    if (isResplitAllowed) {
                         Assert.assertEquals(3, reader.getPartitionCount());
                         Assert.assertEquals(at16, reader.getPartitionRowCountFromMetadata(0));
                         Assert.assertEquals(at17 + 1, reader.getPartitionRowCountFromMetadata(1));
@@ -3029,7 +3062,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 parentRowCount = reader.getPartitionRowCountFromMetadata(0);
                 parentNameTxn2 = reader.getTxFile().getPartitionNameTxn(0);
             }
-            execute("insert into x values (1000002, 'Y', '2020-02-03T" + (canResplit ? "16" : "17") + "')");
+            execute("INSERT INTO x VALUES (1_000_002, 'Y', '2020-02-03T" + (isResplitAllowed ? "16" : "17") + "')");
             try (TableReader reader = getReader("x")) {
                 Assert.assertEquals(partitionCount, reader.getPartitionCount());
                 Assert.assertEquals(parentRowCount + 1, reader.getPartitionRowCountFromMetadata(0));
@@ -3042,13 +3075,13 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 expectedAt17.append(i).append("\tstr-").append(i).append('\n');
             }
             expectedAt17.append("1000001\tX\n");
-            if (!canResplit) {
+            if (!isResplitAllowed) {
                 expectedAt17.append("1000002\tY\n");
             }
-            assertQuery("select i, str from x where ts = '2020-02-03T17'")
+            assertQuery("SELECT i, str FROM x WHERE ts = '2020-02-03T17'")
                     .noLeakCheck()
                     .returns(expectedAt17.toString());
-            assertQuery("select count() from x")
+            assertQuery("SELECT count() FROM x")
                     .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
