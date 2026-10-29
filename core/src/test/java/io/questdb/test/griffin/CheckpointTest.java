@@ -36,14 +36,19 @@ import io.questdb.ServerConfiguration;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CheckpointListener;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.DeltaCheckpoint;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SymbolCountProvider;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -52,6 +57,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewDefinition;
@@ -64,10 +70,15 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
+import io.questdb.cairo.wal.seq.TableTransactionLogFile;
+import io.questdb.cairo.wal.seq.TableTransactionLogV1;
+import io.questdb.cairo.wal.seq.TableTransactionLogV2;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.line.tcp.LineTcpReceiverConfiguration;
@@ -88,6 +99,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
+import io.questdb.std.LongObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
@@ -118,8 +130,11 @@ import java.lang.reflect.Field;
 import java.nio.file.FileVisitResult;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
@@ -1143,6 +1158,153 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreCompletesWhereSyncIsUnavailable() throws Exception {
+        // Windows has no sync(2), and its Files.sync() always returns -1. This suite does not run on Windows,
+        // so the facade plays that platform. Restore must complete and consume the trigger: treating the
+        // missing primitive as a failed flush halts the server, and the trigger it keeps repeats that on
+        // every start.
+        assertMemoryLeak(() -> {
+            createTableWithRowsAfterCheckpoint("t");
+
+            engine.clear();
+            createTriggerFile();
+            testFilesFacade.isWindowsSyncSimulated = true;
+            try {
+                engine.checkpointRecover();
+            } finally {
+                testFilesFacade.isWindowsSyncSimulated = false;
+                // A regression poisons the shared engine; keep the failure in this test.
+                engine.resetDurabilityFailure();
+            }
+
+            Assert.assertFalse("restore must consume the trigger", testFilesFacade.exists(triggerFilePath.$()));
+            Assert.assertFalse("restore must remove the checkpoint", testFilesFacade.exists(path.trimTo(rootLen).$()));
+            assertQuery("select count() from t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreFailsAndKeepsTriggerOnSyncfsError() throws Exception {
+        // A restore whose flush fails has not reached the device. Recovery must fail loudly and keep the
+        // trigger and the checkpoint, so that the next start restores again instead of trusting the files.
+        assertMemoryLeak(() -> {
+            createTableWithRowsAfterCheckpoint("t");
+
+            engine.clear();
+            createTriggerFile();
+            testFilesFacade.isSyncfsForced = true;
+            try {
+                testFilesFacade.errorOnSyncfs = true;
+                try {
+                    engine.checkpointRecover();
+                    Assert.fail("a failed flush of the restored files must fail recovery");
+                } catch (CairoException | CairoError e) {
+                    Assert.assertTrue(CairoException.isDataSyncFailure(e));
+                    TestUtils.assertContains(e.getMessage(), "could not syncfs");
+                    // The engine stops only in a mode that promises durability; elsewhere the restore fails alone.
+                    final boolean durable = CommitMode.isPowerLossDurable(engine.getConfiguration().getCommitMode());
+                    Assert.assertEquals(durable, e instanceof CairoError);
+                    Assert.assertEquals(durable, engine.isDurabilityFailed());
+                } finally {
+                    testFilesFacade.errorOnSyncfs = false;
+                    engine.resetDurabilityFailure();
+                }
+                Assert.assertTrue("the trigger must survive a failed flush", testFilesFacade.exists(triggerFilePath.$()));
+                Assert.assertTrue("the checkpoint must survive a failed flush", testFilesFacade.exists(path.trimTo(rootLen).$()));
+
+                // The next start repeats the restore and completes it.
+                engine.clear();
+                engine.checkpointRecover();
+            } finally {
+                testFilesFacade.isSyncfsForced = false;
+            }
+
+            Assert.assertFalse(testFilesFacade.exists(triggerFilePath.$()));
+            assertQuery("select count() from t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n3\n");
+            engine.checkpointRelease();
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreFlushesEachVolumeOnce() throws Exception {
+        assertCheckpointRestoreFlushesEachVolumeOnce(false);
+    }
+
+    @Test
+    public void testCheckpointRestoreFlushesEachVolumeOnceWhenEntryTypesAreUnknown() throws Exception {
+        // A file system that reports no entry types (XFS without ftype, some FUSE and network file systems) lists
+        // the soft link of a table IN VOLUME as unknown: the flush has to ask, or it flushes no volume.
+        assertCheckpointRestoreFlushesEachVolumeOnce(true);
+    }
+
+    // A table created IN VOLUME lives on another filesystem behind a soft link, so flushing the database root's
+    // filesystem does not cover it. Two tables share one volume, and so one flush.
+    private void assertCheckpointRestoreFlushesEachVolumeOnce(boolean isEntryTypeUnknown) throws Exception {
+        assertMemoryLeak(() -> {
+            final File volume = temp.newFolder(isEntryTypeUnknown ? "checkpoint_volume_unknown_types" : "checkpoint_volume");
+            final String volumeAlias = "checkpoint_vol";
+            try (Path p = new Path()) {
+                configuration.getVolumeDefinitions().of(volumeAlias + "->" + volume.getAbsolutePath(), p, root);
+            }
+            try {
+                for (String tableName : new String[]{"v1", "v2"}) {
+                    execute("create table " + tableName + " (x long, ts timestamp) timestamp(ts) partition by day bypass wal in volume '" + volumeAlias + "'");
+                    execute("insert into " + tableName + " select x, x::timestamp from long_sequence(3)");
+                }
+                execute("checkpoint create");
+                execute("insert into v1 select x + 3, (x + 3)::timestamp from long_sequence(2)");
+
+                engine.clear();
+                createTriggerFile();
+                testFilesFacade.isSyncfsForced = true;
+                testFilesFacade.isEntryTypeUnknown = isEntryTypeUnknown;
+                testFilesFacade.unknownTypes = 0;
+                try {
+                    engine.checkpointRecover();
+                } finally {
+                    testFilesFacade.isSyncfsForced = false;
+                    testFilesFacade.isEntryTypeUnknown = false;
+                }
+                if (isEntryTypeUnknown) {
+                    Assert.assertTrue("the volume flush must list entries of unknown type", testFilesFacade.unknownTypes > 0);
+                }
+
+                final String volumePath = volume.getCanonicalPath();
+                final String dbRootPath = new File(configuration.getDbRoot().toString()).getCanonicalPath();
+                int volumeFlushes = 0;
+                int dbRootFlushes = 0;
+                for (int i = 0, n = testFilesFacade.syncfsDirs.size(); i < n; i++) {
+                    final String dir = new File(testFilesFacade.syncfsDirs.getQuick(i)).getCanonicalPath();
+                    if (dir.equals(volumePath)) {
+                        volumeFlushes++;
+                    } else if (dir.equals(dbRootPath)) {
+                        dbRootFlushes++;
+                    }
+                }
+                Assert.assertEquals("flushed dirs: " + testFilesFacade.syncfsDirs, 1, volumeFlushes);
+                Assert.assertEquals("flushed dirs: " + testFilesFacade.syncfsDirs, 1, dbRootFlushes);
+                assertQuery("select count() from v1")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n3\n");
+                engine.checkpointRelease();
+            } finally {
+                configuration.getVolumeDefinitions().clear();
+            }
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreFailsOnMissingParquetFile() throws Exception {
         // When both _pm and data.parquet are missing, rebuildTableFiles()
         // should throw CairoException from generateMissingParquetMetaFiles().
@@ -2048,6 +2210,177 @@ public class CheckpointTest extends AbstractCairoTest {
                 execute("checkpoint release");
             }
         });
+    }
+
+    @Test
+    public void testCheckpointRecoverClearsStaleAdaptiveEpochAnchor() throws Exception {
+        // Pinned rather than skipped, so it runs under every sweep: only a writer on an adaptive instance enrols
+        // the restored table.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // A checkpoint restore over an existing table rewrites _txn and _cv but does not capture the save point. A
+        // save point left in place would let recovery rewind the restored files to a cut of another lineage, so
+        // checkpoint recover removes it. The restored table then has no save point, so it is not enrolled: the
+        // restore syncs its files, and its next writer enrols it.
+        assertMemoryLeak(() -> {
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
+            drainWalQueue();
+
+            execute("checkpoint create");
+
+            final TableToken token = engine.getTableTokenIfExists("test");
+            Assert.assertNotNull(token);
+
+            // Fabricate a stale save point at the table root (a table that had run in adaptive commit mode). The
+            // checkpoint does not carry it, so a restore-over-existing leaves it.
+            fabricateStaleEpochTrio(token);
+            Assert.assertTrue("precondition: fabricated epoch trio must exist", staleSavePointExists(token));
+
+            engine.clear();
+            engine.closeNameRegistry();
+            createTriggerFile();
+            try {
+                engine.checkpointRecover();
+            } finally {
+                execute("checkpoint release");
+            }
+
+            Assert.assertFalse("checkpoint recover must remove the stale save point", staleSavePointExists(token));
+            try (Path tablePath = new Path()) {
+                tablePath.of(configuration.getDbRoot()).concat(token);
+                Assert.assertFalse(
+                        "the restored table has no save point until its next writer",
+                        DurableEpochManifest.exists(ff, tablePath, tablePath.size())
+                );
+                assertQuery("select * from test")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tname\tval
+                                2023-09-20T12:00:00.000000Z\ta\t10
+                                """);
+
+                execute("insert into test values ('2023-09-21T12:00:00.000000Z', 'b', 20);");
+                drainWalQueue();
+                Assert.assertTrue(
+                        "the next writer enrols the restored table with a valid save point",
+                        DurableEpochManifest.loadCandidates(ff, tablePath, tablePath.size(), token.getTableId()).length > 0
+                );
+                assertQuery("select * from test")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tname\tval
+                                2023-09-20T12:00:00.000000Z\ta\t10
+                                2023-09-21T12:00:00.000000Z\tb\t20
+                                """);
+            }
+        });
+    }
+
+    // Restore resets a saved lag, and the apply job re-applies the lag's transactions from the copied WAL.
+    private void assertCheckpointRestoreReappliesSavedLag(boolean negativeLagChecksum) throws Exception {
+        // A merge-append table keeps no WAL lag, and the suite turns merge-append on.
+        setProperty(CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        execute("create table t (x long, ts timestamp) timestamp(ts) partition by DAY WAL");
+        drainWalQueue();
+        final TableToken token = engine.verifyTableName("t");
+        if (negativeLagChecksum) {
+            // A table with many commits: every txn from 73,046 to 145,130 has a negative empty-lag checksum.
+            engine.releaseInactive();
+            try (TxWriter txWriter = new TxWriter(configuration.getFilesFacade(), configuration)) {
+                txWriter.ofRW(Path.getThreadLocal(configuration.getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME).$());
+                final ObjList<SymbolCountProvider> symbolCounts = new ObjList<>();
+                while (txWriter.getTxn() < 73_100) {
+                    txWriter.commit(symbolCounts);
+                }
+            }
+        }
+        execute("insert into t values (1, '2022-02-24T00:00:00.000000Z')");
+        execute("insert into t values (2, '2022-02-24T01:00:00.000000Z')");
+        execute("insert into t values (3, '2022-02-24T02:00:00.000000Z')");
+        execute("insert into t values (4, '2022-02-24T03:00:00.000000Z')");
+        // Out of order: the transaction before it stays in the lag.
+        execute("insert into t values (5, '2022-02-24T02:30:00.000000Z')");
+
+        // One transaction per pass, until a pass ends with a lag saved in _txn, as the apply job leaves it when
+        // its time quota runs out.
+        setProperty(CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        try (ApplyWal2TableJob applyJob = createWalApplyJob()) {
+            for (int i = 0; i < 20 && readSavedLagTxnCount(token, negativeLagChecksum) == 0; i++) {
+                engine.getTableSequencerAPI().getTxnTracker(token).getMemPressureControl().setMaxBlockRowCount(1);
+                applyJob.run();
+            }
+        }
+        engine.releaseInactive();
+        Assert.assertTrue("the checkpoint must hold a saved lag", readSavedLagTxnCount(token, negativeLagChecksum) > 0);
+
+        execute("checkpoint create");
+        engine.clear();
+        createTriggerFile();
+        engine.checkpointRecover();
+
+        setProperty(CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, -1);
+        drainWalQueueBounded();
+        assertQuery("t")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        x\tts
+                        1\t2022-02-24T00:00:00.000000Z
+                        2\t2022-02-24T01:00:00.000000Z
+                        3\t2022-02-24T02:00:00.000000Z
+                        5\t2022-02-24T02:30:00.000000Z
+                        4\t2022-02-24T03:00:00.000000Z
+                        """);
+        assertQuery("select suspended, writerTxn = sequencerTxn caught_up from wal_tables() where name = 't'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("suspended\tcaught_up\nfalse\ttrue\n");
+        engine.checkpointRelease();
+    }
+
+    private void fabricateStaleEpochTrio(TableToken token) {
+        try (Path src = new Path(); Path dst = new Path()) {
+            final String dbRoot = configuration.getDbRoot();
+            final int s = src.of(dbRoot).concat(token).size();
+            final int d = dst.of(dbRoot).concat(token).size();
+            // A generation-one save point file; its content is irrelevant to the clear.
+            Assert.assertTrue(ff.copy(
+                    src.trimTo(s).concat(TableUtils.TXN_FILE_NAME).$(),
+                    dst.trimTo(d).concat(DurableEpochManifest.FILE_NAME).put(".1").$()) >= 0);
+        }
+    }
+
+
+    private int readSavedLagTxnCount(TableToken token, boolean negativeLagChecksum) {
+        try (TxReader txReader = new TxReader(configuration.getFilesFacade())) {
+            txReader.ofRO(Path.getThreadLocal(configuration.getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+            Assert.assertTrue(txReader.unsafeLoadAll());
+            final int emptyLagChecksum = TableUtils.calculateTxnLagChecksum(txReader.getTxn(), 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
+            Assert.assertEquals("txn=" + txReader.getTxn(), negativeLagChecksum, emptyLagChecksum < 0);
+            return txReader.getLagTxnCount();
+        }
+    }
+
+    // The fresh baseline that checkpoint recovery publishes is generation zero; generation one is the stale one.
+    private boolean staleSavePointExists(TableToken token) {
+        try (Path p = new Path()) {
+            return ff.exists(p.of(configuration.getDbRoot()).concat(token).concat(DurableEpochManifest.FILE_NAME).put(".1").$());
+        }
+    }
+
+    @Test
+    public void testCheckpointRestoreReappliesSavedLag() throws Exception {
+        assertMemoryLeak(() -> assertCheckpointRestoreReappliesSavedLag(false));
+    }
+
+    @Test
+    public void testCheckpointRestoreReappliesSavedLagNegativeLagChecksum() throws Exception {
+        assertMemoryLeak(() -> assertCheckpointRestoreReappliesSavedLag(true));
     }
 
     @Test
@@ -3788,6 +4121,181 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRollsBackV1TxnLog() throws Exception {
+        // Recovery rolls the V1 txnlog's tail back to the checkpoint and leaves the dropped record past the
+        // tail. The txn number it held must go to the next commit, with the next commit's content.
+        final String snapshotId = "id1";
+        final String restartedId = "id2";
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
+            execute("CREATE TABLE test (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO test VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            execute("INSERT INTO test VALUES ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            execute("CHECKPOINT CREATE");
+            execute("INSERT INTO test VALUES ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("test");
+            Assert.assertEquals(WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1, readSeqFileInt(tableToken, WalUtils.TXNLOG_FILE_NAME, 0));
+
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, restartedId);
+            engine.checkpointRecover();
+            Assert.assertEquals(2, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogFile.MAX_TXN_OFFSET_64));
+
+            drainWalQueue();
+            assertQuery("SELECT count() FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+            engine.checkpointRelease();
+
+            execute("INSERT INTO test VALUES ('2024-01-04T00:00:00.000000Z', 4)");
+            drainWalQueue();
+            Assert.assertEquals(3, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogFile.MAX_TXN_OFFSET_64));
+            assertQuery("SELECT val FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("val\n1\n2\n4\n");
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreLeavesNoRolledBackRecordUnderTheNextAppend() throws Exception {
+        // The restore lowers the V1 tail and leaves the rolled-back record past it. The next append writes over
+        // it; a power loss that persists the header but not that record's sector must show zeros there.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 0);
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id1");
+            execute("CREATE TABLE test (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            for (int i = 0; i < 20; i++) {
+                execute("INSERT INTO test VALUES (" + i + ", " + i + ")");
+            }
+            drainWalQueue();
+            execute("CHECKPOINT CREATE");
+            execute("INSERT INTO test VALUES (100, 100)");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("test");
+            final java.nio.file.Path txnLog = java.nio.file.Paths.get(configuration.getDbRoot(), tableToken.getDirName(), WalUtils.SEQ_DIR, WalUtils.TXNLOG_FILE_NAME);
+
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id2");
+            engine.checkpointRecover();
+            final long keptTxn = readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogFile.MAX_TXN_OFFSET_64);
+            final int recordSize = (int) TableTransactionLogV1.RECORD_SIZE;
+            final int offset = (int) (TableTransactionLogFile.HEADER_SIZE + keptTxn * recordSize);
+            Assert.assertTrue("the record must not share the header's sector", offset >= 512);
+            final byte[] rolledBack = Arrays.copyOfRange(java.nio.file.Files.readAllBytes(txnLog), offset, offset + recordSize);
+            Assert.assertFalse("precondition: the restore leaves the rolled-back record", Arrays.equals(rolledBack, new byte[recordSize]));
+
+            // The record's bytes as of the last flush of the log, which is what a power loss leaves. NOSYNC
+            // flushes the log only with fdatasync here.
+            final byte[][] onDisk = {rolledBack};
+            final FilesFacade ffBefore = AbstractCairoTest.ff;
+            AbstractCairoTest.ff = new TestFilesFacadeImpl() {
+                private final Set<Long> fds = new HashSet<>();
+
+                @Override
+                public boolean close(long fd) {
+                    fds.remove(fd);
+                    return super.close(fd);
+                }
+
+                @Override
+                public void fdatasync(long fd) {
+                    super.fdatasync(fd);
+                    onFlush(fd);
+                }
+
+                @Override
+                public void fsync(long fd) {
+                    super.fsync(fd);
+                    onFlush(fd);
+                }
+
+                @Override
+                public long openRW(LPSZ name, int opts) {
+                    final long fd = super.openRW(name, opts);
+                    if (fd > -1 && Utf8s.containsAscii(name, tableToken.getDirName()) && Utf8s.endsWithAscii(name, WalUtils.TXNLOG_FILE_NAME)) {
+                        fds.add(fd);
+                    }
+                    return fd;
+                }
+
+                private void onFlush(long fd) {
+                    if (fds.contains(fd)) {
+                        try {
+                            onDisk[0] = Arrays.copyOfRange(java.nio.file.Files.readAllBytes(txnLog), offset, offset + recordSize);
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        }
+                    }
+                }
+            };
+            final byte[] image;
+            final byte[] recordOnDisk;
+            try {
+                // The first open after the restore, and the append over the rolled-back record.
+                execute("INSERT INTO test VALUES (200, 200)");
+                Assert.assertEquals(keptTxn + 1, engine.getTableSequencerAPI().lastTxn(tableToken));
+                // The power loss comes before the sequencer's clean close, whose flush covers the appended record.
+                image = java.nio.file.Files.readAllBytes(txnLog);
+                recordOnDisk = onDisk[0];
+                engine.releaseInactive();
+                engine.getTableSequencerAPI().releaseAll();
+            } finally {
+                AbstractCairoTest.ff = ffBefore;
+            }
+            engine.checkpointRelease();
+
+            System.arraycopy(recordOnDisk, 0, image, offset, recordSize);
+            java.nio.file.Files.write(txnLog, image);
+            Assert.assertEquals("the rolled-back record came back after a torn append", keptTxn, engine.getTableSequencerAPI().lastTxn(tableToken));
+        });
+    }
+
+    @Test
+    public void testCheckpointRestoreLowersTheV2FieldAndSlotWithTheMaxTxn() throws Exception {
+        // The restore lowers a V2 log's max txn under records an ADAPTIVE run flushed. The flushed-through field and
+        // the slot next to it go down with it, in the same sector: the records an older binary appends after a
+        // downgrade then sit above the slot and are trusted at the next open, instead of being cut as torn.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
+            setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 4);
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id1");
+            execute("CREATE TABLE test (ts TIMESTAMP, val INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            for (int i = 0; i < 10; i++) {
+                execute("INSERT INTO test VALUES (" + i + ", " + i + ")");
+            }
+            drainWalQueue();
+            execute("CHECKPOINT CREATE");
+            for (int i = 10; i < 13; i++) {
+                execute("INSERT INTO test VALUES (" + i + ", " + i + ")");
+            }
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("test");
+            Assert.assertEquals(13, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogFile.MAX_TXN_OFFSET_64));
+            Assert.assertEquals(14, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogV2.UNSYNCED_FROM_TXN_OFFSET_64));
+            Assert.assertEquals(13, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogV2.KNOWN_MAX_TXN_OFFSET_64));
+
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id2");
+            engine.checkpointRecover();
+            Assert.assertEquals(10, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogFile.MAX_TXN_OFFSET_64));
+            Assert.assertEquals("the field follows the max txn", 11, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogV2.UNSYNCED_FROM_TXN_OFFSET_64));
+            Assert.assertEquals("the slot follows the max txn", 10, readSeqFileLong(tableToken, WalUtils.TXNLOG_FILE_NAME, TableTransactionLogV2.KNOWN_MAX_TXN_OFFSET_64));
+            engine.checkpointRelease();
+
+            execute("INSERT INTO test VALUES (100, 100)");
+            Assert.assertEquals(11, engine.getTableSequencerAPI().lastTxn(tableToken));
+        });
+    }
+
+    @Test
     public void testCheckpointRestoresViewDefinition() throws Exception {
         final String snapshotId = "id1";
         assertMemoryLeak(() -> {
@@ -4715,6 +5223,14 @@ public class CheckpointTest extends AbstractCairoTest {
                             5\t2022-02-24T00:00:04.000000Z
                             """);
 
+            if (engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+                // The WAL purge keeps the WAL above the older of the two save points, which recovery falls back
+                // to; one more save point at the applied cut leaves only the checkpoint holding the segment.
+                try (TableWriter writer = getWriter(tableName)) {
+                    writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+                }
+            }
+
             final long interval = engine.getConfiguration().getWalPurgeInterval() * 1000;
             final WalPurgeJob job = new WalPurgeJob(engine);
 
@@ -4998,9 +5514,22 @@ public class CheckpointTest extends AbstractCairoTest {
 
             @Override
             public @NotNull FileVisitResult visitFile(java.nio.file.@NotNull Path file, @NotNull BasicFileAttributes attrs) throws IOException {
-                java.nio.file.Files.copy(file, target.toPath().resolve(source.toPath().relativize(file)),
-                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                try {
+                    java.nio.file.Files.copy(file, target.toPath().resolve(source.toPath().relativize(file)),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                } catch (java.nio.file.NoSuchFileException ignore) {
+                    // The source is a live server: a background job's table lock file can vanish between the
+                    // listing and the copy. A checkpoint does not carry lock files.
+                }
                 return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public @NotNull FileVisitResult visitFileFailed(java.nio.file.@NotNull Path file, @NotNull IOException exc) throws IOException {
+                if (exc instanceof java.nio.file.NoSuchFileException) {
+                    return FileVisitResult.CONTINUE;
+                }
+                throw exc;
             }
         });
     }
@@ -5070,8 +5599,28 @@ public class CheckpointTest extends AbstractCairoTest {
         });
     }
 
+    private static void createTableWithRowsAfterCheckpoint(String tableName) throws SqlException {
+        execute("create table " + tableName + " as (select x from long_sequence(3))");
+        execute("checkpoint create");
+        execute("insert into " + tableName + " select x + 3 from long_sequence(2)");
+    }
+
     private static void createTriggerFile() {
         Files.touch(triggerFilePath.$());
+    }
+
+    // drainWalQueue() with a bound: a writer that never reaches the sequencer txn re-queues its table on every
+    // apply pass, so an unbounded drain would never return.
+    private static void drainWalQueueBounded() {
+        final CheckWalTransactionsJob checkJob = new CheckWalTransactionsJob(engine);
+        try (ApplyWal2TableJob applyJob = createWalApplyJob()) {
+            for (int i = 0; i < 20; i++) {
+                if (!applyJob.run() && !checkJob.run()) {
+                    return;
+                }
+            }
+        }
+        Assert.fail("WAL apply did not go idle in 20 passes");
     }
 
     private static File findNativePartitionDir(File tableDir, String partitionPrefix, String requiredFile) {
@@ -5107,6 +5656,32 @@ public class CheckpointTest extends AbstractCairoTest {
         }
         Assert.fail("Table not found in callback map: " + tableNamePrefix);
         return -1; // unreachable
+    }
+
+    private static int readSeqFileInt(TableToken tableToken, String fileName, long offset) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(WalUtils.SEQ_DIR).concat(fileName);
+            final long fd = TableUtils.openRO(ff, path.$(), LOG);
+            try {
+                return ff.readNonNegativeInt(fd, offset);
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
+    private static long readSeqFileLong(TableToken tableToken, String fileName, long offset) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(WalUtils.SEQ_DIR).concat(fileName);
+            final long fd = TableUtils.openRO(ff, path.$(), LOG);
+            try {
+                return ff.readNonNegativeLong(fd, offset);
+            } finally {
+                ff.close(fd);
+            }
+        }
     }
 
     private void assertSequencerReadColumnOrder(TableToken tableToken, int... expected) {
@@ -5994,10 +6569,22 @@ public class CheckpointTest extends AbstractCairoTest {
 
     private static class TestFilesFacade extends TestFilesFacadeImpl {
 
+        // Names the dir each fd was opened for, while isSyncfsForced records syncfs targets.
+        private final LongObjHashMap<String> openedPaths = new LongObjHashMap<>();
+        final ObjList<String> syncfsDirs = new ObjList<>();
         boolean errorOnRegistryFileCopy = false;
         boolean errorOnRegistryFileRemoval = false;
         boolean errorOnSync = false;
+        boolean errorOnSyncfs = false;
         boolean errorOnTriggerFileRemoval = false;
+        // Reports every entry the volume flush lists as of unknown type, as a file system without entry types does.
+        boolean isEntryTypeUnknown = false;
+        // Takes the syncfs(2) path on any OS, and records the dir behind every syncfs call.
+        boolean isSyncfsForced = false;
+        // Plays Windows: no filesystem-wide syncfs, a restricted file system, and a sync() that returns -1.
+        boolean isWindowsSyncSimulated = false;
+        // The unknown types findType returned, so a test can see that the method it selects still lists.
+        int unknownTypes = 0;
 
         @Override
         public int copy(LPSZ from, LPSZ to) {
@@ -6008,6 +6595,16 @@ public class CheckpointTest extends AbstractCairoTest {
                 return -1;
             }
             return super.copy(from, to);
+        }
+
+        @Override
+        public int findType(long findPtr) {
+            if (isEntryTypeUnknown && StackWalker.getInstance().walk(frames -> frames.anyMatch(
+                    frame -> frame.getClassName().endsWith(".DatabaseCheckpointAgent") && frame.getMethodName().equals("syncVolumes")))) {
+                unknownTypes++;
+                return Files.DT_UNKNOWN;
+            }
+            return super.findType(findPtr);
         }
 
         @Override
@@ -6022,18 +6619,57 @@ public class CheckpointTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isRestrictedFileSystem() {
+            return isWindowsSyncSimulated || super.isRestrictedFileSystem();
+        }
+
+        @Override
+        public boolean isSyncfsFileSystemWide() {
+            if (isWindowsSyncSimulated) {
+                return false;
+            }
+            return isSyncfsForced || super.isSyncfsFileSystemWide();
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            final long fd = super.openRO(name);
+            if (isSyncfsForced && fd > -1) {
+                openedPaths.put(fd, Utf8s.stringFromUtf8Bytes(name));
+            }
+            return fd;
+        }
+
+        @Override
         public int sync() {
-            if (!errorOnSync) {
+            if (!errorOnSync && !isWindowsSyncSimulated) {
                 return super.sync();
             }
             return -1;
         }
 
+        @Override
+        public void syncfs(long fd) {
+            if (isSyncfsForced) {
+                syncfsDirs.add(openedPaths.get(fd));
+            }
+            if (errorOnSyncfs) {
+                throw CairoException.dataSyncFailure(this, 5, "syncfs", "could not syncfs [fd=" + fd + ']');
+            }
+            super.syncfs(fd);
+        }
+
         void reset() {
             errorOnSync = false;
+            errorOnSyncfs = false;
             errorOnTriggerFileRemoval = false;
             errorOnRegistryFileRemoval = false;
             errorOnRegistryFileCopy = false;
+            isEntryTypeUnknown = false;
+            isSyncfsForced = false;
+            isWindowsSyncSimulated = false;
+            openedPaths.clear();
+            syncfsDirs.clear();
         }
     }
 }

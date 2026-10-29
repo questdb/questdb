@@ -40,6 +40,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
+import static io.questdb.cairo.TableUtils.TX_OFFSET_BODY_CHECKSUM_STAMP_32;
 import static io.questdb.cairo.TableUtils.getPartitionTableSizeOffset;
 
 public class TxReaderDeltaTest extends AbstractCairoTest {
@@ -228,10 +229,13 @@ public class TxReaderDeltaTest extends AbstractCairoTest {
         withTxn((writer, reader, path) -> {
             appendPartition(writer, 0);
             Assert.assertTrue(reader.unsafeLoadAll());
+            // The reload drops the writer's partition-table hashes, which the in-place write below would make stale.
+            Assert.assertTrue(writer.unsafeLoadAll());
             try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                 mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
-                // Older writers stored -1 in the partition's offset-3 word.
+                // Older writers stored -1 in the partition's offset-3 word, and no body checksum stamp.
                 mem.putLong(reader.getPartitionVersionOffset(), -1L);
+                mem.putInt(reader.getBodyChecksumStampOffset(), 0);
                 mem.close(false);
             }
             reader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
@@ -249,6 +253,8 @@ public class TxReaderDeltaTest extends AbstractCairoTest {
             writer.setPartitionParquet(Micros.DAY_MICROS, 128);
             commit(writer);
             Assert.assertTrue(reader.unsafeLoadAll());
+            // The reload drops the writer's partition-table hashes, which the in-place writes below would make stale.
+            Assert.assertTrue(writer.unsafeLoadAll());
             try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                 mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
                 final long nativeWord = TxReader.PARTITION_SEQ_TXN_VALID_BIT
@@ -257,6 +263,8 @@ public class TxReaderDeltaTest extends AbstractCairoTest {
                         | TxReader.PARTITION_DELTA_WRITE_BIT | LEGACY_HAS_DELTA_BIT | 128;
                 mem.putLong(reader.getPartitionVersionOffset(), nativeWord);
                 mem.putLong(reader.getPartitionVersionOffset() + 4L * Long.BYTES, parquetWord);
+                // Builds with these flags wrote no body checksum stamp.
+                mem.putInt(reader.getBodyChecksumStampOffset(), 0);
                 mem.close(false);
             }
 
@@ -405,6 +413,10 @@ public class TxReaderDeltaTest extends AbstractCairoTest {
                 return version + 1;
             }
             return version;
+        }
+
+        private long getBodyChecksumStampOffset() {
+            return getBaseOffset() + TX_OFFSET_BODY_CHECKSUM_STAMP_32;
         }
 
         private int getDeltaActiveCount() {

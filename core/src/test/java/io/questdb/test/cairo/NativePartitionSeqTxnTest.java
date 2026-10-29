@@ -1655,17 +1655,32 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(tt).concat(TableUtils.TXN_FILE_NAME);
             final long fileOffset;
+            final int baseOffset;
+            final long recordSize;
+            final long partitionTableStart;
             try (TxReader txReader = new TxReader(ff)) {
                 txReader.ofRO(path.$(), tsType, PartitionBy.DAY);
                 txReader.unsafeLoadAll();
                 // raw long index of the partition's offset-3 (version) slot in the partition table
                 final int rawIndex = partitionIndex * TableUtils.LONGS_PER_TX_ATTACHED_PARTITION + 3;
-                fileOffset = txReader.getBaseOffset() + TableUtils.getPartitionTableIndexOffset(
-                        TableUtils.getPartitionTableSizeOffset(txReader.getSymbolColumnCount()), rawIndex);
+                baseOffset = txReader.getBaseOffset();
+                recordSize = txReader.getRecordSize();
+                partitionTableStart = TableUtils.getPartitionTableSizeOffset(txReader.getSymbolColumnCount());
+                fileOffset = baseOffset + TableUtils.getPartitionTableIndexOffset(partitionTableStart, rawIndex);
             }
             try (MemoryCMARW mem = Vm.getCMARWInstance()) {
                 mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                 mem.putLong(fileOffset, word);
+                // The _txn body checksum covers [0,80) plus the partition table, so a raw poke into a
+                // partition word tears the live area. This test wants a "well-formed but wrong" released-base
+                // word that the gated read has to quarantine, so it restamps the checksum over the poked bytes.
+                // Otherwise TxReader falls back to the previous A/B area, whose older txn the reader scoreboard
+                // refuses, and every reader open spins to a "Transaction read timeout". The _txn checksum tests
+                // cover a byte that does not match its checksum.
+                mem.putLong(
+                        baseOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64,
+                        TableUtils.calculateTxnBodyChecksum(mem.addressOf(baseOffset), recordSize, partitionTableStart)
+                );
                 mem.close(false);
             }
         }
