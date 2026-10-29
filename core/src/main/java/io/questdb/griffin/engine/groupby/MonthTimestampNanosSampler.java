@@ -105,7 +105,7 @@ public class MonthTimestampNanosSampler implements TimestampSampler {
         // starts in an earlier year.
         final int bucketMonth = stepMonths == 1 ? m
                 : isYearAligned ? bucketMonths[m]
-                : m - Math.floorMod(12 * y + m - 1 - anchorPhase, stepMonths);
+                  : m - Math.floorMod(12 * y + m - 1 - anchorPhase, stepMonths);
         if (bucketMonth > 0) {
             final long bucketStart = toNanos(y, isLeap, bucketMonth, startDay > 0 ? startDay : 1) + dayMod;
             // compare via subtraction, which stays correct when bucketStart overflows near Long.MAX_VALUE
