@@ -42,7 +42,6 @@ public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCurs
         this.slaveFactory = slaveFactory;
     }
 
-    // A hash join hashes its slave once, so this over-reports a stream slave by one spare copy.
     @Override
     public boolean isRewindRecomputing() {
         return masterFactory.isRewindRecomputing() || slaveFactory.isRewindRecomputing();

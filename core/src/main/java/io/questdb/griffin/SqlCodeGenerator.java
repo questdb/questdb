@@ -7118,10 +7118,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         master = null;
                                         master = materialize(masterToMaterialize, false);
                                     }
-                                } else if (slaveToFree.isRewindRecomputing()) {
+                                } else if (joinType == IQueryModel.JOIN_CROSS_FULL
+                                        ? !slaveToFree.recordCursorSupportsRandomAccess()
+                                        : slaveToFree.isRewindRecomputing()) {
                                     final RecordCursorFactory slaveToMaterialize = slaveToFree;
                                     slaveToFree = null;
-                                    // The full join tracks matched slave rows by their row ids, which only the copy keeps stable.
                                     slaveToFree = materialize(slaveToMaterialize, joinType == IQueryModel.JOIN_CROSS_FULL);
                                 }
                                 master = switch (joinType) {

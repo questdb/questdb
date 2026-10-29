@@ -2697,6 +2697,31 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullJoinNonEquiOverSlaveWithoutRandomAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT 10L x FROM long_sequence(1))");
+            execute("CREATE TABLE t1 AS (SELECT 1L y FROM long_sequence(1))");
+            execute("CREATE TABLE t2 AS (SELECT 100L y FROM long_sequence(1))");
+            execute("CREATE TABLE t3 AS (SELECT 100 y FROM long_sequence(1))");
+            for (String slave : new String[]{
+                    "SELECT y FROM t1 UNION ALL SELECT y FROM t2",
+                    "SELECT y FROM t1 UNION ALL SELECT y FROM t3",
+                    "SELECT y FROM t1 UNION SELECT y FROM t2",
+                    "SELECT y FROM t1 UNION ALL SELECT a.y FROM t2 a CROSS JOIN t1 b"
+            }) {
+                assertQuery("SELECT * FROM m FULL JOIN (" + slave + ") u ON u.y > m.x ORDER BY y")
+                        .noLeakCheck()
+                        .withPlanContaining("Materialize")
+                        .returns("""
+                                x\ty
+                                null\t1
+                                10\t100
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testFullJoinOnRegexPreservesBothUnmatchedSides() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (x STRING)");
