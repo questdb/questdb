@@ -75,6 +75,10 @@ variables:
   # job timeout.
   - name: MAVEN_RUN_OPTS
     value: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Daether.connector.http.retryHandler.count=8 -Daether.connector.http.retryHandler.interval=7500 -Daether.connector.http.retryHandler.intervalMax=120000"
+  # Numbers this branch's runs for templates/select-test-commit-mode.yml, which swaps every test
+  # job's commit mode from one run to the next. A rerun of failed jobs keeps the number.
+  - name: TEST_COMMIT_MODE_RUN
+    value: $[counter(variables['Build.SourceBranch'], 0)]
   - name: MAVEN_VERSION
     value: "version"
   - name: MAVEN_VERSION_OPTION

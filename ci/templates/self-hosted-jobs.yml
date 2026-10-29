@@ -25,6 +25,8 @@ jobs:
       - template: steps.yml
         parameters:
           prebuiltRustArtifact: qdbr-native-linux-aarch64
+          testCommitModeGroup: "linux_arm64_jdk25 linux_x64_zfs_jdk25 linux_x64_graal"
+          testCommitModeMember: linux_arm64_jdk25
 
   - job: linux_x64_zfs_jdk25
     workspace:
@@ -52,6 +54,8 @@ jobs:
       - template: steps.yml
         parameters:
           prebuiltRustArtifact: qdbr-native-linux-x86-64
+          testCommitModeGroup: "linux_arm64_jdk25 linux_x64_zfs_jdk25 linux_x64_graal"
+          testCommitModeMember: linux_x64_zfs_jdk25
 
   - job: linux_x64_graal
     workspace:
@@ -79,3 +83,5 @@ jobs:
       - template: steps.yml
         parameters:
           prebuiltRustArtifact: qdbr-native-linux-x86-64
+          testCommitModeGroup: "linux_arm64_jdk25 linux_x64_zfs_jdk25 linux_x64_graal"
+          testCommitModeMember: linux_x64_graal
