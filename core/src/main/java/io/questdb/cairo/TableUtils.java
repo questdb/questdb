@@ -163,6 +163,9 @@ public final class TableUtils {
     public static final String PARQUET_PARTITION_STAGING_NAME = "data.parquet.staging";
     public static final String PARTITION_GEOMETRY_FILE_NAME = "_geometry";
     public static final String PARTITION_LAST_SQUASH_TIMESTAMP_FILE = ".squash_ts";
+    // Writer lock reason of the online REINDEX maintenance command. It commits a node-local transaction, so it is
+    // allowed on a read-only replica too.
+    public static final String REINDEX_WRITER_LOCK_REASON = "reindex";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
     public static final char SYSTEM_TABLE_NAME_SUFFIX = '~';

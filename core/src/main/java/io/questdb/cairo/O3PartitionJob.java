@@ -2276,6 +2276,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // the conversion path under the migrated Optional schema, so no Required page survives.
                 // New (already Optional) files report a positive max def level and keep the raw-copy path.
                 final boolean forceFullReencode = hasLegacyRequiredNoSentinelColumn(partitionDecoder.metadata(), parquetColumnCount);
+                // QuestDB 9.3.4 - 10.0.1 merged O3 rows in place without resetting the column tops in _cv. The
+                // rewrite path heals such a partition: its commit zeroes every column top and the indexes are
+                // rebuilt from row 0 in the new directory.
+                final boolean hasStaleColumnTops = hasStaleColumnTops(tableWriter, tableWriterMetadata, parquetMeta, tableToParquetIdx, partitionTimestamp);
 
                 assert rowGroupCount > 0;
 
@@ -2330,6 +2334,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Parquet file.
                 isRewrite = hasSchemaChange
                         || forceFullReencode
+                        || hasStaleColumnTops
                         || rowGroupCount == 1
                         || hasCoalescableTie
                         || (parquetSize > 0 && (double) unusedBytes / parquetSize > cairoConfiguration.getPartitionEncoderParquetO3RewriteUnusedRatio())
@@ -2342,6 +2347,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             .$(", unusedBytes=").$size(unusedBytes)
                             .$(", unusedPct=").$(parquetSize > 0 ? (100.0 * unusedBytes / parquetSize) : 0)
                             .$(", hasSchemaChange=").$(hasSchemaChange)
+                            .$(", hasStaleColumnTops=").$(hasStaleColumnTops)
                             .I$();
                 }
 
@@ -4458,6 +4464,40 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         return false;
     }
 
+    /**
+     * Whether a column the parquet file carries holds a non-NULL value below its {@code _cv} column top, judged from
+     * the {@code _pm} null counts alone. Such a top is stale: QuestDB 9.3.4 - 10.0.1 merged O3 rows in place, zeroing
+     * the parquet-level column tops but not the ones in {@code _cv}.
+     */
+    private static boolean hasStaleColumnTops(
+            TableWriter tableWriter,
+            TableRecordMetadata metadata,
+            ParquetMetaFileReader parquetMeta,
+            IntList tableToParquetIdx,
+            long partitionTimestamp
+    ) {
+        final ColumnVersionReader columnVersionReader = tableWriter.columnVersionReader();
+        final long rowCount = parquetMeta.getPartitionRowCount();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) < 0) {
+                continue;
+            }
+            final int parquetIdx = tableToParquetIdx.getQuick(i);
+            if (parquetIdx < 0) {
+                continue;
+            }
+            long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, i);
+            if (columnTop < 0 || columnTop > rowCount) {
+                // the column is absent from the partition
+                columnTop = rowCount;
+            }
+            if (columnTop > 0 && parquetMeta.hasNonNullValuesBelowRow(parquetIdx, columnTop)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static boolean hasTouchingPieces(PartitionGeometry geometry, int partitionIndex) {
         final int pieceCount = geometry.getPieceCount(partitionIndex);
         long previousTsHi = geometry.getPieceTimestampHi(partitionIndex, 0);
@@ -4627,7 +4667,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         assert columnType >= 0;
                         if (tableWriterMetadata.isDedupKey(columnIndex) && columnIndex != timestampIndex) {
                             final int columnSize = !ColumnType.isVarSize(columnType) ? ColumnType.sizeOf(columnType) : -1;
-                            final long columnTop = tableWriter.getColumnTop(partitionTimestamp, columnIndex, rowGroupSize);
+                            final long columnTop = parquetDedupColumnTop(decoder, rowGroupBuffers, tableToParquetIdx, columnIndex, columnType, decodeIdx, rowGroupSize);
                             long addr = DedupColumnCommitAddresses.setColValues(
                                     dedupColSinkAddr,
                                     dedupColumnIndex++,
@@ -4943,6 +4983,42 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         }
 
         return ((long) numChunks << 32) | (duplicateCount & 0xFFFFFFFFL);
+    }
+
+    /**
+     * The column top the dedup comparer applies to a decoded parquet row group: the comparer treats rows below it as
+     * NULL without reading them. Taken from the decoded data, never from {@code _cv}: QuestDB 9.3.4 - 10.0.1 merged
+     * O3 rows into parquet partitions without resetting the {@code _cv} tops, which then hide real values, and a
+     * partition-level top does not apply to a single row group anyway.
+     * <ul>
+     *     <li>A column the file does not carry is NULL throughout.</li>
+     *     <li>A decoded column holds every row of the row group, with NULL sentinels where the file stores NULLs, or
+     *     a NULL-filled source buffer for an all-NULL chunk, so no top applies.</li>
+     *     <li>BOOLEAN, BYTE, SHORT and CHAR have no NULL sentinel: their decoded NULLs read as 0/false. Their only
+     *     NULLs are the leading column-top rows, which the decoder surfaces from the chunk's null count.</li>
+     * </ul>
+     */
+    private static long parquetDedupColumnTop(
+            ParquetPartitionDecoder decoder,
+            RowGroupBuffers rowGroupBuffers,
+            IntList tableToParquetIdx,
+            int columnIndex,
+            int columnType,
+            int decodeIdx,
+            int rowGroupSize
+    ) {
+        if (decodeIdx < 0) {
+            return rowGroupSize;
+        }
+        if (!ColumnType.isNoNullSentinelFixedType(columnType)) {
+            return 0;
+        }
+        if (rowGroupBuffers.getChunkDataPtr(decodeIdx) == 0) {
+            // all-NULL chunk
+            return rowGroupSize;
+        }
+        final int sourceType = decoder.metadata().getColumnType(tableToParquetIdx.getQuick(columnIndex));
+        return ColumnType.isNoNullSentinelFixedType(sourceType) ? rowGroupBuffers.getChunkColumnTop(decodeIdx) : 0;
     }
 
     /**

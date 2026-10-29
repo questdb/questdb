@@ -356,6 +356,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ParquetPartitionDecoder parquetDecoder;
     private final ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+    // (partition timestamp, replaced name txn) of the parquet partitions an ADD INDEX reindexed in its transaction
+    private final LongList parquetReindexedPartitions = new LongList();
     // Guards EVERY access to deferredPostingSealPurges + the seal-purge task pool.
     // Parquet index rebuilds run on parallel O3 workers, so several stash seal-purges
     // at once; the writer-thread paths touch the same list only after the O3 workers
@@ -1020,7 +1022,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // configureCoveringIfNeeded can find them during index rebuild.
         columnMetadata.setCoveringColumnIndices(coveringColumnIndices);
 
+        // Parquet partitions merged by QuestDB 9.3.4 - 10.0.1 carry stale column tops. Repair them in this same
+        // transaction, so the new index is built over the tops the data really has.
+        prepareStaleParquetPartitionReindexes();
+
         final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
+        boolean committed = false;
         try {
             writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
 
@@ -1030,17 +1037,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // set the index flag in metadata and create new _meta.swp
             rewriteAndSwapMetadata(metadata);
             clearTodoAndCommitMeta();
+            committed = true;
 
             indexers.extendAndSet(columnIndex, indexer);
             populateDenseIndexerList();
         } catch (Throwable th) {
             Misc.free(indexer);
+            if (!committed) {
+                rollbackParquetPartitionReindexes();
+            }
             throw th;
         }
 
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
+        for (int i = 0, n = parquetReindexedPartitions.size(); i < n; i += 2) {
+            removeReindexedParquetPartitionDir(parquetReindexedPartitions.getQuick(i), parquetReindexedPartitions.getQuick(i + 1));
+        }
+        parquetReindexedPartitions.clear();
         LOG.info().$("ADDED index to '").$safe(columnName).$('[').$(ColumnType.nameOf(existingType))
                 .$("]' to ").$substr(pathRootSize, path).$();
     }
@@ -3282,7 +3297,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         newPartitionNameTxn,
                         newParquetFileSize,
                         dstDirLen,
-                        parquetRewriteColumnIndexes
+                        parquetRewriteColumnIndexes,
+                        true
                 );
             }
         } finally {
@@ -3719,6 +3735,55 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         walTxnDetails.readObservableTxnMeta(other, transactionLogCursor, pathSize, getAppliedSeqTxn(), txWriter.getMaxTimestamp(), deadlineMicros);
+    }
+
+    /**
+     * Online REINDEX of parquet partitions: normalises the partition's column tops in {@code _cv} and rebuilds every
+     * index of the partition from the parquet file. Repairs the partitions QuestDB 9.3.4 - 10.0.1 merged O3 rows into
+     * without resetting the column tops. Commits one node-local transaction per partition and does not go through
+     * WAL, so it runs on a replica as well. Each partition gets a new directory version (its parquet files are
+     * hard-linked), readers of the old version keep it until they let go.
+     *
+     * @param partitionName the partition to reindex, or null for every parquet partition of the table
+     */
+    public void reindexParquetPartitions(@Nullable CharSequence partitionName) {
+        checkDistressed();
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            throw CairoException.nonCritical().put("table is not partitioned [table=").put(tableToken.getTableName()).put(']');
+        }
+        if (inTransaction()) {
+            commit();
+        }
+        if (partitionName != null) {
+            final long partitionTimestamp = PartitionBy.parsePartitionDirName(partitionName, timestampType, partitionBy);
+            final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+            if (partitionIndex < 0) {
+                throw CairoException.nonCritical().put("partition does not exist [table=").put(tableToken.getTableName())
+                        .put(", partition=").put(partitionName).put(']');
+            }
+            if (!txWriter.isPartitionParquet(partitionIndex)) {
+                throw CairoException.nonCritical().put("partition is not parquet, use REINDEX ... LOCK EXCLUSIVE [table=")
+                        .put(tableToken.getTableName()).put(", partition=").put(partitionName).put(']');
+            }
+            if (txWriter.isPartitionReadOnly(partitionIndex) || txWriter.isPartitionRemote(partitionIndex)) {
+                throw CairoException.nonCritical().put("cannot reindex read-only or remote partition [table=")
+                        .put(tableToken.getTableName()).put(", partition=").put(partitionName).put(']');
+            }
+            reindexParquetPartition(partitionIndex);
+        } else {
+            for (int partitionIndex = 0; partitionIndex < txWriter.getPartitionCount(); partitionIndex++) {
+                if (!txWriter.isPartitionParquet(partitionIndex)) {
+                    continue;
+                }
+                if (txWriter.isPartitionReadOnly(partitionIndex) || txWriter.isPartitionRemote(partitionIndex)) {
+                    LOG.info().$("skipping read-only or remote partition in reindex [table=").$(tableToken)
+                            .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(partitionIndex))
+                            .I$();
+                    continue;
+                }
+                reindexParquetPartition(partitionIndex);
+            }
+        }
     }
 
     /**
@@ -9673,6 +9738,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
+    private void reindexParquetPartition(int partitionIndex) {
+        final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        if (!prepareParquetPartitionReindex(partitionIndex, false)) {
+            return;
+        }
+        if (columnVersionWriter.hasChanges()) {
+            columnVersionWriter.commit();
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        }
+        commitTxWriter();
+        removeReindexedParquetPartitionDir(partitionTimestamp, partitionNameTxn);
+    }
+
     /**
      * The BITMAP index writers {@link #configureIndexersForClosedActivePartition()} binds on an append-blocked last
      * partition are never appended through: the O3 executor indexes that partition with writers of its own, which
@@ -10965,6 +11044,75 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3TimestampSetter(timestamp);
         return row;
     }
+
+    /**
+     * Normalises the {@code _cv} column tops of a parquet partition, in memory, for the columns the file carries.
+     * <ul>
+     *     <li>Stale tops: QuestDB 9.3.4 - 10.0.1 merged O3 rows into parquet partitions in place, zeroing every
+     *     parquet-level column top but not the ones in {@code _cv}, so values sit below a {@code _cv} top. Once any
+     *     column shows that, every column the file carries starts at row 0: all tops go to 0.</li>
+     *     <li>Otherwise the tops match the file and stay, except a partial one (between 0 and the row count) of a
+     *     type with a NULL sentinel, which goes to 0 as the native-to-parquet conversion does: its top rows hold
+     *     NULLs. BOOLEAN, BYTE, SHORT and CHAR keep it: their top is the only record that those rows are NULL.</li>
+     * </ul>
+     *
+     * @param staleOnly change nothing unless the tops are stale
+     * @return true when a column top changed
+     */
+    private boolean normalizeParquetColumnTops(long partitionTimestamp, long partitionRowCount, int partitionDirLen, long parquetFileSize, boolean staleOnly) {
+        openParquetMetadataOrThrow(path, partitionDirLen, parquetFileSize);
+        try {
+            final int columnCount = metadata.getColumnCount();
+            boolean stale = false;
+            for (int columnIndex = 0; columnIndex < columnCount && !stale; columnIndex++) {
+                if (metadata.getColumnType(columnIndex) <= 0) {
+                    continue;
+                }
+                final int parquetColumnIndex = findParquetColumnIndex(parquetMetaReader, columnIndex);
+                if (parquetColumnIndex < 0) {
+                    continue;
+                }
+                long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                if (columnTop < 0 || columnTop > partitionRowCount) {
+                    columnTop = partitionRowCount;
+                }
+                stale = columnTop > 0 && parquetMetaReader.hasNonNullValuesBelowRow(parquetColumnIndex, columnTop);
+            }
+            if (staleOnly && !stale) {
+                return false;
+            }
+
+            boolean changed = false;
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                final int columnType = metadata.getColumnType(columnIndex);
+                if (columnType <= 0 || findParquetColumnIndex(parquetMetaReader, columnIndex) < 0) {
+                    continue;
+                }
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                final boolean isPartialTop = columnTop > 0 && columnTop < partitionRowCount;
+                if (columnTop != 0 && (stale || (isPartialTop && !ColumnType.isNoNullSentinelFixedType(columnType)))) {
+                    LOG.info().$("zeroing parquet column top [table=").$(tableToken)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                            .$(", column=").$safe(metadata.getColumnName(columnIndex))
+                            .$(", columnTop=").$(columnTop)
+                            .$(", stale=").$(stale)
+                            .I$();
+                    columnVersionWriter.upsertColumnTop(partitionTimestamp, columnIndex, 0);
+                    changed = true;
+                }
+            }
+            return changed;
+        } finally {
+            final long parquetMetaAddr = parquetMetaReader.getAddr();
+            final long parquetMetaSize = parquetMetaReader.getFileSize();
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(partitionDirLen);
+        }
+    }
+
 
     private long nextPostingSealPurgePubSeq(Sequence pubSeq, int retryCount) {
         long cursor = pubSeq.next();
@@ -12414,6 +12562,121 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         indexCount = denseIndexers.size();
         this.hasPostingIndexers = hasPostingIndexers;
+    }
+
+    /**
+     * Writes a new directory version of a parquet partition: normalises its column tops (see
+     * {@link #normalizeParquetColumnTops}) and reindexes every indexed SYMBOL column of it from the parquet file. The
+     * parquet files are hard-linked. Updates {@code _cv} and {@code _txn} in memory only, the caller commits.
+     *
+     * @param staleOnly act only on a partition with stale column tops
+     * @return false when there was nothing to do
+     */
+    private boolean prepareParquetPartitionReindex(int partitionIndex, boolean staleOnly) {
+        final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        final long partitionRowCount = txWriter.getPartitionSize(partitionIndex);
+        final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        final int partitionDirLen = path.size();
+        final boolean topsChanged;
+        try {
+            topsChanged = normalizeParquetColumnTops(partitionTimestamp, partitionRowCount, partitionDirLen, parquetFileSize, staleOnly);
+        } finally {
+            path.trimTo(pathSize);
+        }
+        if (staleOnly && !topsChanged) {
+            return false;
+        }
+
+        if (parquetRewriteColumnIndexes == null) {
+            parquetRewriteColumnIndexes = new IntList();
+        } else {
+            parquetRewriteColumnIndexes.clear();
+        }
+        for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
+            if (ColumnType.isSymbol(metadata.getColumnType(columnIndex)) && IndexType.isIndexed(metadata.getColumnIndexType(columnIndex))) {
+                parquetRewriteColumnIndexes.add(columnIndex);
+            }
+        }
+        if (!topsChanged && parquetRewriteColumnIndexes.size() == 0) {
+            return false;
+        }
+
+        LOG.info().$("reindexing parquet partition [table=").$(tableToken)
+                .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                .$(", columnTopsChanged=").$(topsChanged)
+                .$(", indexCount=").$(parquetRewriteColumnIndexes.size())
+                .I$();
+
+        // A new directory version: readers of the current one keep it until they let go.
+        final long newPartitionNameTxn = getTxn();
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn);
+        final int newPartitionDirLen = other.size();
+        boolean newDirCreated = false;
+        try {
+            createDirsOrFail(ff, other, configuration.getMkDirMode());
+            newDirCreated = true;
+            if (
+                    !linkFile(ff, path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$(), other.trimTo(newPartitionDirLen).concat(PARQUET_PARTITION_NAME).$())
+                            || !linkFile(ff, path.trimTo(partitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$(), other.trimTo(newPartitionDirLen).concat(PARQUET_METADATA_FILE_NAME).$())
+            ) {
+                throw CairoException.critical(ff.errno()).put("could not link parquet partition file [path=").put(path).put(']');
+            }
+            if (parquetRewriteColumnIndexes.size() > 0) {
+                rebuildParquetRewriteIndexes(partitionTimestamp, newPartitionNameTxn, parquetFileSize, newPartitionDirLen, parquetRewriteColumnIndexes, false);
+            }
+        } catch (Throwable th) {
+            // Nothing is committed: drop the column top changes and the new directory.
+            columnVersionWriter.readUnsafe();
+            if (newDirCreated && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                LOG.error().$("could not remove partition dir after failed reindex [path=").$(other).I$();
+            }
+            throw th;
+        } finally {
+            parquetRewriteColumnIndexes.clear();
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+
+        final int partitionIndexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, partitionRowCount);
+        txWriter.setPartitionParquetFileSizeByRawIndex(partitionIndexRaw, parquetFileSize);
+        txWriter.bumpPartitionTableVersion();
+        return true;
+    }
+
+    /**
+     * Prepares, in the current transaction, a reindex of every local parquet partition with stale column tops, see
+     * {@link #prepareParquetPartitionReindex}. Records the replaced directories in
+     * {@link #parquetReindexedPartitions}; on failure leaves nothing behind.
+     */
+    private void prepareStaleParquetPartitionReindexes() {
+        parquetReindexedPartitions.clear();
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            return;
+        }
+        try {
+            for (int partitionIndex = 0, n = txWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
+                if (
+                        !txWriter.isPartitionParquet(partitionIndex)
+                                || txWriter.isPartitionReadOnly(partitionIndex)
+                                || txWriter.isPartitionRemote(partitionIndex)
+                ) {
+                    continue;
+                }
+                final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+                final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+                if (prepareParquetPartitionReindex(partitionIndex, true)) {
+                    parquetReindexedPartitions.add(partitionTimestamp, partitionNameTxn);
+                }
+            }
+        } catch (Throwable th) {
+            rollbackParquetPartitionReindexes();
+            throw th;
+        }
     }
 
     private void processAsyncWriterCommand(
@@ -15360,7 +15623,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long partitionNameTxn,
             long parquetFileSize,
             int partitionDirLen,
-            IntList columnIndexes
+            IntList columnIndexes,
+            boolean normalizeColumnTops
     ) {
         long parquetAddr = 0;
         long parquetSize = 0;
@@ -15402,7 +15666,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             partitionTimestamp,
                             parquetRewriteRowGroupBuffers,
                             true,
-                            true,
+                            normalizeColumnTops,
                             partitionNameTxn
                     );
                 } finally {
@@ -16071,6 +16335,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Post-commit housekeeping of a reindexed parquet partition: removes the replaced directory version once no
+     * reader holds it. A failure here must not undo the committed transaction.
+     */
+    private void removeReindexedParquetPartitionDir(long partitionTimestamp, long partitionNameTxn) {
+        final boolean isLastPartition = partitionTimestamp == txWriter.getLastPartitionTimestamp();
+        try {
+            if (isLastPartition) {
+                closeActivePartition(false);
+            }
+            safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
+            if (isLastPartition) {
+                openLastPartitionAndSetAppendPosition(partitionTimestamp);
+            }
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        }
+    }
+
     private void removeSymbolMapFilesQuiet(CharSequence name, long columnNameTxn) {
         // Symbol map files (.o, .c, .k, .v) in table root always use SYMBOL index format; sealTxn is BITMAP-ignored.
         try {
@@ -16698,6 +16981,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexer.rollback(maxRow);
             }
         }
+    }
+
+    /**
+     * Undoes the uncommitted reindexes {@link #prepareStaleParquetPartitionReindexes} prepared: removes their new
+     * directories and reloads {@code _txn} and {@code _cv}.
+     */
+    private void rollbackParquetPartitionReindexes() {
+        final int n = parquetReindexedPartitions.size();
+        if (n == 0) {
+            // a failed prepare already dropped its own changes, but earlier ones may not exist either
+            columnVersionWriter.readUnsafe();
+            return;
+        }
+        final long newPartitionNameTxn = getTxn();
+        for (int i = 0; i < n; i += 2) {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, parquetReindexedPartitions.getQuick(i), newPartitionNameTxn);
+            if (!ff.rmdir(other.slash())) {
+                LOG.error().$("could not remove partition dir after failed reindex [path=").$(other).I$();
+            }
+        }
+        other.trimTo(pathSize);
+        parquetReindexedPartitions.clear();
+        txWriter.unsafeLoadAll();
+        columnVersionWriter.readUnsafe();
     }
 
     private void rollbackRemoveIndexFiles(CharSequence columnName, int columnIndex) {

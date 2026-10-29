@@ -4128,55 +4128,68 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         checkViewModification(tableToken);
 
-        try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
-            indexBuilder.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()));
+        tok = SqlUtil.fetchNext(lexer);
+        CharSequence columnName = null;
 
+        if (tok != null && isColumnKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
-            CharSequence columnName = null;
-
-            if (tok != null && isColumnKeyword(tok)) {
-                tok = SqlUtil.fetchNext(lexer);
-                if (Chars.isQuoted(tok)) {
-                    tok = unquote(tok);
-                }
-                if (tok == null || TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
-                    columnName = GenericLexer.immutableOf(tok);
-                    tok = SqlUtil.fetchNext(lexer);
-                }
+            if (Chars.isQuoted(tok)) {
+                tok = unquote(tok);
             }
-
-            CharSequence partition = null;
-            if (tok != null && isPartitionKeyword(tok)) {
-                tok = SqlUtil.fetchNext(lexer);
-
-                if (Chars.isQuoted(tok)) {
-                    tok = unquote(tok);
-                }
-                partition = tok;
+            if (tok == null || TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
+                columnName = GenericLexer.immutableOf(tok);
                 tok = SqlUtil.fetchNext(lexer);
             }
+        }
 
-            if (tok == null || !isLockKeyword(tok)) {
-                throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
+        CharSequence partition = null;
+        if (tok != null && isPartitionKeyword(tok)) {
+            tok = SqlUtil.fetchNext(lexer);
+
+            if (Chars.isQuoted(tok)) {
+                tok = unquote(tok);
             }
+            partition = GenericLexer.immutableOf(tok);
+            tok = SqlUtil.fetchNext(lexer);
+        }
 
+        // Without LOCK EXCLUSIVE, REINDEX runs online through the table writer and rebuilds the indexes of parquet
+        // partitions, repairing their column tops. It is a direct, node-local maintenance command, not sent through
+        // WAL, so it works on a replica too.
+        boolean exclusive = false;
+        if (tok != null && isLockKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null || !isExclusiveKeyword(tok)) {
                 throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
             }
-
+            exclusive = true;
             tok = SqlUtil.fetchNext(lexer);
-            if (tok != null && !isSemicolon(tok)) {
-                throw SqlException.$(lexer.getPosition(), "EOF expected");
-            }
+        }
 
-            columnNames.clear();
-            if (columnName != null) {
-                columnNames.add(columnName);
-            }
-            executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
-            if (!executionContext.isValidationOnly()) {
-                indexBuilder.reindex(partition, columnName);
+        if (tok != null && !isSemicolon(tok)) {
+            throw SqlException.$(lexer.getPosition(), exclusive ? "EOF expected" : "LOCK EXCLUSIVE expected");
+        }
+
+        if (!exclusive && columnName != null) {
+            // online REINDEX rebuilds every index of a partition
+            throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
+        }
+
+        columnNames.clear();
+        if (columnName != null) {
+            columnNames.add(columnName);
+        }
+        executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
+        if (!executionContext.isValidationOnly()) {
+            if (exclusive) {
+                try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
+                    indexBuilder.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()));
+                    indexBuilder.reindex(partition, columnName);
+                }
+            } else {
+                try (TableWriter writer = engine.getWriter(tableToken, TableUtils.REINDEX_WRITER_LOCK_REASON)) {
+                    writer.reindexParquetPartitions(partition);
+                }
             }
         }
         compiledQuery.ofRepair();

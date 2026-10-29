@@ -658,6 +658,31 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return true;
     }
 
+    /**
+     * Whether the column holds a non-NULL value in a row below {@code row}, judged from the row group null counts
+     * alone. Answers false when it cannot tell: for a REQUIRED column (it has no NULLs, so a column top region
+     * reads as values) and for row groups without a null count.
+     */
+    public boolean hasNonNullValuesBelowRow(int columnIndex, long row) {
+        if (getColumnMaxDefLevel(columnIndex) == 0) {
+            return false;
+        }
+        long rowGroupLo = 0;
+        for (int rowGroup = 0; rowGroup < rowGroupCount && rowGroupLo < row; rowGroup++) {
+            final long rowGroupSize = getRowGroupSize(rowGroup);
+            final long rowGroupHi = rowGroupLo + rowGroupSize;
+            if (hasChunkNullCount(rowGroup, columnIndex)) {
+                final long nonNullCount = rowGroupSize - getChunkNullCount(rowGroup, columnIndex);
+                // only the row group's rows at or above row may hold values
+                if (nonNullCount > Math.max(0, rowGroupHi - row)) {
+                    return true;
+                }
+            }
+            rowGroupLo = rowGroupHi;
+        }
+        return false;
+    }
+
     public boolean isOpen() {
         return addr != 0 && footerAddr != 0;
     }

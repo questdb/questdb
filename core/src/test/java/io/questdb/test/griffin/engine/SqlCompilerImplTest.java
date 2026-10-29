@@ -7501,7 +7501,8 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                             "from long_sequence(10000)" +
                             "), index(sym1), index(sym2)")
                     .noLeakCheck()
-                    .fails("REINDEX TABLE xxx".length(), "LOCK EXCLUSIVE expected");
+                    // without LOCK EXCLUSIVE, REINDEX rebuilds parquet partition indexes online
+                    .failsWith("table is not partitioned");
 
             assertQuery("REINDEX TABLE xxx COLUMN sym2")
                     .noLeakCheck()
@@ -7511,9 +7512,9 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .fails("REINDEX TABLE xxx LOCK".length(), "LOCK EXCLUSIVE expected");
 
-            assertQuery("REINDEX TABLE xxx PARTITION '1234''")
+            assertQuery("REINDEX TABLE xxx PARTITION '1234' twice")
                     .noLeakCheck()
-                    .fails("REINDEX TABLE xxx PARTITION '1234''".length(), "LOCK EXCLUSIVE expected");
+                    .fails("REINDEX TABLE xxx PARTITION '1234' twice".length(), "LOCK EXCLUSIVE expected");
 
             assertQuery("REINDEX xxx PARTITION '1234''")
                     .noLeakCheck()
