@@ -25,8 +25,10 @@
 package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.join.SharedPrimary;
 import io.questdb.griffin.engine.join.SharedRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
@@ -41,10 +43,9 @@ import org.junit.Test;
  * Direct contract test for {@link SharedRecordCursorFactory#usesExternalDataSource()}.
  * <p>
  * This override cannot be pinned end-to-end through the materialized-view rejection guard.
- * A shared factory never owns its primary - as its class javadoc states, "ownership belongs to
- * the node in the main factory tree that holds the primary factory directly" - so the very same
- * primary is always reachable by a second, direct route (the lateral join's outer branch), and
- * that route propagates the property on its own. Any {@code CREATE MATERIALIZED VIEW} probe is
+ * The home of a shared primary, a node of the main factory tree, holds the very same primary,
+ * so the primary is always reachable by a second, direct route (the lateral join's outer
+ * branch), and that route propagates the property on its own. Any {@code CREATE MATERIALIZED VIEW} probe is
  * therefore rejected with or without this override, and would be a passenger test.
  * <p>
  * The override is still required: {@code usesExternalDataSource()} is a public contract on
@@ -77,8 +78,8 @@ public class SharedRecordCursorFactoryExternalSourceTest extends AbstractCairoTe
     }
 
     private static void assertSharedMirrorsPrimary(String sql, boolean expected) throws Exception {
-        // SharedRecordCursorFactory does not own its primary, so ownership stays with the
-        // compiled tree here, exactly as it does in production.
+        // The compiled tree holds the primary as its home, so it owns the primary once the
+        // SharedPrimary hands it over, exactly as it does in production.
         try (RecordCursorFactory compiled = select(sql)) {
             // select() wraps the plan in QueryProgress; production shares the group-by underneath
             // it, so unwrap one level to build the same pairing the code generator builds.
@@ -93,14 +94,21 @@ public class SharedRecordCursorFactoryExternalSourceTest extends AbstractCairoTe
                     "precondition: this shape must be shareable, otherwise no SharedRecordCursorFactory is built",
                     primary.supportsSharedCursors()
             );
-            final SharedRecordCursorFactory shared = new SharedRecordCursorFactory(primary, 0);
-            Assert.assertEquals(
-                    "SharedRecordCursorFactory must propagate the external-source property of its "
-                            + "primary; it holds the primary without exposing it through getBaseFactory(), "
-                            + "so the fail-open default would silently report false",
-                    expected,
-                    shared.usesExternalDataSource()
-            );
+            final SharedPrimary sharedPrimary = new SharedPrimary((AbstractRecordCursorFactory) primary);
+            sharedPrimary.addHome();
+            try {
+                final SharedRecordCursorFactory shared = new SharedRecordCursorFactory(sharedPrimary, 1);
+                Assert.assertEquals(
+                        "SharedRecordCursorFactory must propagate the external-source property of its "
+                                + "primary; it holds the primary without exposing it through getBaseFactory(), "
+                                + "so the fail-open default would silently report false",
+                        expected,
+                        shared.usesExternalDataSource()
+                );
+                shared.close();
+            } finally {
+                sharedPrimary.handOver();
+            }
         }
     }
 

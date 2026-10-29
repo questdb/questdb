@@ -56,6 +56,11 @@ public final class EmptyTableRecordCursor implements NoRandomAccessRecordCursor 
     }
 
     @Override
+    public boolean isKnownEmpty() {
+        return true;
+    }
+
+    @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         return EmptySymbolMapReader.INSTANCE;
     }

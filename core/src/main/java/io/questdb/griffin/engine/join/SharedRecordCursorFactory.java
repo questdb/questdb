@@ -26,59 +26,84 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 /**
- * Thin wrapper that delegates to a shared factory's materialized data
- * via {@link RecordCursorFactory#getSharedCursor(SqlExecutionContext, int)}.
- * Multiple instances with different sharedIds share the same underlying
- * execution without re-scanning the base data.
+ * A place of a factory tree that reads a {@link SharedPrimary} through a cursor of its own, see
+ * {@link io.questdb.cairo.sql.RecordCursorFactory#getSharedCursor(SqlExecutionContext, int)}. Several such places
+ * read the result that the primary computes once, without scanning its base again.
  * <p>
- * This factory does not own {@code primaryFactory} and intentionally
- * does not override {@code _close()} — ownership belongs to the node
- * in the main factory tree that holds the primary factory directly.
+ * The factory does not own the primary, unless {@link SharedPrimary#handOver()} promotes it to the home of a primary
+ * whose tree holds no other home: it then reads the cursor of the primary itself and closes the primary on close.
  */
 public class SharedRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final RecordCursorFactory primaryFactory;
+    private final SharedPrimary primary;
     private final int sharedId;
+    private boolean isHome;
 
-    public SharedRecordCursorFactory(RecordCursorFactory primaryFactory, int sharedId) {
-        super(primaryFactory.getMetadata());
-        this.primaryFactory = primaryFactory;
+    public SharedRecordCursorFactory(SharedPrimary primary, int sharedId) {
+        super(primary.getFactory().getMetadata());
+        this.primary = primary;
         this.sharedId = sharedId;
+        primary.addReader(this);
+    }
+
+    // The plan of a reader promoted to home is that of the primary, which names its columns through this factory, see
+    // toPlan().
+    @Override
+    public String getBaseColumnName(int idx) {
+        return primary.getFactory().getBaseColumnName(idx);
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        return primaryFactory.getSharedCursor(executionContext, sharedId);
+        if (isHome) {
+            return primary.getFactory().getCursor(executionContext);
+        }
+        return primary.getFactory().getSharedCursor(executionContext, sharedId);
     }
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return primaryFactory.recordCursorSupportsRandomAccess();
+        return primary.getFactory().recordCursorSupportsRandomAccess();
     }
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("(Shared)");
-        sink.child(primaryFactory);
+        if (isHome) {
+            primary.getFactory().toPlan(sink);
+        } else {
+            sink.type("(Shared)");
+            sink.child(primary.getFactory());
+        }
     }
 
     // Shares a single underlying factory without exposing it through getBaseFactory(), so the
     // external-source property is propagated explicitly rather than via the fail-open default.
     //
-    // This is a structural contract, not a load-bearing step in the mat-view rejection guard: as
-    // noted above, the primary is always also held directly by a node in the main factory tree,
-    // so that node gives the guard a second route to the same leaf and rejection does not depend
-    // on this override. It exists so the factory does not misreport itself to a future consumer
-    // that walks a sub-tree in isolation. Pinned by SharedRecordCursorFactoryExternalSourceTest,
-    // which asserts the property on the factory directly - an end-to-end mat-view probe cannot
-    // distinguish its presence from its absence.
+    // This is a structural contract, not a load-bearing step in the mat-view rejection guard: the
+    // home of the primary, a node of the main factory tree, gives the guard a second route to the
+    // same leaf, so rejection does not depend on this override. It exists so the factory does not
+    // misreport itself to a future consumer that walks a sub-tree in isolation. Pinned by
+    // SharedRecordCursorFactoryExternalSourceTest, which asserts the property on the factory
+    // directly - an end-to-end mat-view probe cannot distinguish its presence from its absence.
     @Override
     public boolean usesExternalDataSource() {
-        return primaryFactory.usesExternalDataSource();
+        return primary.getFactory().usesExternalDataSource();
+    }
+
+    @Override
+    protected void _close() {
+        primary.releaseReader(this);
+        if (isHome) {
+            Misc.free(primary.getFactory());
+        }
+    }
+
+    void promoteToHome() {
+        isHome = true;
     }
 }

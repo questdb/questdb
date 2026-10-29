@@ -43,6 +43,7 @@ import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.MultiHorizonJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
@@ -63,6 +64,8 @@ import org.junit.Test;
 
 public class HorizonJoinTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(HorizonJoinTest.class);
+    // the keys of createSharedKeyTypeTables() whose two left-hand columns share q.k
+    private static final String SHARED_KEY_ON = "t.k1 = q.k AND t.k2 = q.k";
     private final boolean isCompositePartitionEnabled;
     private final TestTimestampType leftTableTimestampType;
     private final boolean parallelHorizonJoinEnabled;
@@ -2757,6 +2760,1256 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOnKeysSharingColumn() throws Exception {
+        // Two ON keys that share a column (t.x = p.k AND t.k = p.k) imply t.x = t.k, but only
+        // for rows that match. Pushing that implied equality into the master scan dropped
+        // trades that the HORIZON JOIN must keep with a null price.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (id INT, x INT, k INT, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (k INT, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO prices VALUES
+                        (1, 1.0, '1970-01-01T00:00:00.000001Z'),
+                        (5, 2.0, '1970-01-01T00:00:00.000002Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                        (1, 1, 1, '1970-01-01T00:00:00.000010Z'),
+                        (2, 1, 2, '1970-01-01T00:00:00.000020Z'),
+                        (3, 3, 3, '1970-01-01T00:00:00.000030Z')
+                    """);
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.x = p.k AND t.k = p.k)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg
+                            1\t1.0
+                            2\tnull
+                            3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnKeysSharingSlaveColumnChecksMasterKey() throws Exception {
+        // t.s1 = p.s AND t.s2 = p.s keeps both key pairs, see testHorizonJoinOnKeysSharingColumn(). A
+        // right row writes one value at both key positions, so only a left row whose s1 and s2 are
+        // equal, NULL included, can match. As ASOF JOIN does (sharedKeyCheck), the aggregating HORIZON
+        // JOINs must check that before they look the key up. Without the check, the lookup of a left
+        // row whose values differ scans the right-hand table back to its first row, at every ASOF
+        // position until one scan passes cairo.sql.horizon.join.bwd.scan.absolute.threshold. With the
+        // single offset 0, HORIZON JOIN matches as ASOF JOIN does, so the rows are those of
+        // AsOfJoinTest#testAsOfJoinOnKeysSharingSlaveColumnChecksMasterKey: rows 2 and 3 disagree, and
+        // 'C' of row 5 does not occur in prices. INT keys give the same rows, and so does a SYMBOL key
+        // next to a VARCHAR key, whose pairs compare strings.
+        assertMemoryLeak(() -> {
+            createKeysSharingSlaveColumnTables();
+            final String[] onClauses = {
+                    "t.s1 = p.s AND t.s2 = p.s",
+                    "t.k1 = p.k AND t.k2 = p.k",
+                    "t.s1 = p.s AND t.v2 = p.s"
+            };
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                final String plan = isParallel ? "Async Horizon Join workers: 1 offsets: 1" : "Horizon Join offsets: 1";
+                for (String onClause : onClauses) {
+                    assertQuery("SELECT t.id, max(p.id) pid FROM trades t HORIZON JOIN prices p ON (" + onClause + ") LIST (0s) AS h ORDER BY t.id")
+                            .noLeakCheck()
+                            .expectSize()
+                            .withPlanContaining(plan, "sharedKeyCheck: true")
+                            .returns("""
+                                    id\tpid
+                                    1\t30
+                                    2\tnull
+                                    3\tnull
+                                    4\t20
+                                    5\tnull
+                                    6\t40
+                                    """);
+                    assertQuery("SELECT count(*) c, count(p.id) n, sum(p.id) s FROM trades t HORIZON JOIN prices p ON (" + onClause + ") LIST (0s) AS h")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining(plan, "sharedKeyCheck: true")
+                            .returns("""
+                                    c\tn\ts
+                                    6\t3\t90
+                                    """);
+                }
+                // keys that share no right-hand column need no check
+                assertQuery("SELECT t.id, max(p.id) pid FROM trades t HORIZON JOIN prices p ON (t.s1 = p.s) LIST (0s) AS h ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining(plan)
+                        .withPlanNotContaining("sharedKeyCheck")
+                        .returns("""
+                                id\tpid
+                                1\t30
+                                2\t30
+                                3\t40
+                                4\t20
+                                5\tnull
+                                6\t40
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnKeysSharingSlaveColumnChecksMasterKeyMultiSlave() throws Exception {
+        // The multi-slave HORIZON JOINs must check the left key as the single-slave ones do, see
+        // testHorizonJoinOnKeysSharingSlaveColumnChecksMasterKey(), for a right-hand table whose column
+        // two keys share: both when it comes first, and the code generator parks its slave before it
+        // reaches the last HORIZON JOIN, and when it comes last. q, keyed by s1 or k1 alone, needs no
+        // check and matches every row whose key occurs in prices.
+        assertMemoryLeak(() -> {
+            createKeysSharingSlaveColumnTables();
+            final String[] joins = {
+                    "HORIZON JOIN prices p ON (t.s1 = p.s AND t.s2 = p.s) HORIZON JOIN prices q ON (t.s1 = q.s)",
+                    "HORIZON JOIN prices q ON (t.s1 = q.s) HORIZON JOIN prices p ON (t.s1 = p.s AND t.s2 = p.s)",
+                    "HORIZON JOIN prices p ON (t.k1 = p.k AND t.k2 = p.k) HORIZON JOIN prices q ON (t.k1 = q.k)",
+                    "HORIZON JOIN prices q ON (t.k1 = q.k) HORIZON JOIN prices p ON (t.k1 = p.k AND t.k2 = p.k)"
+            };
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                final String plan = isParallel ? "Async Multi Horizon Join workers: 1 offsets: 1" : "Multi Horizon Join offsets: 1";
+                for (String join : joins) {
+                    assertQuery("SELECT t.id, max(p.id) pid, max(q.id) qid FROM trades t " + join + " LIST (0s) AS h ORDER BY t.id")
+                            .noLeakCheck()
+                            .expectSize()
+                            .withPlanContaining(plan, "sharedKeyCheck: true")
+                            .returns("""
+                                    id\tpid\tqid
+                                    1\t30\t30
+                                    2\tnull\t30
+                                    3\tnull\t40
+                                    4\t20\t20
+                                    5\tnull\tnull
+                                    6\t40\t40
+                                    """);
+                    assertQuery("SELECT count(*) c, count(p.id) pn, sum(p.id) ps, count(q.id) qn, sum(q.id) qs FROM trades t " + join + " LIST (0s) AS h")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining(plan, "sharedKeyCheck: true")
+                            .returns("""
+                                    c\tpn\tps\tqn\tqs
+                                    6\t3\t90\t5\t160
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnKeysSharingSlaveColumnCheckBudget() throws Exception {
+        // The check copies the left-hand key values that share a right-hand column into native memory,
+        // which the hash join value budget bounds, as it bounds the key sink targets of an ASOF JOIN.
+        // A STRING key of 20 characters needs 44 bytes, past the 8-byte budget. A join whose keys share
+        // no right-hand column has no check and runs within the budget.
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 8);
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, 1);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades AS (SELECT x id, rnd_str(20, 20, 0) k1, rnd_str(20, 20, 0) k2, "
+                            + "timestamp_sequence(1_000_000, 1_000_000)::#TIMESTAMP ts FROM long_sequence(10)) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices AS (SELECT x id, rnd_str(20, 20, 0) k, "
+                            + "timestamp_sequence(0, 1_000_000)::#TIMESTAMP ts FROM long_sequence(10)) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertExceptionNoLeakCheck(
+                        "SELECT count() c, count(p.id) n FROM trades t HORIZON JOIN prices p ON (t.k1 = p.k AND t.k2 = p.k) LIST (0s) AS h",
+                        0,
+                        "limit of 8 memory exceeded in HORIZON join (raise cairo.sql.hash.join.value.page.size or cairo.sql.hash.join.value.max.pages)"
+                );
+                assertQuery("SELECT count() c, count(p.id) n FROM trades t HORIZON JOIN prices p ON (t.k1 = p.k) LIST (0s) AS h")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanNotContaining("sharedKeyCheck")
+                        .returns("""
+                                c\tn
+                                10\t0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnKeysSharingSlaveColumnMatchesAsOfJoin() throws Exception {
+        // Every HORIZON JOIN factory over keys that share a right-hand column returns the rows of one
+        // full-fat ASOF JOIN of the shifted left-hand rows per offset, an independent implementation.
+        // The key types cover each encoding that the key loops pick: fixed-size keys, DOUBLE keys whose
+        // bits differ for 0.0 and -0.0, TIMESTAMP next to TIMESTAMP_NS, which compare nanoseconds, and
+        // every combination of SYMBOL, STRING and VARCHAR, which compare symbol ids or strings. About a
+        // quarter of the keys are NULL, which matches NULL, and about half of the left-hand rows hold
+        // two keys that differ. A filtered right-hand table runs the lookups that remember key misses.
+        assertMemoryLeak(() -> {
+            final ObjList<String[]> keyTypes = new ObjList<>();
+            keyTypes.add(new String[]{"INT", "INT", "INT"});
+            keyTypes.add(new String[]{"LONG", "LONG", "LONG"});
+            keyTypes.add(new String[]{"DOUBLE", "DOUBLE", "DOUBLE"});
+            keyTypes.add(new String[]{"TIMESTAMP", "TIMESTAMP_NS", "TIMESTAMP"});
+            keyTypes.add(new String[]{"TIMESTAMP_NS", "TIMESTAMP", "TIMESTAMP_NS"});
+            // every combination of the string types, so a mixed pair comes in either order
+            final String[] stringTypes = {"SYMBOL", "STRING", "VARCHAR"};
+            for (String masterType : stringTypes) {
+                for (String otherMasterType : stringTypes) {
+                    for (String slaveType : stringTypes) {
+                        keyTypes.add(new String[]{masterType, otherMasterType, slaveType});
+                    }
+                }
+            }
+            for (int i = 0, n = keyTypes.size(); i < n; i++) {
+                final String[] types = keyTypes.getQuick(i);
+                createSharedKeyTypeTables(types);
+                assertSharedKeyHorizonJoinsMatchAsOfJoin(SHARED_KEY_ON, true, "key types: " + String.join(", ", types));
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnKeysSharingSlaveColumnMatchesAsOfJoinInEveryScanMode() throws Exception {
+        // As testHorizonJoinOnKeysSharingSlaveColumnMatchesAsOfJoin(), in each scan mode of the lookup:
+        // backward-only, where a key cache miss scans down to the first row, the relative switch, and a
+        // switch to forward scans at every position, after which a miss only reads the key cache.
+        assertMemoryLeak(() -> {
+            final String[][] keyTypes = {
+                    {"INT", "INT", "INT"},
+                    {"SYMBOL", "SYMBOL", "SYMBOL"},
+                    {"SYMBOL", "VARCHAR", "SYMBOL"}
+            };
+            // absolute threshold, min gap, switch factor
+            final long[][] thresholds = {
+                    {Long.MAX_VALUE, Long.MAX_VALUE, 2},
+                    {Long.MAX_VALUE, 16, 2},
+                    {0, 0, 1}
+            };
+            for (String[] types : keyTypes) {
+                createSharedKeyTypeTables(types);
+                for (long[] threshold : thresholds) {
+                    setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, threshold[0]);
+                    setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, threshold[1]);
+                    setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_SWITCH_FACTOR, threshold[2]);
+                    assertSharedKeyHorizonJoinsMatchAsOfJoin(SHARED_KEY_ON, true, "key types: " + String.join(", ", types)
+                            + ", thresholds: " + threshold[0] + ", " + threshold[1] + ", " + threshold[2]);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnThreeKeysSharingSlaveColumnsMatchesAsOfJoin() throws Exception {
+        // Three key pairs: all three left-hand keys share q.k, two share q.k and k3 compares q.j alone,
+        // or k1 compares q.k alone and two share q.j. The check compares each left-hand key with the
+        // earliest left-hand key of its right-hand column, so it compares every group of keys at once.
+        assertMemoryLeak(() -> {
+            final String[][] keyTypes = {
+                    {"INT", "INT", "INT"},
+                    {"SYMBOL", "SYMBOL", "SYMBOL"},
+                    {"SYMBOL", "VARCHAR", "SYMBOL"}
+            };
+            final String[] onClauses = {
+                    "t.k1 = q.k AND t.k2 = q.k AND t.k3 = q.k",
+                    "t.k1 = q.k AND t.k2 = q.k AND t.k3 = q.j",
+                    "t.k1 = q.k AND t.k2 = q.j AND t.k3 = q.j"
+            };
+            for (String[] types : keyTypes) {
+                createSharedKeyTypeTables(types);
+                for (String on : onClauses) {
+                    assertSharedKeyHorizonJoinsMatchAsOfJoin(on, false, "key types: " + String.join(", ", types) + ", ON " + on);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnKeysSharingSlaveSymbolColumnComparesSymbolIds() throws Exception {
+        // A right-hand SYMBOL column that two left-hand SYMBOL columns share compares symbol ids, as a
+        // single SYMBOL key does: SymbolTranslatingRecord translates each left-hand column into the
+        // symbol table of that right-hand column, and a left-hand symbol that the right-hand column
+        // lacks skips the lookup. A right-hand SYMBOL column that a SYMBOL and a VARCHAR column share
+        // needs one encoding at both positions, so these keys compare strings. A left-hand SYMBOL
+        // column that two right-hand columns share keeps one key pair, and the implied right-hand
+        // equality filters the right-hand rows, see testHorizonJoinOnMasterSymbolSharedBySlaveColumns().
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (id INT, s1 SYMBOL, s2 SYMBOL, v VARCHAR, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (id INT, s SYMBOL, a SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            sqlExecutionContext.setParallelHorizonJoinEnabled(true);
+            assertSymbolIdKeys("t.s1 = p.s AND t.s2 = p.s", true);
+            assertSymbolIdKeys("t.s1 = p.s", true);
+            assertSymbolIdKeys("t.s1 = p.s AND t.s2 = p.a", true);
+            assertSymbolIdKeys("t.s1 = p.s AND t.v = p.s", false);
+            assertSymbolIdKeys("t.v = p.s AND t.s1 = p.s", false);
+            assertSymbolIdKeys("t.s1 = p.s AND t.s1 = p.a", true);
+            assertQuery("SELECT count() FROM trades t HORIZON JOIN prices p ON (t.s1 = p.s AND t.s1 = p.a) LIST (0s) AS h")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("slave filter: s=a")
+                    .withPlanNotContaining("sharedKeyCheck")
+                    .returns("""
+                            count
+                            0
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnBindVariableFilter() throws Exception {
+        // the filter reads the bound value: TRUE keeps every right row, FALSE keeps none
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            bindVariableService.clear();
+            bindVariableService.setBoolean("b0", true);
+            assertHorizonJoinOnFilterNoLeakCheck("t.k = p.k AND :b0", """
+                    id\tavg
+                    1\t1.0
+                    2\t2.0
+                    """);
+            bindVariableService.setBoolean("b0", false);
+            assertHorizonJoinOnFilterNoLeakCheck("t.k = p.k AND :b0", """
+                    id\tavg
+                    1\tnull
+                    2\tnull
+                    """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnConstantFalse() throws Exception {
+        // unlike a constant TRUE, a constant FALSE conjunct changes the result: no right row matches
+        assertHorizonJoinOnFilter("t.k = p.k AND 1 = 0", """
+                id\tavg
+                1\tnull
+                2\tnull
+                """);
+    }
+
+    @Test
+    public void testHorizonJoinOnConstantTrueAllowed() throws Exception {
+        // a conjunct that folds to TRUE keeps every right row, so the join runs as if it were absent:
+        // the plan and the rows are those of ON (t.k = p.k)
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            for (String onClause : new String[]{
+                    "t.k = p.k AND 1 = 1",
+                    "1 = 1 AND t.k = p.k",
+                    "t.k = p.k AND true",
+                    "t.k = p.k AND NOT false",
+                    "t.k = p.k AND 'a' = 'a' AND 1 < 2",
+                    "t.k = p.k AND 1 BETWEEN 0 AND 2"
+            }) {
+                assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (" + onClause + ") " +
+                        "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                        "ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlan("Encode sort light\n" +
+                                "  keys: [id]\n" +
+                                "    " + getHorizonJoinPlanType() + " offsets: 1\n" +
+                                "      keys: [id]\n" +
+                                "      values: [avg(p.price)]\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: trades\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Frame forward scan on: prices\n")
+                        .returns("""
+                                id\tavg
+                                1\t1.0
+                                2\t2.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnConstantTrueAllowedMultiSlave() throws Exception {
+        // the code generator parks the slave of a non-last HORIZON JOIN before it reaches the last one
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            for (String[] conjuncts : new String[][]{{" AND 1 = 1", ""}, {"", " AND true"}, {" AND true", " AND 1 = 1"}}) {
+                assertQuery("SELECT t.id, avg(p.price), avg(p2.price) " +
+                        "FROM trades AS t " +
+                        "HORIZON JOIN prices AS p ON (t.k = p.k" + conjuncts[0] + ") " +
+                        "HORIZON JOIN prices AS p2 ON (t.k = p2.k" + conjuncts[1] + ") " +
+                        "LIST (0) AS h " +
+                        "ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\tavg\tavg1
+                                1\t1.0\t1.0
+                                2\t2.0\t2.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnConstantTrueOnly() throws Exception {
+        // without a key, a constant TRUE ON clause gives the rows of a HORIZON JOIN without ON: both
+        // trades match the latest price, 2.0
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            for (String on : new String[]{" ON (1 = 1)", " ON true", ""}) {
+                assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN prices AS p" + on + " " +
+                        "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                        "ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\tavg
+                                1\t2.0
+                                2\t2.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnCrossSlavePredicateNotAllowed() throws Exception {
+        // the conjunct compares the right rows of two HORIZON JOINs
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertQuery("SELECT t.id, avg(p.price), avg(p2.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.k = p.k) " +
+                    "HORIZON JOIN prices AS p2 ON (t.k = p2.k AND p2.price > p.price) " +
+                    "LIST (0) AS h " +
+                    "ORDER BY t.id")
+                    .noLeakCheck()
+                    .fails(152, "unsupported HORIZON join expression [expr='p2.price > p.price']");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnExpressionKeyNotAllowed() throws Exception {
+        assertHorizonJoinOnPredicateRejected("t.k = p.k + 0", 76, "t.k = p.k + 0");
+    }
+
+    @Test
+    public void testHorizonJoinOnImpliedPredicateNotAllowed() throws Exception {
+        // the key implies the first conjunct and the ASOF lookup the other two, p.ts <= t.ts because
+        // the only offset is 0, but each conjunct reads a left-hand or offset column without being a key
+        // equality, so the check rejects it
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertHorizonJoinOnPredicateRejectedNoLeakCheck("t.k = p.k AND t.k::long = p.k::long", 96, "t.k::long = p.k::long");
+            assertHorizonJoinOnPredicateRejectedNoLeakCheck("t.k = p.k AND p.ts <= h.timestamp", 91, "p.ts <= h.timestamp");
+            assertHorizonJoinOnPredicateRejectedNoLeakCheck("t.k = p.k AND p.ts <= t.ts", 91, "p.ts <= t.ts");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterFilterNotAllowed() throws Exception {
+        assertHorizonJoinOnPredicateRejected("t.k = p.k AND t.id > 1", 91, "t.id > 1");
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterKeySharedByDifferentlyEncodedSlaveColumns() throws Exception {
+        // One key copier cannot write a master column for two key encodings. The implied right-hand
+        // equality filters the right-hand rows instead, so one key pair remains. Trade 1 matches price
+        // row 3 on each pair, and no price row has both columns equal to trade 2's key.
+        assertMemoryLeak(() -> {
+            createMasterSymbolSharedBySlaveColumnsTables();
+            executeWithRewriteTimestamp("CREATE TABLE tn (id INT, t TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE pn (t1 TIMESTAMP, t2 TIMESTAMP_NS, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO pn VALUES
+                        ('2024-01-01T00:00:00.000000Z', '2024-01-02T00:00:00.000000000Z', 1.0, '1970-01-01T00:00:00.000001Z'),
+                        ('2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000000Z', 2.0, '1970-01-01T00:00:00.000002Z'),
+                        ('2024-01-02T00:00:00.000000Z', '2024-01-01T00:00:00.000000000Z', 3.0, '1970-01-01T00:00:00.000003Z')
+                    """);
+            execute("""
+                    INSERT INTO tn VALUES
+                        (1, '2024-01-01T00:00:00.000000Z', '1970-01-01T00:00:00.000010Z'),
+                        (2, '2024-01-02T00:00:00.000000Z', '1970-01-01T00:00:00.000020Z')
+                    """);
+
+            final String expected = """
+                    id\tavg
+                    1\t3.0
+                    2\tnull
+                    """;
+            for (String onClause : new String[]{"t.s = p.a AND t.s = p.v", "p.v = t.s AND p.a = t.s"}) {
+                for (String offsets : new String[]{"RANGE FROM 0s TO 0s STEP 1s", "LIST (0)"}) {
+                    assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (" + onClause + ") " +
+                            offsets + " AS h ORDER BY t.id")
+                            .noLeakCheck()
+                            .expectSize()
+                            .withPlanContaining("slave filter: a=v")
+                            .returns(expected);
+                }
+            }
+            // a STRING key next to a VARCHAR key: trade 2 matches price row 1, where str = v = 'B'
+            executeWithRewriteTimestamp("CREATE TABLE st (id INT, s STRING, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            execute("INSERT INTO st SELECT id, s, ts FROM trades");
+            assertQuery("SELECT t.id, avg(p.price) FROM st AS t HORIZON JOIN prices AS p ON (t.s = p.str AND t.s = p.v) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("slave filter: str=v")
+                    .returns("""
+                            id\tavg
+                            1\t3.0
+                            2\t1.0
+                            """);
+            // a TIMESTAMP key next to a TIMESTAMP_NS key
+            assertQuery("SELECT t.id, avg(p.price) FROM tn AS t HORIZON JOIN pn AS p ON (t.t = p.t1 AND t.t = p.t2) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("slave filter: t1=t2")
+                    .returns("""
+                            id\tavg
+                            1\t2.0
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterKeySharedByDifferentlyEncodedSlaveColumnsKeepsBothKeys() throws Exception {
+        // t.ST in upper case keeps mergeContexts, which compares column names case-sensitively, from
+        // turning p.v = t.st AND p.st = t.ST into one key and a right-hand filter, so both key pairs share
+        // t.st. The left key copier writes t.st once, so both pairs compare VARCHAR values, and the right
+        // key copier must write p.st, which no pair compares with a VARCHAR column, as VARCHAR too. In
+        // the same way both pairs on t.tm compare nanoseconds. Trade 2 matches one pair of price row 2
+        // only. A query with two right-hand tables builds the key copiers of each of them. Rows checked
+        // with DuckDB.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (id INT, st STRING, tm TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (st STRING, v VARCHAR, tm TIMESTAMP, tn TIMESTAMP_NS, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO prices VALUES
+                        ('A', 'A', 5::TIMESTAMP, 5_000::TIMESTAMP_NS, 1.0, '1970-01-01T00:00:00.000001Z'),
+                        ('C', 'B', 7::TIMESTAMP, 7_500::TIMESTAMP_NS, 2.0, '1970-01-01T00:00:00.000002Z'),
+                        (NULL, NULL, NULL, NULL, 3.0, '1970-01-01T00:00:00.000003Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                        (1, 'A', 5::TIMESTAMP, '1970-01-01T00:00:00.000010Z'),
+                        (2, 'B', 7::TIMESTAMP, '1970-01-01T00:00:00.000020Z'),
+                        (3, NULL, NULL, '1970-01-01T00:00:00.000030Z')
+                    """);
+
+            for (String onClause : new String[]{"p.v = t.st AND p.st = t.ST", "p.tn = t.tm AND p.tm = t.TM"}) {
+                for (String offsets : new String[]{"RANGE FROM 0s TO 0s STEP 1s", "LIST (0)"}) {
+                    assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (" + onClause + ") " +
+                            offsets + " AS h ORDER BY t.id")
+                            .noLeakCheck()
+                            .expectSize()
+                            .withPlanNotContaining("slave filter")
+                            .returns("""
+                                    id\tavg
+                                    1\t1.0
+                                    2\tnull
+                                    3\t3.0
+                                    """);
+                }
+            }
+            assertQuery("""
+                    SELECT t.id, avg(p.price), avg(q.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (p.v = t.st AND p.st = t.ST)
+                    HORIZON JOIN prices AS q ON (q.tn = t.tm AND q.tm = t.TM)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Multi Horizon Join")
+                    .withPlanNotContaining("slave filter")
+                    .returns("""
+                            id\tavg\tavg1
+                            1\t1.0\t1.0
+                            2\tnull\tnull
+                            3\t3.0\t3.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterKeySharedByDifferentlyEncodedSlaveColumnsMultiSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            createMasterSymbolSharedBySlaveColumnsTables();
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price), avg(q.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.s = p.a AND t.s = p.v)
+                    HORIZON JOIN prices AS q ON (t.s = q.a)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("slave filter: a=v")
+                    .returns("""
+                            id\tavg\tavg1
+                            1\t3.0\t3.0
+                            2\tnull\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterKeySharedBySlaveColumns() throws Exception {
+        // t.k = p.k AND t.k = p.m implies p.k = p.m, which filters the right-hand rows like
+        // the explicit conjunct of testHorizonJoinOnSlaveColumnEqualityFilter. One key pair remains.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (id INT, k INT, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (k INT, m INT, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO prices VALUES
+                        (1, 1, 1.0, '1970-01-01T00:00:00.000001Z'),
+                        (2, 3, 2.0, '1970-01-01T00:00:00.000002Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                        (1, 1, '1970-01-01T00:00:00.000010Z'),
+                        (2, 2, '1970-01-01T00:00:00.000020Z')
+                    """);
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.k = p.k AND t.k = p.m)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg
+                            1\t1.0
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterSlaveComparisonNotAllowed() throws Exception {
+        assertHorizonJoinOnPredicateRejected("t.k = p.k AND p.price > t.id", 94, "p.price > t.id");
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterSymbolSharedBySlaveColumns() throws Exception {
+        // t.s = p.a AND t.s = p.b implies p.a = p.b, which filters the right-hand rows, so one
+        // SYMBOL key pair remains.
+        assertMemoryLeak(() -> {
+            createMasterSymbolSharedBySlaveColumnsTables();
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.s = p.a AND t.s = p.b)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("slave filter: a=b")
+                    .returns("""
+                            id\tavg
+                            1\t3.0
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterSymbolSharedBySlaveColumnsMultiSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            createMasterSymbolSharedBySlaveColumnsTables();
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price), avg(q.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.s = p.a AND t.s = p.b)
+                    HORIZON JOIN prices AS q ON (t.s = q.a)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg\tavg1
+                            1\t3.0\t3.0
+                            2\tnull\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterSymbolSharedBySlaveColumnsWithSecondKey() throws Exception {
+        // A master SYMBOL key shared by two slave columns next to a separate SYMBOL key pair
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (s SYMBOL, s2 SYMBOL, id INT, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (c SYMBOL, a SYMBOL, b SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO prices VALUES
+                        ('Y', 'A', 'B', 1.0, '1970-01-01T00:00:00.000001Z'),
+                        ('X', 'B', 'A', 2.0, '1970-01-01T00:00:00.000002Z'),
+                        ('X', 'A', 'A', 3.0, '1970-01-01T00:00:00.000003Z'),
+                        ('Y', 'B', 'B', 4.0, '1970-01-01T00:00:00.000004Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('A', 'X', 1, '1970-01-01T00:00:00.000010Z'),
+                        ('B', 'Y', 2, '1970-01-01T00:00:00.000020Z'),
+                        ('A', 'Y', 3, '1970-01-01T00:00:00.000030Z')
+                    """);
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.s = p.a AND t.s = p.b AND t.s2 = p.c)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg
+                            1\t3.0
+                            2\t4.0
+                            3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMasterSymbolSharedBySymbolAndStringColumns() throws Exception {
+        // t.s = p.a AND t.s = p.str implies p.a = p.str, which filters the right-hand rows, so one
+        // key pair remains.
+        assertMemoryLeak(() -> {
+            createMasterSymbolSharedBySlaveColumnsTables();
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price)
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.s = p.a AND t.s = p.str)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg
+                            1\t3.0
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMixedSymbolKeysWithCrossedColumnIndexes() throws Exception {
+        // ht.s (master index 2) pairs with hp.s by symbol id, and ht.x (master index 3) pairs with
+        // hp.st (slave index 2) as a string. Each key copier must decide the encoding of its own
+        // columns, or ht.s is written as a string where its pair expects a symbol id.
+        assertMemoryLeak(() -> {
+            createMixedSymbolKeysWithCrossedColumnIndexesTables();
+
+            assertQuery("""
+                    SELECT avg(hp.price)
+                    FROM ht
+                    HORIZON JOIN hp ON (ht.s = hp.s AND ht.x = hp.st)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            avg
+                            5.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnMixedSymbolKeysWithCrossedColumnIndexesMultiSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            createMixedSymbolKeysWithCrossedColumnIndexesTables();
+
+            assertQuery("""
+                    SELECT avg(hp.price), avg(hq.price)
+                    FROM ht
+                    HORIZON JOIN hp ON (ht.s = hp.s AND ht.x = hp.st)
+                    HORIZON JOIN hp AS hq ON (ht.s = hq.s)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            avg\tavg1
+                            5.0\t5.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnOrOfKeysNotAllowed() throws Exception {
+        // a disjunction is not a key equality, so the whole ON clause is left over
+        assertHorizonJoinOnPredicateRejected("t.k = p.k OR t.id = p.k", 82, "t.k = p.k or t.id = p.k");
+    }
+
+    @Test
+    public void testHorizonJoinOnPredicateTrueForAllRows() throws Exception {
+        // every price is positive and the only offset is 0, so each conjunct holds for every row here.
+        // The right-hand filter keeps the rows of ON (t.k = p.k), but the check can't rely on the data
+        // and still rejects the conjunct that reads the offset.
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertHorizonJoinOnFilterNoLeakCheck("t.k = p.k AND p.price > 0", """
+                    id\tavg
+                    1\t1.0
+                    2\t2.0
+                    """);
+            assertHorizonJoinOnPredicateRejectedNoLeakCheck("t.k = p.k AND h.offset = 0", 95, "h.offset = 0");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnPredicateWithoutSlaveColumns() throws Exception {
+        // the query reads no right-hand column, so a right-hand filter can't change its rows: HORIZON JOIN
+        // keeps every left row. The check still rejects a left-hand conjunct.
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            for (String onClause : new String[]{"t.k = p.k", "t.k = p.k AND p.price > 1.5"}) {
+                assertQuery("SELECT t.id, count(*) FROM trades AS t HORIZON JOIN prices AS p ON (" + onClause + ") " +
+                        "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                        "ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\tcount
+                                1\t1
+                                2\t1
+                                """);
+            }
+            assertQuery("SELECT t.id, count(*) FROM trades AS t HORIZON JOIN prices AS p ON (t.k = p.k AND t.id > 1) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "ORDER BY t.id")
+                    .noLeakCheck()
+                    .fails(87, "unsupported HORIZON join expression [expr='t.id > 1']");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnRedundantKeyAllowed() throws Exception {
+        // a reversed or repeated key equality is a key, not a leftover conjunct, so the join returns
+        // the rows of ON (t.k = p.k); the NULL key of trade 3 matches the price with a NULL key
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            execute("INSERT INTO prices VALUES (null, 9, 9.0, '1970-01-01T00:00:00.000003Z')");
+            execute("INSERT INTO trades VALUES (3, null, '1970-01-01T00:00:00.000030Z')");
+            for (String onClause : new String[]{
+                    "t.k = p.k",
+                    "p.k = t.k",
+                    "t.k = p.k AND p.k = t.k",
+                    "t.k = p.k AND t.k = p.k"
+            }) {
+                assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (" + onClause + ") " +
+                        "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                        "ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\tavg
+                                1\t1.0
+                                2\t2.0
+                                3\t9.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnRuntimeConstantFilter() throws Exception {
+        // now() is a runtime constant, so the filter evaluates it on each run: the clock is past 2000
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertHorizonJoinOnFilterNoLeakCheck("t.k = p.k AND now() > '2000-01-01'", """
+                    id\tavg
+                    1\t1.0
+                    2\t2.0
+                    """);
+            assertHorizonJoinOnFilterNoLeakCheck("t.k = p.k AND now() < '2000-01-01'", """
+                    id\tavg
+                    1\tnull
+                    2\tnull
+                    """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnSelfJoinMasterSymbolSharedByTwoKeys() throws Exception {
+        // In a self-join t.s = p.s AND t.s = p.a implies p.s = p.a, which filters the right-hand rows.
+        assertMemoryLeak(() -> {
+            createSelfJoinSymbolSharedTable();
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price)
+                    FROM x AS t
+                    HORIZON JOIN x AS p ON (t.s = p.s AND t.s = p.a)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg
+                            0\tnull
+                            1\tnull
+                            2\t3.0
+                            3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnSelfJoinMasterSymbolSharedByTwoKeysMultiSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            createSelfJoinSymbolSharedTable();
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price), avg(q.price)
+                    FROM x AS t
+                    HORIZON JOIN x AS p ON (t.s = p.s AND t.s = p.a)
+                    HORIZON JOIN x AS q ON (t.s = q.s)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg\tavg1
+                            0\tnull\t1.0
+                            1\tnull\t2.0
+                            2\t3.0\t3.0
+                            3\tnull\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnSelfJoinSlaveSymbolSharedByTwoKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            createSelfJoinSymbolSharedTable();
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price)
+                    FROM x AS t
+                    HORIZON JOIN x AS p ON (t.s = p.s AND t.a = p.s)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg
+                            0\tnull
+                            1\tnull
+                            2\t3.0
+                            3\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveColumnEqualityFilter() throws Exception {
+        // an equality of two right-hand columns is a filter, not a key: only price 1.0 has k = m
+        assertHorizonJoinOnFilter("t.k = p.k AND p.k = p.m", """
+                id\tavg
+                1\t1.0
+                2\tnull
+                """);
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveConstantFilter() throws Exception {
+        assertHorizonJoinOnFilter("t.k = p.k AND p.m = 3", """
+                id\tavg
+                1\tnull
+                2\t2.0
+                """);
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveConstantFilterMultiSlave() throws Exception {
+        // The filter sits on the non-last HORIZON JOIN, whose slave the code generator
+        // parks before it reaches the last HORIZON JOIN.
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertQuery("SELECT t.id, avg(p.price), avg(p2.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.k = p.k AND p.m = 3) " +
+                    "HORIZON JOIN prices AS p2 ON (t.k = p2.k) " +
+                    "LIST (0) AS h " +
+                    "ORDER BY t.id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg\tavg1
+                            1\tnull\t1.0
+                            2\t2.0\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveFilter() throws Exception {
+        assertHorizonJoinOnFilter("t.k = p.k AND p.price > 1.5", """
+                id\tavg
+                1\tnull
+                2\t2.0
+                """);
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveFilterMultiSlave() throws Exception {
+        // the filter sits on the last HORIZON JOIN, which builds the multi-slave factory
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertQuery("SELECT t.id, avg(p.price), avg(p2.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.k = p.k) " +
+                    "HORIZON JOIN prices AS p2 ON (t.k = p2.k AND p2.price > 1.5) " +
+                    "LIST (0) AS h " +
+                    "ORDER BY t.id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg\tavg1
+                            1\t1.0\tnull
+                            2\t2.0\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveInListFilter() throws Exception {
+        assertHorizonJoinOnFilter("t.k = p.k AND p.m IN (1, 2)", """
+                id\tavg
+                1\t1.0
+                2\tnull
+                """);
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveKeySharedByDifferentlyEncodedMasterColumns() throws Exception {
+        // t.a = p.s AND t.v = p.s implies t.a = t.v, which must not filter the left-hand rows that
+        // HORIZON JOIN keeps, so both key pairs remain. The slave key copier writes p.s once, so both
+        // pairs compare VARCHAR values, and only a trade whose a and v are equal matches.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE tv (id INT, a SYMBOL, v VARCHAR, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE ps (s SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO ps VALUES
+                        ('A', 1.0, '1970-01-01T00:00:00.000001Z'),
+                        ('B', 2.0, '1970-01-01T00:00:00.000002Z')
+                    """);
+            execute("""
+                    INSERT INTO tv VALUES
+                        (1, 'A', 'A', '1970-01-01T00:00:00.000010Z'),
+                        (2, 'B', 'A', '1970-01-01T00:00:00.000020Z'),
+                        (3, 'B', 'B', '1970-01-01T00:00:00.000030Z')
+                    """);
+
+            assertQuery("SELECT t.id, avg(p.price) FROM tv AS t HORIZON JOIN ps AS p ON (t.a = p.s AND t.v = p.s) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg
+                            1\t1.0
+                            2\tnull
+                            3\t2.0
+                            """);
+            assertQuery("SELECT t.id, avg(p.price), avg(q.price) FROM tv AS t HORIZON JOIN ps AS p ON (t.a = p.s) " +
+                    "HORIZON JOIN ps AS q ON (t.a = q.s AND t.v = q.s) RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg\tavg1
+                            1\t1.0\t1.0
+                            2\t2.0\tnull
+                            3\t2.0\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveKeySharedByMixedTimestampColumnsKeepsNull() throws Exception {
+        // p.a is compared with the TIMESTAMP_NS t.n and the TIMESTAMP t.m, so both key positions compare
+        // nanoseconds, and the key copiers convert t.m and p.a. A NULL TIMESTAMP must stay NULL rather
+        // than turn into 1970-01-01: t1 matches the NULL row of p, t2 its 1970-01-01 row, and t3 and t4,
+        // whose two columns disagree, match nothing. t6 is 500 nanoseconds off the 1 microsecond row of
+        // p, and t7 compares a TIMESTAMP outside the TIMESTAMP_NS range, which must not fail the query.
+        assertMemoryLeak(() -> {
+            createMixedTimestampKeyTables();
+            assertMixedTimestampKeyHorizonJoins(
+                    new String[]{"t.n = p.a AND t.m = p.a", "t.m = p.a AND t.n = p.a", "p.a = t.n AND p.a = t.m"},
+                    """
+                            id\tavg
+                            1\t11.0
+                            2\t10.0
+                            3\tnull
+                            4\tnull
+                            5\t12.0
+                            6\tnull
+                            7\tnull
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveSymbolSharedBySymbolAndStringColumns() throws Exception {
+        // The slave key copier writes p.s once, so the SYMBOL pair and the STRING pair must
+        // both compare strings.
+        assertMemoryLeak(() -> {
+            createSlaveSymbolSharedByMasterColumnsTables();
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price)
+                    FROM tm AS t
+                    HORIZON JOIN ps AS p ON (t.a = p.s AND t.str = p.s)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg
+                            1\t1.0
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveSymbolSharedBySymbolAndStringColumnsMultiSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            createSlaveSymbolSharedByMasterColumnsTables();
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price), avg(q.price)
+                    FROM tm AS t
+                    HORIZON JOIN ps AS p ON (t.a = p.s)
+                    HORIZON JOIN ps AS q ON (t.a = q.s AND t.str = q.s)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg\tavg1
+                            1\t1.0\t1.0
+                            2\t2.0\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnSlaveSymbolSharedBySymbolColumns() throws Exception {
+        // A slave SYMBOL key matched against two master SYMBOL columns compares strings.
+        assertMemoryLeak(() -> {
+            createSlaveSymbolSharedByMasterColumnsTables();
+
+            assertQuery("""
+                    SELECT t.id, avg(p.price)
+                    FROM tm AS t
+                    HORIZON JOIN ps AS p ON (t.a = p.s AND t.b = p.s)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tavg
+                            1\t1.0
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnSubQueryNotAllowed() throws Exception {
+        // the parser rejects the sub-query before the code generator sees the conjunct
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertQuery("SELECT t.id, avg(p.price) FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.k = p.k AND p.price > (SELECT min(price) FROM prices)) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "ORDER BY t.id")
+                    .noLeakCheck()
+                    .fails(97, "query is not allowed here");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnTautology() throws Exception {
+        // each conjunct holds for every row: a right-hand one keeps every right row, as p.price = p.price
+        // does for a NULL price too, because NULL = NULL is TRUE. The check still rejects the left-hand one.
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            for (String onClause : new String[]{
+                    "t.k = p.k AND p.k = p.k",
+                    "t.k = p.k AND p.price = p.price",
+                    "t.k = p.k AND (p.price < 1.5 OR true)"
+            }) {
+                assertHorizonJoinOnFilterNoLeakCheck(onClause, """
+                        id\tavg
+                        1\t1.0
+                        2\t2.0
+                        """);
+            }
+            assertHorizonJoinOnPredicateRejectedNoLeakCheck("t.k = p.k AND t.id = t.id", 91, "t.id = t.id");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinOnTautologyMultiSlave() throws Exception {
+        // a right-hand tautology keeps every right row on either HORIZON JOIN of the chain
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            for (String[] conjuncts : new String[][]{{" AND p.k = p.k", ""}, {"", " AND p2.k = p2.k"}}) {
+                assertQuery("SELECT t.id, avg(p.price), avg(p2.price) " +
+                        "FROM trades AS t " +
+                        "HORIZON JOIN prices AS p ON (t.k = p.k" + conjuncts[0] + ") " +
+                        "HORIZON JOIN prices AS p2 ON (t.k = p2.k" + conjuncts[1] + ") " +
+                        "LIST (0) AS h " +
+                        "ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\tavg\tavg1
+                                1\t1.0\t1.0
+                                2\t2.0\t2.0
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinOrderByExpressionOverNonSelectedColumn() throws Exception {
         // ORDER BY an expression over a column that the select list does not output, such as
         // t.price * 2, adds the expression to the horizon model as a hidden key, so the groups split
@@ -3713,14 +4966,120 @@ public class HorizonJoinTest extends AbstractCairoTest {
             final String inSubquery = "SELECT avg(q.price) FROM trades t HORIZON JOIN quotes q "
                     + "ON (q.sym IN (SELECT sym FROM trades)) LIST (0s) AS h";
             assertQuery(inSubquery).fails(inSubquery.indexOf("SELECT sym"), "query is not allowed here");
+            // a computed column and a LIMIT keep the right-hand side from reading time frames; a projection
+            // that only renames columns does not, see testHorizonJoinRightFilterRenamedColumns
             final ObjList<String> rhsValues = new ObjList<>(
-                    "(SELECT ts, sym, price AS p FROM quotes WHERE price > 0)",
                     "(SELECT ts, sym, price * 2 AS p FROM quotes WHERE price > 0)",
                     "(SELECT ts, sym, price AS p FROM quotes WHERE price > 0 LIMIT 1)");
             for (int rhsIndex = 0; rhsIndex < rhsValues.size(); rhsIndex++) {
                 final String rhs = rhsValues.getQuick(rhsIndex);
                 final String query = "SELECT avg(q.p) FROM trades t HORIZON JOIN " + rhs + " q LIST (0s) AS h";
                 assertQuery(query).fails(query.indexOf("HORIZON"), "right-hand side of HORIZON JOIN can only be a table with an optional filter");
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterRenamedColumns() throws Exception {
+        // A right-hand sub-query that renames columns: the right-hand filter, whether two keys imply it,
+        // ON holds it or the sub-query's WHERE does, filters the table under the projection, and the
+        // join reads the table's columns under their projected names. Each query runs on the serial and
+        // on the parallel factory. Rows checked with DuckDB.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (id INT, s SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (a SYMBOL, b SYMBOL, v VARCHAR, price DOUBLE, venue SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO prices VALUES
+                        ('A', 'B', 'B', 1.0, 'X', '1970-01-01T00:00:00.000001Z'),
+                        ('B', 'A', 'A', 2.0, 'Y', '1970-01-01T00:00:00.000002Z'),
+                        ('A', 'A', 'A', 3.0, 'X', '1970-01-01T00:00:00.000003Z'),
+                        ('B', 'B', 'B', 0.5, 'Y', '1970-01-01T00:00:00.000004Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                        (1, 'A', '1970-01-01T00:00:00.000010Z'),
+                        (2, 'B', '1970-01-01T00:00:00.000020Z')
+                    """);
+            final String[][] cases = {
+                    // keys on two renamed columns imply a = b
+                    {"(SELECT a AS x, b AS y, price, ts FROM prices) p ON (t.s = p.x AND t.s = p.y)", "slave filter: a=b", "1\t3.0\n2\t0.5\n"},
+                    {"(SELECT a AS x, v AS y, price, ts FROM prices) p ON (t.s = p.x AND t.s = p.y)", "slave filter: a=v", "1\t3.0\n2\t0.5\n"},
+                    // ON holds the right-hand filter
+                    {"(SELECT a AS x, b AS y, price, ts FROM prices) p ON (t.s = p.x AND p.price > 1)", "slave filter: 1<price", "1\t3.0\n2\t2.0\n"},
+                    // the sub-query's WHERE holds the filter, also on a column the projection drops
+                    {"(SELECT a AS x, b AS y, price, ts FROM prices WHERE a = b) p ON (t.s = p.x)", "slave filter: a=b", "1\t3.0\n2\t0.5\n"},
+                    {"(SELECT a AS x, price, ts FROM prices WHERE venue = 'X') p ON (t.s = p.x)", "slave filter: venue='X'", "1\t3.0\n2\tnull\n"},
+                    // swapped names, and a dropped column whose name a projected column takes
+                    {"(SELECT a AS b, b AS a, price, ts FROM prices) p ON (t.s = p.a AND p.price > 1)", "slave filter: 1<price", "1\t3.0\n2\tnull\n"},
+                    {"(SELECT a AS b, price, ts FROM prices WHERE b = 'A') p ON (t.s = p.b)", "slave filter: b='A'", "1\t3.0\n2\t2.0\n"},
+                    // stacked projections, and a renamed designated timestamp
+                    {"(SELECT x, y, price, ts FROM (SELECT a AS x, b AS y, price, ts FROM prices)) p ON (t.s = p.x AND t.s = p.y)", "slave filter: a=b", "1\t3.0\n2\t0.5\n"},
+                    {"(SELECT x AS z, price, ts FROM (SELECT a AS x, b AS y, price, ts FROM prices WHERE a = b)) p ON (t.s = p.z)", "slave filter: a=b", "1\t3.0\n2\t0.5\n"},
+                    {"(SELECT a AS x, price, ts AS pts FROM prices) p ON (t.s = p.x AND p.price > 1)", "slave filter: 1<price", "1\t3.0\n2\t2.0\n"},
+            };
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                final String horizonJoin = (isParallel ? "Async " : "") + "Horizon Join";
+                final String multiHorizonJoin = (isParallel ? "Async " : "") + "Multi Horizon Join";
+                for (String[] c : cases) {
+                    assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN " + c[0] + " RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
+                            .noLeakCheck()
+                            .expectSize()
+                            .withPlanContaining(horizonJoin, c[1])
+                            .returns("id\tavg\n" + c[2]);
+                }
+                assertQuery("WITH q AS (SELECT a AS x, b AS y, price, ts FROM prices) " +
+                        "SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN q AS p ON (t.s = p.x AND t.s = p.y) " +
+                        "RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining(horizonJoin, "slave filter: a=b")
+                        .returns("id\tavg\n1\t3.0\n2\t0.5\n");
+                assertQuery("SELECT t.id, avg(p.px) FROM trades AS t HORIZON JOIN (SELECT a, b, price AS px, ts FROM prices) AS p " +
+                        "ON (t.s = p.a AND t.s = p.b) RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining(horizonJoin, "slave filter: a=b")
+                        .returns("id\tavg\n1\t3.0\n2\t0.5\n");
+                // a projected column takes the name of the dropped column b, and price takes b#2, the name
+                // that renameHorizonSlaveColumns() tries first for b, at index 2 of the peeled slave's
+                // columns price, a, b, ts
+                assertQuery("SELECT t.id, avg(p.\"b#2\") FROM trades AS t HORIZON JOIN (SELECT a AS b, price AS \"b#2\", ts FROM prices WHERE b = 'A') AS p " +
+                        "ON (t.s = p.b) RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining(horizonJoin, "slave filter: b='A'")
+                        .returns("id\tavg\n1\t3.0\n2\t2.0\n");
+                assertQuery("SELECT t.id, avg(p.price), avg(q.price) FROM trades AS t " +
+                        "HORIZON JOIN (SELECT a AS x, b AS y, price, ts FROM prices) AS p ON (t.s = p.x AND t.s = p.y) " +
+                        "HORIZON JOIN (SELECT a AS z, price, ts FROM prices WHERE b = 'A') AS q ON (t.s = q.z) " +
+                        "LIST (0) AS h ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining(multiHorizonJoin, "slave filter: a=b", "slave filter: b='A'")
+                        .returns("id\tavg\tavg1\n1\t3.0\t3.0\n2\t0.5\t2.0\n");
+                // a slave that renames columns after one that renames none: each slave reads its own metadata
+                assertQuery("SELECT t.id, avg(q.price), avg(p.price) FROM trades AS t " +
+                        "HORIZON JOIN (prices WHERE b = 'A') AS q ON (t.s = q.a) " +
+                        "HORIZON JOIN (SELECT a AS x, b AS y, price, ts FROM prices) AS p ON (t.s = p.x AND t.s = p.y) " +
+                        "LIST (0) AS h ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining(multiHorizonJoin, "slave filter: b='A'", "slave filter: a=b")
+                        .returns("id\tavg\tavg1\n1\t3.0\t3.0\n2\t2.0\t0.5\n");
+                // the peel stops at a projection that exposes one base column under two names, which cannot
+                // read time frames; count(p.y) keeps y in the projection
+                final String twoNames = "SELECT t.id, avg(p.price), count(p.y) FROM trades AS t HORIZON JOIN (SELECT a AS x, a AS y, price, ts FROM prices WHERE b = 'A') AS p " +
+                        "ON (t.s = p.x) RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id";
+                assertQuery(twoNames)
+                        .noLeakCheck()
+                        .fails(twoNames.indexOf("HORIZON"), "right-hand side of HORIZON JOIN can only be a table with an optional filter");
+                // a column that the projection drops stays unreadable by name
+                final String sql = "SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN (SELECT a AS x, price, ts FROM prices WHERE venue = 'X') AS p " +
+                        "ON (t.s = p.x AND p.venue = 'X') RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id";
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(sql.indexOf("p.venue"), "Invalid column: p.venue");
             }
         });
     }
@@ -4116,6 +5475,27 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "WHERE t.qty > 0")
                     .noLeakCheck()
                     .fails(37, "right-hand side of HORIZON JOIN can only be a table with an optional filter");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinSlaveRowFilter() throws Exception {
+        // HORIZON JOIN takes the row filter off its right-hand side, whether a sub-query or the
+        // (table WHERE ...) form carries it, which keeps the time frame cursor it needs
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            for (String slave : new String[]{"(SELECT * FROM prices WHERE price > 1.5)", "(prices WHERE m = 3)"}) {
+                assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN " + slave + " AS p ON (t.k = p.k) " +
+                        "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                        "ORDER BY t.id")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\tavg
+                                1\tnull
+                                2\t2.0
+                                """);
+            }
         });
     }
 
@@ -5824,6 +7204,29 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             0\t150.0\t300
                             1\t160.0\t300
                             """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithMixedTimestampKeyKeepsNull() throws Exception {
+        // A key of the TIMESTAMP_NS t.n and the TIMESTAMP p.a compares nanoseconds, and the key copier
+        // converts p.a. NULL matches NULL and 1970-01-01 matches 1970-01-01, as in a key of two TIMESTAMP
+        // columns (#7757).
+        assertMemoryLeak(() -> {
+            createMixedTimestampKeyTables();
+            assertMixedTimestampKeyHorizonJoins(
+                    new String[]{"t.n = p.a", "p.a = t.n"},
+                    """
+                            id\tavg
+                            1\t11.0
+                            2\t10.0
+                            3\t10.0
+                            4\t11.0
+                            5\t12.0
+                            6\tnull
+                            7\tnull
+                            """
+            );
         });
     }
 
@@ -9528,10 +10931,94 @@ public class HorizonJoinTest extends AbstractCairoTest {
         }
     }
 
+    private static <T> T findFactoryInTree(RecordCursorFactory factory, Class<T> type) {
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (type.isInstance(f)) {
+                return type.cast(f);
+            }
+        }
+        throw new AssertionError("expected " + type.getSimpleName() + " in the factory tree, but top was " + factory.getClass().getSimpleName());
+    }
+
+    // The rows of the HORIZON JOIN of t and right q ON (on) LIST (-2m, 0m, 1m), and with isMulti of a
+    // second HORIZON JOIN of q r ON (t.k1 = r.k), as one ASOF JOIN of the shifted rows of t per
+    // offset. Column o holds the index of the offset.
+    private static String sharedKeyAsOfJoinReference(String right, String on, boolean isMulti) {
+        final int[] offsetsMinutes = {-2, 0, 1};
+        final StringSink sql = new StringSink();
+        for (int i = 0; i < offsetsMinutes.length; i++) {
+            if (i > 0) {
+                sql.put(" UNION ALL ");
+            }
+            sql.put("SELECT ").put(i).put(" o, t.id, q.id qid");
+            if (isMulti) {
+                sql.put(", r.id rid");
+            }
+            sql.put(" FROM (SELECT * FROM (SELECT dateadd('m', ").put(offsetsMinutes[i])
+                    .put(", ts) ts, id, k1, k2, k3 FROM t) TIMESTAMP(ts)) t ASOF JOIN ").put(right)
+                    .put(" q ON (").put(on).put(')');
+            if (isMulti) {
+                sql.put(" ASOF JOIN q r ON (t.k1 = r.k)");
+            }
+        }
+        return sql.toString();
+    }
+
+    // A value of the key type from a few values, NULL in about a quarter of the rows. TIMESTAMP and
+    // TIMESTAMP_NS draw the same instants, and DOUBLE draws 0.0 and -0.0, which a key map tells apart.
+    private static String sharedKeyValue(String type) {
+        final String value = switch (type) {
+            case "SYMBOL" -> "rnd_str('A', 'B', '\u00e9')";
+            case "INT" -> "rnd_int(1, 3, 0)";
+            case "LONG" -> "rnd_long(1, 3, 0)";
+            case "DOUBLE" -> "CASE WHEN rnd_boolean() THEN 1.5 WHEN rnd_boolean() THEN 0.0 ELSE -0.0 END";
+            case "TIMESTAMP" -> "rnd_long(0, 2, 0)::TIMESTAMP";
+            case "TIMESTAMP_NS" -> "(rnd_long(0, 2, 0) * 1_000)::TIMESTAMP_NS";
+            case "STRING", "VARCHAR" -> "rnd_str('A', 'B', '\u00e9', '')";
+            default -> throw new IllegalArgumentException("unsupported key type: " + type);
+        };
+        return "(CASE WHEN rnd_int(0, 3, 0) = 0 THEN NULL ELSE " + value + " END)::" + type;
+    }
+
     private void assertHorizonJoinFactory(String sql, Class<? extends RecordCursorFactory> factoryClass) throws Exception {
         try (RecordCursorFactory factory = select(sql)) {
             TestUtils.assertFactoryInTree(factory, factoryClass, sql);
         }
+    }
+
+    private void assertHorizonJoinOnFilter(String onClause, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertHorizonJoinOnFilterNoLeakCheck(onClause, expected);
+        });
+    }
+
+    private void assertHorizonJoinOnFilterNoLeakCheck(String onClause, String expected) throws Exception {
+        // a conjunct that reads only right-hand columns, or no column, filters the right-hand rows
+        // that the ASOF lookup can match
+        assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (" + onClause + ") " +
+                "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                "ORDER BY t.id")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
+    }
+
+    private void assertHorizonJoinOnPredicateRejected(String onClause, int position, String rejectedExpr) throws Exception {
+        // HORIZON JOIN ON accepts key equalities between left and right columns, and conjuncts that read
+        // only right-hand columns or no column
+        assertMemoryLeak(() -> {
+            createHorizonJoinOnPredicateTables();
+            assertHorizonJoinOnPredicateRejectedNoLeakCheck(onClause, position, rejectedExpr);
+        });
+    }
+
+    private void assertHorizonJoinOnPredicateRejectedNoLeakCheck(String onClause, int position, String rejectedExpr) throws Exception {
+        assertQuery("SELECT t.id, avg(p.price) FROM trades AS t HORIZON JOIN prices AS p ON (" + onClause + ") " +
+                "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                "ORDER BY t.id")
+                .noLeakCheck()
+                .fails(position, "unsupported HORIZON join expression [expr='" + rejectedExpr + "']");
     }
 
     private void assertHorizonJoinScanModesMatchAsOfJoin() throws Exception {
@@ -9703,6 +11190,155 @@ public class HorizonJoinTest extends AbstractCairoTest {
                 .returns(expectedResorted);
     }
 
+    // Runs one HORIZON JOIN of t and p, and two, serial and parallel, on each ON clause. Every HORIZON
+    // JOIN of the two returns the rows of the one.
+    private void assertMixedTimestampKeyHorizonJoins(String[] onClauses, String expected) throws Exception {
+        final StringBuilder expectedTwoJoins = new StringBuilder("id\tavg\tavg1\n");
+        final String[] lines = expected.split("\n");
+        for (int i = 1; i < lines.length; i++) {
+            expectedTwoJoins.append(lines[i]).append('\t').append(lines[i].substring(lines[i].indexOf('\t') + 1)).append('\n');
+        }
+        for (boolean parallel : new boolean[]{false, true}) {
+            sqlExecutionContext.setParallelHorizonJoinEnabled(parallel);
+            for (String on : onClauses) {
+                final QueryAssertion oneJoin = assertQuery(
+                        "SELECT t.id, avg(p.pid) FROM t HORIZON JOIN p ON (" + on + ") RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id"
+                ).noLeakCheck().expectSize();
+                (parallel ? oneJoin.withPlanContaining("Async Horizon Join") : oneJoin.withPlanNotContaining("Async")).returns(expected);
+                final QueryAssertion twoJoins = assertQuery(
+                        "SELECT t.id, avg(p.pid), avg(q.pid) FROM t HORIZON JOIN p ON (" + on + ") HORIZON JOIN p AS q ON ("
+                                + on.replace("p.", "q.") + ") RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id"
+                ).noLeakCheck().expectSize();
+                (parallel ? twoJoins.withPlanContaining("Async Multi Horizon Join") : twoJoins.withPlanContaining("Multi Horizon Join").withPlanNotContaining("Async"))
+                        .returns(expectedTwoJoins.toString());
+            }
+        }
+    }
+
+    // Runs the HORIZON JOIN factories over t and q of createSharedKeyTypeTables() ON (on), serially and
+    // in parallel, against one full-fat ASOF JOIN per offset. Without isEveryFactory, only the
+    // aggregating factories without GROUP BY keys and the row-preserving ones run.
+    private void assertSharedKeyHorizonJoinsMatchAsOfJoin(String on, boolean isEveryFactory, String message) throws Exception {
+        final String reference = sharedKeyAsOfJoinReference("q", on, false);
+        printSql("SELECT id, qid FROM (" + reference + ") ORDER BY id, o", true);
+        final String rowsExpected = sink.toString();
+        printSql("SELECT count() c, count(qid) n, sum(qid) s FROM (" + reference + ")", true);
+        final String notKeyedExpected = sink.toString();
+        final String multiReference = sharedKeyAsOfJoinReference("q", on, true);
+        printSql("SELECT id, qid, rid FROM (" + multiReference + ") ORDER BY id, o", true);
+        final String multiRowsExpected = sink.toString();
+        printSql("SELECT id, count() c, count(qid) n, sum(qid) s FROM (" + reference + ") ORDER BY id", true);
+        final String keyedExpected = sink.toString();
+        printSql("SELECT count() c, count(qid) n, sum(qid) s FROM (" + sharedKeyAsOfJoinReference("(q WHERE id % 3 <> 0)", on, false) + ")", true);
+        final String filteredExpected = sink.toString();
+        printSql("SELECT id, count() c, sum(qid) s, sum(rid) r FROM (" + multiReference + ") ORDER BY id", true);
+        final String multiExpected = sink.toString();
+
+        final String list = " LIST (-2m, 0m, 1m) AS h";
+        final String join = " FROM t HORIZON JOIN q ON (" + on + ')';
+        final String rows = "SELECT t.id, q.id qid" + join + list;
+        final String notKeyed = "SELECT count() c, count(q.id) n, sum(q.id) s" + join + list;
+        // r has no key that shares a right-hand column, so it has no check
+        final String multiJoin = join + " HORIZON JOIN q r ON (t.k1 = r.k)";
+        final String multiRows = "SELECT t.id, q.id qid, r.id rid" + multiJoin + list;
+        final String keyed = "SELECT t.id, count() c, count(q.id) n, sum(q.id) s" + join + list + " ORDER BY t.id";
+        final String filtered = "SELECT count() c, count(q.id) n, sum(q.id) s FROM t HORIZON JOIN (q WHERE id % 3 <> 0) q ON (" + on + ')' + list;
+        final String multi = "SELECT t.id, count() c, sum(q.id) s, sum(r.id) r" + multiJoin + list + " ORDER BY t.id";
+        for (boolean isParallel : new boolean[]{false, true}) {
+            sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+            try {
+                final Class<? extends RecordCursorFactory> projectionClass = isParallel
+                        ? AsyncHorizonJoinProjectionRecordCursorFactory.class
+                        : HorizonJoinProjectionRecordCursorFactory.class;
+                final Class<? extends RecordCursorFactory> notKeyedClass = isParallel
+                        ? AsyncHorizonJoinNotKeyedRecordCursorFactory.class
+                        : HorizonJoinNotKeyedRecordCursorFactory.class;
+                assertHorizonJoinFactory(rows, projectionClass);
+                assertQuery(rows)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("sharedKeyCheck: true")
+                        .returns(rowsExpected);
+                assertHorizonJoinFactory(notKeyed, notKeyedClass);
+                assertQuery(notKeyed)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("sharedKeyCheck: true")
+                        .returns(notKeyedExpected);
+                if (!isEveryFactory) {
+                    continue;
+                }
+                assertHorizonJoinFactory(multiRows, projectionClass);
+                assertQuery(multiRows)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("sharedKeyCheck: true")
+                        .returns(multiRowsExpected);
+                assertHorizonJoinFactory(keyed, isParallel ? AsyncHorizonJoinRecordCursorFactory.class : HorizonJoinRecordCursorFactory.class);
+                assertQuery(keyed)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("sharedKeyCheck: true")
+                        .returns(keyedExpected);
+                assertHorizonJoinFactory(filtered, notKeyedClass);
+                assertQuery(filtered)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("slave filter", "sharedKeyCheck: true")
+                        .returns(filteredExpected);
+                assertHorizonJoinFactory(multi, isParallel ? AsyncMultiHorizonJoinRecordCursorFactory.class : MultiHorizonJoinRecordCursorFactory.class);
+                assertQuery(multi)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("sharedKeyCheck: true")
+                        .returns(multiExpected);
+            } catch (AssertionError e) {
+                throw new AssertionError(message + (isParallel ? ", parallel" : ", serial") + ": " + e.getMessage(), e);
+            }
+        }
+    }
+
+    // Tells from the atoms of the parallel factories whether the key of prices p compares symbol ids:
+    // only then do the lookups copy the left-hand key from a SymbolTranslatingRecord.
+    private void assertSymbolIdKeys(String onClause, boolean isSymbolId) throws Exception {
+        final String single = "SELECT count() FROM trades t HORIZON JOIN prices p ON (" + onClause + ") LIST (0s) AS h";
+        try (RecordCursorFactory factory = select(single)) {
+            final AsyncHorizonJoinNotKeyedRecordCursorFactory horizon = findFactoryInTree(factory, AsyncHorizonJoinNotKeyedRecordCursorFactory.class);
+            Assert.assertEquals(single, isSymbolId, horizon.getAtom().getMasterKeyRecord(-1, null) instanceof SymbolTranslatingRecord);
+        }
+        // p first, so the code generator parks its slave, and p last
+        final String[] multiSlaveQueries = {
+                "SELECT count() FROM trades t HORIZON JOIN prices p ON (" + onClause + ") HORIZON JOIN prices r ON (t.s1 = r.s) LIST (0s) AS h",
+                "SELECT count() FROM trades t HORIZON JOIN prices r ON (t.s1 = r.s) HORIZON JOIN prices p ON (" + onClause + ") LIST (0s) AS h"
+        };
+        for (int slaveIndex = 0; slaveIndex < multiSlaveQueries.length; slaveIndex++) {
+            final String sql = multiSlaveQueries[slaveIndex];
+            try (RecordCursorFactory factory = select(sql)) {
+                final AsyncMultiHorizonJoinNotKeyedRecordCursorFactory horizon = findFactoryInTree(factory, AsyncMultiHorizonJoinNotKeyedRecordCursorFactory.class);
+                Assert.assertEquals(sql, isSymbolId, horizon.getAtom().getMasterKeyRecord(-1, slaveIndex, null) instanceof SymbolTranslatingRecord);
+            }
+        }
+    }
+
+    private void createHorizonJoinOnPredicateTables() throws Exception {
+        executeWithRewriteTimestamp("CREATE TABLE trades (id INT, k INT, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE prices (k INT, m INT, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        execute("""
+                INSERT INTO prices VALUES
+                    (1, 1, 1.0, '1970-01-01T00:00:00.000001Z'),
+                    (2, 3, 2.0, '1970-01-01T00:00:00.000002Z')
+                """);
+        execute("""
+                INSERT INTO trades VALUES
+                    (1, 1, '1970-01-01T00:00:00.000010Z'),
+                    (2, 2, '1970-01-01T00:00:00.000020Z')
+                """);
+    }
+
     private void createHorizonSubQueryTables() throws Exception {
         executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
         executeWithRewriteTimestamp("CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
@@ -9794,6 +11430,124 @@ public class HorizonJoinTest extends AbstractCairoTest {
         );
         execute("INSERT INTO bids SELECT ts, sym, bid FROM quotes");
         execute("INSERT INTO asks SELECT ts, sym, bid + 1 FROM quotes");
+    }
+
+    // The SYMBOL, INT and VARCHAR columns of trades hold the same pairs: 'A' is 1, 'B' is 2 and 'C' is
+    // 3. The two keys of a pair agree in rows 1, 4, 5 and 6, row 4 being NULL in both. 'C' occurs only
+    // in trades, and every row of prices precedes every row of trades.
+    private void createKeysSharingSlaveColumnTables() throws Exception {
+        executeWithRewriteTimestamp("CREATE TABLE trades (id INT, s1 SYMBOL, s2 SYMBOL, v2 VARCHAR, k1 INT, k2 INT, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE prices (id INT, s SYMBOL, k INT, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        execute("""
+                INSERT INTO prices VALUES
+                    (10, 'A', 1, '1970-01-01T00:00:00.000001Z'),
+                    (20, NULL, NULL, '1970-01-01T00:00:00.000002Z'),
+                    (30, 'A', 1, '1970-01-01T00:00:00.000005Z'),
+                    (40, 'B', 2, '1970-01-01T00:00:00.000006Z')
+                """);
+        execute("""
+                INSERT INTO trades VALUES
+                    (1, 'A', 'A', 'A', 1, 1, '1970-01-01T00:00:00.000010Z'),
+                    (2, 'A', 'B', 'B', 1, 2, '1970-01-01T00:00:00.000020Z'),
+                    (3, 'B', NULL, NULL, 2, NULL, '1970-01-01T00:00:00.000030Z'),
+                    (4, NULL, NULL, NULL, NULL, NULL, '1970-01-01T00:00:00.000040Z'),
+                    (5, 'C', 'C', 'C', 3, 3, '1970-01-01T00:00:00.000050Z'),
+                    (6, 'B', 'B', 'B', 2, 2, '1970-01-01T00:00:00.000060Z')
+                """);
+    }
+
+    private void createMasterSymbolSharedBySlaveColumnsTables() throws Exception {
+        executeWithRewriteTimestamp("CREATE TABLE trades (id INT, s SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE prices (a SYMBOL, b SYMBOL, str STRING, v VARCHAR, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        execute("""
+                INSERT INTO prices VALUES
+                    ('A', 'B', 'B', 'B', 1.0, '1970-01-01T00:00:00.000001Z'),
+                    ('B', 'A', 'A', 'A', 2.0, '1970-01-01T00:00:00.000002Z'),
+                    ('A', 'A', 'A', 'A', 3.0, '1970-01-01T00:00:00.000003Z')
+                """);
+        execute("""
+                INSERT INTO trades VALUES
+                    (1, 'A', '1970-01-01T00:00:00.000010Z'),
+                    (2, 'B', '1970-01-01T00:00:00.000020Z')
+                """);
+    }
+
+    private void createMixedSymbolKeysWithCrossedColumnIndexesTables() throws Exception {
+        executeWithRewriteTimestamp("CREATE TABLE ht (ts #TIMESTAMP, a INT, s SYMBOL, x SYMBOL) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE hp (ts #TIMESTAMP, s SYMBOL, st STRING, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        execute("INSERT INTO hp VALUES ('1970-01-01T00:00:01.000000Z', 'k', 'q', 5.0)");
+        execute("INSERT INTO ht VALUES ('1970-01-01T00:00:02.000000Z', 1, 'k', 'q')");
+    }
+
+    // p.a holds 1970-01-01, NULL, 1 microsecond and 9999-12-31, a TIMESTAMP outside the TIMESTAMP_NS
+    // range. Each row of t pairs a TIMESTAMP m with a TIMESTAMP_NS n: both NULL, both 1970-01-01, NULL
+    // next to 1970-01-01 and the reverse, 1 microsecond in both units, 1 microsecond next to 1,500
+    // nanoseconds, and 9999-12-31 next to the last TIMESTAMP_NS value. The rows of p precede every row
+    // of t.
+    private void createMixedTimestampKeyTables() throws Exception {
+        executeWithRewriteTimestamp("CREATE TABLE p (pid INT, a TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        execute("""
+                INSERT INTO p VALUES
+                    (10, 0::TIMESTAMP, '2024-01-01T00:00:00.000000Z'),
+                    (11, NULL, '2024-01-01T00:00:01.000000Z'),
+                    (12, 1::TIMESTAMP, '2024-01-01T00:00:02.000000Z'),
+                    (13, '9999-12-31T23:59:59.999999Z', '2024-01-01T00:00:03.000000Z')
+                """);
+        executeWithRewriteTimestamp("CREATE TABLE t (id INT, m TIMESTAMP, n TIMESTAMP_NS, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+        execute("""
+                INSERT INTO t VALUES
+                    (1, NULL, NULL, '2024-01-01T00:00:05.000000Z'),
+                    (2, 0::TIMESTAMP, 0::TIMESTAMP_NS, '2024-01-01T00:00:06.000000Z'),
+                    (3, NULL, 0::TIMESTAMP_NS, '2024-01-01T00:00:07.000000Z'),
+                    (4, 0::TIMESTAMP, NULL, '2024-01-01T00:00:08.000000Z'),
+                    (5, 1::TIMESTAMP, 1_000::TIMESTAMP_NS, '2024-01-01T00:00:09.000000Z'),
+                    (6, 1::TIMESTAMP, 1_500::TIMESTAMP_NS, '2024-01-01T00:00:10.000000Z'),
+                    (7, '9999-12-31T23:59:59.999999Z', '2262-04-11T23:47:16.854775807Z', '2024-01-01T00:00:11.000000Z')
+                """);
+    }
+
+    private void createSelfJoinSymbolSharedTable() throws Exception {
+        executeWithRewriteTimestamp("CREATE TABLE x (id INT, s SYMBOL, a SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+        execute("""
+                INSERT INTO x VALUES
+                    (0, 'A', 'B', 1.0, '1970-01-01T00:00:00.000001Z'),
+                    (1, 'B', 'A', 2.0, '1970-01-01T00:00:00.000002Z'),
+                    (2, 'A', 'A', 3.0, '1970-01-01T00:00:00.000003Z'),
+                    (3, 'B', 'C', 4.0, '1970-01-01T00:00:00.000004Z')
+                """);
+    }
+
+    // q holds 300 rows a minute apart, over 5 hourly partitions, and t 300 rows between them. k1 and k3
+    // of t take the first key type, k2 the second, and q.k and q.j the third.
+    private void createSharedKeyTypeTables(String[] types) throws Exception {
+        execute("DROP TABLE IF EXISTS t");
+        execute("DROP TABLE IF EXISTS q");
+        executeWithRewriteTimestamp(
+                "CREATE TABLE q AS (SELECT x id, " + sharedKeyValue(types[2]) + " k, " + sharedKeyValue(types[2]) + " j, "
+                        + "timestamp_sequence(0, 60_000_000)::#TIMESTAMP ts FROM long_sequence(300)) TIMESTAMP(ts) PARTITION BY HOUR",
+                rightTableTimestampType.getTypeName()
+        );
+        executeWithRewriteTimestamp(
+                "CREATE TABLE t AS (SELECT x id, " + sharedKeyValue(types[0]) + " k1, " + sharedKeyValue(types[1]) + " k2, "
+                        + sharedKeyValue(types[0]) + " k3, "
+                        + "timestamp_sequence(30_000_000, 60_000_000)::#TIMESTAMP ts FROM long_sequence(300)) TIMESTAMP(ts) PARTITION BY HOUR",
+                leftTableTimestampType.getTypeName()
+        );
+    }
+
+    private void createSlaveSymbolSharedByMasterColumnsTables() throws Exception {
+        executeWithRewriteTimestamp("CREATE TABLE tm (id INT, a SYMBOL, str STRING, b SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+        executeWithRewriteTimestamp("CREATE TABLE ps (s SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        execute("""
+                INSERT INTO ps VALUES
+                    ('A', 1.0, '1970-01-01T00:00:00.000001Z'),
+                    ('B', 2.0, '1970-01-01T00:00:00.000002Z')
+                """);
+        execute("""
+                INSERT INTO tm VALUES
+                    (1, 'A', 'A', 'A', '1970-01-01T00:00:00.000010Z'),
+                    (2, 'B', 'A', 'A', '1970-01-01T00:00:00.000020Z')
+                """);
     }
 
     private String getHorizonJoinPlanType() {

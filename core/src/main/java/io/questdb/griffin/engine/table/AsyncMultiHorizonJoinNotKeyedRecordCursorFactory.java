@@ -202,6 +202,9 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             if (slaveFilter != null) {
                 sink.attr("slave filter").val(slaveFilter, slaveFactories.getQuick(i));
             }
+            if (slaveStates.getQuick(i).hasSharedKeyCheck()) {
+                sink.attr("sharedKeyCheck").val(true);
+            }
             sink.child(slaveFactories.getQuick(i));
         }
     }

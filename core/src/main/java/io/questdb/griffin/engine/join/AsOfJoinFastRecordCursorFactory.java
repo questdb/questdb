@@ -49,6 +49,10 @@ import org.jetbrains.annotations.Nullable;
 
 public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinKeyedFastRecordCursor cursor;
+    // Write the master columns at the key positions that share a slave column, see
+    // SqlCodeGenerator.createSharedKeyCopier(). Both are null when no slave key column repeats.
+    private final @Nullable RecordSink earliestSharedKeySink;
+    private final @Nullable RecordSink laterSharedKeySink;
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
     private final SymbolShortCircuit symbolShortCircuit;
@@ -67,26 +71,52 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             JoinContext joinContext,
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable RecordSink earliestSharedKeySink,
+            @Nullable RecordSink laterSharedKeySink
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.masterKeySink = masterKeySink;
+        this.earliestSharedKeySink = earliestSharedKeySink;
+        this.laterSharedKeySink = laterSharedKeySink;
         this.slaveKeySink = slaveKeySink;
         long maxSinkTargetHeapSize = (long) configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
-        this.cursor = new AsOfJoinKeyedFastRecordCursor(
-                columnSplit,
-                NullRecordFactory.getInstance(slaveFactory.getMetadata()),
-                masterFactory.getMetadata().getTimestampIndex(),
-                masterFactory.getMetadata().getTimestampType(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
-                        SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
-                slaveFactory.getMetadata().getTimestampIndex(),
-                slaveFactory.getMetadata().getTimestampType(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
-                        SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
-                configuration.getSqlAsOfJoinLookAhead()
-        );
+        final RecordMetadata masterMetadata = masterFactory.getMetadata();
+        final RecordMetadata slaveMetadata = slaveFactory.getMetadata();
+        final SingleRecordSink masterSinkTarget = new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
+                SingleRecordSink.CONFIG_KEYS_ASOF_JOIN);
+        final SingleRecordSink slaveSinkTarget = new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
+                SingleRecordSink.CONFIG_KEYS_ASOF_JOIN);
+        // Only a join whose keys share a slave column gets the cursor that checks the master key
+        // before it moves the slave cursor, so every other join keeps the plain cursor.
+        if (earliestSharedKeySink == null) {
+            this.cursor = new AsOfJoinKeyedFastRecordCursor(
+                    columnSplit,
+                    NullRecordFactory.getInstance(slaveMetadata),
+                    masterMetadata.getTimestampIndex(),
+                    masterMetadata.getTimestampType(),
+                    masterSinkTarget,
+                    slaveMetadata.getTimestampIndex(),
+                    slaveMetadata.getTimestampType(),
+                    slaveSinkTarget,
+                    configuration.getSqlAsOfJoinLookAhead()
+            );
+        } else {
+            this.cursor = new AsOfJoinKeyedFastCheckedRecordCursor(
+                    columnSplit,
+                    NullRecordFactory.getInstance(slaveMetadata),
+                    masterMetadata.getTimestampIndex(),
+                    masterMetadata.getTimestampType(),
+                    masterSinkTarget,
+                    slaveMetadata.getTimestampIndex(),
+                    slaveMetadata.getTimestampType(),
+                    slaveSinkTarget,
+                    configuration.getSqlAsOfJoinLookAhead(),
+                    earliestSharedKeySink,
+                    laterSharedKeySink
+            );
+        }
         this.symbolShortCircuit = symbolShortCircuit;
         this.toleranceInterval = toleranceInterval;
         this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
@@ -139,6 +169,9 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
+        if (earliestSharedKeySink != null) {
+            sink.attr("sharedKeyCheck").val(true);
+        }
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -153,13 +186,68 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
         CairoException.rethrowCleanupFailure(failure);
     }
 
+    private class AsOfJoinKeyedFastCheckedRecordCursor extends AsOfJoinKeyedFastRecordCursor {
+        private final RecordSink earliestSharedKeySink;
+        private final RecordSink laterSharedKeySink;
+
+        public AsOfJoinKeyedFastCheckedRecordCursor(
+                int columnSplit,
+                Record nullRecord,
+                int masterTimestampIndex,
+                int masterTimestampType,
+                SingleRecordSink masterSinkTarget,
+                int slaveTimestampIndex,
+                int slaveTimestampType,
+                SingleRecordSink slaveSinkTarget,
+                int lookahead,
+                RecordSink earliestSharedKeySink,
+                RecordSink laterSharedKeySink
+        ) {
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, masterSinkTarget, slaveTimestampIndex, slaveTimestampType, slaveSinkTarget, lookahead);
+            this.earliestSharedKeySink = earliestSharedKeySink;
+            this.laterSharedKeySink = laterSharedKeySink;
+        }
+
+        @Override
+        public boolean hasNext() {
+            // Consult the breaker at the top, so an empty master still observes cancellation.
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            if (!masterCursor.hasNext()) {
+                return false;
+            }
+            if (!isMasterKeyMatchable()) {
+                // No slave row matches master values that differ at key positions sharing a slave
+                // column, so skip moving the slave cursor and scanning it.
+                record.hasSlave(false);
+                return true;
+            }
+            return findSlaveRecord();
+        }
+
+        // A slave row writes one value at all key positions that share its column, so it matches only
+        // a master row whose values at those positions encode the same. The method writes the shared
+        // master columns into both sinks, and the key matching writes both sinks again before it
+        // reads them. A shared SYMBOL value that does not occur in the slave table matches no row.
+        private boolean isMasterKeyMatchable() {
+            if (symbolTranslatingRecord != null) {
+                symbolTranslatingRecord.resetNonExistentKeyFlag();
+            }
+            masterSinkTarget.clear();
+            earliestSharedKeySink.copy(masterKeyRecord, masterSinkTarget);
+            slaveSinkTarget.clear();
+            laterSharedKeySink.copy(masterKeyRecord, slaveSinkTarget);
+            return masterSinkTarget.memeq(slaveSinkTarget)
+                    && (symbolTranslatingRecord == null || !symbolTranslatingRecord.hadNonExistentKey());
+        }
+    }
+
     private class AsOfJoinKeyedFastRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {
-        private final SingleRecordSink masterSinkTarget;
-        private final SingleRecordSink slaveSinkTarget;
+        protected final SingleRecordSink masterSinkTarget;
+        protected final SingleRecordSink slaveSinkTarget;
         // Record used for master key serialization. Set once in of() to either
         // masterRecord or SymbolTranslatingRecord wrapping it, so that getInt()
         // on symbol key columns returns slave symbol IDs.
-        private Record masterKeyRecord;
+        protected Record masterKeyRecord;
 
         public AsOfJoinKeyedFastRecordCursor(
                 int columnSplit,
