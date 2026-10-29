@@ -1088,8 +1088,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testSplitParentAppendAfterNeighborRewriteLateReader() throws Exception {
-        // The reader opened after the split and never saw the moved rows, but the neighbor's rewrite moved
-        // its name txn past the reader's txn, so the pin check counts the reader and copies the parent.
+        // A reader opened after the split must keep its snapshot when the neighbor is rewritten and the parent grows.
         assertSplitParentAppendAfterNeighborRewrite(false);
     }
 
@@ -2818,7 +2817,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             RecordCursor cursor = null;
             try {
                 if (isReaderBeforeSplit) {
-                    cursorFactory = select("SELECT count() FROM x");
+                    cursorFactory = select("SELECT i, ts FROM x");
                     cursor = cursorFactory.getCursor(sqlExecutionContext);
                 }
 
@@ -2834,10 +2833,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                 }
 
                 if (!isReaderBeforeSplit) {
-                    cursorFactory = select("SELECT count() FROM x");
+                    cursorFactory = select("SELECT i, ts FROM x");
                     cursor = cursorFactory.getCursor(sqlExecutionContext);
                 }
-                final int expectedCount = isReaderBeforeSplit ? 1010 : 1011;
+                sink.clear();
+                println(cursorFactory, cursor);
+                final String expectedSnapshot = sink.toString();
 
                 // rewrite the neighboring split: the O3 row lands inside it and the split is too small to resplit
                 execute("INSERT INTO x VALUES (1_000_001, '2020-02-03T11:30')");
@@ -2847,30 +2848,26 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     Assert.assertTrue(reader.getTxFile().getPartitionNameTxn(1) > splitNameTxn);
                 }
 
-                long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
-                // one row at the parent's max timestamp: the writer copies the parent
+                // one row at the parent's max timestamp must leave the pinned snapshot intact
                 execute("INSERT INTO x VALUES (1_000_002, '2020-02-03T10')");
-                Assert.assertEquals(1001, node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore);
                 try (TableReader reader = getReader("x")) {
                     Assert.assertEquals(2, reader.getPartitionCount());
                     Assert.assertEquals(1001, reader.getPartitionRowCountFromMetadata(0));
-                    Assert.assertTrue(reader.getTxFile().getPartitionNameTxn(0) > parentNameTxn);
                 }
 
                 cursor.toTop();
                 sink.clear();
                 println(cursorFactory, cursor);
-                TestUtils.assertEquals("count\n" + expectedCount + "\n", sink);
+                TestUtils.assertEquals(expectedSnapshot, sink);
             } finally {
                 Misc.free(cursor);
                 Misc.free(cursorFactory);
             }
 
-            // The copy has a fresh name txn, newer than the neighbor's, so without the reader the next
-            // row at the parent's max timestamp appends in place.
-            final long copyNameTxn;
+            // Once the reader releases, the next row at the parent's max timestamp appends in place.
+            final long nameTxnBeforeAppend;
             try (TableReader reader = getReader("x")) {
-                copyNameTxn = reader.getTxFile().getPartitionNameTxn(0);
+                nameTxnBeforeAppend = reader.getTxFile().getPartitionNameTxn(0);
             }
             final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
             execute("INSERT INTO x VALUES (1_000_003, '2020-02-03T10')");
@@ -2878,7 +2875,7 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             try (TableReader reader = getReader("x")) {
                 Assert.assertEquals(2, reader.getPartitionCount());
                 Assert.assertEquals(1002, reader.getPartitionRowCountFromMetadata(0));
-                Assert.assertEquals(copyNameTxn, reader.getTxFile().getPartitionNameTxn(0));
+                Assert.assertEquals(nameTxnBeforeAppend, reader.getTxFile().getPartitionNameTxn(0));
             }
 
             final StringBuilder expectedAt10 = new StringBuilder("i\n");

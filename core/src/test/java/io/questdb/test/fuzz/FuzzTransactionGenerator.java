@@ -153,13 +153,11 @@ public class FuzzTransactionGenerator {
 
         long estimatedTotalRows = rowCount + initialRowCount;
 
-        // Uniformly random timestamps almost never land on a timestamp that already exists in the table,
-        // so with this probability an O3 data block is anchored next to an earlier block's min or max row,
-        // sometimes followed by a resend of exactly that row. In-order runs keep their pure append workload.
+        // Anchor some O3 blocks near earlier timestamps to exercise collisions and adjacent writes.
         final double probabilityOfAnchoredBlock = o3 && rnd.nextBoolean() ? 0.3 * rnd.nextDouble() : 0;
         final LongList anchors = new LongList();
         long lastAnchor = Long.MIN_VALUE;
-        long pendingResendTs = Long.MIN_VALUE;
+        long pendingCollisionTs = Long.MIN_VALUE;
 
         for (int i = 0; i < transactionCount; i++) {
             if (i == tableDropIteration) {
@@ -295,25 +293,25 @@ public class FuzzTransactionGenerator {
                 }
 
                 final long startTs, stopTs;
-                final boolean isResend = pendingResendTs != Long.MIN_VALUE;
-                final boolean isAnchored = isResend || (probabilityOfAnchoredBlock > 0 && anchors.size() > 0 && rnd.nextDouble() < probabilityOfAnchoredBlock);
-                if (isResend) {
-                    // the client resends the existing row the previous anchored block landed just above
-                    startTs = pendingResendTs;
-                    stopTs = pendingResendTs;
-                    pendingResendTs = Long.MIN_VALUE;
+                final boolean isCollision = pendingCollisionTs != Long.MIN_VALUE;
+                final boolean isAnchored = isCollision || (probabilityOfAnchoredBlock > 0 && anchors.size() > 0 && rnd.nextDouble() < probabilityOfAnchoredBlock);
+                if (isCollision) {
+                    // generate new rows at the previous anchor's timestamp
+                    startTs = pendingCollisionTs;
+                    stopTs = pendingCollisionTs;
+                    pendingCollisionTs = Long.MIN_VALUE;
                     blockRows = Math.min(blockRows, 1 + rnd.nextInt(16));
                 } else if (isAnchored) {
-                    // revisiting the previous anchor clusters late writes around one existing row
+                    // revisiting the previous anchor clusters late writes around one timestamp
                     if (lastAnchor == Long.MIN_VALUE || rnd.nextBoolean()) {
                         lastAnchor = anchors.getQuick(rnd.nextInt(anchors.size()));
                     }
                     if (rnd.nextBoolean()) {
-                        // rows just above an existing row; the next data block resends that row
+                        // write just above the anchor, then revisit its timestamp in the next data block
                         startTs = lastAnchor + 1;
-                        pendingResendTs = lastAnchor;
+                        pendingCollisionTs = lastAnchor;
                     } else {
-                        // just below, exactly at, or just above an existing row
+                        // just below, exactly at, or just above the anchor
                         startTs = lastAnchor + rnd.nextInt(3) - 1;
                     }
                     final long width = switch (rnd.nextInt(3)) {
