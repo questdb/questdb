@@ -767,43 +767,6 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTickExprThatExpandsToNothingInRowFilter() throws Exception {
-        // An OR with a condition that is not a timestamp interval keeps the IN in the row filter.
-        // A tick expression with no interval at all, here a day filter that drops its only day,
-        // never matches, and the JIT compiles it to a comparison that is always false.
-        assertMemoryLeak(() -> {
-            // hourly rows from 2024-01-01T00:00 to 2024-01-04T23:00, in ts and in ts2
-            execute("""
-                    CREATE TABLE t AS (
-                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts,
-                               timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts2
-                        FROM long_sequence(96)
-                    ) TIMESTAMP(ts) PARTITION BY DAY
-                    """);
-            final int jitMode = sqlExecutionContext.getJitMode();
-            try {
-                for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
-                    sqlExecutionContext.setJitMode(mode);
-                    final String groupBy = mode == SqlJitMode.JIT_MODE_ENABLED && JitUtil.isJitSupported()
-                            ? "Async JIT Group By"
-                            : "Async Group By";
-                    assertFilterRows("ts IN '2024-01-02#Mon' OR ts > '2030-01-01'", groupBy, "0\t\t");
-                    assertFilterRows("ts NOT IN '2024-01-02#Mon' OR ts > '2030-01-01'", groupBy, "96\t2024-01-01T00:00:00.000000Z\t2024-01-04T23:00:00.000000Z");
-                    assertFilterRows("ts2 IN '2024-01-02#Mon'", groupBy, "0\t\t");
-                    assertFilterRows("ts2 NOT IN '2024-01-02#Mon'", groupBy, "96\t2024-01-01T00:00:00.000000Z\t2024-01-04T23:00:00.000000Z");
-                    assertFilterRows(
-                            "(ts IN '2024-01-02#Mon' OR ts IN '2024-01-03') AND ts IN '2024-01-[03..04]'",
-                            "Interval forward scan",
-                            "24\t2024-01-03T00:00:00.000000Z\t2024-01-03T23:00:00.000000Z"
-                    );
-                }
-            } finally {
-                sqlExecutionContext.setJitMode(jitMode);
-            }
-        });
-    }
-
-    @Test
     public void testTickExprOrWithEmptyFirstBranch() throws Exception {
         // A union starts from its first branch. When that branch selects nothing, the union is
         // the rest of the branches. 2024-01-02 is a Tuesday, not a Monday.
@@ -836,6 +799,97 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 assertIntrinsicRows("(ts IN '2024-01-02#Mon' OR ts IN '2024-01-03') AND ts IN '2024-01-04'", "0\t\t");
             } finally {
                 setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testTickExprParseErrorFails() throws Exception {
+        // A tick expression that does not parse fails the query with the parser's message, at the
+        // position of the expression, whether it comes as a literal, as a bind variable or as a
+        // value of each row, rather than matching no row
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-01-02T00:00:00.000000Z', 3_600_000_000L) ts,
+                               '2024-01-02T08:00@Bogus/Zone' s
+                        FROM long_sequence(24)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final String tickExpr = "2024-01-02T08:00@Bogus/Zone";
+            final String error = "invalid timezone: Bogus/Zone";
+            assertExceptionNoLeakCheck("SELECT count() FROM t WHERE ts IN '" + tickExpr + "'", 34, error);
+            bindVariableService.clear();
+            bindVariableService.setStr(0, tickExpr);
+            // the interval scan
+            assertExceptionNoLeakCheck("SELECT count() FROM t WHERE ts IN $1", 34, error);
+            assertExceptionNoLeakCheck("SELECT count() FROM t WHERE ts NOT IN $1", 38, error);
+            // the row filter
+            assertExceptionNoLeakCheck("SELECT count() FROM t WHERE ts IN $1 OR ts = 0", 34, error);
+            // a value of each row
+            assertExceptionNoLeakCheck("SELECT count() FROM t WHERE ts IN s", 34, error);
+            // An error that the parser places inside the value points at the bind variable, since the
+            // value is not part of the SQL text
+            final String rangeError = "Invalid date range: start is after end";
+            assertExceptionNoLeakCheck("SELECT count() FROM t WHERE ts IN '[$tomorrow..$today]'", 34, rangeError);
+            bindVariableService.setStr(0, "[$tomorrow..$today]");
+            assertExceptionNoLeakCheck("SELECT count() FROM t WHERE ts IN $1", 34, rangeError);
+            assertExceptionNoLeakCheck("SELECT count() FROM t WHERE ts IN $1 OR ts = 0", 34, rangeError);
+            // A null bind variable is not an error, and matches no row. Neither is an expression that
+            // selects nothing: 2024-01-02 is a Tuesday.
+            for (String value : new String[]{null, "2024-01-02#Mon"}) {
+                bindVariableService.setStr(0, value);
+                for (String sql : new String[]{"SELECT count() FROM t WHERE ts IN $1", "SELECT count() FROM t WHERE ts IN $1 OR ts = 0"}) {
+                    assertQuery(sql)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n0\n");
+                }
+            }
+            // and excluding nothing keeps every row
+            bindVariableService.setStr(0, "2024-01-02#Mon");
+            assertQuery("SELECT count() FROM t WHERE ts NOT IN $1")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n24\n");
+        });
+    }
+
+    @Test
+    public void testTickExprThatExpandsToNothingInRowFilter() throws Exception {
+        // An OR with a condition that is not a timestamp interval keeps the IN in the row filter.
+        // A tick expression with no interval at all, here a day filter that drops its only day,
+        // never matches, and the JIT compiles it to a comparison that is always false.
+        assertMemoryLeak(() -> {
+            // hourly rows from 2024-01-01T00:00 to 2024-01-04T23:00, in ts and in ts2
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts,
+                               timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts2
+                        FROM long_sequence(96)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final int jitMode = sqlExecutionContext.getJitMode();
+            try {
+                for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                    sqlExecutionContext.setJitMode(mode);
+                    final String groupBy = mode == SqlJitMode.JIT_MODE_ENABLED && JitUtil.isJitSupported()
+                            ? "Async JIT Group By"
+                            : "Async Group By";
+                    assertFilterRows("ts IN '2024-01-02#Mon' OR ts > '2030-01-01'", groupBy, "0\t\t");
+                    assertFilterRows("ts NOT IN '2024-01-02#Mon' OR ts > '2030-01-01'", groupBy, "96\t2024-01-01T00:00:00.000000Z\t2024-01-04T23:00:00.000000Z");
+                    assertFilterRows("ts2 IN '2024-01-02#Mon'", groupBy, "0\t\t");
+                    assertFilterRows("ts2 NOT IN '2024-01-02#Mon'", groupBy, "96\t2024-01-01T00:00:00.000000Z\t2024-01-04T23:00:00.000000Z");
+                    assertFilterRows(
+                            "(ts IN '2024-01-02#Mon' OR ts IN '2024-01-03') AND ts IN '2024-01-[03..04]'",
+                            "Interval forward scan",
+                            "24\t2024-01-03T00:00:00.000000Z\t2024-01-03T23:00:00.000000Z"
+                    );
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
             }
         });
     }

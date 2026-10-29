@@ -407,6 +407,13 @@ public class CompiledTickExpression extends UntypedFunction {
         // in time, so a point in time that falls exactly on midnight stays a point in time.
         boolean isStartDay = DateVariableExpr.isDayLevel(startEncoded);
         boolean isEndDay = DateVariableExpr.isDayLevel(endEncoded);
+        // As in the parser, a whole-day endpoint starts the range at the start of its day, and
+        // ends it at the end of its day, and a range that starts after it ends fails
+        final long rangeLo = isStartDay ? timestampDriver.startOfDay(start, 0) : start;
+        final long rangeHi = isEndDay ? timestampDriver.endOfDay(timestampDriver.startOfDay(end, 0)) : end;
+        if (rangeLo > rangeHi) {
+            throw CairoException.nonCritical().position(position).put("Invalid date range: start is after end");
+        }
 
         if (!isStartDay && !isEndDay) {
             final int rangeStart = out.size();
@@ -462,9 +469,8 @@ public class CompiledTickExpression extends UntypedFunction {
     }
 
     /**
-     * Parses the expression the same way as a bind variable. compileTickExpr() has parsed it once
-     * already, so only an error that depends on "now" can surface here, such as a range whose
-     * start passes its end.
+     * Parses the expression the same way as a bind variable, against the captured "now", and fails
+     * with the parser's error.
      */
     private void parse(LongList outIntervals) {
         try {

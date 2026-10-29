@@ -280,7 +280,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         try {
             final boolean isCursor = intervalFunction.getType() == ColumnType.CURSOR;
             reserveEncodedIntervals(1, isCursor ? 1 : 0);
-            IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
+            // the lo of the entry carries the position of the function, for its parse errors
+            IntervalUtils.encodeInterval(functionPosition, 0L, IntervalOperation.INTERSECT_INTERVALS, staticIntervals);
             addDynamicFunction(intervalFunction, functionPosition, isCursor);
             intervalApplied = true;
         } catch (Throwable th) {
@@ -640,7 +641,8 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         try {
             final boolean isCursor = intervalFunction.getType() == ColumnType.CURSOR;
             reserveEncodedIntervals(1, isCursor ? 1 : 0);
-            IntervalUtils.encodeInterval(0L, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
+            // the lo of the entry carries the position of the function, for its parse errors
+            IntervalUtils.encodeInterval(functionPosition, 0L, IntervalOperation.SUBTRACT_INTERVALS, staticIntervals);
             addDynamicFunction(intervalFunction, functionPosition, isCursor);
             intervalApplied = true;
         } catch (Throwable th) {

@@ -1035,6 +1035,21 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprInvalidDateRange() throws SqlException {
+        // A literal fails on a range that starts after it ends, the way a bind variable does
+        final String now = "2024-01-02T10:30:00.000000Z";
+        final String error = "Invalid date range: start is after end";
+        assertParsedAndCompiledErrorWithNow("[$tomorrow..$today]", now, error);
+        assertParsedAndCompiledErrorWithNow("$tomorrow..$today", now, error);
+        assertParsedAndCompiledErrorWithNow("[$now..$now - 1h]", now, error);
+        assertParsedAndCompiledErrorWithNow("[$today..$now - 2d]T09:00", now, error);
+        assertParsedAndCompiledErrorWithNow("[$today + 3bd..$today, $today]", now, error);
+        // a range within one day is fine
+        assertCompiledTickExprWithNow("[$today..$now]", now);
+        assertCompiledTickExprWithNow("[$now..$today]", now);
+    }
+
+    @Test
     public void testCompiledTickExprInvalidSingleTimeOverride() {
         assertCompileTickExprError("[$today]Tabc", "Invalid time override");
     }
@@ -1380,9 +1395,10 @@ public class TickExprTest {
     }
 
     @Test
-    public void testCompiledTickExprTimeListInvalidTimezone() {
-        // a time list slot with its own timezone compiles by parsing, so the error is the one a bind variable gets
-        assertCompileTickExprError("[$today]T[09:00@Bogus,14:00]", "invalid timezone: Bogus");
+    public void testCompiledTickExprTimeListInvalidTimezone() throws SqlException {
+        // a time list slot with its own timezone parses when it evaluates, so the error is the one a
+        // bind variable gets
+        assertParsedAndCompiledErrorWithNow("[$today]T[09:00@Bogus,14:00]", "2024-01-02T10:30:00.000000Z", "invalid timezone: Bogus");
     }
 
     @Test
@@ -1423,9 +1439,9 @@ public class TickExprTest {
                 "2024-10-27T05:00:00.000000Z"
         );
         // London springs forward at 01:00 GMT on 2024-03-31, so the minute 01:30 does not exist
-        // and moves to the transition, 01:00Z; 02:30 BST is 01:30Z
+        // and matches nothing; 02:30 BST is 01:30Z
         assertParsedAndCompiledWithNow(
-                "[{lo=2024-03-31T01:00:00.000000Z, hi=2024-03-31T01:00:59.999999Z},{lo=2024-03-31T01:30:00.000000Z, hi=2024-03-31T01:30:59.999999Z}]",
+                "[{lo=2024-03-31T01:30:00.000000Z, hi=2024-03-31T01:30:59.999999Z}]",
                 "[$today]T[01:30@Europe/London,02:30@Europe/London]",
                 "2024-03-31T05:00:00.000000Z"
         );
@@ -4124,14 +4140,13 @@ public class TickExprTest {
     public void testDateVariableRangeWithNowAndTimeListInDstGap() throws SqlException {
         // On 2024-03-31 London clocks skip from 01:00 to 02:00 local time. The range compares
         // the slots with $now - 2h in local time, the way it compares its other intervals, then
-        // converts the slots it keeps to UTC. 01:30 does not exist and converts to the transition,
-        // 01:00Z, 02:30 BST is 01:30Z, and tomorrow's 00:30, 01:30 and 02:30 BST are 23:30Z,
-        // 00:30Z and 01:30Z.
+        // converts the slots it keeps to UTC. Today's 01:30 does not exist and matches nothing,
+        // 02:30 BST is 01:30Z, and tomorrow's 00:30, 01:30 and 02:30 BST are 23:30Z, 00:30Z and
+        // 01:30Z.
         final String expression = "[$now - 2h..$tomorrow]T[00:30,01:30,02:30]@Europe/London";
         // $now - 2h = 01:20 local, inside the skipped hour: 01:30 and 02:30 are after it
         assertParsedAndCompiledWithNow(
-                "[{lo=2024-03-31T01:00:00.000000Z, hi=2024-03-31T01:00:59.999999Z}," +
-                        "{lo=2024-03-31T01:30:00.000000Z, hi=2024-03-31T01:30:59.999999Z}," +
+                "[{lo=2024-03-31T01:30:00.000000Z, hi=2024-03-31T01:30:59.999999Z}," +
                         "{lo=2024-03-31T23:30:00.000000Z, hi=2024-03-31T23:30:59.999999Z}," +
                         "{lo=2024-04-01T00:30:00.000000Z, hi=2024-04-01T00:30:59.999999Z}," +
                         "{lo=2024-04-01T01:30:00.000000Z, hi=2024-04-01T01:30:59.999999Z}]",
@@ -6622,20 +6637,6 @@ public class TickExprTest {
     }
 
     @Test
-    public void testTimezoneDstGapAdjustment() throws SqlException {
-        // Test DST gap handling - exercises L1602-1604 (lo and hi adjustment)
-        // On March 10, 2024 at 2:00 AM in America/New_York, clocks spring forward to 3:00 AM
-        // So 2:30 AM doesn't exist - both lo and hi are adjusted forward by the same gap offset
-        // to preserve interval width
-        // lo (2:30:00) -> 3:00:00 EDT = 07:00:00 UTC
-        // hi (2:30:59.999999) -> 3:00:59.999999 EDT = 07:00:59.999999 UTC
-        assertBracketInterval(
-                "[{lo=2024-03-10T07:00:00.000000Z, hi=2024-03-10T07:00:59.999999Z}]",
-                "2024-03-10T02:30@America/New_York"
-        );
-    }
-
-    @Test
     public void testTimezoneDstGapHiOnlyInGap() throws SqlException {
         // On March 10, 2024 at 2:00 AM in America/New_York, clocks spring forward to 3:00 AM.
         // The ;2m duration extends the interval from 01:59 EST into the gap. Local times from
@@ -6656,12 +6657,6 @@ public class TickExprTest {
                 "[{lo=2024-03-31T01:00:00.000000Z, hi=2024-03-31T01:04:59.999999Z}]",
                 "2024-03-31T01:10@Europe/London;55m"
         );
-        // No instant has a local time from 01:00 to 01:29:59.999999, so the interval moves to start
-        // at the transition and keeps its width
-        assertBracketInterval(
-                "[{lo=2024-03-31T01:00:00.000000Z, hi=2024-03-31T01:29:59.999999Z}]",
-                "2024-03-31T01:00@Europe/London;30m"
-        );
         // New York springs forward from 02:00 EST to 03:00 EDT, 07:00 UTC
         assertBracketInterval(
                 "[{lo=2024-03-10T07:00:00.000000Z, hi=2024-03-10T07:04:59.999999Z}]",
@@ -6670,6 +6665,25 @@ public class TickExprTest {
         // both paths share the conversion
         assertCompiledTickExprWithNow("$todayT01:10@Europe/London;55m", "2024-03-31T12:00:00.000000Z");
         assertCompiledTickExprWithNow("$todayT01:00@Europe/London;30m", "2024-03-31T12:00:00.000000Z");
+    }
+
+    @Test
+    public void testTimezoneDstGapMinuteMatchesNothing() throws SqlException {
+        // On March 10, 2024 at 2:00 AM in America/New_York, clocks spring forward to 3:00 AM, so no
+        // instant has a local time from 02:00 to 02:59:59.999999, and an interval in that time
+        // matches nothing
+        assertBracketInterval("[]", "2024-03-10T02:30@America/New_York");
+        assertBracketInterval("[]", "2024-03-10T02:00@America/New_York;30m");
+        assertParsedAndCompiledWithNow("[]", "$todayT02:30@America/New_York", "2024-03-10T12:00:00.000000Z");
+        // so a day covers the same instants as its minutes, also when the day ends in the gap, as
+        // in Nuuk, where clocks skip from 23:00 to 00:00 on 2024-03-30
+        assertBracketInterval("[{lo=2024-03-10T05:00:00.000000Z, hi=2024-03-11T03:59:59.999999Z}]", "2024-03-10T[00..23]:[00..59]@America/New_York");
+        assertBracketInterval("[{lo=2024-03-10T05:00:00.000000Z, hi=2024-03-11T03:59:59.999999Z}]", "2024-03-10@America/New_York");
+        assertBracketInterval("[{lo=2024-03-30T02:00:00.000000Z, hi=2024-03-31T00:59:59.999999Z}]", "2024-03-30T[00..23]:[00..59]@America/Nuuk");
+        assertBracketInterval("[{lo=2024-03-30T02:00:00.000000Z, hi=2024-03-31T00:59:59.999999Z}]", "2024-03-30@America/Nuuk");
+        // in dynamic mode, the minute after the dropped one carries the operation
+        assertEncodedInterval("[{lo=2024-03-10T07:30:00.000000Z, hi=2024-03-10T07:30:59.999999Z}]", "2024-03-10T[02:30,03:30]@America/New_York");
+        assertEncodedOperations(1);
     }
 
     @Test

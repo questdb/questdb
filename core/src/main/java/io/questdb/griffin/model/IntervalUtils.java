@@ -270,11 +270,9 @@ public final class IntervalUtils {
         int timeHi = compileSuffixTimeHi(tzMarkerPos, durationSemicolon, durationHi);
 
         if (!isCompilable(effectiveSeq, elemListLo, elemListHi, isBareVar, timeLo, timeHi, durationSemicolon)) {
-            // Parse the expression now, so that an error surfaces when the SQL compiles
-            tmp.clear();
-            parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, tmp,
-                    IntervalOperation.INTERSECT, tlCompileSink3.get(), true, timestampDriver.getTicks());
-            tmp.clear();
+            // The expression parses when it evaluates, against the "now" of the query: whether a
+            // range starts after it ends, or expands to too many intervals, can depend on "now",
+            // which the clock at compile time does not stand for
             return new CompiledTickExpression(timestampDriver, configuration, seq.subSequence(lo, lim), position);
         }
 
@@ -5169,25 +5167,34 @@ public final class IntervalUtils {
      * of its ends repeat, at different transitions.</li>
      * <li>Where clocks spring forward, local times are skipped. An interval that starts in the
      * skipped time starts at the transition, and one that ends in it ends right before the
-     * transition. An interval that falls entirely in the skipped time, which no instant matches,
-     * moves to start at the transition and keeps its width, so the minute 02:30 of a 02:00 to 03:00
-     * gap becomes the minute 03:00.</li>
+     * transition. No instant matches an interval that falls entirely in the skipped time, so the
+     * conversion drops it.</li>
      * </ul>
-     * An unbounded end, Long.MIN_VALUE or Long.MAX_VALUE, stays unbounded. The intervals that the
-     * conversion adds go after the others. In the static format, {@code stride} 2, the intervals
-     * from {@code startIndex} on are then sorted and merged. In the dynamic format, {@code stride}
-     * 4, an added interval copies the encoding of the interval it comes from, with the operation
-     * that the intervals of an expansion after the first carry, see {@link #getEffectiveOp}. A
-     * repeating interval in the dynamic format, whose repetitions the runtime computes in UTC,
-     * stays one interval, from the first occurrence of its start to the first occurrence of its end.
+     * So the result never depends on how the local time splits into intervals: a day covers the
+     * same instants as its hours or minutes. An unbounded end, Long.MIN_VALUE or Long.MAX_VALUE,
+     * stays unbounded. The intervals that the conversion adds go after the others. In the static
+     * format, {@code stride} 2, the intervals from {@code startIndex} on are then sorted and
+     * merged. In the dynamic format, {@code stride} 4, an added interval copies the encoding of the
+     * interval it comes from, with the operation that the intervals of an expansion after the
+     * first carry, see {@link #getEffectiveOp}, and when the conversion drops the first interval,
+     * the next one takes over its operation. A repeating interval in the dynamic format, whose
+     * repetitions the runtime computes in UTC, stays one interval: from the first occurrence of
+     * its start to the first occurrence of its end, or at the transition when it falls in a gap.
      */
     static void localIntervalsToUtc(TimeZoneRules tzRules, LongList intervals, int startIndex, int stride) {
         final int size = intervals.size();
+        if (size <= startIndex) {
+            return;
+        }
+        final boolean isDynamic = stride == STATIC_LONGS_PER_DYNAMIC_INTERVAL;
+        final short firstOperation = isDynamic ? getEncodedOperation(intervals, startIndex) : IntervalOperation.NONE;
         // getNextDST() gives the same transition for every instant from nextTransitionFrom up to the
         // transition, so the ends that fall there reuse it
         long nextTransitionFrom = Long.MAX_VALUE;
         long nextTransition = Long.MIN_VALUE;
         long offsetAfterNextTransition = 0;
+        // the converted intervals go to writeIndex, and their extra pieces after the others
+        int writeIndex = startIndex;
         for (int i = startIndex; i < size; i += stride) {
             final long lo = intervals.getQuick(i);
             final long hi = intervals.getQuick(i + 1);
@@ -5245,15 +5252,20 @@ public final class IntervalUtils {
                 }
             }
 
-            if (start > end) {
-                // no instant has a local time in the interval
-                intervals.setQuick(i, start);
-                intervals.setQuick(i + 1, start + (hi - lo));
+            final boolean isRepeating = isDynamic && decodePeriodType(intervals, i) != PeriodType.NONE;
+            if (start > end && !isRepeating) {
+                // no instant has a local time in the interval, which falls entirely in a gap
                 continue;
             }
-            if (stride == STATIC_LONGS_PER_DYNAMIC_INTERVAL && decodePeriodType(intervals, i) != PeriodType.NONE) {
-                intervals.setQuick(i, start);
-                intervals.setQuick(i + 1, hiTransition != Long.MIN_VALUE ? hiFirst : end);
+            if (writeIndex != i) {
+                for (int j = 2; j < stride; j++) {
+                    intervals.setQuick(writeIndex + j, intervals.getQuick(i + j));
+                }
+            }
+            if (isRepeating) {
+                intervals.setQuick(writeIndex, start);
+                intervals.setQuick(writeIndex + 1, start > end ? start + (hi - lo) : (hiTransition != Long.MIN_VALUE ? hiFirst : end));
+                writeIndex += stride;
                 continue;
             }
 
@@ -5283,21 +5295,34 @@ public final class IntervalUtils {
                 hole1Hi = hiTransition - 1;
             }
 
+            intervals.setQuick(writeIndex, start);
             if (hole1Lo == Long.MAX_VALUE) {
-                intervals.setQuick(i, start);
-                intervals.setQuick(i + 1, end);
-                continue;
-            }
-            intervals.setQuick(i, start);
-            intervals.setQuick(i + 1, hole1Lo - 1);
-            if (hole2Lo == Long.MAX_VALUE) {
-                addConvertedPiece(intervals, i, stride, hole1Hi + 1, end);
+                intervals.setQuick(writeIndex + 1, end);
             } else {
-                addConvertedPiece(intervals, i, stride, hole1Hi + 1, hole2Lo - 1);
-                addConvertedPiece(intervals, i, stride, hole2Hi + 1, end);
+                intervals.setQuick(writeIndex + 1, hole1Lo - 1);
+                if (hole2Lo == Long.MAX_VALUE) {
+                    addConvertedPiece(intervals, writeIndex, stride, hole1Hi + 1, end);
+                } else {
+                    addConvertedPiece(intervals, writeIndex, stride, hole1Hi + 1, hole2Lo - 1);
+                    addConvertedPiece(intervals, writeIndex, stride, hole2Hi + 1, end);
+                }
             }
+            writeIndex += stride;
         }
-        if (stride == 2 && intervals.size() > size) {
+
+        // move the extra pieces down to the converted intervals
+        final int pieceSize = intervals.size() - size;
+        if (writeIndex < size) {
+            for (int k = 0; k < pieceSize; k++) {
+                intervals.setQuick(writeIndex + k, intervals.getQuick(size + k));
+            }
+            intervals.setPos(writeIndex + pieceSize);
+        }
+        if (isDynamic) {
+            if (intervals.size() > startIndex) {
+                setEncodedOperation(intervals, startIndex, firstOperation);
+            }
+        } else if (pieceSize > 0) {
             unionBracketExpandedIntervals(intervals, startIndex);
         }
     }
