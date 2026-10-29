@@ -3991,6 +3991,9 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             // record of each commit, not the commit.
             execute("INSERT INTO base (ts, sym, i) VALUES ('2026-01-03T00:05:00.000000Z', 'a', 7)");
             drainWalQueue();
+            // Under ADAPTIVE the base keeps its WAL back to its own save points, which would hide
+            // the view's floor; save points at the applied head lift that hold.
+            releaseSavePointHolds("base");
             engine.releaseInactive();
             setCurrentMicros(currentMicros + 60_000_000L);
             try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
@@ -4790,6 +4793,9 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                     "the rebuild reproduces 2 of the 3 rows the view holds up to 2026-01-03T00:09:00.000000Z"
             );
 
+            // Under ADAPTIVE the base keeps its WAL back to its own save points, which would hide
+            // the view's floor; save points at the applied head lift that hold.
+            releaseSavePointHolds("base");
             engine.releaseInactive();
             setCurrentMicros(currentMicros + 60_000_000L);
             try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {

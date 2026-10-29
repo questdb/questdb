@@ -671,6 +671,9 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
             // on a base table every other writer and view shares. Releasing is the same rule an
             // invalid view follows, for the same reason.
             final long walSegmentsBefore = countWalSegments(baseDirName);
+            // Under ADAPTIVE the base keeps its WAL back to its own save points, which would hide
+            // the view's floor; save points at the applied head lift that hold.
+            releaseSavePointHolds("tx");
             engine.releaseInactive();
             setCurrentMicros(60_000_000L);
             try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
