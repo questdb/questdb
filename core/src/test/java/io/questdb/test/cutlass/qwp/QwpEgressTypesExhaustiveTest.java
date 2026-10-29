@@ -717,6 +717,51 @@ public class QwpEgressTypesExhaustiveTest extends AbstractReusedServerQwpEgressT
     }
 
     @Test
+    public void testDecimalSmallWidthsColumnTopAndParquet() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // Rows written before ADD COLUMN read through the column top, and the first
+                // two partitions are then read back from parquet rather than native storage.
+                serverMain.execute("CREATE TABLE t(x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("""
+                        INSERT INTO t VALUES
+                            (1, '1970-01-01T00:00:00Z'),
+                            (2, '1970-01-01T01:00:00Z')
+                        """);
+                serverMain.execute("ALTER TABLE t ADD COLUMN d2 DECIMAL(2, 1)");
+                serverMain.execute("ALTER TABLE t ADD COLUMN d4 DECIMAL(4, 2)");
+                serverMain.execute("ALTER TABLE t ADD COLUMN d9 DECIMAL(9, 3)");
+                serverMain.execute("""
+                        INSERT INTO t(x, ts, d2, d4, d9) VALUES
+                            (3, '1970-01-02T00:00:00Z', -1.5m, 12.34m, -123456.789m),
+                            (4, '1970-01-02T01:00:00Z', NULL, NULL, NULL),
+                            (5, '1970-01-03T00:00:00Z', 9.9m, -99.99m, 999999.999m)
+                        """);
+                serverMain.awaitTable("t");
+                serverMain.execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-03'");
+                serverMain.awaitTable("t");
+                serverMain.assertSql("SELECT count() FROM table_partitions('t') WHERE isParquet", "count\n2\n");
+
+                final int[] expectedScales = {1, 2, 3};
+                final long[][] expected = {
+                        null,
+                        null,
+                        {-15, 1_234, -123_456_789},
+                        null,
+                        {99, -9_999, 999_999_999}
+                };
+                assertSmallDecimals("SELECT d2, d4, d9 FROM t", expected, expectedScales);
+                // Filtered scan over the same mix of parquet and native partitions.
+                assertSmallDecimals(
+                        "SELECT d2, d4, d9 FROM t WHERE x >= 3",
+                        new long[][]{expected[2], expected[3], expected[4]},
+                        expectedScales
+                );
+            }
+        });
+    }
+
+    @Test
     public void testDouble() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startEgressServer()) {

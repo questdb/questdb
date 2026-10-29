@@ -775,13 +775,6 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         return count;
     }
 
-    private static long readGeoBits(Record record, int col, int precisionBits) {
-        if (precisionBits <= 7) return record.getGeoByte(col);
-        if (precisionBits <= 15) return record.getGeoShort(col);
-        if (precisionBits <= 31) return record.getGeoInt(col);
-        return record.getGeoLong(col);
-    }
-
     /**
      * Reads a DECIMAL8/16/32/64 cell as a DECIMAL64 mantissa, mapping each narrow
      * type's NULL sentinel to {@link Decimals#DECIMAL64_NULL}. The narrow sentinels
@@ -804,6 +797,13 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             }
             default -> record.getDecimal64(col);
         };
+    }
+
+    private static long readGeoBits(Record record, int col, int precisionBits) {
+        if (precisionBits <= 7) return record.getGeoByte(col);
+        if (precisionBits <= 15) return record.getGeoShort(col);
+        if (precisionBits <= 31) return record.getGeoInt(col);
+        return record.getGeoLong(col);
     }
 
     /**
