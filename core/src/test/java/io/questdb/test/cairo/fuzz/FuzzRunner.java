@@ -71,7 +71,6 @@ import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.QueryAssertion;
-import io.questdb.test.fuzz.FuzzAddCoveringIndexOperation;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
@@ -305,14 +304,6 @@ public class FuzzRunner {
                         } else {
                             writer.commit();
                         }
-                        for (int opIdx = 0; opIdx < size; opIdx++) {
-                            if (transaction.operationList.getQuick(opIdx) instanceof FuzzAddCoveringIndexOperation coveringOp) {
-                                Misc.free(writer);
-                                writer = null;
-                                coveringOp.executePostDrain(engine, tableName);
-                                writer = TestUtils.getWriter(engine, tableName);
-                            }
-                        }
                     }
                 } catch (CairoException | CairoError e) {
                     boolean housekeeping = (e instanceof CairoException) && ((CairoException) e).isHousekeeping();
@@ -423,8 +414,6 @@ public class FuzzRunner {
     public void applyWal(ObjList<FuzzTransaction> transactions, String tableName, int walWriterCount, Rnd applyRnd) {
         TableToken tableToken = engine.verifyTableName(tableName);
         applyToWal(transactions, tableName, walWriterCount, applyRnd);
-        drainWalQueue(applyRnd, tableName);
-        executeCoveringIndexOps(transactions, tableName);
         drainWalQueue(applyRnd, tableName);
         Assert.assertFalse("Table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
     }
@@ -892,8 +881,6 @@ public class FuzzRunner {
         ObjList<ObjList<FuzzTransaction>> tablesTransactions = new ObjList<>();
         tablesTransactions.add(transactions);
         applyManyWalParallel(tablesTransactions, applyRnd, tableName, false, true);
-        executeCoveringIndexOps(transactions, tableName);
-        drainWalQueue(applyRnd, tableName);
     }
 
     private void assertMinMaxTimestamp(SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
@@ -1483,17 +1470,6 @@ public class FuzzRunner {
             // applyManyWalParallel()'s waitApply thread pool below), so it needs its own sweep,
             // not just the threaded one.
             compactionJob.drain(0);
-        }
-    }
-
-    private void executeCoveringIndexOps(ObjList<FuzzTransaction> transactions, String tableName) {
-        for (int i = 0, n = transactions.size(); i < n; i++) {
-            ObjList<FuzzTransactionOperation> ops = transactions.getQuick(i).operationList;
-            for (int j = 0, m = ops.size(); j < m; j++) {
-                if (ops.getQuick(j) instanceof FuzzAddCoveringIndexOperation coveringOp) {
-                    coveringOp.executePostDrain(engine, tableName);
-                }
-            }
         }
     }
 
