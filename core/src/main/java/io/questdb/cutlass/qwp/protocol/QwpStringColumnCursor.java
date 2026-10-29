@@ -56,6 +56,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
     private long offsetArrayAddress;
     private long stringDataAddress;
     private int stringDataLength;
+    private int valueCount;
     // Configuration
     private byte typeCode;
 
@@ -104,7 +105,24 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
         offsetArrayAddress = 0;
         stringDataAddress = 0;
         stringDataLength = 0;
+        valueCount = 0;
         resetRowPosition();
+    }
+
+    public long getDataAddress() {
+        return stringDataAddress;
+    }
+
+    public int getDataSize() {
+        return stringDataLength;
+    }
+
+    public long getNullBitmapAddress() {
+        return nullBitmapAddress;
+    }
+
+    public long getOffsetsAddress() {
+        return offsetArrayAddress;
     }
 
     @Override
@@ -122,6 +140,10 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
      */
     public DirectUtf8Sequence getUtf8Value() {
         return valueUtf8;
+    }
+
+    public int getValueCount() {
+        return valueCount;
     }
 
     @Override
@@ -170,7 +192,7 @@ public final class QwpStringColumnCursor implements QwpColumnCursor {
             nullCount = 0;
         }
 
-        int valueCount = rowCount - nullCount;
+        this.valueCount = rowCount - nullCount;
         long offsetArraySize = ((long) valueCount + 1) * 4;
         if (offset + offsetArraySize > dataLength) {
             throw QwpParseException.create(

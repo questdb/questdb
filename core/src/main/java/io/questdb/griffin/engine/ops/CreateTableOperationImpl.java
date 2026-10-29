@@ -32,6 +32,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriteMode;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -85,6 +86,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private long batchSize;
     private int defaultSymbolCapacity = -1;
     private boolean ignoreIfExists;
+    private boolean isBatchExplicit;
     private String likeTableName;
     // position of the "like" table name in the SQL text, for error reporting
     private int likeTableNamePosition;
@@ -109,6 +111,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private String volumeAlias;
     private int volumePosition;
     private boolean walEnabled;
+    private int writeMode = TableWriteMode.WAL_SEGMENTS;
 
     public CreateTableOperationImpl(
             String selectText,
@@ -178,6 +181,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int ttlPosition,
             int tableFormat,
             boolean walEnabled,
+            int writeMode,
             boolean autoIncludeTimestamp
     ) throws SqlException {
         this.autoIncludeTimestamp = autoIncludeTimestamp;
@@ -190,6 +194,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.ignoreIfExists = ignoreIfExists;
         this.partitionByPosition = partitionByPosition;
         this.tableFormat = tableFormat;
+        this.writeMode = writeMode;
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             CharSequence colName = columnNames.get(i);
             this.columnNames.add(Chars.toString(colName));
@@ -247,10 +252,12 @@ public class CreateTableOperationImpl implements CreateTableOperation {
      * @param timestampColumnNamePosition designated timestamp column name in user's input
      * @param volumeAlias                 the name of the "volume" where table is created, volumes are used to create table on different physical disks
      * @param walEnabled                  WAL flag
+     * @param writeMode                   sequenced table write mode, see TableWriteMode
      * @param defaultSymbolCapacity       the default symbol capacity value, usually comes from the configuration
      * @param maxUncommittedRows          max uncommitted rows for non-WAL tables, this is written to table's metadata to be used by ingress protocols
      * @param o3MaxLag                    o3 commit lag, another performance optimisation parameter for non-WAL tables.
      * @param createColumnModelMap        maps that contains type casts and additional index flags
+     * @param isBatchExplicit             whether the SQL explicitly specified its batch boundary
      * @param batchSize                   number of rows in commit batch when data is moved from the select into the
      *                                    new table. Special value of -1 means "atomic" commit. This corresponds to "batch" keyword on the SQL.
      * @param batchO3MaxLag               lag windows in rows, which helps timestamp ordering code to smooth out timestamp jitter
@@ -273,10 +280,12 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int ttlPosition,
             int tableFormat,
             boolean walEnabled,
+            int writeMode,
             int defaultSymbolCapacity,
             int maxUncommittedRows,
             long o3MaxLag,
             @Transient LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap,
+            boolean isBatchExplicit,
             long batchSize,
             long batchO3MaxLag,
             int tableKind,
@@ -298,7 +307,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.ttlHoursOrMonths = ttlHoursOrMonths;
         this.ttlPosition = ttlPosition;
         this.tableFormat = tableFormat;
+        this.writeMode = writeMode;
         this.defaultSymbolCapacity = defaultSymbolCapacity;
+        this.isBatchExplicit = isBatchExplicit;
         this.batchSize = batchSize;
         this.batchO3MaxLag = batchO3MaxLag;
         this.o3MaxLag = o3MaxLag;
@@ -498,6 +509,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
+    public int getWriteMode() {
+        return writeMode;
+    }
+
+    @Override
     public boolean ignoreIfExists() {
         return ignoreIfExists;
     }
@@ -556,6 +572,11 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     }
 
     @Override
+    public boolean isBatchExplicit() {
+        return isBatchExplicit;
+    }
+
+    @Override
     public boolean isCovering(int index) {
         return (getLowAt(index * 2 + 1) & COLUMN_FLAG_COVERING) != 0;
     }
@@ -611,6 +632,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.partitionBy = likeTableMetadata.getPartitionBy();
         this.timestampIndex = likeTableMetadata.getTimestampIndex();
         this.walEnabled = likeTableMetadata.isWalEnabled();
+        this.writeMode = likeTableMetadata.getWriteMode();
         this.ttlHoursOrMonths = likeTableMetadata.getTtlHoursOrMonths();
         this.tableFormat = likeTableMetadata.getTableFormat();
         columnNames.clear();

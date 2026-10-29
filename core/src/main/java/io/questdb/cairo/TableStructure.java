@@ -89,6 +89,10 @@ public interface TableStructure {
         return null;
     }
 
+    default int getWriteMode() {
+        return TableWriteMode.WAL_SEGMENTS;
+    }
+
     default boolean hasParquetPartitions() {
         return false;
     }

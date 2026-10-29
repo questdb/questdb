@@ -55,6 +55,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionOwner;
 import io.questdb.griffin.engine.functions.bind.ArrayBindVariable;
+import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
@@ -136,13 +137,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private static final int SYNC_DESCRIBE = 2;
     private static final int SYNC_DONE = 5;
     private static final int SYNC_PARSE = 0;
-    // Test seam: when non-null, fireParkedUpdateMintObserver() runs this hook just before the parked-writer
-    // UPDATE branch (index < 0) externalizes via commit() + apply(), i.e. inside the role-switch read-lock
-    // hold once the fence below is in place. This branch never reaches OperationDispatcher, so the
-    // dispatcher pre-apply hook cannot pause it; this hook is its counterpart. A test installs a hook that
-    // pauses there so a concurrent PRIMARY-to-REPLICA demote either blocks behind the read hold or expires
-    // its tryLock budget, exercising the demote race deterministically without host load. Null in
-    // production (the default): the fire-site is a single static volatile read with no side effect.
+    // Test seam before the parked INSERT commit and subsequent UPDATE apply fences.
+    // A demotion here must refuse before either mutation is accepted.
     @TestOnly
     private static volatile Runnable parkedUpdateMintObserver;
     // Test seam: when non-null, fireSyncCommitObserver() runs this hook at the top of commit(), just before
@@ -444,44 +440,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             rollback(pendingWriters);
             throw kaput().put((Throwable) CairoException.readOnlyAccess());
         }
-        // Hold the role-switch READ lock across the authoritative re-check and the actual commit. The
-        // role-flip path in EntCairoEngine acquires the WRITE side of this lock around the REPLICA flag
-        // publish, so either (a) the flip runs first: we see REPLICA on the in-lock re-check and refuse
-        // without committing; or (b) we run first: we commit as PRIMARY and the flip's write acquire
-        // waits for this read hold to release. This closes the TOCTOU window between the gate-read and
-        // writerAPI.commit(), while concurrent commits on other protocols share the read side.
-        final Lock lock = engine.getRoleSwitchReadLock();
-        lock.lock();
         try {
-            // Authoritative in-lock re-check. The refusal is thrown wrapped as a processing exception (via
-            // kaput()) carrying the standard read-only authorization message, so the implicit-commit-at-SYNC
-            // path -- whose catch handles only the processing exception type -- delivers it to the client as a
-            // clean read-only error with the connection kept open, rather than escaping to the connection's
-            // last-resort catch and force-disconnecting. The COMMIT-arm path has its own catch and is
-            // unaffected. The parked writers are rolled back so nothing lands on the demoting node.
-            if (engine.isReadOnlyMode()) {
-                rollback(pendingWriters);
-                throw kaput().put((Throwable) CairoException.readOnlyAccess());
-            }
-            try {
-                for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
-                    final TableWriterAPI w = pendingWriter.value;
-                    if (w != null) {
-                        w.commit();
-                    }
-                    // We rely on the fact that writer will roll back itself when it is returned to the pool.
-                    // The pool will also handle a case, when rollback fails. This will release the writer object
-                    // fully and force next writer to load its state from disk.
-                    pendingWriter.value = Misc.free(w);
+            for (ObjObjHashMap.Entry<TableToken, TableWriterAPI> pendingWriter : pendingWriters) {
+                final TableWriterAPI writer = pendingWriter.value;
+                if (writer != null) {
+                    writer.commitWithRoleFence(engine, false);
                 }
-                pendingWriters.clear();
-            } catch (Throwable th) {
-                // free remaining writers
-                rollback(pendingWriters);
-                throw kaput().put(th);
+                pendingWriter.value = Misc.free(writer);
             }
-        } finally {
-            lock.unlock();
+            pendingWriters.clear();
+        } catch (Throwable th) {
+            rollback(pendingWriters);
+            throw kaput().put(th);
         }
     }
 
@@ -1541,25 +1511,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     /**
-     * Demote write-fence for the pg-wire CTAS/CREATE/DROP arms. These operations execute outside the
-     * pendingWriters funnel that {@link #commit} fences, so the pre-execution gate in msgExecute is
-     * their only read-only check -- and that gate read is check-then-act: the operation can begin while
-     * the node is still PRIMARY and externalize its effect (a fresh table, a CTAS data commit, a drop)
-     * on a node that flips to REPLICA mid-execute, acknowledging success for a change no uploader will
-     * replicate. Holding the role-switch lock across the in-lock re-check AND the execute serializes the
-     * whole operation against the flip: either the flip ran first (we see REPLICA and refuse without
-     * executing) or the operation runs fully as PRIMARY and the flip's flag publish waits behind it.
-     * <p>
-     * This takes the role-switch READ lock the ILP and pg-wire commit fences take, held across the
-     * in-lock re-check AND operation.execute() because the DDL externalizes inside execute() with no
-     * separable commit chokepoint. The READ side lets concurrent commits on other tables/protocols run
-     * in parallel with this DDL; only the role flip (which takes the WRITE side) is excluded from it.
-     * <p>
-     * Both refusal checks consult the SAME ReadOnlyStatementGate predicate the pre-execution gate in
-     * msgExecute uses -- NOT a blanket isReadOnlyMode() refusal -- because the gate carries the one
-     * DDL exemption a read-only replica must keep: the admin's DROP of the HTTP parquet exporter's
-     * leftover temp table (the only DROP a replica permits; see ReadOnlyStatementGate). A blanket
-     * refusal here would refuse the exempted DROP the pre-gate just allowed through.
+     * Fences DDL against demotion. WAL CTAS owns narrower fences for metadata
+     * creation and each commit, allowing a mode-switch wait between batches.
+     * Other DDL retains its operation-wide fence and read-only DROP exemption.
      */
     private long executeDdlFenced(
             SqlExecutionContext sqlExecutionContext,
@@ -1573,20 +1527,23 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         long affectedRowCount = 0;
         engine.getMetrics().pgWireMetrics().markStart();
         try {
-            final Lock lock = engine.getRoleSwitchReadLock();
+            // WAL CTAS fences its metadata creation and individual commits, so F1 waits can release the role fence.
+            final Lock lock = operation instanceof CreateTableOperation create && create.isWalEnabled() && create.getSelectText() != null
+                    ? null : engine.getRoleSwitchReadLock();
             final OperationFuture future;
-            lock.lock();
+            if (lock != null) {
+                lock.lock();
+            }
             try {
-                // Authoritative in-lock re-check against the role flip, which holds the WRITE side of this
-                // lock around the REPLICA flag publish. The execute runs inside the read hold so the flip
-                // cannot interleave (its write acquire waits), while other commits share the read side.
                 if (engine.isReadOnlyMode()
                         && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, operation, engine.getConfiguration())) {
                     throw CairoException.readOnlyAccess();
                 }
                 future = operation.execute(sqlExecutionContext, tempSequence);
             } finally {
-                lock.unlock();
+                if (lock != null) {
+                    lock.unlock();
+                }
             }
             try (future) {
                 future.await();
@@ -1856,18 +1813,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             // cached writers to remain in the list until transaction end
                             @SuppressWarnings("resource")
                             TableWriterAPI tableWriterAPI = pendingWriters.valueAt(index);
-                            // Demote write-fence for the parked-writer UPDATE, mirroring the sibling
-                            // commit(pendingWriters) fence. The UPDATE implicitly commits the parked
-                            // writer mid-transaction (commit() + apply() below) -- so the explicit COMMIT
-                            // fence never sees these writes. Acquire the writer was done while PRIMARY; a
-                            // demote landing before commit()/apply() would externalize an unreplicated
-                            // change the drain never waited on. Hold the role-switch READ lock across an
-                            // authoritative in-lock re-check and the commit()/apply(): either the flip ran
-                            // first (we see read-only and refuse, rolling back the parked writers) or this
-                            // runs fully as PRIMARY while the flip's write acquire waits for the read hold.
-                            if (engine.isReadOnlyMode()) {
-                                rollback(pendingWriters);
-                                throw CairoException.readOnlyAccess();
+                            fireParkedUpdateMintObserver();
+                            try {
+                                tableWriterAPI.commitWithRoleFence(engine, false);
+                            } catch (CairoException e) {
+                                if (e.isReadOnlyAccessRefusal()) {
+                                    rollback(pendingWriters);
+                                }
+                                throw e;
                             }
                             final Lock lock = engine.getRoleSwitchReadLock();
                             lock.lock();
@@ -1876,9 +1829,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                                     rollback(pendingWriters);
                                     throw CairoException.readOnlyAccess();
                                 }
-                                // Update implicitly commits. WAL table cannot do 2 commits in 1 call and require commits to be made upfront.
-                                fireParkedUpdateMintObserver();
-                                tableWriterAPI.commit();
                                 sqlAffectedRowCount = tableWriterAPI.apply(updateOperation);
                             } finally {
                                 lock.unlock();

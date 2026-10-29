@@ -55,6 +55,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlTimeoutException;
+import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -669,32 +670,9 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     }
 
     /**
-     * Demote write-fence for the HTTP /exec CTAS/CREATE/DROP/CREATE MAT VIEW/CREATE VIEW arms, the twin
-     * of pg-wire's PGPipelineEntry.executeDdlFenced. These DDL statements submit op.execute() outside any
-     * writer funnel, so the pre-compile gate in compileAndExecuteQuery is their only read-only check --
-     * and that read is check-then-act: the operation can begin while the node is still PRIMARY and
-     * externalize its effect (a fresh table, a CTAS data commit, a drop) on a node that flips to REPLICA
-     * mid-execute, acknowledging with HTTP 200 a change no uploader replicates.
-     * <p>
-     * For a non-WAL CTAS the data commit lives inside execute() (SqlCompilerImpl.copyTableData ->
-     * writer.commit(), with the writer built directly via new TableWriter, bypassing the pooled
-     * acquire-gates and so uncounted by the demote drain); for a WAL CTAS the externalization is the WAL
-     * pump inside the same execute(). Holding the role-switch READ lock across the in-lock re-check AND
-     * op.execute() serializes the whole operation against the flip and so closes both windows from one
-     * seam: either the flip ran first (we see REPLICA and refuse without executing) or the operation runs
-     * fully as PRIMARY and the flip's flag publish (which takes the WRITE side) waits behind it. The READ
-     * side lets concurrent commits on other tables/protocols run in parallel; only the role flip is
-     * excluded.
-     * <p>
-     * Both refusal checks consult the SAME ReadOnlyStatementGate predicate the pre-compile gate uses --
-     * NOT a blanket isReadOnlyMode() refusal -- because the gate carries the one DDL exemption a read-only
-     * replica must keep: the admin's DROP of the HTTP parquet exporter's leftover temp table. A blanket
-     * refusal here would refuse the exempted DROP the pre-gate just allowed through (the regression CI
-     * build 241196 caught).
-     * <p>
-     * The retry path (retryQueryExecution) needs no second fence: it only awaits the already-submitted
-     * future and never re-invokes op.execute(). The operation's async apply path acquires the same fence,
-     * so this method releases its read hold before waiting for the future.
+     * Fences DDL against demotion. WAL CTAS owns narrower fences for metadata
+     * creation and each commit, allowing a mode-switch wait between batches.
+     * Other DDL retains its operation-wide fence and read-only DROP exemption.
      */
     private int executeDdlFenced(
             SqlExecutionContextImpl sqlExecutionContext,
@@ -707,20 +685,23 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, op, engine.getConfiguration())) {
             throw CairoException.readOnlyAccess();
         }
-        final Lock lock = engine.getRoleSwitchReadLock();
+        // WAL CTAS fences its metadata creation and individual commits, so F1 waits can release the role fence.
+        final Lock lock = op instanceof CreateTableOperation create && create.isWalEnabled() && create.getSelectText() != null
+                ? null : engine.getRoleSwitchReadLock();
         final OperationFuture future;
-        lock.lock();
+        if (lock != null) {
+            lock.lock();
+        }
         try {
-            // Authoritative in-lock re-check against the role flip, which holds the WRITE side of this
-            // lock around the REPLICA flag publish. op.execute() runs inside the read hold so the flip
-            // cannot interleave (its write acquire waits), while other commits share the read side.
             if (engine.isReadOnlyMode()
                     && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, op, engine.getConfiguration())) {
                 throw CairoException.readOnlyAccess();
             }
             future = op.execute(sqlExecutionContext, eventSubSequence);
         } finally {
-            lock.unlock();
+            if (lock != null) {
+                lock.unlock();
+            }
         }
         try (future) {
             return future.await(awaitTimeout);

@@ -43,6 +43,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     private final IntList endOfRowTupleValuesPositions = new IntList();
     private final ObjList<ObjList<ExpressionNode>> rowTupleValues = new ObjList<>();
     private long batchSize = -1;
+    private boolean isBatchExplicit;
     private long o3MaxLag = 0;
     private IQueryModel queryModel;
     private int selectKeywordPosition;
@@ -84,6 +85,7 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
         this.rowTupleValues.clear();
         this.selectKeywordPosition = 0;
         this.endOfRowTupleValuesPositions.clear();
+        this.isBatchExplicit = false;
         this.batchSize = -1;
         this.o3MaxLag = 0;
     }
@@ -137,6 +139,14 @@ public class InsertModel implements ExecutionModel, Mutable, Sinkable {
     @Override
     public ExpressionNode getTableNameExpr() {
         return tableNameExpr;
+    }
+
+    public boolean isBatchExplicit() {
+        return isBatchExplicit;
+    }
+
+    public void setBatchExplicit(boolean isBatchExplicit) {
+        this.isBatchExplicit = isBatchExplicit;
     }
 
     public void setBatchSize(long batchSize) {

@@ -48,6 +48,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     private int ttlHoursOrMonths;
     private TxReader txReader;
     private boolean walEnabled;
+    private int writeMode;
 
     public TableWriterMetadata(TableToken tableToken) {
         this.tableToken = tableToken;
@@ -105,7 +106,8 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     /**
      * The storage version stamped into {@code _meta} at {@link TableUtils#META_OFFSET_VERSION}.
      * {@link ColumnType#VERSION} for an ordinary table, {@link ColumnType#MAX_STORAGE_VERSION}
-     * while the table holds composite partitions.
+     * while the table holds composite partitions, or {@link TableUtils#META_FORMAT_VERSION_DELTA}
+     * permanently for a Delta table.
      */
     public int getStorageVersion() {
         return storageVersion;
@@ -151,6 +153,11 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
     }
 
     @Override
+    public int getWriteMode() {
+        return writeMode;
+    }
+
+    @Override
     public boolean hasParquetPartitions() {
         return txReader != null && txReader.hasParquetPartitions();
     }
@@ -175,6 +182,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.walEnabled = metaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(metaMem);
         this.tableFormat = TableUtils.getTableFormat(metaMem);
+        this.writeMode = TableUtils.getWriteMode(metaMem);
 
         long offset = TableUtils.getColumnNameOffset(columnCount);
         this.symbolMapCount = 0;
@@ -264,9 +272,14 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
         this.txReader = txReader;
     }
 
+    public void setWriteMode(int writeMode) {
+        this.writeMode = writeMode;
+    }
+
     public void updateTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
     }
+
 
     void addColumn(
             CharSequence name,

@@ -37,6 +37,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriteMode;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.view.ViewDefinition;
@@ -3586,6 +3587,7 @@ public class SqlParser {
             tok = tok(lexer, "table name or 'if'");
         } else if (isBatchKeyword(tok)) {
             batchSpecified = true;
+            builder.setBatchExplicit(true);
 
             long val = expectLong(lexer);
             if (val > 0) {
@@ -3707,14 +3709,24 @@ public class SqlParser {
 
             tok = sqlParserCallback.parseTtlSettings(lexer, tok, partitionBy, builder, false);
 
-            // FORMAT can appear before WAL: ... PARTITION BY DAY FORMAT PARQUET WAL ...
+            // FORMAT and the write mode are independent: ... FORMAT PARQUET DELTA ...
             if (tok != null && isFormatKeyword(tok)) {
                 tok = parseCreateTableFormat(lexer, builder);
                 formatSeen = true;
             }
 
             if (tok != null) {
-                if (isWalKeyword(tok)) {
+                if (isDeltaKeyword(tok)) {
+                    if (!PartitionBy.isPartitioned(builder.getPartitionByFromExpr())) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "DELTA requires a partitioned table with a designated timestamp");
+                    }
+                    if (!configuration.isWalSupported()) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "DELTA requires sequencer support");
+                    }
+                    builder.setWriteMode(TableWriteMode.DELTA_RUNS);
+                    walSetting = WAL_ENABLED;
+                    tok = optTok(lexer);
+                } else if (isWalKeyword(tok)) {
                     if (!PartitionBy.isPartitioned(builder.getPartitionByFromExpr())) {
                         throw SqlException.position(lexer.lastTokenPosition())
                                 .put("WAL Write Mode can only be used on partitioned tables");
@@ -3742,6 +3754,14 @@ public class SqlParser {
                 tok = parseCreateTableFormat(lexer, builder);
                 formatSeen = true;
             }
+        }
+        if (tok != null && isDeltaKeyword(tok) && walSetting == WAL_NOT_SET) {
+            throw SqlException.$(lexer.lastTokenPosition(), "DELTA requires a partitioned table with a designated timestamp");
+        }
+        if (tok != null && walSetting != WAL_NOT_SET
+                && (builder.getWriteMode() == TableWriteMode.DELTA_RUNS || isDeltaKeyword(tok))
+                && (isDeltaKeyword(tok) || isWalKeyword(tok) || isBypassKeyword(tok))) {
+            throw SqlException.$(lexer.lastTokenPosition(), "WAL, BYPASS WAL and DELTA write modes are mutually exclusive");
         }
         final boolean isWalEnabled = configuration.isWalSupported()
                 && PartitionBy.isPartitioned(builder.getPartitionByFromExpr())
@@ -3792,6 +3812,9 @@ public class SqlParser {
         }
 
         if (tok != null && (isDedupKeyword(tok) || isDeduplicateKeyword(tok))) {
+            if (builder.getWriteMode() == TableWriteMode.DELTA_RUNS) {
+                throw SqlException.$(lexer.lastTokenPosition(), "deduplication is not supported on Delta tables");
+            }
             if (!builder.isWalEnabled()) {
                 throw SqlException.position(lexer.getPosition()).put("deduplication is possible only on WAL tables");
             }
@@ -5676,6 +5699,7 @@ public class SqlParser {
         }
 
         if (isBatchKeyword(tok)) {
+            model.setBatchExplicit(true);
             long val = expectLong(lexer);
             if (val > 0) {
                 model.setBatchSize(val);

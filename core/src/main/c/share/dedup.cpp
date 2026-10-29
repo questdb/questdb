@@ -1349,7 +1349,7 @@ Java_io_questdb_std_Vect_dedupMergeVarcharColumnSize(JNIEnv *env, jclass cl,
 
         if ((firstWord & 1) == 0 && (firstWord & 4) == 0) {
             // not inlined and not null
-            auto size = (firstWord >> 4) & 0xffffff;
+            auto size = (firstWord >> 4) & 0x0fffffff;
             dst_var_offset += size;
         }
     }

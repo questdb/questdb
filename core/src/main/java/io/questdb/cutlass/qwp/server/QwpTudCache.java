@@ -611,7 +611,7 @@ public class QwpTudCache implements QuietCloseable {
         // Copy table name to heap - needed for WalTableUpdateDetails and cache key
         Utf8String tableNameCopy = Utf8String.newInstance(tableNameUtf8);
 
-        TableWriterAPI walWriter = engine.getWalWriter(tableToken);
+        TableWriterAPI walWriter = engine.getTableWriterAPI(tableToken, "qwp");
         WalTableUpdateDetails tud = null;
         try {
             tud = new WalTableUpdateDetails(

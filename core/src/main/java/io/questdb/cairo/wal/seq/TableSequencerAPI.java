@@ -45,6 +45,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -53,6 +54,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.Iterator;
+import java.util.concurrent.locks.Lock;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 
@@ -93,6 +95,48 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public long beginDeltaTableSwitch(TableToken tableToken, long validatedMetadataVersion) {
+        final Lock roleLock = engine.getRoleSwitchReadLock();
+        roleLock.lock();
+        try {
+            engine.verifyTableToken(tableToken);
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.readOnlyAccess();
+            }
+            if (!tableToken.isWal() || tableToken.isMatView() || tableToken.isLiveView()) {
+                throw CairoException.nonCritical().put("Delta conversion requires an ordinary WAL table");
+            }
+            // View creation and storage-policy writes use this monitor through publication.
+            // Recheck their F1 preconditions before acceptance in role -> graph -> sequencer order.
+            synchronized (engine.getDependentViewGraph()) {
+                engine.validateDeltaTableSwitchDependencies(tableToken);
+                try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+                    try {
+                        if (!sequencer.getTableToken().equals(tableToken)) {
+                            throw TableReferenceOutOfDateException.of(tableToken);
+                        }
+                        engine.fireRoleSwitchMintObserver();
+                        return sequencer.beginDeltaTableSwitch(validatedMetadataVersion);
+                    } finally {
+                        sequencer.unlockWrite();
+                    }
+                }
+            }
+        } finally {
+            roleLock.unlock();
+        }
+    }
+
+    public void checkNoTableModeTransition(TableToken tableToken) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
+            try {
+                sequencer.checkNoTableModeTransition();
+            } finally {
+                sequencer.unlockRead();
+            }
+        }
+    }
+
     @Override
     public void close() {
         closed = true;
@@ -103,6 +147,16 @@ public class TableSequencerAPI implements QuietCloseable {
     public void closeSequencer(TableToken tableToken) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             sequencer.unlockWrite();
+        }
+    }
+
+    public void completeDeltaTableSwitch(TableToken tableToken) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+            try {
+                sequencer.completeDeltaTableSwitch(tableToken);
+            } finally {
+                sequencer.unlockWrite();
+            }
         }
     }
 
@@ -119,6 +173,23 @@ public class TableSequencerAPI implements QuietCloseable {
             LOG.info().$("failed to drop wal table [table=").$(tableToken).I$();
             if (!failedCreate) {
                 throw e;
+            }
+        }
+    }
+
+    public boolean dropTableWithNotification(TableToken tableToken) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+            try {
+                // notifyDropped must not reacquire this non-reentrant sequencer lock.
+                if (!engine.notifyDropped(tableToken, sequencer.lastTxn())) {
+                    return false;
+                }
+                engine.fireRoleSwitchMintObserver();
+                sequencer.dropTable();
+                getSeqTxnTracker(tableToken).notifyOnDrop();
+                return true;
+            } finally {
+                sequencer.unlockWrite();
             }
         }
     }
@@ -228,6 +299,10 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public CairoEngine getEngine() {
+        return engine;
+    }
+
     public @NotNull TableMetadataChangeLog getMetadataChangeLog(final TableToken tableToken, long structureVersionLo) {
         try (TableSequencerImpl tableSequencer = getOrOpenSequencer(tableToken, this.openSequencerInstanceLambda)) {
             if (tableSequencer.metadataMatches(structureVersionLo)) {
@@ -271,15 +346,43 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
-    public int getNextWalId(final TableToken tableToken) {
-        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
-            int walId;
+    public int getNextEventWalId(final TableToken tableToken) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
             try {
-                walId = tableSequencer.getNextWalId();
+                return sequencer.getNextWalId();
             } finally {
-                tableSequencer.unlockRead();
+                sequencer.unlockRead();
             }
-            return walId;
+        }
+    }
+
+    public int getNextWalId(final TableToken tableToken) {
+        // Resolve by directory so a rename still reaches the original sequencer, but reject a
+        // token that names a different physical table before applying the current Delta mode.
+        // Delta itself is deliberately absent from TableToken.equals(): stale mode projections
+        // must be routed using the authoritative registry entry.
+        final TableToken current = engine.getUpdatedTableToken(tableToken);
+        if (current == null) {
+            engine.verifyTableToken(tableToken);
+        } else if (!current.renamed(tableToken.getTableName()).equals(tableToken)) {
+            throw TableReferenceOutOfDateException.of(tableToken);
+        }
+        if (current != null && current.isDelta()) {
+            if (engine.isTableDropped(tableToken)) {
+                throw CairoException.tableDropped(tableToken);
+            }
+            throw CairoException.nonCritical().put("WAL writers are not supported for Delta tables");
+        }
+        return getNextEventWalId(tableToken);
+    }
+
+    public long getPendingDeltaTableSwitch(TableToken tableToken) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
+            try {
+                return sequencer.getPendingDeltaTableSwitch();
+            } finally {
+                sequencer.unlockRead();
+            }
         }
     }
 
@@ -344,7 +447,14 @@ public class TableSequencerAPI implements QuietCloseable {
     public boolean initTxnTracker(TableToken tableToken, long writerTxn, long seqTxn) {
         SeqTxnTracker seqTxnTracker = getSeqTxnTracker(tableToken);
         final boolean isSuspended = isSuspended(tableToken);
-        return seqTxnTracker.initTxns(writerTxn, seqTxn, isSuspended);
+        boolean needsApply = seqTxnTracker.initTxns(writerTxn, seqTxn, isSuspended);
+        return needsApply || (!isSuspended && seqTxn > 0 && !tableToken.isDelta() && getPendingDeltaTableSwitch(tableToken) > 0);
+    }
+
+    // Writer close/tick can run under the sequencer write lock (e.g. RESUME WAL).
+    public boolean isDeltaTableSwitchPending(TableToken tableToken) {
+        TableSequencerImpl sequencer = seqRegistry.get(tableToken.getDirName());
+        return sequencer != null ? sequencer.isDeltaTableSwitchPending() : getPendingDeltaTableSwitch(tableToken) > 0;
     }
 
     public boolean isSuspended(final TableToken tableToken) {
@@ -367,10 +477,56 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public long acceptDeltaTxn(TableToken token, long txn, long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long minTimestamp, long maxTimestamp, long rowCount) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(token, SequencerLockType.WRITE)) {
+            try {
+                return sequencer.acceptDeltaTxn(txn, structureVersion, walId, segmentId, segmentTxn, timestamp, minTimestamp, maxTimestamp, rowCount);
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
+    }
+
+    public void finishDeltaRecovery(TableToken token, long appliedTxn) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(token, SequencerLockType.WRITE)) {
+            try {
+                sequencer.finishDeltaRecovery(appliedTxn);
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
+    }
+
+    public void finishDeltaTxn(TableToken token, long txn) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(token, SequencerLockType.WRITE)) {
+            try {
+                sequencer.finishDeltaTxn(txn);
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
+    }
+
+    public long reserveDeltaTxn(TableToken token, long structureVersion, long appliedTxn) {
+        try (TableSequencerImpl sequencer = openSequencerLocked(token, SequencerLockType.WRITE)) {
+            try {
+                return sequencer.reserveDeltaTxn(structureVersion, appliedTxn);
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
+    }
+
     public long nextStructureTxn(final TableToken tableToken, long structureVersion, AlterOperation alterOp) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             long txn;
             try {
+                if (!tableSequencer.getTableToken().equals(tableToken)) {
+                    throw TableReferenceOutOfDateException.of(tableToken);
+                }
+                if (isDeltaTable(tableToken)) {
+                    throw CairoException.nonCritical().put("WAL schema changes are not supported for Delta tables");
+                }
                 txn = tableSequencer.nextStructureTxn(structureVersion, alterOp);
             } finally {
                 tableSequencer.unlockWrite();
@@ -385,6 +541,9 @@ public class TableSequencerAPI implements QuietCloseable {
             try {
                 if (!tableSequencer.getTableToken().equals(tableToken)) {
                     throw TableReferenceOutOfDateException.of(tableToken);
+                }
+                if (isDeltaTable(tableToken)) {
+                    throw CairoException.nonCritical().put("WAL writes are not supported for Delta tables");
                 }
                 txn = tableSequencer.nextTxn(expectedSchemaVersion, walId, segmentId, segmentTxn, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
             } finally {
@@ -425,7 +584,9 @@ public class TableSequencerAPI implements QuietCloseable {
     public boolean notifyOnCheck(TableToken tableToken, long seqTxn) {
         // Updates seqTxn and returns true if CheckWalTransactionsJob should post notification
         // to run ApplyWal2TableJob for the table
-        return getSeqTxnTracker(tableToken).notifyOnCheck(seqTxn);
+        SeqTxnTracker tracker = getSeqTxnTracker(tableToken);
+        return tracker.notifyOnCheck(seqTxn)
+                || (!tracker.isSuspended() && seqTxn > 0 && !tableToken.isDelta() && getPendingDeltaTableSwitch(tableToken) > 0);
     }
 
     public void notifySegmentClosed(TableToken tableToken, long txn, int walId, int segmentId) {
@@ -560,6 +721,10 @@ public class TableSequencerAPI implements QuietCloseable {
         final SeqTxnTracker tracker = getTxnTracker(tableToken);
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
+                if (resumeFromTxn > 0 && (sequencer.getTableToken().isDelta()
+                        || sequencer.isDeltaTableSwitchPending() && resumeFromTxn > sequencer.lastTxn())) {
+                    throw CairoException.nonCritical().put("cannot skip a Delta table switch or use WAL skip on a Delta table");
+                }
                 // A replica keeps no save point, so the boot arm owes nothing there.
                 final boolean isCompletionOutstanding = tracker.isDurableEpochCompletionRequired()
                         && engine.getResolvedCommitMode() == CommitMode.ADAPTIVE;
@@ -714,12 +879,23 @@ public class TableSequencerAPI implements QuietCloseable {
         throw CairoException.critical(0).put("sequencer is distressed [table=").put(tableToken.getDirName()).put(']');
     }
 
+    // Resolves by directory, so a stale name (rename, drop) keeps the sequencer's own WAL errors.
+    private boolean isDeltaTable(TableToken tableToken) {
+        final TableToken current = engine.getUpdatedTableToken(tableToken);
+        return current != null && current.isDelta();
+    }
+
     private TableSequencerImpl openSequencerInstance(CharSequence tableDir, Object tableToken) {
+        TableToken token = (TableToken) tableToken;
+        TableToken current = engine.getTableTokenIfExists(token.getTableName());
+        if (current != null && current.equals(token)) {
+            token = current;
+        }
         return new TableSequencerImpl(
                 this,
                 this.engine,
-                (TableToken) tableToken,
-                getSeqTxnTracker((TableToken) tableToken),
+                token,
+                getSeqTxnTracker(token),
                 0,
                 null
         );

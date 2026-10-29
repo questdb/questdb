@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MemorySerializer;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriteMode;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
@@ -50,6 +51,9 @@ import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
+import static io.questdb.cairo.TableUtils.openSmallFile;
+import static io.questdb.cairo.wal.WalUtils.DELTA_TABLE_SWITCH_VERSION;
+import static io.questdb.cairo.wal.WalUtils.DELTA_TABLE_SWITCH_WAL_ID;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
 
@@ -164,8 +168,57 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         if (maxTxn < 0) {
             return -1;
         }
+        if (maxTxn == 0) {
+            return 0;
+        }
         long offset = TableTransactionLogFile.HEADER_SIZE + (maxTxn - 1) * RECORD_SIZE;
         return ff.readNonNegativeLong(logFileFd, offset);
+    }
+
+    @Override
+    public long addDeltaRunEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long minTimestamp, long maxTimestamp, long rowCount) {
+        final long appendOffset = txnMem.getAppendOffset();
+        final int commitMode = configuration.getCommitMode();
+        try {
+            txnMem.putLong(structureVersion);
+            txnMem.putInt(walId);
+            txnMem.putInt(segmentId);
+            txnMem.putInt(segmentTxn);
+            txnMem.putLong(timestamp);
+            if (commitMode != CommitMode.NOSYNC) {
+                txnMem.sync(commitMode == CommitMode.ASYNC);
+            }
+        } catch (Throwable th) {
+            txnMem.jumpTo(appendOffset);
+            throw th;
+        }
+        Unsafe.storeFence();
+        final long nextTxn = maxTxn.incrementAndGet();
+        txnMem.putLong(MAX_TXN_OFFSET_64, nextTxn);
+        sync0();
+        return nextTxn;
+    }
+
+    @Override
+    public long addDeltaTableSwitchEntry(long structureVersion, long timestamp) {
+        long appendOffset = txnMem.getAppendOffset();
+        try {
+            txnMem.putLong(structureVersion);
+            txnMem.putInt(DELTA_TABLE_SWITCH_WAL_ID);
+            txnMem.putInt(DELTA_TABLE_SWITCH_VERSION);
+            txnMem.putInt(TableWriteMode.DELTA_RUNS);
+            txnMem.putLong(timestamp);
+            // The first sync leaves maxTxn unchanged, including when the record shares its page.
+            txnMem.sync(false);
+        } catch (Throwable th) {
+            txnMem.jumpTo(appendOffset);
+            throw th;
+        }
+        Unsafe.storeFence();
+        long nextTxn = maxTxn.incrementAndGet();
+        txnMem.putLong(MAX_TXN_OFFSET_64, nextTxn);
+        txnMem.sync(false);
+        return nextTxn;
     }
 
     @Override
@@ -331,7 +384,9 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         isPastTailUnchecked = true;
         maxTxn.set(lastTxn);
         txnMem.jumpTo(HEADER_SIZE);
-        long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (wholeTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
+        long maxStructureVersion = wholeTxn > 0
+                ? txnMem.getLong(HEADER_SIZE + (wholeTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET)
+                : 0;
         if (lastTxn > wholeTxn && tableTxn != null) {
             // The kept torn records' versions are not on the disk; the table committed them, so it has their schema.
             maxStructureVersion = Math.max(maxStructureVersion, tableTxn[1]);

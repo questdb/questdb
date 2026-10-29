@@ -82,6 +82,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -6956,11 +6957,13 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         writerField.set(tud, Proxy.newProxyInstance(
                 TableWriterAPI.class.getClassLoader(),
                 new Class[]{TableWriterAPI.class},
-                (_, method, _) -> switch (method.getName()) {
+                (proxy, method, args) -> switch (method.getName()) {
                     case "getUncommittedRowCount" -> 1L;
                     case "getWalId" -> 1;
                     case "getSegmentId" -> 0;
                     case "getLastSeqTxn" -> 0L;
+                    // The interface's role fence dispatches to commit() or ic() below.
+                    case "commitWithRoleFence" -> InvocationHandler.invokeDefault(proxy, method, args);
                     // commit(false) -> commit(), commit(true) -> ic(); both must
                     // surface the same simulated failure.
                     case "commit", "ic" -> {

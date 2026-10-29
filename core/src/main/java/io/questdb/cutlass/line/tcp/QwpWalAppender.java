@@ -26,13 +26,12 @@ package io.questdb.cutlass.line.tcp;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnarRowAppender;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.TableRecordMetadata;
-import io.questdb.cairo.wal.ColumnarRowAppender;
-import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpBooleanColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpColumnCursor;
@@ -159,7 +158,7 @@ public class QwpWalAppender implements QuietCloseable {
             QwpTableBlockCursor tableBlock,
             TableUpdateDetails tud
     ) throws CommitFailedException, QwpParseException {
-        appendToWalStreaming(securityContext, tableBlock, tud, true);
+        appendToWalStreaming(securityContext, tableBlock, tud, true, false);
     }
 
     /**
@@ -174,9 +173,19 @@ public class QwpWalAppender implements QuietCloseable {
             TableUpdateDetails tud,
             boolean isColumnCreationAllowed
     ) throws CommitFailedException, QwpParseException {
+        appendToWalStreaming(securityContext, tableBlock, tud, isColumnCreationAllowed, false);
+    }
+
+    public void appendToWalStreaming(
+            SecurityContext securityContext,
+            QwpTableBlockCursor tableBlock,
+            TableUpdateDetails tud,
+            boolean isColumnCreationAllowed,
+            boolean closesTransaction
+    ) throws CommitFailedException, QwpParseException {
         for (int retryCount = 0; !tud.isDropped(); retryCount++) {
             try {
-                appendToWalStreaming0(securityContext, tableBlock, tud, isColumnCreationAllowed);
+                appendToWalStreaming0(securityContext, tableBlock, tud, isColumnCreationAllowed, closesTransaction);
                 return;
             } catch (MetadataChangedException e) {
                 if (retryCount == maxMetadataChangeRetries) {
@@ -189,7 +198,6 @@ public class QwpWalAppender implements QuietCloseable {
 
     @Override
     public void close() {
-        // No resources to clean up - columnar path uses WalColumnarRowAppender's own resources
     }
 
     /**
@@ -426,21 +434,23 @@ public class QwpWalAppender implements QuietCloseable {
      */
     private void appendToWalColumnar(
             QwpTableBlockCursor tableBlock,
-            WalWriter walWriter,
+            TableWriterAPI walWriter,
             int timestampColumnInBlock,
             int columnCount,
             int rowCount,
             TableUpdateDetails tud,
-            long metadataVersion
+            long metadataVersion,
+            TableRecordMetadata expectedMetadata,
+            boolean closesTransaction
     ) throws QwpParseException, CommitFailedException, MetadataChangedException {
-        ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
+        final ColumnarRowAppender appender = walWriter.getColumnarRowAppender();
         appender.beginColumnarWrite(rowCount);
 
         try {
             // beginColumnarWrite may trigger a segment roll if the WAL writer
             // detects a pending ALTER TABLE. Re-check metadata version to avoid
             // writing with stale column types (e.g., SYMBOL after conversion to VARCHAR).
-            if (walWriter.getMetadataVersion() != metadataVersion) {
+            if (walWriter.getMetadataVersion() != metadataVersion || walWriter.getMetadata() != expectedMetadata) {
                 appender.cancelColumnarWrite();
                 throw MetadataChangedException.INSTANCE;
             }
@@ -518,6 +528,12 @@ public class QwpWalAppender implements QuietCloseable {
                 long now = tud.getTimestampDriver().getTicks();
                 minTimestamp = maxTimestamp = now;
                 serverTimestamp = now;
+            }
+
+            if (walWriter.getUncommittedRowCount() == 0) {
+                // Only the last block of a commit frame can prove the whole next transaction's order.
+                // A block in a deferred group never makes that claim.
+                walWriter.setBatchOrdered(closesTransaction && !outOfOrder);
             }
 
             // Write each column
@@ -934,7 +950,7 @@ public class QwpWalAppender implements QuietCloseable {
             if (timestampColumnInBlock < 0) {
                 int timestampIndex = walWriter.getMetadata().getTimestampIndex();
                 if (timestampIndex >= 0) {
-                    walWriter.putServerAssignedTimestampColumnar(rowCount, serverTimestamp);
+                    appender.putServerAssignedTimestamp(rowCount, serverTimestamp);
                 }
             }
 
@@ -957,7 +973,8 @@ public class QwpWalAppender implements QuietCloseable {
             SecurityContext securityContext,
             QwpTableBlockCursor tableBlock,
             TableUpdateDetails tud,
-            boolean isColumnCreationAllowed
+            boolean isColumnCreationAllowed,
+            boolean closesTransaction
     ) throws CommitFailedException, MetadataChangedException, QwpParseException {
         int columnCount = tableBlock.getColumnCount();
         int rowCount = tableBlock.getRowCount();
@@ -980,15 +997,27 @@ public class QwpWalAppender implements QuietCloseable {
                     .put(tud.getTableNameUtf16())
                     .put(']');
         }
+        // A held WAL handle may adopt dense Delta metadata without changing the schema version.
+        writer.getColumnarRowAppender();
         TableRecordMetadata metadata = writer.getMetadata();
-        int timestampIndex = tud.getTimestampIndex();
+        int timestampIndex = metadata.getTimestampIndex();
         long metadataVersion = writer.getMetadataVersion();
 
         final ObjList<QwpColumnDef> schema = tableBlock.getSchema();
         // Array columns check their dimensions against each block's data, so a schema
         // with one goes through Phase 1 every time.
         if (!hasResolvedArrayColumn && isResolvedFor(schema, writer, metadataVersion)) {
-            appendToWalColumnar(tableBlock, (WalWriter) writer, resolvedTimestampColumnInBlock, columnCount, rowCount, tud, metadataVersion);
+            appendToWalColumnar(
+                    tableBlock,
+                    writer,
+                    resolvedTimestampColumnInBlock,
+                    columnCount,
+                    rowCount,
+                    tud,
+                    metadataVersion,
+                    metadata,
+                    closesTransaction
+            );
             return;
         }
         resolvedSchema = null;
@@ -1034,6 +1063,10 @@ public class QwpWalAppender implements QuietCloseable {
                                 .put(", column=")
                                 .put(columnName)
                                 .put(']');
+                    }
+                    if (writer.getTableToken().isDelta()) {
+                        throw CairoException.schemaMismatch().put("automatic column creation is not supported for Delta tables [table=")
+                                .put(writer.getTableToken().getTableName()).put(", column=").put(columnName).put(']');
                     }
                     if (autoCreateNewColumns && TableUtils.isValidColumnName(columnName, maxFileNameLength)) {
                         final int newColumnType;
@@ -1104,10 +1137,8 @@ public class QwpWalAppender implements QuietCloseable {
             hasResolvedArrayColumn = hasArrayColumn;
         }
 
-        // Phase 2: Write data - always use columnar path
-        // Writer is always a WalWriter in this context (QWP v1 only supports WAL tables)
-        WalWriter walWriter = (WalWriter) writer;
-        appendToWalColumnar(tableBlock, walWriter, timestampColumnInBlock, columnCount, rowCount, tud, metadataVersion);
+        // Phase 2: use the writer's columnar capability with the same wire coercions.
+        appendToWalColumnar(tableBlock, writer, timestampColumnInBlock, columnCount, rowCount, tud, metadataVersion, metadata, closesTransaction);
     }
 
     // The Phase 1 cache hit: the one definition behind isSchemaSettled() and the

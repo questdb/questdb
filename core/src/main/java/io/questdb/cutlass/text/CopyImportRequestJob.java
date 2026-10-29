@@ -204,6 +204,10 @@ public class CopyImportRequestJob extends SynchronizedJob implements Closeable {
         if (engine.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
             return task.getPartitionBy() >= 0 && task.getPartitionBy() != PartitionBy.NONE;
         }
+        if (tableToken.isDelta()) {
+            // Parallel import installs physical partitions; Delta imports use the table writer API.
+            return false;
+        }
         try (TableReader reader = engine.getReader(tableToken)) {
             return PartitionBy.isPartitioned(reader.getPartitionedBy());
         }

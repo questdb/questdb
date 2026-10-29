@@ -52,6 +52,8 @@ public class TableToken implements Sinkable {
     @NotNull
     private final GcUtf8String dirName;
     private final boolean dirNameSameAsTableName;
+    // Write mode can change without changing table identity; equals deliberately excludes it.
+    private final boolean isDelta;
     private final boolean isProtected;
     private final boolean isPublic;
     private final boolean isSystem;
@@ -70,11 +72,16 @@ public class TableToken implements Sinkable {
     }
 
     private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, @Nullable String dbLogName, int tableId, Type type, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic) {
+        this(tableName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic, false);
+    }
+
+    private TableToken(@NotNull String tableName, @NotNull GcUtf8String dirName, @Nullable String dbLogName, int tableId, Type type, boolean isWal, boolean isSystem, boolean isProtected, boolean isPublic, boolean isDelta) {
         this.tableName = tableName;
         this.dirName = dirName;
         this.tableId = tableId;
         this.type = type;
         this.isWal = isWal;
+        this.isDelta = isDelta;
         this.isSystem = isSystem;
         this.isProtected = isProtected;
         this.isPublic = isPublic;
@@ -154,6 +161,10 @@ public class TableToken implements Sinkable {
         return tableId;
     }
 
+    public boolean isDelta() {
+        return isDelta;
+    }
+
     public boolean isLiveView() {
         return type == Type.LIVE_VIEW;
     }
@@ -183,7 +194,7 @@ public class TableToken implements Sinkable {
     }
 
     public TableToken renamed(String newName) {
-        return new TableToken(newName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
+        return new TableToken(newName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic, isDelta);
     }
 
     @Override
@@ -210,10 +221,18 @@ public class TableToken implements Sinkable {
                 ", isMatView=" + isMatView() +
                 ", isLiveView=" + isLiveView() +
                 ", isWal=" + isWal +
+                ", isDelta=" + isDelta +
                 ", isSystem=" + isSystem +
                 ", isProtected=" + isProtected +
                 ", isPublic=" + isPublic +
                 '}';
+    }
+
+    public TableToken withDelta() {
+        if (!isWal || type != Type.TABLE) {
+            throw new IllegalArgumentException("Delta mode requires a regular WAL-sequenced table");
+        }
+        return isDelta ? this : new TableToken(tableName, dirName, dbLogName, tableId, type, true, isSystem, isProtected, isPublic, true);
     }
 
     public enum Type {

@@ -38,6 +38,10 @@ import static io.questdb.cairo.wal.WalUtils.TABLE_REGISTRY_NAME_FILE;
 public class GrowOnlyTableNameRegistryStore implements Closeable {
     public static final int OPERATION_ADD = 0;
     public static final int OPERATION_REMOVE = -1;
+    protected static final long TABLE_NAME_ENTRY_FLAG_DELTA = 1;
+    // A nonzero version marker distinguishes a known WAL mode from legacy reserved zeroes.
+    // Older binaries can discard these flags during registry compaction, so zero must be rebuilt from _meta.
+    protected static final long TABLE_NAME_ENTRY_FLAGS_VERSION = 0x5144420100000000L;
     protected final static long TABLE_NAME_ENTRY_RESERVED_LONGS = 8;
     protected final MemoryMARW tableNameMemory = Vm.getCMARWInstance();
     private final FilesFacade ff;
@@ -94,7 +98,8 @@ public class GrowOnlyTableNameRegistryStore implements Closeable {
         tableNameMemory.putInt(tableType);
 
         if (operation != OPERATION_REMOVE) {
-            for (int i = 0; i < TABLE_NAME_ENTRY_RESERVED_LONGS; i++) {
+            tableNameMemory.putLong(TABLE_NAME_ENTRY_FLAGS_VERSION | (tableToken.isDelta() ? TABLE_NAME_ENTRY_FLAG_DELTA : 0));
+            for (int i = 1; i < TABLE_NAME_ENTRY_RESERVED_LONGS; i++) {
                 tableNameMemory.putLong(0);
             }
         }

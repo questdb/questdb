@@ -29,6 +29,7 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriteMode;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -58,6 +59,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private long batchSize = -1;
     private int defaultSymbolCapacity;
     private boolean ignoreIfExists = false;
+    private boolean isBatchExplicit;
     private ExpressionNode likeTableNameExpr;
     private int maxUncommittedRows;
     private long o3MaxLag = -1;
@@ -77,6 +79,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private CharSequence volumeAlias;
     private int volumePosition;
     private boolean walEnabled;
+    private int writeMode = TableWriteMode.WAL_SEGMENTS;
 
     public void addColumnModel(CharSequence columnName, CreateTableColumnModel model) throws SqlException {
         if (columnModels.get(columnName) != null) {
@@ -112,10 +115,12 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     ttlPosition,
                     tableFormat,
                     walEnabled,
+                    writeMode,
                     defaultSymbolCapacity,
                     maxUncommittedRows,
                     o3MaxLag,
                     columnModels,
+                    isBatchExplicit,
                     batchSize,
                     batchO3MaxLag,
                     tableKind,
@@ -164,6 +169,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                 ttlPosition,
                 tableFormat,
                 walEnabled,
+                writeMode,
                 autoIncludeTs
         );
         return op;
@@ -174,6 +180,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         columnNameIndexMap.clear();
         columnNames.clear();
         columnModels.clear();
+        isBatchExplicit = false;
         batchO3MaxLag = -1;
         batchSize = -1;
         tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
@@ -195,6 +202,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         ttlHoursOrMonths = 0;
         ttlPosition = 0;
         walEnabled = false;
+        writeMode = TableWriteMode.WAL_SEGMENTS;
         tableKind = TableUtils.TABLE_KIND_REGULAR_TABLE;
     }
 
@@ -261,6 +269,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         return volumeAlias;
     }
 
+    public int getWriteMode() {
+        return writeMode;
+    }
+
     public boolean isAtomic() {
         return batchSize == -1;
     }
@@ -275,6 +287,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         } else {
             ShowCreateTableRecordCursorFactory.ttlToSink(ttlHoursOrMonths, sink);
         }
+    }
+
+    public void setBatchExplicit(boolean isBatchExplicit) {
+        this.isBatchExplicit = isBatchExplicit;
     }
 
     public void setBatchO3MaxLag(long batchO3MaxLag) {
@@ -358,6 +374,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         this.walEnabled = walEnabled;
     }
 
+    public void setWriteMode(int writeMode) {
+        this.writeMode = writeMode;
+    }
+
     @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("create");
@@ -432,7 +452,9 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             sink.putAscii(" partition by ").put(partitionByExpr.token);
             ttlToSink(sink);
             ShowCreateTableRecordCursorFactory.tableFormatToSink(tableFormat, sink);
-            if (walEnabled) {
+            if (writeMode == TableWriteMode.DELTA_RUNS) {
+                sink.putAscii(" delta");
+            } else if (walEnabled) {
                 sink.putAscii(" wal");
             }
         }

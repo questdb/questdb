@@ -441,7 +441,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     final MemoryR auxCol = reader.getColumn(readerColIndex + 1);
                     final long auxAddress = auxCol.getPageAddress(0);
                     final long auxOffsetLo = columnTypeDriver.getAuxVectorOffset(partitionLoAdjusted);
-                    final long auxOffsetHi = columnTypeDriver.getAuxVectorOffset(partitionHiAdjusted);
+                    final long auxOffsetHi = columnTypeDriver.getAuxVectorSize(partitionHiAdjusted);
 
                     final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxAddress, partitionHiAdjusted - 1);
                     // some var-size columns may not have data memory (fully inlined)
@@ -695,7 +695,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     final MemoryR auxCol = reader.getColumn(readerColIndex + 1);
                     final long auxAddress = auxCol.getPageAddress(0);
                     final long auxOffsetLo = columnTypeDriver.getAuxVectorOffset(partitionLoAdjusted);
-                    final long auxOffsetHi = columnTypeDriver.getAuxVectorOffset(partitionHiAdjusted);
+                    final long auxOffsetHi = columnTypeDriver.getAuxVectorSize(partitionHiAdjusted);
 
                     final long dataSize = columnTypeDriver.getDataVectorSizeAt(auxAddress, partitionHiAdjusted - 1);
                     // some var-size columns may not have data memory (fully inlined)

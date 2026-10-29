@@ -70,6 +70,17 @@ abstract class WalWriterBase implements AutoCloseable {
             WalDirectoryPolicy walDirectoryPolicy,
             WalLocker walLocker
     ) {
+        this(configuration, tableToken, tableSequencerAPI, walDirectoryPolicy, walLocker, tableSequencerAPI.getNextWalId(tableToken));
+    }
+
+    WalWriterBase(
+            CairoConfiguration configuration,
+            TableToken tableToken,
+            TableSequencerAPI tableSequencerAPI,
+            WalDirectoryPolicy walDirectoryPolicy,
+            WalLocker walLocker,
+            int walId
+    ) {
         this.sequencer = tableSequencerAPI;
         this.configuration = configuration;
         this.walDirectoryPolicy = walDirectoryPolicy;
@@ -78,7 +89,7 @@ abstract class WalWriterBase implements AutoCloseable {
 
         mkDirMode = configuration.getMkDirMode();
         ff = configuration.getFilesFacade();
-        walId = tableSequencerAPI.getNextWalId(tableToken);
+        this.walId = walId;
         walName = WAL_NAME_BASE + walId;
         path = new Path();
         path.of(configuration.getDbRoot());

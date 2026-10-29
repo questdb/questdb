@@ -47,6 +47,7 @@ public final class FuzzConfig {
     public static final String HORIZON_JOIN_PROP = "questdb.fuzz.horizonjoin";
     public static final String LATEST_ON_PROP = "questdb.fuzz.lateston";
     public static final String QUERIES_PROP = "questdb.fuzz.queries";
+    public static final String SHADOW_DELTA_PROP = "questdb.fuzz.shadow.delta";
     public static final String VERIFY_CURSOR_PROP = "questdb.fuzz.verify.cursor";
     public static final String WINDOW_JOIN_PROP = "questdb.fuzz.windowjoin";
     public static final String WINDOW_PROP = "questdb.fuzz.window";
@@ -81,6 +82,7 @@ public final class FuzzConfig {
     private final boolean isHorizonJoinEnabled;
     private final boolean isLatestOnEnabled;
     private final boolean isParallelFaultEnabled;
+    private final boolean isShadowDeltaEnabled;
     private final boolean isVerifyCursorEnabled;
     private final boolean isWindowEnabled;
     private final boolean isWindowJoinEnabled;
@@ -121,6 +123,8 @@ public final class FuzzConfig {
         this.dumpPath = System.getProperty(DUMP_PROP);
         this.isDiffJitEnabled = Boolean.parseBoolean(System.getProperty(DIFF_JIT_PROP, "true"));
         this.isDiffShadowEnabled = Boolean.parseBoolean(System.getProperty(DIFF_SHADOW_PROP, "true"));
+        // Off by default: only the Enterprise engine can create the Delta shadow tables this builds.
+        this.isShadowDeltaEnabled = Boolean.parseBoolean(System.getProperty(SHADOW_DELTA_PROP, "false"));
         // Runs every equi-join GROUP BY query with the fused hash join GROUP BY on and off and
         // compares the results (see QueryRunner). Pass -Dquestdb.fuzz.diff.fused=false to drop
         // the comparison and keep the shape.
@@ -249,6 +253,10 @@ public final class FuzzConfig {
 
     public boolean isParallelFaultEnabled() {
         return isParallelFaultEnabled;
+    }
+
+    public boolean isShadowDeltaEnabled() {
+        return isShadowDeltaEnabled;
     }
 
     public boolean isVerifyCursorEnabled() {

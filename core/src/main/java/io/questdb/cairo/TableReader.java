@@ -2189,7 +2189,8 @@ public class TableReader implements Closeable, SymbolTableSource {
 
         if (forceTruncate) {
             reloadAllSymbols();
-        } else if (changed) {
+        } else if (changed || txFile.hasAnyDelta()) {
+            // Delta commits add symbols without resizing partitions.
             reloadSymbolMapCounts();
         }
     }

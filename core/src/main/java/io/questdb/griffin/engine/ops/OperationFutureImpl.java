@@ -31,6 +31,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -60,6 +61,7 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
     private AsyncWriterCommand asyncWriterCommand;
     private boolean closing;
     private long correlationId;
+    private long deltaSwitchTxn = -1;
     private SCSequence eventSubSeq;
     private QueryFutureUpdateListener queryFutureUpdateListener;
     private int status;
@@ -95,9 +97,10 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
         if (eventSubSeq != null) {
             engine.getMessageBus().getTableWriterEventFanOut().remove(eventSubSeq);
             eventSubSeq = null;
-            correlationId = -1;
-            tableToken = null;
         }
+        correlationId = -1;
+        deltaSwitchTxn = -1;
+        tableToken = null;
         asyncWriterCommand = Misc.free(asyncWriterCommand);
 
         if (!closing) {
@@ -173,12 +176,51 @@ class OperationFutureImpl extends AbstractSelfReturningObject<OperationFutureImp
         }
     }
 
+    public void ofDeltaTableSwitch(
+            TableToken tableToken,
+            long switchTxn,
+            SqlExecutionContext executionContext,
+            int tableNamePositionInSql
+    ) {
+        this.affectedRowsCount = 0;
+        this.correlationId = engine.getCommandCorrelationId();
+        this.deltaSwitchTxn = switchTxn;
+        this.queryFutureUpdateListener = executionContext.getQueryFutureUpdateListener();
+        this.status = QUERY_STARTED;
+        this.tableNamePositionInSql = tableNamePositionInSql;
+        this.tableToken = tableToken;
+        try {
+            queryFutureUpdateListener.reportStart(tableToken, correlationId);
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
+    }
+
     private int await0(long timeout) throws SqlException {
         if (status == QUERY_COMPLETE) {
             return status;
         }
-        status = Math.max(status, awaitWriterEvent(timeout));
+        status = Math.max(status, deltaSwitchTxn >= 0 ? awaitDeltaTableSwitch(timeout) : awaitWriterEvent(timeout));
         return status;
+    }
+
+    private int awaitDeltaTableSwitch(long timeout) throws SqlException {
+        final MillisecondClock clock = engine.getConfiguration().getMillisecondClock();
+        final long start = clock.getTicks();
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        while (!engine.isDeltaTableSwitchComplete(tableToken, deltaSwitchTxn)) {
+            if (tracker.isSuspended()) {
+                throw SqlException.$(tableNamePositionInSql, "Delta table switch is suspended: ").put(tracker.getErrorMessage());
+            }
+            if (clock.getTicks() - start > timeout) {
+                queryFutureUpdateListener.reportBusyWaitExpired(tableToken, correlationId);
+                return QUERY_STARTED;
+            }
+            Os.pause();
+        }
+        queryFutureUpdateListener.reportProgress(correlationId, QUERY_COMPLETE);
+        return QUERY_COMPLETE;
     }
 
     private int awaitWriterEvent(long timeout) throws SqlException {

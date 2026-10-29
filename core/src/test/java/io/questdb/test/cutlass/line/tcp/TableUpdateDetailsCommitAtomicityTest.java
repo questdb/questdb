@@ -42,6 +42,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.Method;
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -277,6 +278,7 @@ public class TableUpdateDetailsCommitAtomicityTest extends AbstractCairoTest {
                 TableWriterAPI.class.getClassLoader(),
                 new Class[]{TableWriterAPI.class},
                 (proxy, method, args) -> switch (method.getName()) {
+                    case "commitWithRoleFence" -> InvocationHandler.invokeDefault(proxy, method, args);
                     case "getUncommittedRowCount" -> uncommittedRowCount;
                     case "getMetadata" -> (TableRecordMetadata) Proxy.newProxyInstance(
                             TableRecordMetadata.class.getClassLoader(),

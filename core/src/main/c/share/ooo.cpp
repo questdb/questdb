@@ -2579,7 +2579,7 @@ Java_io_questdb_std_Vect_sortVarcharColumn(JNIEnv *env, jclass cl, jlong mergedT
         const int64_t flags = a1 & 0x0f;
         if ((flags & 5) == 0) {
             // not inlined and not null
-            const int64_t size = ((a1 >> 4) & 0xffffff);
+            const int64_t size = ((a1 >> 4) & 0x0fffffff);
             platform_memcpy(reinterpret_cast<void *>(tgt_data + offset),
                             reinterpret_cast<const void *>(src_data + (a2 >> 16)),
                             size);

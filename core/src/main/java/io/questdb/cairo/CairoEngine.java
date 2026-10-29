@@ -2161,17 +2161,8 @@ public class CairoEngine implements Closeable, WriterSource {
     public void dropTableOrViewOrMatView(@Transient Path path, TableToken tableToken) {
         verifyTableToken(tableToken);
         if (tableToken.isWal()) {
-            if (notifyDropped(tableToken)) {
+            if (tableSequencerAPI.dropTableWithNotification(tableToken)) {
                 durableAckRegistry.onTableDropped(tableToken);
-                // Both-trees pre-externalization fire-point: fire the role-switch mint observer here,
-                // immediately before tableSequencerAPI.dropTable mints the replicated drop. A WAL DROP
-                // does not route through OperationDispatcher (it runs as a GenericDropOperation executed
-                // directly), so this is the single externalization site for DROP TABLE/VIEW/MATERIALIZED
-                // VIEW/ALL TABLES across pg-wire, HTTP /exec and the QWP egress channel. Firing here lets
-                // a demote-race witness arm one seam that trips on both the fenced and the unfenced tree.
-                // A strict no-op in production (the observer field is null).
-                fireRoleSwitchMintObserver();
-                tableSequencerAPI.dropTable(tableToken, false);
                 notifyViewStoresAboutDrop(tableToken);
                 matViewStateStore.removeViewState(tableToken);
                 dependentViewGraph.removeView(tableToken);
@@ -2257,6 +2248,27 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
             }
         }
+    }
+
+    public void finishDeltaTableSwitch(TableToken tableToken) {
+        TableToken current = verifyAndGetTableToken(tableToken);
+        TableToken delta = current.isDelta() ? current : current.withDelta();
+        if (!isDeltaTableSupported()) {
+            throw CairoException.nonCritical().put("Delta table writer is not available");
+        }
+        // Old borrowers keep their snapshots/buffers; returned pool entries must be rebuilt.
+        tableMetadataPool.notifyDropped(current, true);
+        walWriterPool.notifyDropped(current, true);
+        try (TableWriterAPI ignored = createDeltaTableWriter(delta, "Delta table switch")) {
+            // Initialize the real provider while legacy admission remains closed.
+        }
+        try (MetadataCacheWriter metadata = metadataCache.writeLock()) {
+            metadata.hydrateTable(delta);
+        }
+        if (!current.isDelta()) {
+            tableNameRegistry.replaceTableToken(delta);
+        }
+        tableSequencerAPI.completeDeltaTableSwitch(delta);
     }
 
     /**
@@ -2460,7 +2472,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableReader getReader(TableToken tableToken) {
-        verifyTableToken(tableToken);
+        tableToken = verifyAndGetTableToken(tableToken);
         try {
             return readerPool.get(tableToken);
         } catch (CairoException e) {
@@ -2470,7 +2482,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableReader getReader(TableToken tableToken, @Nullable ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
-        verifyTableToken(tableToken);
+        tableToken = verifyAndGetTableToken(tableToken);
         try {
             return readerPool.get(tableToken, readerPoolSupervisor);
         } catch (CairoException e) {
@@ -2480,7 +2492,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableReader getReader(TableToken tableToken, long metadataVersion, @Nullable ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
-        verifyTableToken(tableToken);
+        tableToken = verifyAndGetTableToken(tableToken);
         TableReader reader;
         try {
             reader = readerPool.get(tableToken, readerPoolSupervisor);
@@ -2730,14 +2742,11 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @Override
     public TableWriterAPI getTableWriterAPI(TableToken tableToken, @NotNull String lockReason) {
-        verifyTableToken(tableToken);
+        tableToken = verifyAndGetTableToken(tableToken);
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
         }
-        if (configuration.isWalApplySuspendedWriteDenied() && isWalApplySuspended(tableToken)) {
-            throw CairoException.tableSuspended(tableToken);
-        }
-        return walWriterPool.get(tableToken);
+        return getSequencedWriter(tableToken, lockReason);
     }
 
     @Override
@@ -2748,10 +2757,7 @@ public class CairoEngine implements Closeable, WriterSource {
         if (!tableToken.isWal()) {
             return writerPool.get(tableToken, lockReason);
         }
-        if (configuration.isWalApplySuspendedWriteDenied() && isWalApplySuspended(tableToken)) {
-            throw CairoException.tableSuspended(tableToken);
-        }
-        return walWriterPool.get(tableToken);
+        return getSequencedWriter(tableToken, lockReason);
     }
 
     public ObjList<Telemetry<? extends AbstractTelemetryTask>> getTelemetries() {
@@ -2870,7 +2876,10 @@ public class CairoEngine implements Closeable, WriterSource {
      */
     public @NotNull WalWriter getWalWriterUnsafe(TableToken tableToken) {
         throwIfDurabilityFailed();
-        verifyTableToken(tableToken);
+        tableToken = verifyAndGetTableToken(tableToken);
+        if (tableToken.isDelta()) {
+            throw CairoException.nonCritical().put("WAL writers are not supported for Delta tables");
+        }
         if (configuration.isWalApplySuspendedWriteDenied() && isWalApplySuspended(tableToken)) {
             throw CairoException.tableSuspended(tableToken);
         }
@@ -2896,7 +2905,13 @@ public class CairoEngine implements Closeable, WriterSource {
     public TableWriter getWriterOrPublishCommand(TableToken tableToken, @NotNull AsyncWriterCommand asyncWriterCommand) {
         throwIfDurabilityFailed();
         verifyTableToken(tableToken);
-        return writerPool.getWriterOrPublishCommand(tableToken, asyncWriterCommand.getCommandName(), asyncWriterCommand);
+        if (tableToken.isWal()) {
+            tableSequencerAPI.checkNoTableModeTransition(tableToken);
+            if (isDeltaTable(tableToken)) {
+                throw CairoException.nonCritical().put("legacy writer commands are not supported for Delta tables");
+            }
+        }
+        return checkLegacyWriterMode(writerPool.getWriterOrPublishCommand(tableToken, asyncWriterCommand.getCommandName(), asyncWriterCommand));
     }
 
     public TableWriter getWriterOrPublishCommand(
@@ -2905,12 +2920,18 @@ public class CairoEngine implements Closeable, WriterSource {
             @NotNull LongConsumer publishedWriterIdSink
     ) {
         verifyTableToken(tableToken);
-        return writerPool.getWriterOrPublishCommand(
+        if (tableToken.isWal()) {
+            tableSequencerAPI.checkNoTableModeTransition(tableToken);
+            if (isDeltaTable(tableToken)) {
+                throw CairoException.nonCritical().put("legacy writer commands are not supported for Delta tables");
+            }
+        }
+        return checkLegacyWriterMode(writerPool.getWriterOrPublishCommand(
                 tableToken,
                 asyncWriterCommand.getCommandName(),
                 asyncWriterCommand,
                 publishedWriterIdSink
-        );
+        ));
     }
 
     public Map<CharSequence, WriterPool.Entry> getWriterPoolEntries() {
@@ -3201,6 +3222,21 @@ public class CairoEngine implements Closeable, WriterSource {
         return isCompleteInitDone;
     }
 
+    public boolean isDeltaTable(TableToken tableToken) {
+        return verifyAndGetTableToken(tableToken).isDelta();
+    }
+
+    public boolean isDeltaTableSwitchComplete(TableToken tableToken, long switchTxn) {
+        TableToken current = verifyAndGetTableToken(tableToken);
+        return current.isDelta() && tableSequencerAPI.getPendingDeltaTableSwitch(current) < 0
+                && (switchTxn < 0 || tableSequencerAPI.getTxnTracker(current).getWriterTxn() >= switchTxn);
+    }
+
+    /** True only when a direct Delta writer provider is installed. */
+    public boolean isDeltaTableSupported() {
+        return false;
+    }
+
     /**
      * Reports whether the node still permits a force/WAL-bypass break-glass alter (e.g. FORCE DROP
      * PARTITION on a hard-suspended table) while it otherwise refuses ordinary writes via
@@ -3431,6 +3467,10 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public boolean notifyDropped(TableToken tableToken) {
+        return notifyDropped(tableToken, -1);
+    }
+
+    public boolean notifyDropped(TableToken tableToken, long lastSeqTxn) {
         if (tableNameRegistry.dropTable(tableToken)) {
             notifyPoolsTableDropped(tableToken, false);
             final MatViewRefreshTask matViewRefreshTask = tlMatViewRefreshTask.get();
@@ -3438,7 +3478,7 @@ public class CairoEngine implements Closeable, WriterSource {
             matViewRefreshTask.baseTableToken = tableToken;
             matViewRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
             matViewRefreshTask.invalidationReason = "table drop operation";
-            notifyMatViewBaseTableCommit(matViewRefreshTask, tableSequencerAPI.lastTxn(tableToken));
+            notifyMatViewBaseTableCommit(matViewRefreshTask, lastSeqTxn >= 0 ? lastSeqTxn : tableSequencerAPI.lastTxn(tableToken));
             notifyViewStoresAboutDrop(tableToken);
             return true;
         }
@@ -4131,6 +4171,55 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    public long validateDeltaTableSwitch(TableToken tableToken) {
+        TableToken current = verifyAndGetTableToken(tableToken);
+        if (isReadOnlyMode()) {
+            throw CairoException.readOnlyAccess();
+        }
+        if (!current.isWal() || current.isView() || current.isMatView() || current.isLiveView()) {
+            throw CairoException.nonCritical().put("Delta conversion requires an ordinary WAL table");
+        }
+        if (!isDeltaTableSupported()) {
+            throw CairoException.nonCritical().put("Delta table writer is not available");
+        }
+        validateDeltaTableSwitchDependencies(current);
+        try (TableReader reader = getReader(current); Path path = new Path()) {
+            TableReaderMetadata metadata = reader.getMetadata();
+            if (!PartitionBy.isPartitioned(metadata.getPartitionBy()) || metadata.getTimestampIndex() < 0) {
+                throw CairoException.nonCritical().put("Delta tables require partitioning and a designated timestamp");
+            }
+            if (metadata.getTtlHoursOrMonths() != 0) {
+                throw CairoException.nonCritical().put("TTL is not supported for Delta tables");
+            }
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (metadata.isDedupKey(i)) {
+                    throw CairoException.nonCritical().put("deduplication is not supported for Delta tables");
+                }
+            }
+            TxReader tx = reader.getTxFile();
+            for (int i = 0, n = tx.getPartitionCount(); i < n; i++) {
+                path.of(configuration.getDbRoot()).concat(current);
+                TableUtils.setPathForNativePartition(path, metadata.getTimestampType(), metadata.getPartitionBy(),
+                        tx.getPartitionTimestampByIndex(i), tx.getPartitionNameTxn(i));
+                if (tx.isPartitionRemotelyServed(i) || configuration.getFilesFacade().isSoftLink(path.$())) {
+                    throw CairoException.nonCritical().put("Delta conversion requires local partition sources");
+                }
+            }
+            if (configuration.getFilesFacade().exists(path.of(configuration.getDbRoot()).concat(current).concat(io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME).$())) {
+                throw CairoException.nonCritical().put("table already has a pending type conversion");
+            }
+            return metadata.getMetadataVersion();
+        }
+    }
+
+    public void validateDeltaTableSwitchDependencies(TableToken tableToken) {
+        final ObjList<TableToken> dependents = new ObjList<>();
+        dependentViewGraph.getDependentViews(tableToken, dependents);
+        if (dependents.size() > 0) {
+            throw CairoException.nonCritical().put("Delta conversion of a view base table is not supported");
+        }
+    }
+
     public TableToken verifyTableName(final CharSequence tableName) {
         TableToken tableToken = tableNameRegistry.getTableToken(tableName);
         if (tableToken == null) {
@@ -4152,13 +4241,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void verifyTableToken(TableToken tableToken) {
-        TableToken tt = tableNameRegistry.getTableToken(tableToken.getTableName());
-        if (tt == null || TableNameRegistry.isLocked(tt)) {
-            throw CairoException.tableDoesNotExist(tableToken.getTableName());
-        }
-        if (!tt.equals(tableToken)) {
-            throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), tt.getTableId(), tt.getTableId(), -1);
-        }
+        verifyAndGetTableToken(tableToken);
     }
 
     public void verifyViewToken(TableToken tableToken, long expectedTxn) {
@@ -4177,6 +4260,15 @@ public class CairoEngine implements Closeable, WriterSource {
         if (vd.getSeqTxn() != expectedTxn) {
             throw TableReferenceOutOfDateException.ofOutdatedView(tableToken, expectedTxn, vd.getSeqTxn());
         }
+    }
+
+    private static TableWriter checkLegacyWriterMode(TableWriter writer) {
+        // Conversion can finish between the admission check and acquiring this writer.
+        if (writer != null && writer.getMetadata().getWriteMode() == TableWriteMode.DELTA_RUNS) {
+            writer.close();
+            throw CairoException.nonCritical().put("legacy writer commands are not supported for Delta tables");
+        }
+        return writer;
     }
 
     private static TableReader checkReaderVersion(TableToken tableToken, long metadataVersion, TableReader reader) {
@@ -4535,6 +4627,16 @@ public class CairoEngine implements Closeable, WriterSource {
         assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
         final CharSequence tableName = struct.getTableName();
         validNameOrThrow(tableName);
+        if (struct.getWriteMode() != TableWriteMode.WAL_SEGMENTS) {
+            // Preserve the normal IF NOT EXISTS no-op before checking provider availability.
+            TableToken existing = ifNotExists ? getTableTokenIfExists(tableName) : null;
+            if (existing != null) {
+                struct.init(existing);
+                return deferRegisterName ? null : existing;
+            }
+            validateDeltaTableStructure(struct);
+        }
+        assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
 
         final int tableId = (int) tableIdGenerator.getNextId();
 
@@ -4554,6 +4656,9 @@ public class CairoEngine implements Closeable, WriterSource {
                     continue;
                 }
                 throw EntryUnavailableException.instance("table exists");
+            }
+            if (struct.getWriteMode() == TableWriteMode.DELTA_RUNS) {
+                tableToken = tableToken.withDelta();
             }
             struct.init(tableToken);
             while (!lockTableCreate(tableToken)) {
@@ -5134,6 +5239,9 @@ public class CairoEngine implements Closeable, WriterSource {
             oldWriter = replicaVariant ? getWriterUnsafe(oldToken, "rebase") : getWriter(oldToken, "rebase");
 
             // Delta catalogs retain transaction numbers that a WAL rebase resets to zero.
+            if (oldWriter.getMetadata().getWriteMode() == TableWriteMode.DELTA_RUNS) {
+                throw CairoException.nonCritical().put("cannot rebase WAL for a Delta table [table=").put(tableName).put(']');
+            }
             if (oldWriter.getTxWriter().hasDeltaState()) {
                 throw CairoException.nonCritical()
                         .put("cannot rebase WAL, table has a delta-active partition or delta data [table=")
@@ -5536,6 +5644,29 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    private void validateDeltaTableStructure(TableStructure struct) {
+        if (struct.getWriteMode() != TableWriteMode.DELTA_RUNS) {
+            throw CairoException.nonCritical().put("unsupported table write mode: ").put(struct.getWriteMode());
+        }
+        if (!struct.isWalEnabled() || !PartitionBy.isPartitioned(struct.getPartitionBy()) || struct.getTimestampIndex() < 0) {
+            throw CairoException.nonCritical().put("Delta tables require WAL sequencing, partitioning and a designated timestamp");
+        }
+        if (struct.isView() || struct.isMatView() || struct.isLiveView()) {
+            throw CairoException.nonCritical().put("Delta mode is only supported for regular tables");
+        }
+        if (struct.getTtlHoursOrMonths() != 0) {
+            throw CairoException.nonCritical().put("TTL is not supported for Delta tables");
+        }
+        for (int i = 0, n = struct.getColumnCount(); i < n; i++) {
+            if (struct.isDedupKey(i)) {
+                throw CairoException.nonCritical().put("deduplication is not supported for Delta tables");
+            }
+        }
+        if (!isDeltaTableSupported()) {
+            throw CairoException.nonCritical().put("Delta table writer is not available");
+        }
+    }
+
     private void validateDesiredMetadataVersion(TableToken tableToken, TableRecordMetadata metadata, long desiredVersion) {
         if ((desiredVersion != TableUtils.ANY_TABLE_VERSION && metadata.getMetadataVersion() != desiredVersion) || tableToken.getTableId() != metadata.getTableId()) {
             final TableReferenceOutOfDateException ex = TableReferenceOutOfDateException.of(
@@ -5548,6 +5679,18 @@ public class CairoEngine implements Closeable, WriterSource {
             metadata.close();
             throw ex;
         }
+    }
+
+    @NotNull
+    private TableToken verifyAndGetTableToken(TableToken tableToken) {
+        TableToken currentToken = tableNameRegistry.getTableToken(tableToken.getTableName());
+        if (currentToken == null || TableNameRegistry.isLocked(currentToken)) {
+            throw CairoException.tableDoesNotExist(tableToken.getTableName());
+        }
+        if (!currentToken.equals(tableToken)) {
+            throw TableReferenceOutOfDateException.of(tableToken, tableToken.getTableId(), currentToken.getTableId(), currentToken.getTableId(), -1);
+        }
+        return currentToken;
     }
 
     @NotNull
@@ -5570,8 +5713,56 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    private TableWriterAPI getSequencedWriter(TableToken token, String lockReason) {
+        while (true) {
+            token = awaitDeltaWriterAdmission(token);
+            if (configuration.isWalApplySuspendedWriteDenied() && isWalApplySuspended(token)) {
+                throw CairoException.tableSuspended(token);
+            }
+            if (token.isDelta()) {
+                return createDeltaTableWriter(token, lockReason);
+            }
+            try {
+                return walWriterPool.get(token);
+            } catch (CairoException refusal) {
+                final TableToken current = verifyAndGetTableToken(token);
+                if (!current.isDelta() && tableSequencerAPI.getPendingDeltaTableSwitch(current) <= 0) {
+                    throw refusal;
+                }
+                token = current;
+            }
+        }
+    }
+
+    private TableToken awaitDeltaWriterAdmission(TableToken token) {
+        final long switchTxn = tableSequencerAPI.getPendingDeltaTableSwitch(token);
+        if (switchTxn <= 0) {
+            return token;
+        }
+        final long deadline = System.nanoTime() + configuration.getWriterAsyncCommandMaxTimeout() * 1_000_000L;
+        while (!isDeltaTableSwitchComplete(token, switchTxn)) {
+            if (isReadOnlyMode()) {
+                throw CairoException.readOnlyAccess();
+            }
+            final SeqTxnTracker tracker = tableSequencerAPI.getTxnTracker(token);
+            if (tracker.isSuspended()) {
+                throw CairoException.nonCritical().put("Delta table switch is suspended [table=").put(token)
+                        .put(", error=").put(tracker.getErrorMessage()).put(']');
+            }
+            if (System.nanoTime() - deadline >= 0) {
+                throw CairoException.nonCritical().put("timed out waiting for Delta table switch [table=").put(token).put(']');
+            }
+            Os.sleep(1);
+        }
+        return verifyAndGetTableToken(token);
+    }
+
     protected void clearDdlListener() {
         ddlListener.clear();
+    }
+
+    protected TableWriterAPI createDeltaTableWriter(TableToken tableToken, @NotNull String lockReason) {
+        throw CairoException.nonCritical().put("Delta table writer is not available");
     }
 
     protected @NotNull DependentViewGraph createDependentViewGraph() {

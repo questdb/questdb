@@ -78,6 +78,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     public final static short SET_PARQUET_ENCODING = SET_MAT_VIEW_REFRESH + 1; // 26
     public final static short SET_TABLE_FORMAT = SET_PARQUET_ENCODING + 1; // 27
+    public final static short SET_TABLE_TYPE_DELTA = SET_TABLE_FORMAT + 1; // 28
     private static final int ADD_COLUMN_FLAGS_OFFSET = 3;
     private static final int ADD_COLUMN_PARAM_COUNT = 6;
     // V2 layout (this branch onwards): index type fits in low 3 bits, dedup
@@ -213,6 +214,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case SET_PARAM_MAX_UNCOMMITTED_ROWS, SET_PARAM_COMMIT_LAG, SET_TTL ->
                     securityContext.authorizeAlterTableSetParam(tableToken);
             case SET_TABLE_FORMAT -> securityContext.authorizeAlterTableSetFormat(tableToken);
+            case SET_TABLE_TYPE_DELTA -> securityContext.authorizeAlterTableSetType(tableToken);
             case SET_DEDUP_ENABLE -> securityContext.authorizeAlterTableDedupEnable(tableToken);
             case SET_DEDUP_DISABLE -> securityContext.authorizeAlterTableDedupDisable(tableToken);
             case CONVERT_PARTITION_TO_PARQUET ->
@@ -321,7 +323,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public boolean isForceableWhenSuspended() {
         // Any non-structural change may be force-applied directly to a hard-suspended table,
         // mirroring FORCE DROP PARTITION. Structural changes must stay versioned through the WAL.
-        return !isStructural();
+        return command != SET_TABLE_TYPE_DELTA && !isStructural();
     }
 
     public boolean isIndexedColumnAdded() {

@@ -215,6 +215,17 @@ public class TableNameRegistryRW extends AbstractTableNameRegistry {
     }
 
     @Override
+    public synchronized void replaceTableToken(TableToken tableToken) {
+        final TableToken current = tableNameToTableTokenMap.get(tableToken.getTableName());
+        if (current == null || !current.equals(tableToken)) {
+            throw CairoException.tableDoesNotExist(tableToken.getTableName());
+        }
+        nameStore.replaceTableToken(tableToken);
+        dirNameToTableTokenMap.put(tableToken.getDirName(), ReverseTableMapItem.of(tableToken));
+        tableNameToTableTokenMap.put(tableToken.getTableName(), tableToken);
+    }
+
+    @Override
     public TableToken rename(CharSequence oldName, CharSequence newName, TableToken tableToken) {
         String newTableNameStr = Chars.toString(newName);
         TableToken renamedTableToken = tableToken.renamed(newTableNameStr);

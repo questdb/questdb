@@ -62,13 +62,15 @@ import static io.questdb.cairo.wal.WalTxnType.MAT_VIEW_INVALIDATE;
 
 public class WalUtils {
     public static final String CONVERT_FILE_NAME = "_convert";
+    public static final int DELTA_TABLE_SWITCH_VERSION = 1;
+    public static final int DELTA_TABLE_SWITCH_WAL_ID = -3;
     public static final int DROP_TABLE_STRUCTURE_VERSION = -2;
     public static final int DROP_TABLE_WAL_ID = -2;
     public static final String EVENT_FILE_NAME = "_event";
     public static final String EVENT_INDEX_FILE_NAME = "_event.i";
     public static final CharSequence INITIAL_META_FILE_NAME = "_meta.0";
     public static final int METADATA_WALID = -1;
-    public static final int MIN_WAL_ID = DROP_TABLE_WAL_ID;
+    public static final int MIN_WAL_ID = DELTA_TABLE_SWITCH_WAL_ID;
     // Per-table marker file written on the freshly-created table of an ALTER TABLE ... REBASE WAL. Lives
     // in the table dir and is permanent (survives restart, never removed). When the uploader first records
     // the table in the replication index it stats this marker and, if present, skips the empty seed txn and
@@ -133,6 +135,12 @@ public class WalUtils {
     // LIVE_VIEW_DATA block, so the backward scan keeps looking. Distinct from a real
     // maxBaseSeqTxn (>= 0) and from the not-found / unreadable result (-1).
     private static final long LV_SCAN_CONTINUE = Long.MIN_VALUE;
+
+    public static void checkWalId(int walId) {
+        if (walId == 0 || walId < MIN_WAL_ID) {
+            throw CairoException.critical(0).put("unsupported sequencer transaction kind [walId=").put(walId).put(']');
+        }
+    }
 
     /**
      * Builds a complete rebased table in the staging directory {@code dstDir} for

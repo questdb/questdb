@@ -56,6 +56,8 @@ import static io.questdb.std.Files.DT_FILE;
 
 public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
     private static final Log LOG = LogFactory.getLog(TableNameRegistryStore.class);
+    private static final long TABLE_ID_FLAG_DELTA = 1L << 33;
+    private static final long TABLE_ID_FLAG_WAL = 1L << 32;
     private final CairoConfiguration configuration;
     private final StringSink nameSink = new StringSink();
     private final TableFlagResolver tableFlagResolver;
@@ -138,6 +140,29 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         return consistent;
     }
 
+    public synchronized void replaceTableToken(TableToken tableToken) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        // Snapshot committed entries under the same monitor as logAdd/logDrop. Live maps
+        // can contain half-finished creates/renames and cannot be the snapshot source.
+        ConcurrentHashMap<TableToken> names = new ConcurrentHashMap<>(false);
+        ConcurrentHashMap<ReverseTableMapItem> directories = new ConcurrentHashMap<>();
+        if (!reloadFromTablesFile(names, directories, null)) {
+            throw CairoException.critical(0).put("cannot replace mode in inconsistent table registry");
+        }
+        TableToken current = names.get(tableToken.getTableName());
+        if (current == null || !current.equals(tableToken)) {
+            throw CairoException.tableDoesNotExist(tableToken.getTableName());
+        }
+        names.put(tableToken.getTableName(), tableToken);
+        directories.put(tableToken.getDirName(), ReverseTableMapItem.of(tableToken));
+        try (Path path = new Path().of(configuration.getDbRoot())) {
+            int version = findLastTablesFileVersion(ff, path, nameSink);
+            if (!compactTableNameFile(names, directories, version, ff, path)) {
+                throw CairoException.critical(ff.errno()).put("cannot publish Delta table registry snapshot");
+            }
+        }
+    }
+
     @TestOnly
     public synchronized void resetMemory() {
         if (!isLocked()) {
@@ -151,6 +176,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         configuration.getFilesFacade().remove(path);
 
         tableNameMemory.smallFile(configuration.getFilesFacade(), path, MemoryTag.MMAP_DEFAULT);
+        tableNameMemory.putLong(Long.BYTES);
     }
 
     @Override
@@ -210,24 +236,21 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         dirNameToTableTokenMap.clear();
     }
 
-    private void compactTableNameFile(
+    private boolean compactTableNameFile(
             Map<CharSequence, TableToken> nameTableTokenMap,
             Map<CharSequence, ReverseTableMapItem> reverseNameMap,
             int lastFileVersion,
             FilesFacade ff,
             Path path
     ) {
-        // compact the memory, remove deleted entries.
-        // write to the tmp file.
-        int pathRootLen = path.size();
-        path.concat(TABLE_REGISTRY_NAME_FILE).putAscii(".tmp");
-        long currentOffset;
-
-        tableNameMemory.close(false);
-        tableNameMemory.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-        final long newAppendOffset;
+        final int pathRootLen = path.size();
+        long currentOffset = tableNameMemory.getAppendOffset();
         try {
-            tableNameMemory.putLong(0L);
+            path.concat(TABLE_REGISTRY_NAME_FILE).putAscii(".tmp");
+            tableNameMemory.close(false);
+            tableNameMemory.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+            tableNameMemory.jumpTo(0);
+            tableNameMemory.putLong(Long.BYTES);
 
             // Save tables not fully deleted yet to complete the deletion.
             for (ReverseTableMapItem reverseMapItem : reverseNameMap.values()) {
@@ -242,46 +265,39 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             }
 
             tableNameMemory.sync(false);
-            newAppendOffset = tableNameMemory.getAppendOffset();
-        } finally {
-            // A failed flush must not leave the temporary file open, nor the registry appending to it.
+            final long newAppendOffset = tableNameMemory.getAppendOffset();
             tableNameMemory.close();
-        }
 
-        // rename tmp to next version file, everyone will automatically switch to new file
-        LPSZ path2 = Path.getThreadLocal2(configuration.getDbRoot())
-                .concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion + 1).$();
-        // renameDurable, not rename: the fsyncDirDurable below is what publishes this new name, and it is a
-        // no-op on a restricted (Windows) file system, where the durable rename is the barrier.
-        if (ff.renameDurable(path.$(), path2) == Files.FILES_RENAME_OK) {
-            LOG.info().$("compacted tables file [path=").$(path2).I$();
-            lastFileVersion++;
-            currentOffset = newAppendOffset;
-            // The rename above and the unlink below are two namespace changes in one directory, and neither is
-            // durable until the directory is fsynced, so a power loss between them may persist the unlink and
-            // lose the new version's entry, leaving no registry file. Every name resolves through the registry,
-            // and the directory-scan fallback cannot tell a dropped but unpurged table from a live one, so
-            // dropped tables would come back. Fsync the db root first, so at least one version is durable.
-            // Fail-stop (see TableUtils.fsyncDirDurable): without this barrier the unlink must not run.
-            TableUtils.fsyncDirDurable(ff, path.trimTo(pathRootLen).$());
-            // best effort to remove old files, but we don't care if it fails
-            path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion - 1);
-            ff.removeQuiet(path.$());
-
-            path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion);
-            tableNameMemory.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-            tableNameMemory.jumpTo(currentOffset);
-        } else {
-            // Not critical, if rename fails, compaction will be done next time
-            // Reopen the existing, non-compacted file
-            path2 = Path.getThreadLocal2(configuration.getDbRoot())
-                    .concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion).$();
-            tableNameMemory.smallFile(ff, path2, MemoryTag.MMAP_DEFAULT);
-            long appendOffset = tableNameMemory.getLong(0);
-            tableNameMemory.jumpTo(appendOffset);
-
+            // Readers switch to the next version as soon as the rename succeeds.
+            LPSZ path2 = Path.getThreadLocal2(configuration.getDbRoot())
+                    .concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion + 1).$();
+            // renameDurable, not rename: the fsyncDirDurable below is what publishes this new name, and it is a
+            // no-op on a restricted (Windows) file system, where the durable rename is the barrier.
+            if (ff.renameDurable(path.$(), path2) == Files.FILES_RENAME_OK) {
+                lastFileVersion++;
+                currentOffset = newAppendOffset;
+                LOG.info().$("compacted tables file [path=").$(path2).I$();
+                // The rename above and the unlink below are two namespace changes in one directory. Publish the
+                // new version before removing the old one, so a power loss cannot leave the registry without a
+                // durable version. This is a no-op on restricted filesystems where renameDurable is the barrier.
+                TableUtils.fsyncDirDurable(ff, path.trimTo(pathRootLen).$());
+                // Keep the old version until the snapshot's directory entry is durable.
+                path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion - 1);
+                ff.removeQuiet(path.$());
+                return true;
+            }
             LOG.error().$("could not rename tables file, tables file will not be compacted [from=").$(path)
                     .$(", to=").$(path2).I$();
+            return false;
+        } finally {
+            // A failed write or sync must never leave subsequent DDL appending to .tmp.
+            try {
+                tableNameMemory.close(false);
+            } finally {
+                path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion);
+                tableNameMemory.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
+                tableNameMemory.jumpTo(currentOffset);
+            }
         }
     }
 
@@ -323,7 +339,8 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         return findLastTablesFileVersion(ff, path, nameSink);
     }
 
-    private int readTableId(Path path, CharSequence dirName, FilesFacade ff) {
+    // The low 32 bits hold the table ID; the high bits hold WAL and Delta flags.
+    private long readTableIdAndFlags(Path path, CharSequence dirName, FilesFacade ff) {
         path.of(configuration.getDbRoot()).concat(dirName);
         int pathLen = path.size();
         path.concat(META_FILE_NAME);
@@ -332,9 +349,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
             // check if it is a view
             path.trimTo(pathLen).concat(ViewDefinition.VIEW_DEFINITION_FILE_NAME);
             if (ff.exists(path.$())) {
-                // negative table id means WAL table,
-                // views are considered to be WAL tables
-                return -getTableIdFromTableDir(dirName);
+                return Integer.toUnsignedLong(getTableIdFromTableDir(dirName)) | TABLE_ID_FLAG_WAL;
             }
             return 0;
         }
@@ -346,7 +361,19 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                 return 0;
             }
             byte isWal = (byte) (ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_WAL_ENABLED) & 0xFF);
-            return isWal == 0 ? tableId : -tableId;
+            int version = ff.readNonNegativeInt(fd, TableUtils.META_OFFSET_VERSION);
+            boolean isDelta = version == META_FORMAT_VERSION_DELTA;
+            if (isDelta) {
+                if (ff.readNonNegativeInt(fd, META_OFFSET_WRITE_MODE) != TableWriteMode.DELTA_RUNS
+                        || isWal == 0
+                        || !PartitionBy.isPartitioned(ff.readNonNegativeInt(fd, META_OFFSET_PARTITION_BY))
+                        || ff.readNonNegativeInt(fd, META_OFFSET_TIMESTAMP_INDEX) < 0) {
+                    throw TableUtils.validationException().put("invalid Delta table metadata [path=").put(path).put(']');
+                }
+            } else if (version > ColumnType.MAX_STORAGE_VERSION || version < 0) {
+                throw CairoException.metadataVersionMismatch(path, ColumnType.VERSION, version);
+            }
+            return tableId | (isWal != 0 ? TABLE_ID_FLAG_WAL : 0) | (isDelta ? TABLE_ID_FLAG_DELTA : 0);
         } finally {
             ff.close(fd);
         }
@@ -371,12 +398,14 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     ) {
                         int tableId;
                         boolean isWalTable;
+                        boolean isDeltaTable;
                         String tableName;
 
                         try {
-                            tableId = readTableId(path, dirName, ff);
-                            isWalTable = tableId < 0;
-                            tableId = Math.abs(tableId);
+                            long tableIdAndFlags = readTableIdAndFlags(path, dirName, ff);
+                            tableId = (int) tableIdAndFlags;
+                            isWalTable = (tableIdAndFlags & TABLE_ID_FLAG_WAL) != 0;
+                            isDeltaTable = (tableIdAndFlags & TABLE_ID_FLAG_DELTA) != 0;
                             tableName = TableUtils.readTableName(path.of(configuration.getDbRoot()).concat(dirNameSink), plimit, tableNameRoMemory, ff);
                         } catch (CairoException e) {
                             if (e.isFileCannotRead()) {
@@ -405,6 +434,9 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                             boolean isWal = isWalTable || type.isImplicitlyWal();
                             String dbLogName = configuration.getDbLogName();
                             TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
+                            if (isDeltaTable) {
+                                token = token.withDelta();
+                            }
                             TableToken existingTableToken = tableNameToTableTokenMap.get(tableName);
 
                             if (existingTableToken != null) {
@@ -484,6 +516,7 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
         int forceCompact = Integer.MAX_VALUE / 2;
 
         int tableToCompact = 0;
+        ObjList<TableToken> legacyWalTokens = new ObjList<>();
         while (currentOffset < mapMem) {
             int operation = memory.getInt(currentOffset);
             currentOffset += Integer.BYTES;
@@ -530,6 +563,11 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                 }
             } else {
                 assert operation == OPERATION_ADD;
+                long flags = memory.getLong(currentOffset);
+                if (flags != 0 && ((flags & ~TABLE_NAME_ENTRY_FLAG_DELTA) != TABLE_NAME_ENTRY_FLAGS_VERSION
+                        || ((flags & TABLE_NAME_ENTRY_FLAG_DELTA) != 0 && tableType != TABLE_TYPE_WAL))) {
+                    throw CairoException.critical(0).put("invalid table registry flags [table=").put(tableName).put(", flags=").put(flags).put(']');
+                }
                 if (TableUtils.exists(ff, path, configuration.getDbRoot(), dirName) != TABLE_EXISTS) {
                     // This can be BAU, remove record will follow
                     tableToCompact++;
@@ -553,7 +591,17 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     TableToken.Type type = tableTypeOf(tableType);
                     boolean isWal = tableType == TABLE_TYPE_WAL || type.isImplicitlyWal();
                     String dbLogName = configuration.getDbLogName();
-                    final TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
+                    TableToken token = new TableToken(tableName, dirName, dbLogName, tableId, type, isWal, isSystem, isProtected, isPublic);
+                    boolean isDelta = (flags & TABLE_NAME_ENTRY_FLAG_DELTA) != 0;
+                    if (flags == 0) {
+                        if (tableType == TABLE_TYPE_WAL) {
+                            legacyWalTokens.add(token);
+                        }
+                        tableToCompact = forceCompact;
+                    }
+                    if (isDelta) {
+                        token = token.withDelta();
+                    }
                     tableNameToTableTokenMap.put(tableName, token);
                     if (!Chars.startsWith(token.getDirName(), token.getTableName())) {
                         // This table is renamed, log system to real table name mapping
@@ -597,7 +645,28 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
                     tableToCompact = forceCompact;
                 }
             }
+        }
 
+        // Legacy entries (including files compacted by older binaries) have no write mode.
+        // Rebuild only live entries after replay: historical DROP records may have no _meta left.
+        for (int i = 0, n = legacyWalTokens.size(); i < n; i++) {
+            TableToken token = legacyWalTokens.getQuick(i);
+            if (tableNameToTableTokenMap.get(token.getTableName()) == token) {
+                long tableIdAndFlags = readTableIdAndFlags(path, token.getDirName(), ff);
+                if ((int) tableIdAndFlags != token.getTableId()) {
+                    throw CairoException.critical(0).put("invalid legacy table registry identity [table=").put(token.getTableName()).put(']');
+                }
+                // A legacy WAL-to-BYPASS conversion may already have changed the WAL bit;
+                // TableConverter reconciles that separately. Only recover the Delta mode here.
+                if ((tableIdAndFlags & TABLE_ID_FLAG_DELTA) != 0) {
+                    token = token.withDelta();
+                    tableNameToTableTokenMap.put(token.getTableName(), token);
+                    dirNameToTableTokenMap.put(token.getDirName(), ReverseTableMapItem.of(token));
+                }
+            }
+        }
+
+        if (isLocked()) {
             final int tableRegistryCompactionThreshold = configuration.getTableRegistryCompactionThreshold();
             if ((tableRegistryCompactionThreshold > -1 && tableToCompact > tableRegistryCompactionThreshold) || tableToCompact >= forceCompact) {
                 path.trimTo(plimit);

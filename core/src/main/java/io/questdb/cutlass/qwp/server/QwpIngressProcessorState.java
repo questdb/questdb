@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitFailedException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.WalWriter;
@@ -1658,15 +1659,34 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                     return;
                 }
 
+                if (durableAckEnabled) {
+                    final TableToken current = engine.getUpdatedTableToken(tud.getTableToken());
+                    if (current != null && current.isDelta()) {
+                        throw CairoException.schemaMismatch().put("durable acknowledgements are not supported for Delta tables [table=")
+                                .put(current).put(']');
+                    }
+                    if (tud.getWriter() instanceof WalWriter walWriter) {
+                        // A concurrent mode switch can land between this check and sequencer acceptance.
+                        walWriter.setDeltaHandoffAllowed(false);
+                    }
+                }
+
                 // Read BEFORE the append: the cursor is consumed by it, and a
                 // metadata-change retry resets row iteration.
                 final boolean blockHasRows = tableBlock.getRowCount() > 0;
-                walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
+                final boolean hasNextTable = preparedMessageCursor.hasNextTable();
+                walAppender.appendToWalStreaming(
+                        securityContext,
+                        tableBlock,
+                        tud,
+                        true,
+                        !isDeferCommit() && !hasNextTable
+                );
                 if (blockHasRows) {
                     messageAppendedRows = true;
                     frameRowTud = tud;
                 }
-                tableBlock = preparedMessageCursor.hasNextTable() ? preparedMessageCursor.nextTable() : null;
+                tableBlock = hasNextTable ? preparedMessageCursor.nextTable() : null;
             }
         } catch (Throwable e) {
             rejectMessageError(e);

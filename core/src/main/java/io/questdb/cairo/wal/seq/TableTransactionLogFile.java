@@ -81,6 +81,16 @@ public interface TableTransactionLogFile extends Closeable {
     long TX_LOG_SEGMENT_TXN_OFFSET = TX_LOG_SEGMENT_OFFSET + Integer.BYTES;
     long TX_LOG_COMMIT_TIMESTAMP_OFFSET = TX_LOG_SEGMENT_TXN_OFFSET + Integer.BYTES;
 
+    /** Persists a direct Run record before publishing its transaction number. */
+    long addDeltaRunEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long minTimestamp, long maxTimestamp, long rowCount);
+
+    /**
+     * Persists a Delta switch record before publishing and persisting its transaction number.
+     * The barrier is synchronous regardless of the ordinary row commit mode. A failure after
+     * publication may leave an accepted transaction and requires recovery before admission resumes.
+     */
+    long addDeltaTableSwitchEntry(long structureVersion, long timestamp);
+
     /**
      * Adds a new data transaction to the log
      * <p>

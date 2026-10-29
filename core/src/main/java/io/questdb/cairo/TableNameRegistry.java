@@ -170,6 +170,10 @@ public interface TableNameRegistry extends Closeable {
      */
     void registerName(TableToken tableToken);
 
+    default void replaceTableToken(TableToken tableToken) {
+        throw CairoException.readOnlyAccess();
+    }
+
     /**
      * Replaces {@code oldToken} with a new token for the same name that points at
      * {@code newDirName}/{@code newTableId}, persisting the drop and the registration in one durable step
