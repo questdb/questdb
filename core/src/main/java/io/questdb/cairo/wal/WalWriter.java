@@ -523,6 +523,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         commit();
     }
 
+    /**
+     * True between {@code beginColumnarWrite} and its {@code endColumnarWrite} or
+     * {@code cancelColumnarWrite}; also true after a cancel that failed to rewind.
+     */
+    public boolean isInColumnarWrite() {
+        return columnarAppender != null && columnarAppender.isInColumnarWrite();
+    }
+
     @Override
     public TableWriter.Row newRow() {
         return newRow(0L);
@@ -1462,10 +1470,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return segmentRowCount > currentTxnStartRowNum;
     }
 
-    private boolean isInColumnarWrite() {
-        return columnarAppender != null && columnarAppender.isInColumnarWrite();
-    }
-
     private boolean isTruncateFilesOnClose() {
         return walDirectoryPolicy.truncateFilesOnClose();
     }
@@ -1578,7 +1582,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 ff.fsyncAndClose(dirFd);
             }
             lastSegmentTxn = -1;
-            LOG.info().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
+            LOG.debug().$("opened WAL segment [path=").$substr(pathRootSize, path.parent()).I$();
         } finally {
             int oldMinSegmentLocked = minSegmentLocked;
             if (moveMinSegmentLock(newSegmentId)) {

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Vect;
 
@@ -43,7 +44,8 @@ import io.questdb.std.Vect;
  * Master rows are discovered lazily via {@link RecordCursor#hasNext()} and their rowIds
  * are cached in a sliding window. Timestamps are read on-the-fly via {@code recordAt()}.
  * The sliding window evicts rowIds below the minimum stream position, bounding memory
- * to the spread between the fastest and slowest offset streams.
+ * to the spread between the fastest and slowest offset streams. A ring buffer holds the
+ * window, so an eviction only advances the window's head and moves no rowIds.
  * <p>
  * When there is only one offset, the heap is bypassed and master rows are iterated in order.
  */
@@ -53,7 +55,8 @@ public class HorizonTimestampIterator implements QuietCloseable {
     private final long[] heapPos;
     private final long[] heapTs;
     private final long[] offsets;
-    // Sliding window of discovered master rowIds (off-heap)
+    // Ring buffer of the rowIds of master positions [windowBase, discoveredCount) (off-heap).
+    // Its capacity stays a power of two: 64 longs, doubled when the window fills it.
     private final DirectLongList rowIds;
     private final boolean singleOffset;
     private long currentHorizonTs;
@@ -68,8 +71,10 @@ public class HorizonTimestampIterator implements QuietCloseable {
     // Single offset optimization state
     private long singleOffsetValue;
     private int timestampColumnIndex;
-    // The master position that index 0 of rowIds corresponds to
+    // The first master position in the window
     private long windowBase;
+    // Index in rowIds of the rowId at windowBase
+    private long windowHead;
 
     public HorizonTimestampIterator(long[] offsets) {
         this.offsets = offsets;
@@ -125,10 +130,11 @@ public class HorizonTimestampIterator implements QuietCloseable {
         this.recordB = recordB;
         this.timestampColumnIndex = timestampColumnIndex;
         this.windowBase = 0;
+        this.windowHead = 0;
         this.discoveredCount = 0;
         this.exhausted = false;
         rowIds.reopen();
-        rowIds.clear();
+        assert Numbers.isPow2(rowIds.getCapacity());
 
         if (singleOffset) {
             // Nothing to seed; nextSingleOffset() will discover rows on demand
@@ -157,10 +163,15 @@ public class HorizonTimestampIterator implements QuietCloseable {
         }
         if (masterCursor.hasNext()) {
             Record record = masterCursor.getRecord();
-            if (rowIds.size() >= MAX_WINDOW_SIZE) {
+            final long windowSize = discoveredCount - windowBase;
+            if (windowSize >= MAX_WINDOW_SIZE) {
                 throw CairoException.nonCritical().put("horizon join sliding window is too large; consider reducing the offset range");
             }
-            rowIds.add(record.getRowId());
+            final long capacity = rowIds.getCapacity();
+            if (windowSize == capacity) {
+                growWindow(capacity);
+            }
+            rowIds.set((windowHead + windowSize) & (rowIds.getCapacity() - 1), record.getRowId());
             discoveredCount++;
             return true;
         }
@@ -182,18 +193,25 @@ public class HorizonTimestampIterator implements QuietCloseable {
             }
         }
         if (minPos > windowBase) {
-            long evictCount = minPos - windowBase;
-            long remaining = rowIds.size() - evictCount;
-            if (remaining > 0) {
-                Vect.memmove(rowIds.getAddress(), rowIds.getAddress() + evictCount * Long.BYTES, remaining * Long.BYTES);
-            }
-            rowIds.setPos(remaining);
+            windowHead = (windowHead + minPos - windowBase) & (rowIds.getCapacity() - 1);
             windowBase = minPos;
         }
     }
 
     private long getRowId(long pos) {
-        return rowIds.get(pos - windowBase);
+        return rowIds.get((windowHead + pos - windowBase) & (rowIds.getCapacity() - 1));
+    }
+
+    /**
+     * Doubles the ring buffer when the window fills it. The window then runs from windowHead
+     * to the end of the buffer and wraps around to index 0. The wrapped part moves past the old
+     * end, so the window runs contiguously from windowHead in the doubled buffer.
+     */
+    private void growWindow(long capacity) {
+        rowIds.setCapacity(capacity << 1);
+        if (windowHead > 0) {
+            Vect.memcpy(rowIds.getAddress() + (capacity << 3), rowIds.getAddress(), windowHead << 3);
+        }
     }
 
     private void heapInsert(long ts, int offsetIdx) {
@@ -259,13 +277,13 @@ public class HorizonTimestampIterator implements QuietCloseable {
         if (!discoverNextRow()) {
             return false;
         }
-        long rowId = rowIds.get(discoveredCount - 1 - windowBase);
+        long rowId = getRowId(discoveredCount - 1);
         masterCursor.recordAt(recordB, rowId);
         currentHorizonTs = addTimestampAndOffset(recordB.getTimestamp(timestampColumnIndex), singleOffsetValue);
         currentMasterRowId = rowId;
         currentOffsetIdx = 0;
-        // No need to cache rowIds; evict immediately
-        rowIds.clear();
+        // No need to cache rowIds; evict immediately. The window is empty, and the next
+        // rowId lands at windowHead again.
         windowBase = discoveredCount;
         return true;
     }
