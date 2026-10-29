@@ -122,8 +122,8 @@ final class BindScope implements Mutable {
     final ObjList<ExpressionNode> windowAliasReferences = new ObjList<>();
     final ObjList<ExpressionNode> windowAliasResolutions = new ObjList<>();
     final OutputSchema windowBindingSchema = new OutputSchema();
-    final OutputSchema windowCallScope;
     final IntList windowColumnIds = new IntList();
+    final OutputSchema windowInputScope;
     final IntList windowJoinAggregateSteps;
     final ObjList<PivotBinder.WindowJoinPivotAggregate> windowJoinPivotAggregates = new ObjList<>();
     final ArrayColumnTypes windowKeyTypes = new ArrayColumnTypes();
@@ -166,8 +166,8 @@ final class BindScope implements Mutable {
     QueryModel timestampFromSubquery;
     int timestampSubqueryType;
     QueryModel timestampToSubquery;
-    LogicalPlan windowCallScopeInput;
     LogicalPlan windowInput;
+    LogicalPlan windowInputScopePlan;
 
     BindScope() {
         aggregateHashes = windowAliasIds;
@@ -189,7 +189,7 @@ final class BindScope implements Mutable {
         pivotKeyIndexes = sourceProjectionIndexes;
         selectAliasIndexes = windowSelfReferences;
         translatingAliases = new TranslatingAliases(joinNativeTimestampIds, windowColumnIds, windowSelfReferences);
-        windowCallScope = referenceScope;
+        windowInputScope = referenceScope;
         windowJoinAggregateSteps = windowColumnIds;
     }
 
@@ -266,8 +266,8 @@ final class BindScope implements Mutable {
         timestampFromSubquery = null;
         timestampSubqueryType = 0;
         timestampToSubquery = null;
-        windowCallScopeInput = null;
         windowInput = null;
+        windowInputScopePlan = null;
     }
 
     /**

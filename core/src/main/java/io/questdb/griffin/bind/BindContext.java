@@ -145,15 +145,6 @@ final class BindContext implements Mutable {
         isSetOperationBranch = false;
     }
 
-    private static boolean hasVisibleColumn(OutputSchema schema, CharSequence name) {
-        for (int i = 0, n = schema.getColumnCount(); i < n; i++) {
-            if (schema.isVisible(i) && Chars.equalsIgnoreCase(schema.getColumnName(i), name)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     static ObjList<ExpressionNode> blockGroupBy(QueryModel model, QueryModel source) {
         return source.getGroupBy().size() > 0 && !source.isPivot() ? source.getGroupBy() : model.getGroupBy();
     }
@@ -283,13 +274,15 @@ final class BindContext implements Mutable {
     }
 
     /**
-     * Window calls and specs read the input column a computed column of the same name would shadow.
+     * The scope expressions over a window input bind in: every input column, hidden ones included, except that a
+     * column the name resolves to shadows a hidden column of its name, as a source column shadows a computed column
+     * named after it.
      */
-    static OutputSchema windowCallBindingScope(OutputSchema input, OutputSchema scope) {
+    static OutputSchema windowBindingScope(OutputSchema input, OutputSchema scope) {
         scope.clear();
         for (int i = 0, n = input.getColumnCount(); i < n; i++) {
             scope.addColumnAs(input, i, input.getColumnId(i), input.getColumnName(i),
-                    input.isVisible(i) || !hasVisibleColumn(input, input.getColumnName(i)), input.getColumnQualifier(i));
+                    input.isVisible(i) || input.getColumnIndexQuiet(input.getColumnName(i)) < 0, input.getColumnQualifier(i));
         }
         scope.setTimestampIndex(input.getTimestampIndex());
         return scope;
@@ -594,16 +587,6 @@ final class BindContext implements Mutable {
     }
 
     OutputSchema windowBindingScope(OutputSchema input) {
-        final OutputSchema windowBindingSchema = scopes.current().windowBindingSchema;
-        windowBindingSchema.clear();
-        for (int i = 0, n = input.getColumnCount(); i < n; i++) {
-            windowBindingSchema.addColumnAs(input, i, input.getColumnId(i), input.getColumnName(i), true, input.getColumnQualifier(i));
-        }
-        windowBindingSchema.setTimestampIndex(input.getTimestampIndex());
-        return windowBindingSchema;
-    }
-
-    OutputSchema windowCallBindingScope(OutputSchema input) {
-        return windowCallBindingScope(input, scopes.current().windowBindingSchema);
+        return windowBindingScope(input, scopes.current().windowBindingSchema);
     }
 }

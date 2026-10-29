@@ -18397,6 +18397,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRenamedColumnAfterSameNamedExpressionAliasExpressionsOff() throws Exception {
+        testRenamedColumnAfterSameNamedExpression(false);
+    }
+
+    @Test
+    public void testRenamedColumnAfterSameNamedExpressionAliasExpressionsOn() throws Exception {
+        testRenamedColumnAfterSameNamedExpression(true);
+    }
+
+    @Test
     public void testRowHiLessThanRowHi() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR) timestamp(ts)", timestampType.getTypeName());
@@ -22406,6 +22416,271 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     private String replaceTimestampSuffix1(String expected) {
         return timestampType == TestTimestampType.NANO ? expected.replaceAll("0.0000", "0.0000000") : expected;
+    }
+
+    private void testRenamedColumnAfterSameNamedExpression(boolean isAliasExpressionEnabled) throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, String.valueOf(isAliasExpressionEnabled));
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (id INT, grp SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        (3, 'a', 15.0, '2024-01-01T00:00:00.000000Z'),
+                        (1, 'b', 25.0, '2024-01-01T00:01:00.000000Z'),
+                        (4, 'a', 5.0, '2024-01-01T00:02:00.000000Z'),
+                        (2, 'b', 35.0, '2024-01-01T00:03:00.000000Z')
+                    """);
+            execute("CREATE TABLE t (x INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10), (1, 20), (2, 30)");
+
+            assertQuery("SELECT qty * 10 AS qty, qty AS q2, row_number() OVER () rn FROM trades")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            qty\tq2\trn
+                            150.0\t15.0\t1
+                            250.0\t25.0\t2
+                            50.0\t5.0\t3
+                            350.0\t35.0\t4
+                            """);
+            assertQuery("SELECT qty * 10 AS qty, qty AS q2, sum(qty) OVER () s FROM trades")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            qty\tq2\ts
+                            150.0\t15.0\t80.0
+                            250.0\t25.0\t80.0
+                            50.0\t5.0\t80.0
+                            350.0\t35.0\t80.0
+                            """);
+            assertQuery("SELECT upper(grp) AS grp, grp AS g2, row_number() OVER (ORDER BY ts) rn FROM trades")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            grp\tg2\trn
+                            A\ta\t1
+                            B\tb\t2
+                            A\ta\t3
+                            B\tb\t4
+                            """);
+            assertQuery("SELECT id + 1 AS id, id AS id2, row_number() OVER (ORDER BY id) rn FROM trades")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            id\tid2\trn
+                            4\t3\t3
+                            2\t1\t1
+                            5\t4\t4
+                            3\t2\t2
+                            """);
+            assertQuery("SELECT * FROM (SELECT qty * 10 AS qty, qty AS q2, row_number() OVER () rn FROM trades) WHERE q2 > 100")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("qty\tq2\trn\n");
+            assertQuery("SELECT * FROM (SELECT qty * 10 AS qty, qty AS q2, row_number() OVER () rn FROM trades) WHERE q2 > 20")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            qty\tq2\trn
+                            250.0\t25.0\t2
+                            350.0\t35.0\t4
+                            """);
+            assertQuery("SELECT qty * 2 AS x, qty AS q2, row_number() OVER () rn FROM trades")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            x\tq2\trn
+                            30.0\t15.0\t1
+                            50.0\t25.0\t2
+                            10.0\t5.0\t3
+                            70.0\t35.0\t4
+                            """);
+            assertQuery("SELECT qty * 2 AS x, qty AS q2, sum(qty) OVER () s FROM trades")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            x\tq2\ts
+                            30.0\t15.0\t80.0
+                            50.0\t25.0\t80.0
+                            10.0\t5.0\t80.0
+                            70.0\t35.0\t80.0
+                            """);
+            assertQuery("SELECT qty * 2 AS x, qty AS q2, row_number() OVER (ORDER BY ts) rn FROM trades")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            x\tq2\trn
+                            30.0\t15.0\t1
+                            50.0\t25.0\t2
+                            10.0\t5.0\t3
+                            70.0\t35.0\t4
+                            """);
+            assertQuery("SELECT ts, qty * 2 AS x, qty AS q2, row_number() OVER () rn FROM trades")
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tx\tq2\trn
+                            2024-01-01T00:00:00.000000Z\t30.0\t15.0\t1
+                            2024-01-01T00:01:00.000000Z\t50.0\t25.0\t2
+                            2024-01-01T00:02:00.000000Z\t10.0\t5.0\t3
+                            2024-01-01T00:03:00.000000Z\t70.0\t35.0\t4
+                            """);
+            assertQuery("SELECT id + 1 AS x, id AS id2, row_number() OVER (ORDER BY id) rn FROM trades")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            x\tid2\trn
+                            4\t3\t3
+                            2\t1\t1
+                            5\t4\t4
+                            3\t2\t2
+                            """);
+            assertQuery("SELECT qty * 2 AS x, qty AS q2, row_number() OVER () rn FROM (SELECT * FROM trades)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            x\tq2\trn
+                            30.0\t15.0\t1
+                            50.0\t25.0\t2
+                            10.0\t5.0\t3
+                            70.0\t35.0\t4
+                            """);
+            assertQuery("SELECT sum(sum(qty) OVER ()) OVER (ORDER BY qty) AS s, qty AS q2 FROM trades")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            s\tq2
+                            160.0\t15.0
+                            240.0\t25.0
+                            80.0\t5.0
+                            320.0\t35.0
+                            """);
+            assertQuery("SELECT qty AS q2, qty * 10 AS qty, row_number() OVER () rn FROM trades")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            q2\tqty\trn
+                            15.0\t150.0\t1
+                            25.0\t250.0\t2
+                            5.0\t50.0\t3
+                            35.0\t350.0\t4
+                            """);
+            assertQuery("SELECT qty * 2 AS x, qty, qty AS q2, sum(qty) OVER () s FROM trades")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            x\tqty\tq2\ts
+                            30.0\t15.0\t15.0\t80.0
+                            50.0\t25.0\t25.0\t80.0
+                            10.0\t5.0\t5.0\t80.0
+                            70.0\t35.0\t35.0\t80.0
+                            """);
+            assertQuery("SELECT qty * 10 AS qty, qty AS q2 FROM trades")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            qty\tq2
+                            150.0\t15.0
+                            250.0\t25.0
+                            50.0\t5.0
+                            350.0\t35.0
+                            """);
+            assertQuery("SELECT id + 1 AS id, id AS id2, row_number() OVER (PARTITION BY id ORDER BY ts) rn FROM trades")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            id\tid2\trn
+                            4\t3\t1
+                            2\t1\t1
+                            5\t4\t1
+                            3\t2\t1
+                            """);
+            assertQuery("SELECT qty * -1 AS qty, qty AS q1, row_number() OVER (ORDER BY qty) rn FROM trades")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            qty\tq1\trn
+                            -15.0\t15.0\t2
+                            -25.0\t25.0\t3
+                            -5.0\t5.0\t1
+                            -35.0\t35.0\t4
+                            """);
+            assertQuery("SELECT upper(grp) AS grp, grp AS g2, count() OVER (PARTITION BY grp) c FROM trades")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            grp\tg2\tc
+                            A\ta\t2
+                            B\tb\t2
+                            A\ta\t2
+                            B\tb\t2
+                            """);
+            assertQuery("SELECT id + 1 AS id, id AS id2, row_number() OVER (ORDER BY id2 DESC) rn FROM trades")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            id\tid2\trn
+                            4\t3\t2
+                            2\t1\t4
+                            5\t4\t1
+                            3\t2\t3
+                            """);
+            assertQuery("SELECT row_number() OVER (ORDER BY q2) rn, qty * 10 AS qty, qty AS q2 FROM trades")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            rn\tqty\tq2
+                            2\t150.0\t15.0
+                            3\t250.0\t25.0
+                            1\t50.0\t5.0
+                            4\t350.0\t35.0
+                            """);
+            assertQuery("SELECT qty * 10 AS x, x + sum(qty) OVER () AS z FROM trades")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            x\tz
+                            150.0\t230.0
+                            250.0\t330.0
+                            50.0\t130.0
+                            350.0\t430.0
+                            """);
+            assertQuery("SELECT x, x AS kx, row_number() OVER (PARTITION BY x ORDER BY v) rn FROM t")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            x\tkx\trn
+                            1\t1\t1
+                            1\t1\t2
+                            2\t2\t1
+                            """);
+            assertQuery("SELECT x + 1 AS x, x AS kx, row_number() OVER (PARTITION BY x ORDER BY v) rn FROM t")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            x\tkx\trn
+                            2\t1\t1
+                            2\t1\t2
+                            3\t2\t1
+                            """);
+            assertQuery("SELECT v * 2 AS v, v AS kv, row_number() OVER (ORDER BY kv DESC) rn FROM t")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            v\tkv\trn
+                            20\t10\t3
+                            40\t20\t2
+                            60\t30\t1
+                            """);
+        });
     }
 
     static {

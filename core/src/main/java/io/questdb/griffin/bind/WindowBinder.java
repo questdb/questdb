@@ -236,7 +236,7 @@ final class WindowBinder {
             return null;
         }
         try {
-            final BoundExpression bound = ctx.functionBinder.bind(expression, ctx.windowBindingScope(ctx.scope().windowInput.getOutput()),
+            final BoundExpression bound = ctx.functionBinder.bind(expression, windowInputScope(),
                     sourceAlias(source), ColumnType.STRING, executionContext);
             return LogicalPlans.isVolatile(bound) ? bound : null;
         } catch (SqlException e) {
@@ -353,7 +353,7 @@ final class WindowBinder {
             if (aggregatePosition >= 0) {
                 throw SqlException.$(aggregatePosition, "Aggregate function cannot be passed as an argument");
             }
-            spec.getPartitionBy().add(ctx.functionBinder.bind(partition, windowCallScope(), sourceAlias(source), executionContext));
+            spec.getPartitionBy().add(ctx.functionBinder.bind(partition, windowInputScope(), sourceAlias(source), executionContext));
         }
         ExpressionNode orderViolation = null;
         for (int k = 0, count = syntax.getOrderBy().size(); k < count; k++) {
@@ -365,7 +365,7 @@ final class WindowBinder {
                 spec.addOrderBy(-1, SqlBinder.sortDirection(syntax.getOrderByDirection().getQuick(k)), order.token, order.position);
                 continue;
             }
-            final BoundExpression bound = ctx.functionBinder.bind(order, windowCallScope(), sourceAlias(source), executionContext);
+            final BoundExpression bound = ctx.functionBinder.bind(order, windowInputScope(), sourceAlias(source), executionContext);
             // Only an outer column of a LATERAL body is not an input column of the window.
             final int id = bound instanceof ColumnExpression column ? column.getColumnId()
                     : appendWindowInputExpression(bound, "__window_order", order.position);
@@ -835,7 +835,7 @@ final class WindowBinder {
                         scope.windowAliasCopyColumns.add(i);
                         return aliased;
                     }
-                    final BoundExpression bound = ctx.functionBinder.bindValue(aliased, ctx.windowBindingScope(scope.windowInput.getOutput()), sourceAlias(source), executionContext);
+                    final BoundExpression bound = ctx.functionBinder.bindValue(aliased, windowInputScope(), sourceAlias(source), executionContext);
                     if (bound instanceof ColumnExpression ref) {
                         id = ref.getColumnId();
                     } else {
@@ -947,18 +947,6 @@ final class WindowBinder {
         return -1;
     }
 
-    /**
-     * The scope window calls and specs of the current window input bind in, built once per input.
-     */
-    private OutputSchema windowCallScope() {
-        final BindScope scope = ctx.scope();
-        if (scope.windowCallScopeInput != scope.windowInput) {
-            windowCallBindingScope(scope.windowInput.getOutput(), scope.windowCallScope);
-            scope.windowCallScopeInput = scope.windowInput;
-        }
-        return scope.windowCallScope;
-    }
-
     private ExpressionNode windowColumnReference(int id, int position) {
         final OutputSchema output = ctx.scope().windowInput.getOutput();
         final int index = output.getColumnIndexById(id);
@@ -966,6 +954,19 @@ final class WindowBinder {
             throw new IllegalStateException("window dependency is outside its input");
         }
         return ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, output.getColumnName(index), 0, position);
+    }
+
+    /**
+     * The scope expressions over the current window input bind in, see {@link BindContext#windowBindingScope}, built
+     * once per input.
+     */
+    private OutputSchema windowInputScope() {
+        final BindScope scope = ctx.scope();
+        if (scope.windowInputScopePlan != scope.windowInput) {
+            windowBindingScope(scope.windowInput.getOutput(), scope.windowInputScope);
+            scope.windowInputScopePlan = scope.windowInput;
+        }
+        return scope.windowInputScope;
     }
 
     /**
@@ -1005,13 +1006,13 @@ final class WindowBinder {
 
     FunctionExpression bindWindowFunction(ExpressionNode expression, WindowSpec spec, OutputSchema input,
                                           QueryModel source, SqlExecutionContext executionContext) throws SqlException {
-        return bindWindowFunction(expression, spec, input, ctx.windowCallBindingScope(input), source, executionContext);
+        return bindWindowFunction(expression, spec, input, ctx.windowBindingScope(input), source, executionContext);
     }
 
     LogicalPlan bindWindows(QueryModel model, QueryModel source, LogicalPlan input, SqlExecutionContext executionContext) throws SqlException {
         final BindScope bindScope = ctx.scope();
         bindScope.windowInput = input;
-        bindScope.windowCallScopeInput = null;
+        bindScope.windowInputScopePlan = null;
         bindScope.windowNodeIndexes.clear();
         bindScope.windowNodes.clear();
         bindScope.windowOrderExpressions.clear();
@@ -1098,7 +1099,7 @@ final class WindowBinder {
                                     && spec.getOrderByColumnIds().getQuick(0) == scope.getTimestampColumnId()
                                     && spec.getOrderByDirections().getQuick(0) == SortDirection.ASCENDING);
                 }
-                final FunctionExpression function = bindWindowFunction(replaceWindowCallReferences(node), spec, bindScope.windowInput.getOutput(), windowCallScope(),
+                final FunctionExpression function = bindWindowFunction(replaceWindowCallReferences(node), spec, bindScope.windowInput.getOutput(), windowInputScope(),
                         source, executionContext);
                 if (i == orderViolationIndex) {
                     throw SqlException.invalidColumn(orderViolation.position, orderViolation.token);
