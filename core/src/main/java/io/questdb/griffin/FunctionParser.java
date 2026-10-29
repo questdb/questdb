@@ -230,28 +230,31 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     /**
-     * Does for a SHOW statement that lists objects or reads their metadata what
-     * {@code checkAndCreateFunction} does for a function that declares
-     * {@link SqlExecutionRequirements#DISCLOSES_OBJECTS}: checks the statement when the compile
-     * stores its result in a materialized or live view, and records it for the checks that run after
-     * the optimiser. The compiler creates the cursor of a SHOW statement directly, not through a
-     * function factory, so it reports the statement here, before it creates the cursor.
+     * Does for a SHOW statement what {@code checkAndCreateFunction} does for a function that
+     * declares the same {@link SqlExecutionRequirements}, e.g. a statement that lists objects or
+     * reads their metadata declares {@link SqlExecutionRequirements#DISCLOSES_OBJECTS}: checks the
+     * statement when the compile stores its result in a materialized or live view, and records it for
+     * the checks that run after the optimiser. The compiler creates the cursor of a SHOW statement
+     * directly, not through a function factory, so it reports the statement here, before it creates
+     * the cursor.
      *
      * @param position         the position of the statement in the compiled SQL
      * @param statement        the statement, e.g. SHOW TABLES
+     * @param requirements     the requirements of the statement, see {@link SqlExecutionRequirements}
      * @param executionContext the context of the compile
      * @throws SqlException when a materialized or live view may not store the result of the statement
      */
-    public void addObjectDisclosingStatement(
+    public void addStatementRequirements(
             int position,
             CharSequence statement,
+            int requirements,
             SqlExecutionContext executionContext
     ) throws SqlException {
         final int requirementPosition = executionRequirementPosition > -1 ? executionRequirementPosition : position;
         final SqlExecutionContext.TableFunctionView view = executionContext.getTableFunctionView();
         if (!executionContext.allowNonDeterministicFunctions()) {
             SqlExecutionRequirements.checkStoredView(
-                    SqlExecutionRequirements.DISCLOSES_OBJECTS,
+                    requirements,
                     requirementPosition,
                     statement,
                     true,
@@ -259,7 +262,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     executionContext
             );
         }
-        executionRequirements.add(SqlExecutionRequirements.DISCLOSES_OBJECTS, requirementPosition, statement, true, view);
+        executionRequirements.add(requirements, requirementPosition, statement, true, view);
     }
 
     @Override

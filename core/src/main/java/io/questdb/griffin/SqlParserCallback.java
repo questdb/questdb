@@ -126,6 +126,17 @@ public interface SqlParserCallback {
         return null;
     }
 
+    /**
+     * Returns the {@link SqlExecutionRequirements} that the factory this callback generates for a
+     * SHOW statement that lists objects or reads their metadata has on top of
+     * {@link SqlExecutionRequirements#DISCLOSES_OBJECTS}, e.g. a factory that authorizes the caller
+     * needs the security context of the caller, which the refresh of a materialized or live view does
+     * not have.
+     */
+    default int getShowExecutionRequirements(IQueryModel model) {
+        return SqlExecutionRequirements.NONE;
+    }
+
     default CreateLiveViewOperationBuilder parseCreateLiveViewExt(
             GenericLexer lexer,
             SqlExecutionContext executionContext,

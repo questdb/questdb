@@ -15327,8 +15327,14 @@ public class SqlOptimiser implements Mutable {
             final CharSequence objectDisclosingStatement = getObjectDisclosingStatement(model.getShowKind());
             if (objectDisclosingStatement != null) {
                 // a materialized or live view may store what the statement lists only on the terms
-                // of a function that does so, see SqlExecutionRequirements.DISCLOSES_OBJECTS
-                functionParser.addObjectDisclosingStatement(model.getModelPosition(), objectDisclosingStatement, executionContext);
+                // of a function that does so, see SqlExecutionRequirements.DISCLOSES_OBJECTS, and
+                // the parser callback adds what its own factory for the statement requires
+                functionParser.addStatementRequirements(
+                        model.getModelPosition(),
+                        objectDisclosingStatement,
+                        SqlExecutionRequirements.DISCLOSES_OBJECTS | sqlParserCallback.getShowExecutionRequirements(model),
+                        executionContext
+                );
             }
             showFactory = generateShowFactory(model, executionContext, sqlParserCallback, path);
         } finally {
