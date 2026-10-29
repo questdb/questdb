@@ -374,40 +374,14 @@ final class JoinOrderSolver implements Mutable {
 
     /**
      * Indexes the ordering constraints of the graph into {@link #laterInputs}: links them into the child sets, which
-     * {@link #linkDependencies} relinks, sorts the inputs topologically by them, and adds to each input, from the last
-     * one back, its children and the inputs they order after them.
+     * {@link #linkDependencies} relinks, and sorts the inputs by them, see {@link JoinGraph#sortTopologically}, then adds
+     * to each input, from the last one back, its children and the inputs they order after them.
      */
     private void indexOrderingConstraints() {
-        final IntList constraints = graph.getOrderingConstraints();
         final int count = dependencies.size();
         final int words = (count + 63) >>> 6;
         laterInputs.setAll(count * words, 0);
-        inCounts.setAll(count, 0);
-        for (int i = 0, n = constraints.size(); i < n; i += 2) {
-            if (link(constraints.getQuick(i), constraints.getQuick(i + 1))) {
-                inCounts.increment(constraints.getQuick(i + 1));
-            }
-        }
-        candidateOrder.clear();
-        ready.clear();
-        for (int i = 0; i < count; i++) {
-            if (inCounts.getQuick(i) == 0) {
-                ready.add(i);
-            }
-        }
-        while (ready.notEmpty()) {
-            final int source = ready.poll();
-            candidateOrder.add(source);
-            final IntHashSet sourceChildren = children.getQuick(source);
-            for (int i = 0, n = sourceChildren.size(); i < n; i++) {
-                final int child = sourceChildren.get(i);
-                final int inCount = inCounts.getQuick(child) - 1;
-                inCounts.setQuick(child, inCount);
-                if (inCount == 0) {
-                    ready.add(child);
-                }
-            }
-        }
+        JoinGraph.sortTopologically(graph.getOrderingConstraints(), count, children, inCounts, ready, candidateOrder);
         for (int i = candidateOrder.size() - 1; i >= 0; i--) {
             final int source = candidateOrder.getQuick(i);
             final IntHashSet sourceChildren = children.getQuick(source);

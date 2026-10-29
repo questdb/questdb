@@ -24,7 +24,9 @@
 
 package io.questdb.griffin.plan.logical;
 
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.IntSortedList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
@@ -66,6 +68,52 @@ public final class JoinGraph implements Mutable {
                 addUnnestEdges(inputs, expressions.getQuick(i), step, edges);
             }
         }
+    }
+
+    /**
+     * Links the parent and child pairs of {@code edges} into the child sets of the {@code count} inputs, which it clears
+     * first, and appends the inputs to {@code order}, which may be {@code edges}, each after its parents and the lowest
+     * ready one first; returns how many it appended, fewer than the inputs when the edges form a cycle.
+     * {@code inCounts} and {@code ready} are temporaries of the call.
+     */
+    public static int sortTopologically(
+            IntList edges,
+            int count,
+            ObjList<IntHashSet> children,
+            IntList inCounts,
+            IntSortedList ready,
+            IntList order
+    ) {
+        for (int i = 0, n = children.size(); i < n; i++) {
+            children.getQuick(i).clear();
+        }
+        inCounts.setAll(count, 0);
+        for (int i = 0, n = edges.size(); i < n; i += 2) {
+            if (children.getQuick(edges.getQuick(i)).add(edges.getQuick(i + 1))) {
+                inCounts.increment(edges.getQuick(i + 1));
+            }
+        }
+        order.clear();
+        ready.clear();
+        for (int i = 0; i < count; i++) {
+            if (inCounts.getQuick(i) == 0) {
+                ready.add(i);
+            }
+        }
+        while (ready.notEmpty()) {
+            final int source = ready.poll();
+            order.add(source);
+            final IntHashSet sourceChildren = children.getQuick(source);
+            for (int i = 0, n = sourceChildren.size(); i < n; i++) {
+                final int child = sourceChildren.get(i);
+                final int inCount = inCounts.getQuick(child) - 1;
+                inCounts.setQuick(child, inCount);
+                if (inCount == 0) {
+                    ready.add(child);
+                }
+            }
+        }
+        return order.size();
     }
 
     /**

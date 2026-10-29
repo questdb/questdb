@@ -31,6 +31,7 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
@@ -52,6 +53,7 @@ public class ViewGraph implements Mutable {
     private static final BiConsumer<ObjList<TableToken>, TableToken> ADD = ObjList::add;
     private static final Function<CharSequence, ViewDependencyList> CREATE_DEPENDENCY_LIST = name -> new ViewDependencyList();
     private static final BiConsumer<ObjList<TableToken>, TableToken> REMOVE = ObjList::remove;
+    private static final FiberLocal<LowerCaseCharSequenceHashSet> tlVisitedViews = new FiberLocal<>(LowerCaseCharSequenceHashSet::new);
     private final ConcurrentHashMap<ViewDefinition> definitionsByTableDirName = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<ViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
 
@@ -120,7 +122,9 @@ public class ViewGraph implements Mutable {
      * {@link #collectReadColumns}.
      */
     public boolean readsTable(CairoEngine engine, ViewDefinition view, CharSequence tableName) {
-        return readsTable(engine, view, tableName, definitionsByTableDirName.size());
+        final LowerCaseCharSequenceHashSet visitedViews = tlVisitedViews.get();
+        visitedViews.clear();
+        return readsTable(engine, view, tableName, visitedViews);
     }
 
     public synchronized void removeView(TableToken viewToken) {
@@ -246,19 +250,17 @@ public class ViewGraph implements Mutable {
         return token != null && token.isView() ? getViewDefinition(token) : null;
     }
 
-    // depth bounds the walk by the number of views, which no chain of distinct views exceeds
-    private boolean readsTable(CairoEngine engine, ViewDefinition view, CharSequence tableName, int depth) {
+    private boolean readsTable(CairoEngine engine, ViewDefinition view, CharSequence tableName, LowerCaseCharSequenceHashSet visitedViews) {
         final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = view.getDependencies();
         if (dependencies.get(tableName) != null) {
             return true;
         }
-        if (depth > 0) {
-            final ObjList<CharSequence> names = dependencies.keys();
-            for (int i = 0, n = names.size(); i < n; i++) {
-                final ViewDefinition innerView = innerView(engine, names.getQuick(i));
-                if (innerView != null && readsTable(engine, innerView, tableName, depth - 1)) {
-                    return true;
-                }
+        final ObjList<CharSequence> names = dependencies.keys();
+        for (int i = 0, n = names.size(); i < n; i++) {
+            final ViewDefinition innerView = innerView(engine, names.getQuick(i));
+            if (innerView != null && visitedViews.add(innerView.getViewToken().getDirName())
+                    && readsTable(engine, innerView, tableName, visitedViews)) {
+                return true;
             }
         }
         return false;

@@ -52,6 +52,7 @@ import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
@@ -400,8 +401,7 @@ final class Decorrelation implements OptimiserPass {
      * the domain of those columns, keyed on its own, see {@link DecorrelationDomains#joinMissing}: the left branch before
      * the right one, which then reads that domain. Both end with one column per outer column, which the operation's
      * output carries hidden. When the operation releases its right branch before it reads the left one, see
-     * {@link io.questdb.griffin.plan.logical.SetOperationKind#isRightReleasedFirst}, the domains the right branch builds
-     * serve only that branch.
+     * {@link PlanToFactoryRules#isRightReleasedFirst}, the domains the right branch builds serve only that branch.
      */
     private LogicalPlan decorrelateSetOperation(SetOperationPlan operation, int base) throws SqlException {
         final int enclosingOperation = domains.beginOperation(operation);
@@ -413,7 +413,7 @@ final class Decorrelation implements OptimiserPass {
             final int rightProducerBase = domains.producerMark();
             operation.replaceInput(1, decorrelateBranch(operation.getRight(), rightBase));
             operation.replaceInput(1, domains.joinMissing(operation.getRight(), rightBase, operation.getRightPosition()));
-            if (operation.getOperation().isRightReleasedFirst()) {
+            if (PlanToFactoryRules.isRightReleasedFirst(operation)) {
                 domains.retireProducers(rightProducerBase);
             }
             final int rightEnd = mapping.mark();

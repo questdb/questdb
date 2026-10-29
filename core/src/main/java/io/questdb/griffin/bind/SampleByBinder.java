@@ -142,6 +142,18 @@ final class SampleByBinder {
         return false;
     }
 
+    /**
+     * The stride of the SAMPLE BY period literal {@code period}, such as 15 for {@code 15m} or 1 for {@code m}: an
+     * optional positive INT followed by the one-letter unit that ends the literal. The stride must fit the timestamp
+     * range in that unit, see {@link TimestampSamplerFactory#getSampleByInstance}.
+     */
+    private static long periodStride(TimestampDriver driver, ExpressionNode period) throws SqlException {
+        final int unitIndex = TimestampSamplerFactory.findPositiveIntervalEndIndex(period.token, period.position, "sample");
+        final long stride = TimestampSamplerFactory.parsePositiveInterval(period.token, unitIndex, period.position, "sample", Numbers.INT_NULL, '?');
+        TimestampSamplerFactory.getSampleByInstance(driver, stride, period.token.charAt(unitIndex), period.position + unitIndex);
+        return stride;
+    }
+
     private static boolean requiresSampleByCursorAlignment(QueryModel source) {
         final ExpressionNode from = source.getSampleByFrom();
         if (source.getSampleByOffset() == null || source.getSampleByUnit() != null
@@ -174,6 +186,15 @@ final class SampleByBinder {
             };
         } catch (ImplicitCastException | UnsupportedOperationException e) {
             throw GroupByUtils.invalidSampleByFillValue(fillToken, fillPosition);
+        }
+    }
+
+    /**
+     * Fails with {@code message} at the expression when its type, once known, does not convert to {@code type}.
+     */
+    private static void validateConvertible(BoundExpression expression, int type, CharSequence message) throws SqlException {
+        if (expression != null && expression.getDataType() != ColumnType.UNDEFINED && !ColumnType.isConvertibleFrom(expression.getDataType(), type)) {
+            throw SqlException.$(expression.getPosition(), message);
         }
     }
 
@@ -211,10 +232,10 @@ final class SampleByBinder {
 
     private static void validateRuntimeConstant(BoundExpression expression, int type, CharSequence message) throws SqlException {
         if (expression != null && expression.getDataType() != ColumnType.UNDEFINED
-                && ((expression.getFunctionFlags() & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) == 0
-                || !ColumnType.isConvertibleFrom(expression.getDataType(), type))) {
+                && (expression.getFunctionFlags() & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) == 0) {
             throw SqlException.$(expression.getPosition(), message);
         }
+        validateConvertible(expression, type, message);
     }
 
     /**
@@ -657,9 +678,8 @@ final class SampleByBinder {
         if (aggregate instanceof SampleByPlan sampleBy) {
             plan.setPeriod(sampleBy.getStride(), sampleBy.getPeriodUnit(), sampleBy.getPeriodUnitPosition());
         } else {
-            final long stride = TimestampSamplerFactory.getSampleByStride(ColumnType.getTimestampDriver(timestampType), period.token, period.position);
             final int unitIndex = period.token.length() - 1;
-            plan.setPeriod(stride, period.token.charAt(unitIndex), period.position + unitIndex);
+            plan.setPeriod(periodStride(ColumnType.getTimestampDriver(timestampType), period), period.token.charAt(unitIndex), period.position + unitIndex);
         }
         final ExpressionNode timezone = sampleByTimezone(source);
         final boolean isSubDay = CommonUtils.isSubDayUnit(plan.getPeriodUnit());
@@ -782,9 +802,8 @@ final class SampleByBinder {
         final ExpressionNode unit = source.getSampleByUnit();
         final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         if (unit == null) {
-            final long stride = TimestampSamplerFactory.getSampleByStride(driver, sampleBy.token, sampleBy.position);
             final int unitIndex = sampleBy.token.length() - 1;
-            plan.setPeriod(sampleBy.token, stride, sampleBy.position, sampleBy.token.charAt(unitIndex), sampleBy.position + unitIndex);
+            plan.setPeriod(sampleBy.token, periodStride(driver, sampleBy), sampleBy.position, sampleBy.token.charAt(unitIndex), sampleBy.position + unitIndex);
         } else {
             final BoundExpression bound = ctx.functionBinder.bind(sampleBy, ctx.emptySchema, null, executionContext);
             if (!(bound instanceof ConstantExpression period)
@@ -816,13 +835,6 @@ final class SampleByBinder {
                     "timezone must be a constant expression of STRING or CHAR type");
         }
         final ExpressionNode offset = sampleByOffset(source);
-        if (offset != null) {
-            // timestamp_floor_utc rejects an offset that is not constant or does not parse
-            final BoundExpression bound = ctx.functionBinder.bind(offset, input, sourceAlias(source), ColumnType.STRING, executionContext);
-            if (bound.getDataType() != ColumnType.UNDEFINED && !ColumnType.isConvertibleFrom(bound.getDataType(), ColumnType.STRING)) {
-                throw SqlException.$(bound.getPosition(), OFFSET_ERROR);
-            }
-        }
         final boolean isSubDay = !sampleBy.token.isEmpty() && CommonUtils.isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
         final ExpressionNode floor = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "timestamp_floor_utc", 0, sampleBy.position);
         floor.paramCount = 5;
@@ -833,7 +845,13 @@ final class SampleByBinder {
         final CharacterStoreEntry interval = ctx.characterStore.newEntry();
         interval.put('\'').put(sampleBy.token).put('\'');
         floor.args.add(ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, interval.toImmutable(), 0, sampleBy.position));
-        final BoundExpression bucket = ctx.functionBinder.bind(floor, input, sourceAlias(source), executionContext);
+        final BoundExpression bucket;
+        try {
+            bucket = ctx.functionBinder.bind(floor, input, sourceAlias(source), executionContext);
+        } catch (SqlException e) {
+            validateConvertible(ctx.functionBinder.bind(offset, input, sourceAlias(source), ColumnType.STRING, executionContext), ColumnType.STRING, OFFSET_ERROR);
+            throw e;
+        }
         TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(bucket.getDataType()), CommonUtils.getStrideMultiple(sampleBy.token, sampleBy.position),
                 CommonUtils.getStrideUnit(sampleBy.token, sampleBy.position), sampleBy.position + sampleBy.token.length() - 1);
         return bucket;

@@ -106,24 +106,24 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
         // e.g. clock going backward
         // we need to ensure we do not fill time transition
         long expectedLocalEpoch;
-        final boolean isLeadingGap = firstRun;
         if (firstRun) {
             expectedLocalEpoch = nextSampleLocalEpoch;
-            firstRun = false;
         } else {
             expectedLocalEpoch = timestampSampler.nextTimestamp(nextSampleLocalEpoch);
         }
         // is data timestamp ahead of next expected timestamp?
         if (expectedLocalEpoch < localEpoch) {
-            setActiveB(expectedLocalEpoch, isLeadingGap);
+            setActiveB(expectedLocalEpoch);
+            firstRun = false;
             sampleLocalEpoch = expectedLocalEpoch;
             nextSampleLocalEpoch = expectedLocalEpoch;
             return true;
         }
+        firstRun = false;
 
         if (endFill) {
             // the bucket that TO ends can follow the last bucket with rows without a gap
-            setActiveB(expectedLocalEpoch, false);
+            setActiveB(expectedLocalEpoch);
             sampleLocalEpoch = expectedLocalEpoch;
             nextSampleLocalEpoch = expectedLocalEpoch;
             endFill = false;
@@ -186,11 +186,11 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
 
     // The end fill has no bucket to interpolate towards: a LINEAR column shows the last bucket's value. The leading
     // gap, between FROM and the first row, has no bucket to interpolate from: a LINEAR column shows NULL.
-    private void setActiveB(long expectedLocalEpoch, boolean isLeadingGap) {
+    private void setActiveB(long expectedLocalEpoch) {
         if (!gapFill) {
             if (endFill) {
                 record.setActiveB();
-            } else if (isLeadingGap) {
+            } else if (firstRun) {
                 record.setActiveB();
                 peeker.peek();
             } else {

@@ -28,6 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.LogicalPlans;
+import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -682,35 +683,21 @@ public final class PhysicalProperties {
     }
 
     /**
-     * Whether the join step runs the markout join, UNKNOWN before operator planning records its algorithm.
-     */
-    /**
-     * The most rows a LIMIT of constant bounds returns, as {@link io.questdb.griffin.engine.LimitRecordCursorFactory}
-     * resolves them: {@code n} for {@code LIMIT n} and {@code LIMIT -n}, and the distance between the bounds of
-     * {@code LIMIT lo, hi} where both are non-negative or both negative, which it swaps when {@code lo} exceeds
-     * {@code hi}, or where {@code lo} is negative and {@code hi} is zero. -1 where the count is not a constant: a bound
-     * only execution knows or a NULL one, a non-negative {@code lo} with a negative {@code hi}, which ends the rows that
-     * many rows before the last row of the input, and a negative {@code lo} with a positive {@code hi}, which execution
-     * rejects.
+     * The most rows a LIMIT returns, see {@link LimitRecordCursorFactory#rowCount}; -1 where only execution knows a bound
+     * or a bound is NULL.
      */
     private static long limitCount(LimitPlan limit) {
-        if (!(limit.getLo() instanceof ConstantExpression loConstant)) {
+        if (isRuntimeLimit(limit)) {
             return -1;
         }
-        final long lo = LogicalPlans.limitValue(loConstant);
-        if (lo == Numbers.LONG_NULL) {
-            return -1;
-        }
-        if (limit.getHi() == null) {
-            return Math.abs(lo);
-        }
-        if (!(limit.getHi() instanceof ConstantExpression hiConstant)) {
-            return -1;
-        }
-        final long hi = LogicalPlans.limitValue(hiConstant);
-        return hi != Numbers.LONG_NULL && (Numbers.sameSign(lo, hi) || lo < 0 && hi == 0) ? Math.abs(hi - lo) : -1;
+        final long lo = LogicalPlans.limitValue((ConstantExpression) limit.getLo());
+        final long hi = limit.getHi() == null ? 0 : LogicalPlans.limitValue((ConstantExpression) limit.getHi());
+        return lo == Numbers.LONG_NULL || hi == Numbers.LONG_NULL ? -1 : LimitRecordCursorFactory.rowCount(lo, hi);
     }
 
+    /**
+     * Whether the join step runs the markout join, UNKNOWN before operator planning records its algorithm.
+     */
     private static Capability markout(JoinInput step) {
         return step.getAlgorithm() == null ? Capability.UNKNOWN : Capability.of(step.getAlgorithm() == JoinInput.Algorithm.MARKOUT);
     }

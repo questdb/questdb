@@ -66,8 +66,6 @@ final class TemporalJoinBinder {
     private final AggregateBinder aggregateBinder;
     private final SqlBinder binder;
     private final BindContext ctx;
-    // The slave column node of each key bindHorizonKeys binds into its step, by key index
-    private final ObjList<ExpressionNode> horizonKeySlaveNodes = new ObjList<>();
     private final JoinBinder joinBinder;
     private final OrderBinder orderBinder;
     private final WindowBinder windowBinder;
@@ -371,11 +369,14 @@ final class TemporalJoinBinder {
                 final int slaveId = slave.getColumnId(slaveIndex);
                 final int keyIndex = LogicalPlans.filteredKeyIndex(step.getKeys(), masterId, slaveId, slave);
                 if (keyIndex > -1) {
-                    return ctx.combinePredicates(slaveFilter, ctx.binaryNode(ExpressionNode.OPERATION, "=", 0,
-                            horizonKeySlaveNodes.getQuick(keyIndex), slaveNode, criteria.position));
+                    final JoinKey key = step.getKeys().getQuick(keyIndex);
+                    final CharSequence keyName = slave.getColumnName(slave.getColumnIndexById(key.getSlaveColumnId()));
+                    final ExpressionNode keyNode = ctx.bindingExpressions.next().of(ExpressionNode.LITERAL,
+                            ctx.qualifiedJoinName(slaveAlias, keyName), 0, key.getPosition());
+                    return ctx.combinePredicates(slaveFilter, ctx.binaryNode(ExpressionNode.OPERATION, "=", 0, keyNode, slaveNode,
+                            criteria.position));
                 }
                 step.addKey(masterId, slaveId, slaveNode.position);
-                horizonKeySlaveNodes.add(slaveNode);
                 return slaveFilter;
             }
         }
@@ -803,7 +804,6 @@ final class TemporalJoinBinder {
             final OutputSchema slaveOutput = slave.getOutput();
             JoinBinder.validateTimeSeriesTimestamps(step.getPosition(), masterOutput.getColumnId(masterTimestampIndex), slave);
             output.addColumnsFrom(slaveOutput, slaveAlias);
-            horizonKeySlaveNodes.clear();
             final ExpressionNode slaveFilter = bindHorizonKeys(occurrence.getJoinCriteria(), null, step, masterOutput, masterAlias,
                     slaveOutput, slaveAlias);
             if (slaveFilter != null) {

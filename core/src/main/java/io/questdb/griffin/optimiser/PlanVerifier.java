@@ -664,7 +664,7 @@ public final class PlanVerifier {
     /**
      * True when a right branch of {@link #releasedBranches} holds the node at walk position {@code producerIndex} and
      * not the one at {@code readIndex}: its set operation releases the node before the other reads it, see
-     * {@link io.questdb.griffin.plan.logical.SetOperationKind#isRightReleasedFirst}.
+     * {@link PlanToFactoryRules#isRightReleasedFirst}.
      */
     private boolean isReleasedBefore(int producerIndex, int readIndex) {
         for (int i = 0, n = releasedBranches.size(); i < n; i += 2) {
@@ -1100,7 +1100,7 @@ public final class PlanVerifier {
         }
         requestedColumn(operation.getRequestedOrderColumnId(), operation.getOutput());
         failIfViolated(PhysicalChoiceVerifier.setOperation(operation, isAccessPathRequired));
-        if (operation.getOperation().isRightReleasedFirst()) {
+        if (PlanToFactoryRules.isRightReleasedFirst(operation)) {
             releasedBranches.add(visited.indexOf(operation.getRight()));
             releasedBranches.add(visited.size());
         }

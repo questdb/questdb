@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.ViewDefinition;
+import io.questdb.cairo.view.ViewGraph;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
@@ -480,6 +481,33 @@ public class TableVisibilityTest extends AbstractCairoTest {
                 assertMaskedLikeMissing("SELECT * FROM visible_t CROSS JOIN %s", "secret_v", hidingContext);
                 assertMaskedLikeMissing("SELECT * FROM %s", "secret_mv", hidingContext);
                 assertMaskedLikeMissing("SELECT * FROM %s", "secret_lv", hidingContext);
+            }
+        });
+    }
+
+    @Test
+    public void testViewAuthorityCoversObjectsThroughSharedNestedViews() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            execute("CREATE VIEW visible_base AS (SELECT ts, secret_col FROM secret_t)");
+            execute("CREATE VIEW visible_left AS (SELECT * FROM visible_base)");
+            execute("CREATE VIEW visible_right AS (SELECT * FROM visible_base)");
+            execute("CREATE VIEW visible_diamond AS (SELECT * FROM visible_left UNION SELECT * FROM visible_right)");
+            execute("CREATE VIEW visible_nested AS (SELECT * FROM visible_diamond)");
+            execute("CREATE VIEW visible_through AS (DECLARE OVERRIDABLE @t := 'visible_nw' SELECT count() c FROM table_columns(@t) CROSS JOIN visible_nested)");
+            drainWalAndViewQueues();
+            final ViewGraph viewGraph = engine.getViewGraph();
+            final ViewDefinition through = viewGraph.getViewDefinition(engine.verifyTableName("visible_through"));
+            Assert.assertTrue(viewGraph.readsTable(engine, through, "visible_nw"));
+            Assert.assertTrue(viewGraph.readsTable(engine, through, "secret_t"));
+            Assert.assertFalse(viewGraph.readsTable(engine, through, "secret_nw"));
+            Assert.assertFalse(viewGraph.readsTable(engine, through, "visible_t"));
+            final ViewDefinition diamond = viewGraph.getViewDefinition(engine.verifyTableName("visible_diamond"));
+            Assert.assertTrue(viewGraph.readsTable(engine, diamond, "secret_t"));
+            Assert.assertFalse(viewGraph.readsTable(engine, diamond, "visible_nw"));
+            try (SqlExecutionContext hidingContext = newHidingContext()) {
+                assertQuery("DECLARE @t := 'secret_t' SELECT * FROM visible_through").withContext(hidingContext).noLeakCheck().noRandomAccess().expectSize().returns("c\n2\n");
+                assertMaskedLikeMissing("DECLARE @t := '%s' SELECT * FROM visible_through", "secret_nw", hidingContext);
             }
         });
     }

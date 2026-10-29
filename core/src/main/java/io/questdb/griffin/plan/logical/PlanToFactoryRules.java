@@ -390,6 +390,14 @@ public final class PlanToFactoryRules {
     }
 
     /**
+     * Whether the factory of the set operation hashes every row of its right input and releases that input before it
+     * reads its left input: EXCEPT and INTERSECT.
+     */
+    public static boolean isRightReleasedFirst(SetOperationPlan operation) {
+        return !operation.getOperation().isUnion();
+    }
+
+    /**
      * Whether the generator hash-joins the master to an empty slave instead of the step's input: a keyed LEFT join
      * whose ON residual is constant false, so no slave row matches and the join emits each master row once.
      */

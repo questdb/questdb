@@ -2949,6 +2949,169 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLateralLimitDescendingBindVariableBoundsMatchOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            createLimitOracleTables();
+            final String secondAndThird = """
+                    k\tv
+                    null\t8
+                    1\t11
+                    1\t12
+                    2\t21
+                    """;
+            final String firstThree = """
+                    k\tv
+                    null\t7
+                    null\t8
+                    1\t10
+                    1\t11
+                    1\t12
+                    2\t20
+                    2\t21
+                    3\t30
+                    """;
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(limitBounds("descending bounds", secondAndThird, 3, 1));
+            cases.add(limitBounds("ascending bounds", secondAndThird, 1, 3));
+            cases.add(limitBounds("equal bounds", "k\tv\n", 2, 2));
+            cases.add(limitBounds("descending bounds down to zero", firstThree, 3, 0));
+            cases.add(limitBounds("NULL first bound", firstThree, Numbers.LONG_NULL, 3));
+            cases.add(limitBounds("NULL second bound", "k\tv\n", 3, Numbers.LONG_NULL));
+            cases.add(limitBounds("NULL bounds", "k\tv\n", Numbers.LONG_NULL, Numbers.LONG_NULL));
+            cases.add(limitBounds("descending bounds again", secondAndThird, 3, 1));
+            assertLateralBodyMatchesOracle("SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT :lo, :hi", cases);
+
+            final ObjList<BindVarTuple> constantFirstCases = new ObjList<>();
+            constantFirstCases.add(limitBounds("second bound below the first", secondAndThird, 0, 1));
+            constantFirstCases.add(limitBounds("second bound above the first", "k\tv\n1\t13\n", 0, 5));
+            constantFirstCases.add(limitBounds("NULL second bound", "k\tv\n", 0, Numbers.LONG_NULL));
+            assertLateralBodyMatchesOracle("SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT 3, :hi", constantFirstCases);
+
+            bindVariableService.setLong("lo", 3);
+            bindVariableService.setLong("hi", 1);
+            assertQuery("SELECT t1.k, l.v FROM t1 JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT :lo, :hi) l ON true")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Filter filter: (least[LONG]([coalesce(:lo::long,0L),:hi::long])<__lateral_rn"
+                            + " and greatest[LONG]([coalesce(:lo::long,0L),:hi::long])>=__lateral_rn)");
+        });
+    }
+
+    @Test
+    public void testLateralLimitDescendingConstantBoundsMatchOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            createLimitOracleTables();
+            final String secondAndThird = """
+                    k\tv
+                    null\t8
+                    1\t11
+                    1\t12
+                    2\t21
+                    """;
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT 3, 1", secondAndThird);
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT 1, 3", secondAndThird);
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT 2, 2", "k\tv\n");
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT 3, 0", """
+                    k\tv
+                    null\t7
+                    null\t8
+                    1\t10
+                    1\t11
+                    1\t12
+                    2\t20
+                    2\t21
+                    3\t30
+                    """);
+            assertQuery("SELECT t1.k, l.v FROM t1 JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT 3, 1) l ON true")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Filter filter: (1L<__lateral_rn and 3L>=__lateral_rn)");
+        });
+    }
+
+    @Test
+    public void testLateralLimitDescendingOuterColumnBoundsMatchOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            createLimitOracleTables();
+            assertLateralBodyMatchesOracle("SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT t1.k + 1, 1", """
+                    k\tv
+                    null\t7
+                    1\t11
+                    2\t21
+                    """);
+            assertLateralBodyMatchesOracle("SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT 3, t1.k - 1", """
+                    k\tv
+                    1\t10
+                    1\t11
+                    1\t12
+                    2\t21
+                    """);
+            assertLateralBodyMatchesOracle("SELECT count() v FROM t2 WHERE t2.k = t1.k LIMIT 1, t1.k - 1", """
+                    k\tv
+                    1\t4
+                    """);
+        });
+    }
+
+    @Test
+    public void testLateralLimitDescendingScalarBoundsMatchOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            createLimitOracleTables();
+            final String counts = """
+                    k\tv
+                    null\t2
+                    1\t4
+                    2\t2
+                    3\t1
+                    4\t0
+                    """;
+            final String maxima = """
+                    k\tv
+                    null\t8
+                    1\t13
+                    2\t21
+                    3\t30
+                    4\tnull
+                    """;
+            assertLateralScalarBodyMatchesOracle("SELECT count() v FROM t2 WHERE t2.k = t1.k LIMIT 1, 0", counts);
+            assertLateralScalarBodyMatchesOracle("SELECT max(v) v FROM t2 WHERE t2.k = t1.k LIMIT 1, 0", maxima);
+            assertLateralScalarBodyMatchesOracle("SELECT c * 2 v FROM (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT 1, 0)", """
+                    k\tv
+                    null\t4
+                    1\t8
+                    2\t4
+                    3\t2
+                    4\t0
+                    """);
+            assertLateralScalarBodyMatchesOracle("SELECT count() v FROM t2 WHERE t2.k = t1.k LIMIT 3, 1", "k\tv\n");
+            assertLateralScalarBodyMatchesOracle("SELECT count() v FROM t2 WHERE t2.k = t1.k LIMIT 2, 2", "k\tv\n");
+            assertLateralScalarBodyMatchesOracle("SELECT count() v FROM t2 WHERE t2.k = t1.k LIMIT 1, 3", "k\tv\n");
+
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(limitBounds("descending bounds down to zero", counts, 1, 0));
+            cases.add(limitBounds("descending bounds", "k\tv\n", 3, 1));
+            cases.add(limitBounds("ascending bounds", counts, 0, 1));
+            cases.add(limitBounds("NULL second bound", "k\tv\n", 1, Numbers.LONG_NULL));
+            cases.add(limitBounds("NULL bounds", "k\tv\n", Numbers.LONG_NULL, Numbers.LONG_NULL));
+            cases.add(limitBounds("descending bounds down to zero again", counts, 3, 0));
+            assertLateralBodyMatchesOracle("SELECT count() v FROM t2 WHERE t2.k = t1.k LIMIT :lo, :hi", cases);
+
+            final ObjList<BindVarTuple> lateralCases = new ObjList<>();
+            lateralCases.add(limitBounds("NULL first bound reads 0", counts, Numbers.LONG_NULL, 1));
+            lateralCases.add(limitBounds("NULL first bound reads 0 up to 0", "k\tv\n", Numbers.LONG_NULL, 0));
+            lateralCases.add(BindVarTuple.fails("negative second bound", "negative LIMIT is not supported in a correlated lateral sub-query [limit=-1]",
+                    bindVariableService -> {
+                        bindVariableService.setLong("lo", 1);
+                        bindVariableService.setLong("hi", -1);
+                    }));
+            lateralCases.add(BindVarTuple.fails("negative first bound", "negative LIMIT is not supported in a correlated lateral sub-query [limit=-1]",
+                    bindVariableService -> {
+                        bindVariableService.setLong("lo", -1);
+                        bindVariableService.setLong("hi", 0);
+                    }));
+            assertQuery(lateralBodyQuery("SELECT count() v FROM t2 WHERE t2.k = t1.k LIMIT :lo, :hi")).noLeakCheck().assertBinds(lateralCases);
+        });
+    }
+
+    @Test
     public void testLateralLimitOuterColumnCheckedPerOuterRow() throws Exception {
         assertMemoryLeak(() -> {
             createT1("(1), (2), (3), (NULL), (4)");
@@ -11261,7 +11424,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     for (int hi = 0; hi < 3; hi++) {
                         assertQuery(join + scalar + " LIMIT " + lo + "," + hi + tail)
                                 .noLeakCheck()
-                                .returns(lo == 0 && hi > 0 ? """
+                                .returns(Math.min(lo, hi) == 0 && Math.max(lo, hi) > 0 ? """
                                         k\tc
                                         1\t1
                                         2\t0
@@ -18981,22 +19144,50 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    private void assertLateralLimitMatchesOracle(String limit, String expected) throws Exception {
-        assertQuery("SELECT t1.k, l.v FROM t1 JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k " + limit + ") l ON true ORDER BY t1.k, l.v")
-                .noLeakCheck()
-                .returns(expected);
+    /**
+     * Runs the body, which reads the outer key as {@code t1.k} and projects {@code v}, once per outer key of
+     * {@link #createLimitOracleTables} with the key in place of {@code t1.k}.
+     */
+    private static String lateralBodyOracle(String body) {
         final String[] keys = {"1", "2", "3", "NULL::INT", "4"};
         final StringBuilder oracle = new StringBuilder("SELECT * FROM (");
         for (int i = 0; i < keys.length; i++) {
             if (i > 0) {
                 oracle.append(" UNION ALL ");
             }
-            oracle.append("SELECT ").append(keys[i]).append(" k, v FROM (SELECT v FROM t2 WHERE t2.k = ").append(keys[i]).append(' ').append(limit).append(')');
+            oracle.append("SELECT ").append(keys[i]).append(" k, v FROM (").append(body.replace("t1.k", keys[i])).append(')');
         }
-        assertQuery(oracle.append(") ORDER BY k, v").toString())
-                .noLeakCheck()
-                .sizeMayVary()
-                .returns(expected);
+        return oracle.append(") ORDER BY k, v").toString();
+    }
+
+    private static String lateralBodyQuery(String body) {
+        return "SELECT t1.k, l.v FROM t1 JOIN LATERAL (" + body + ") l ON true ORDER BY t1.k, l.v";
+    }
+
+    private static BindVarTuple limitBounds(String description, String expected, long lo, long hi) {
+        return BindVarTuple.ok(description, expected, bindVariableService -> {
+            bindVariableService.setLong("lo", lo);
+            bindVariableService.setLong("hi", hi);
+        });
+    }
+
+    private void assertLateralBodyMatchesOracle(String body, ObjList<BindVarTuple> cases) throws Exception {
+        assertQuery(lateralBodyQuery(body)).noLeakCheck().assertBinds(cases);
+        assertQuery(lateralBodyOracle(body)).noLeakCheck().sizeMayVary().assertBinds(cases);
+    }
+
+    private void assertLateralBodyMatchesOracle(String body, String expected) throws Exception {
+        assertQuery(lateralBodyQuery(body)).noLeakCheck().returns(expected);
+        assertQuery(lateralBodyOracle(body)).noLeakCheck().sizeMayVary().returns(expected);
+    }
+
+    private void assertLateralLimitMatchesOracle(String limit, String expected) throws Exception {
+        assertLateralBodyMatchesOracle("SELECT v FROM t2 WHERE t2.k = t1.k " + limit, expected);
+    }
+
+    private void assertLateralScalarBodyMatchesOracle(String body, String expected) throws Exception {
+        assertQuery(lateralBodyQuery(body)).noLeakCheck().sizeMayVary().returns(expected);
+        assertQuery(lateralBodyOracle(body)).noLeakCheck().sizeMayVary().returns(expected);
     }
 
     private void assertPlainScalarAggregateRuntimeLimit(
@@ -19038,6 +19229,15 @@ public class LateralJoinTest extends AbstractCairoTest {
         execute("INSERT INTO a VALUES (10, 1), (10, NULL), (20, 5), (30, NULL)");
         execute("CREATE TABLE b (y INT, w INT)");
         execute("INSERT INTO b VALUES (1, 7), (3, 8), (3, 9), (4, 3), (20, 6)");
+    }
+
+    private void createLimitOracleTables() throws Exception {
+        createT1("(1), (2), (3), (NULL), (4)");
+        execute("CREATE TABLE t2 (k INT, v INT)");
+        execute("""
+                INSERT INTO t2 VALUES
+                (1, 10), (1, 13), (1, 11), (1, 12), (2, 21), (2, 20), (3, 30), (NULL, 7), (NULL, 8)
+                """);
     }
 
     private void createOrders(String rows) throws Exception {

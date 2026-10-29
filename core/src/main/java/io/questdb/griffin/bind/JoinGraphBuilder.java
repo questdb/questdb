@@ -222,7 +222,8 @@ public final class JoinGraphBuilder implements Mutable {
         stagedDependencies.clear();
         isCollecting = false;
         collectSemanticEdges();
-        if (sortTopologically(semanticEdges, semanticEdges) < dependencies.size()) {
+        final int count = dependencies.size();
+        if (JoinGraph.sortTopologically(semanticEdges, count, children, inCounts, ready, semanticEdges) < count) {
             return false;
         }
         addImpliedKeys();
@@ -468,7 +469,7 @@ public final class JoinGraphBuilder implements Mutable {
         // A bit set per input of the inputs ordered after one of its children, then one of those ordered after it.
         final int descendantsBase = count * words;
         final IntList order = semanticEdges;
-        sortTopologically(constraints, order);
+        JoinGraph.sortTopologically(constraints, count, children, inCounts, ready, order);
         reachableInputs.setAll(2 * descendantsBase, 0);
         for (int i = order.size() - 1; i >= 0; i--) {
             final int source = order.getQuick(i);
@@ -516,45 +517,6 @@ public final class JoinGraphBuilder implements Mutable {
         if (!isCollecting) {
             throw new IllegalStateException("join analysis is not collecting predicates");
         }
-    }
-
-    /**
-     * Links the parent and child pairs of {@code edges} into the child sets and appends the inputs to {@code order},
-     * which may be {@code edges}, each after its parents; returns how many it appended, fewer than the inputs when
-     * the edges form a cycle.
-     */
-    private int sortTopologically(IntList edges, IntList order) {
-        for (int i = 0, n = children.size(); i < n; i++) {
-            children.getQuick(i).clear();
-        }
-        final int count = dependencies.size();
-        inCounts.setAll(count, 0);
-        for (int i = 0, n = edges.size(); i < n; i += 2) {
-            if (children.getQuick(edges.getQuick(i)).add(edges.getQuick(i + 1))) {
-                inCounts.increment(edges.getQuick(i + 1));
-            }
-        }
-        order.clear();
-        ready.clear();
-        for (int i = 0; i < count; i++) {
-            if (inCounts.getQuick(i) == 0) {
-                ready.add(i);
-            }
-        }
-        while (ready.notEmpty()) {
-            final int source = ready.poll();
-            order.add(source);
-            final IntHashSet sourceChildren = children.getQuick(source);
-            for (int i = 0, n = sourceChildren.size(); i < n; i++) {
-                final int child = sourceChildren.get(i);
-                final int inCount = inCounts.getQuick(child) - 1;
-                inCounts.setQuick(child, inCount);
-                if (inCount == 0) {
-                    ready.add(child);
-                }
-            }
-        }
-        return order.size();
     }
 
     private int sourceColumnType(int source, int columnId) {

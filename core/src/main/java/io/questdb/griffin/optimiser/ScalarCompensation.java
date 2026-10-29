@@ -147,6 +147,17 @@ final class ScalarCompensation implements Mutable {
     }
 
     /**
+     * The aggregate the projection reads through its sorts and FILLs, or null when it reads no aggregate.
+     */
+    private static AggregatePlan aggregateBelow(ProjectPlan project) {
+        LogicalPlan input = project.getChild();
+        while (input instanceof SortPlan || input instanceof FillPlan) {
+            input = input.inputAt(0);
+        }
+        return input instanceof AggregatePlan aggregate ? aggregate : null;
+    }
+
+    /**
      * The comparison a count conjunct applies: the operand of a NOT, otherwise the conjunct itself.
      */
     private static FunctionExpression countComparison(FunctionExpression call) {
@@ -211,6 +222,17 @@ final class ScalarCompensation implements Mutable {
         return false;
     }
 
+    /**
+     * Whether two constant LIMIT bounds are non-negative, not NULL, and the first exceeds the second.
+     */
+    private static boolean isDescendingConstantPair(BoundExpression lo, BoundExpression hi) {
+        if (!(lo instanceof ConstantExpression first) || !(hi instanceof ConstantExpression second)) {
+            return false;
+        }
+        final long upper = LogicalPlans.limitValue(second);
+        return upper >= 0 && LogicalPlans.limitValue(first) > upper;
+    }
+
     private static boolean isIntegerConstant(BoundExpression expression) {
         if (!(expression instanceof ConstantExpression constant)) {
             return false;
@@ -233,6 +255,14 @@ final class ScalarCompensation implements Mutable {
      */
     private static boolean isNullOnEmpty(BoundExpression expression, AggregatePlan aggregate) {
         return !hasZeroOnEmpty(expression, aggregate) && isNullPropagating(expression);
+    }
+
+    /**
+     * Whether only execution can order two LIMIT bounds that are not negative constants: the first is not a constant,
+     * or is a positive one over a second that is not.
+     */
+    private static boolean isOrderedAtExecution(BoundExpression lo, BoundExpression hi) {
+        return !(lo instanceof ConstantExpression first) || !(hi instanceof ConstantExpression) && LogicalPlans.limitValue(first) > 0;
     }
 
     private static boolean isZeroOnEmpty(FunctionExpression aggregate) {
@@ -401,20 +431,25 @@ final class ScalarCompensation implements Mutable {
         return true;
     }
 
-    private BoundExpression limitComparison(CharSequence operator, CharSequence boundFunction, BoundExpression limit, long nullLimit, BoundExpression rank,
-                                            OutputSchema input) throws SqlException {
+    private BoundExpression limitBound(CharSequence boundFunction, BoundExpression limit, long nullLimit, OutputSchema input) throws SqlException {
         final int position = limit.getPosition();
         context.getCallArguments().clear();
         context.getCallArguments().add(limit);
         context.getCallArguments().add(planNodes.constants.next().ofLong(nullLimit, position));
-        final BoundExpression bound = context.bindCall(boundFunction, position, input);
-        return context.bindCall(operator, position, bound, rank, input);
+        return context.bindCall(boundFunction, position, input);
+    }
+
+    private BoundExpression limitComparison(CharSequence operator, CharSequence boundFunction, BoundExpression limit, long nullLimit, BoundExpression rank,
+                                            OutputSchema input) throws SqlException {
+        return context.bindCall(operator, limit.getPosition(), limitBound(boundFunction, limit, nullLimit, input), rank, input);
     }
 
     /**
      * Whether the LIMIT keeps the row at the 1-based rank of the {@code size} rows. A lone bound keeps the ranks up to
      * it, or every rank when it is NULL; two bounds keep the ranks after the first up to the second, each reading 0
-     * when NULL. A negative constant bound counts from the end of the rows, and so does the second bound after a
+     * when NULL, and two non-negative bounds that are not NULL apply in ascending order: the planner orders them when
+     * it knows both, and execution through {@code least} and {@code greatest}, which skip a NULL second bound,
+     * otherwise. A negative constant bound counts from the end of the rows, and so does the second bound after a
      * negative first one, which must then be a constant of at most 0; two negative bounds apply in ascending order.
      * Reads {@code size} only when {@link #isTailLimit} holds; {@code boundFunction} reads any other bound with its
      * NULL substitute.
@@ -426,8 +461,18 @@ final class ScalarCompensation implements Mutable {
             if (hi == null) {
                 return limitComparison(">=", boundFunction, lo, Long.MAX_VALUE, rank, input);
             }
-            final BoundExpression upper = isNegativeConstant(hi) ? tailComparison(">=", hi, rank, size, input) : limitComparison(">=", boundFunction, hi, 0, rank, input);
-            return context.getRewriter().combineConjunction(limitComparison("<", boundFunction, lo, 0, rank, input), upper, position);
+            if (!isNegativeConstant(hi) && isOrderedAtExecution(lo, hi)) {
+                final BoundExpression first = limitBound(boundFunction, lo, 0, input);
+                final BoundExpression second = Chars.equals(boundFunction, CHECKED_BOUND) ? limitBound(boundFunction, hi, Numbers.LONG_NULL, input) : hi;
+                final BoundExpression lower = context.bindCall("<", position, context.bindCall("least", position, first, second, input), rank, input);
+                final BoundExpression greatest = context.bindCall("greatest", position, context.getRewriter().copy(first), context.getRewriter().copy(second), input);
+                final BoundExpression upper = context.bindCall(">=", position, greatest, rank, input);
+                return context.getRewriter().combineConjunction(lower, upper, position);
+            }
+            final boolean isDescending = isDescendingConstantPair(lo, hi);
+            final BoundExpression upper = isNegativeConstant(hi) ? tailComparison(">=", hi, rank, size, input)
+                    : limitComparison(">=", boundFunction, isDescending ? lo : hi, 0, rank, input);
+            return context.getRewriter().combineConjunction(limitComparison("<", boundFunction, isDescending ? hi : lo, 0, rank, input), upper, position);
         }
         final long first = LogicalPlans.limitValue((ConstantExpression) lo);
         long second = 0;
@@ -997,11 +1042,8 @@ final class ScalarCompensation implements Mutable {
         if (top >= chain.size() || !(chain.getQuick(top) instanceof ProjectPlan project) || uncompensatedScalars.indexOf(project) > -1) {
             return false;
         }
-        LogicalPlan input = project.getChild();
-        while (input instanceof SortPlan || input instanceof FillPlan) {
-            input = input.inputAt(0);
-        }
-        return input instanceof AggregatePlan aggregate && isImplicitlyKeyedByOuterColumns(aggregate);
+        final AggregatePlan aggregate = aggregateBelow(project);
+        return aggregate != null && isImplicitlyKeyedByOuterColumns(aggregate);
     }
 
     /**
@@ -1058,11 +1100,8 @@ final class ScalarCompensation implements Mutable {
     }
 
     AggregatePlan scalarAggregateBelow(ProjectPlan project) {
-        LogicalPlan input = project.getChild();
-        while (input instanceof SortPlan || input instanceof FillPlan) {
-            input = input.inputAt(0);
-        }
-        return input == scalarAggregate ? scalarAggregate : null;
+        final AggregatePlan aggregate = aggregateBelow(project);
+        return aggregate == scalarAggregate ? aggregate : null;
     }
 
     /**

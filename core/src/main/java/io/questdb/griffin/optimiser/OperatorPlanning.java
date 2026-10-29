@@ -317,8 +317,8 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * Records on each filter of the plan, and of the decorrelation domains it reads, whether the input of the filter
-     * reads the target of an UPDATE, see {@link FilterPlan#hasUpdateScan}, and returns whether the plan reads it.
+     * Records on each filter of the plan whether the input of the filter reads the target of an UPDATE, see
+     * {@link FilterPlan#hasUpdateScan}, and returns whether the plan reads it.
      */
     private static boolean recordUpdateScans(LogicalPlan plan) {
         boolean hasUpdateScan = plan instanceof ScanPlan scan && scan.isUpdate();
@@ -328,9 +328,7 @@ final class OperatorPlanning implements Mutable {
                 hasUpdateScan = true;
             }
         }
-        if (plan instanceof DomainReadPlan read) {
-            recordUpdateScans(read.getProducer());
-        } else if (plan instanceof FilterPlan filter) {
+        if (plan instanceof FilterPlan filter) {
             filter.setUpdateScan(hasUpdateScan);
         }
         return hasUpdateScan;

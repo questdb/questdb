@@ -69,6 +69,19 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         this.cursor = new LimitRecordCursor(loFunction, hiFunction, argPos, masterSuffixLimit);
     }
 
+    /**
+     * The most rows {@code LIMIT lo, hi} returns, as {@link LimitRecordCursor#of} resolves the bounds, which reads
+     * {@code LIMIT n} as {@code LIMIT n, 0}: the distance between the bounds where both are non-negative or both
+     * negative, or where {@code lo} is negative and {@code hi} is zero. -1 where the count is not a constant: a
+     * non-negative {@code lo} with a negative {@code hi} ends the rows that many rows before the last row of the input,
+     * execution rejects a negative {@code lo} with a positive {@code hi}, and the distance from {@link Long#MIN_VALUE}
+     * to zero exceeds a long.
+     */
+    public static long rowCount(long lo, long hi) {
+        final long count = Math.abs(hi - lo);
+        return count > -1 && (Numbers.sameSign(lo, hi) || lo < 0 && hi == 0) ? count : -1;
+    }
+
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
@@ -551,26 +564,15 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             if (rightFunction != null) {
                 rightFunction.init(base, executionContext);
             }
-            long leftArg = leftFunction.getLong(null);
-            if (rightFunction == null) {
-                if (leftArg >= 0) {
-                    lo = 0;
-                    hi = leftArg;
-                } else {
-                    lo = leftArg;
-                    hi = 0;
-                }
-            } else {
-                lo = leftArg;
-                hi = rightFunction.getLong(null);
-                if (lo < 0 && hi > 0) {
-                    throw SqlException.$(argPos, "LIMIT <negative>, <positive> is not allowed");
-                }
-                if (lo > hi && Numbers.sameSign(lo, hi)) {
-                    final long l = hi;
-                    hi = lo;
-                    lo = l;
-                }
+            lo = leftFunction.getLong(null);
+            hi = rightFunction == null ? 0 : rightFunction.getLong(null);
+            if (lo < 0 && hi > 0) {
+                throw SqlException.$(argPos, "LIMIT <negative>, <positive> is not allowed");
+            }
+            final long count = rowCount(lo, hi);
+            if (count > -1) {
+                lo = Math.min(lo, hi);
+                hi = lo + count;
             }
 
             baseSize = -1;
