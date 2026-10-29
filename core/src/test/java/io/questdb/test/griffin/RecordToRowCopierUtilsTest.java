@@ -28,18 +28,28 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableColumnMetadata;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.LoopingRecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
+import io.questdb.std.Long256;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
@@ -50,10 +60,18 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
+import java.util.Arrays;
+import java.util.List;
 
 public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
 
+    // 500 INT columns estimate to 9,000 bytes of copy bytecode: more than one 6,000-byte chunk, so the chunked
+    // generator splits instead of falling back to the single-method one, and more than the 8,000-byte method
+    // limit, so the default auto-selection picks the chunked copier too.
+    private static final int CHUNKING_PAD_COUNT = 500;
     private static final int[] COPIER_TYPES = {
             RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD,
             RecordToRowCopierUtils.COPIER_TYPE_CHUNKED,
@@ -710,6 +728,99 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIsCopierConvertible() throws Exception {
+        // Every pair isCopierConvertible() admits must get a target-typed put from all three copiers, or an
+        // ImplicitCastException for a value the target cannot hold, and the three copiers must agree.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (
+                        c_boolean BOOLEAN, c_byte BYTE, c_short SHORT, c_char CHAR, c_int INT, c_long LONG, c_date DATE,
+                        c_ts TIMESTAMP, c_tsns TIMESTAMP_NS, c_float FLOAT, c_double DOUBLE, c_string STRING,
+                        c_symbol SYMBOL, c_varchar VARCHAR, c_binary BINARY, c_long256 LONG256, c_uuid UUID, c_ipv4 IPv4,
+                        c_geo3b GEOHASH(3b), c_geo1c GEOHASH(1c), c_geo3c GEOHASH(3c), c_geo6c GEOHASH(6c),
+                        c_geo12c GEOHASH(12c), c_dec8 DECIMAL(2,1), c_dec16 DECIMAL(4,1), c_dec32 DECIMAL(9,2),
+                        c_dec64 DECIMAL(18,2), c_dec128 DECIMAL(38,2), c_dec256 DECIMAL(60,2), c_darr DOUBLE[],
+                        c_darr2 DOUBLE[][], ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            // The first row holds a value in every column, the second row holds only NULLs.
+            execute("""
+                    INSERT INTO src
+                    SELECT true, 5::BYTE, 300::SHORT, '7', 70_000, 1_726_000_000_000_000L, '2024-09-10T12:01:02.123Z'::DATE,
+                    '2024-09-10T12:01:02.123456Z'::TIMESTAMP, '2024-09-10T12:01:02.123456789Z'::TIMESTAMP_NS, 1.5f,
+                    1725969662123456.0, '42', '42', '42', rnd_bin(4, 4, 0), '0x01'::LONG256,
+                    '11111111-1111-1111-1111-111111111111'::UUID, '1.2.3.4'::IPv4, ##101, #u, #u33, #u33d8b, #u33d8b121234,
+                    '1.5'::DECIMAL(2,1), '1.5'::DECIMAL(4,1), '1.5'::DECIMAL(9,2), '1.5'::DECIMAL(18,2),
+                    '1.5'::DECIMAL(38,2), '1.5'::DECIMAL(60,2), ARRAY[1.0, 2.0], ARRAY[[1.0], [2.0]],
+                    '2024-09-10T12:00:00.000000Z'::TIMESTAMP
+                    FROM long_sequence(1)
+                    """);
+            execute("INSERT INTO src (ts) VALUES ('2024-09-10T13:00:00.000000Z')");
+
+            final String[] sourceExpressions = {
+                    "c_boolean", "c_byte", "c_short", "c_char", "c_int", "c_long", "c_date", "c_ts", "c_tsns", "c_float",
+                    "c_double", "c_string", "c_symbol", "c_varchar", "c_binary", "c_long256", "c_uuid", "c_ipv4",
+                    "c_geo3b", "c_geo1c", "c_geo3c", "c_geo6c", "c_geo12c", "c_dec8", "c_dec16", "c_dec32", "c_dec64",
+                    "c_dec128", "c_dec256", "c_darr", "c_darr2", "NULL", "to_long128(1, 2)", "interval(c_ts, c_ts)"
+            };
+            final int[] targetTypes = {
+                    ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT, ColumnType.LONG,
+                    ColumnType.DATE, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO, ColumnType.FLOAT,
+                    ColumnType.DOUBLE, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR, ColumnType.BINARY,
+                    ColumnType.LONG256, ColumnType.UUID, ColumnType.IPv4, ColumnType.getGeoHashTypeWithBits(3),
+                    ColumnType.getGeoHashTypeWithBits(5), ColumnType.getGeoHashTypeWithBits(15),
+                    ColumnType.getGeoHashTypeWithBits(30), ColumnType.getGeoHashTypeWithBits(60),
+                    ColumnType.getDecimalType(2, 1), ColumnType.getDecimalType(4, 1), ColumnType.getDecimalType(9, 2),
+                    ColumnType.getDecimalType(18, 2), ColumnType.getDecimalType(38, 2), ColumnType.getDecimalType(60, 2),
+                    ColumnType.encodeArrayType(ColumnType.DOUBLE, 1), ColumnType.encodeArrayType(ColumnType.DOUBLE, 2)
+            };
+            // The chunked copier splits only a schema that exceeds one chunk, so pad it with INT columns.
+            final StringBuilder pads = new StringBuilder();
+            for (int i = 0; i < CHUNKING_PAD_COUNT; i++) {
+                pads.append(", 0 p").append(i);
+            }
+            for (String expression : sourceExpressions) {
+                try (RecordCursorFactory factory = select("SELECT " + expression + " x" + pads + " FROM src")) {
+                    final int fromType = factory.getMetadata().getColumnType(0);
+                    for (int toType : targetTypes) {
+                        final String pair = ColumnType.nameOf(fromType) + " -> " + ColumnType.nameOf(toType);
+                        // Outside CHAR targets, the copiers admit every pair ColumnType.isConvertibleFrom() admits.
+                        if (ColumnType.tagOf(toType) != ColumnType.CHAR) {
+                            Assert.assertTrue(
+                                    pair,
+                                    !ColumnType.isConvertibleFrom(fromType, toType) || RecordToRowCopierUtils.isCopierConvertible(fromType, toType)
+                            );
+                        }
+                        if (RecordToRowCopierUtils.isCopierConvertible(fromType, toType)) {
+                            final String singleMethod = describeCopy(factory, toType, RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD, 0, pair);
+                            final String chunked = describeCopy(factory, toType, RecordToRowCopierUtils.COPIER_TYPE_CHUNKED, CHUNKING_PAD_COUNT, pair);
+                            final String looping = describeCopy(factory, toType, RecordToRowCopierUtils.COPIER_TYPE_LOOPING, 0, pair);
+                            Assert.assertEquals(pair + " [chunked]", singleMethod, chunked);
+                            Assert.assertEquals(pair + " [looping]", singleMethod, looping);
+                        }
+                    }
+                }
+            }
+        });
+
+        Assert.assertFalse(RecordToRowCopierUtils.isCopierConvertible(ColumnType.BYTE, ColumnType.BOOLEAN));
+        for (int fromType : new int[]{
+                ColumnType.BYTE, ColumnType.SHORT, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP_MICRO,
+                ColumnType.TIMESTAMP_NANO, ColumnType.FLOAT, ColumnType.DOUBLE
+        }) {
+            Assert.assertFalse(ColumnType.nameOf(fromType), RecordToRowCopierUtils.isCopierConvertible(fromType, ColumnType.CHAR));
+        }
+        for (int fromType : new int[]{
+                ColumnType.CHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE, ColumnType.NULL
+        }) {
+            Assert.assertTrue(ColumnType.nameOf(fromType), RecordToRowCopierUtils.isCopierConvertible(fromType, ColumnType.CHAR));
+        }
+        for (int toType : new int[]{ColumnType.DATE, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            Assert.assertTrue(ColumnType.nameOf(toType), RecordToRowCopierUtils.isCopierConvertible(ColumnType.DOUBLE, toType));
+        }
+    }
+
+    @Test
     public void testTransferDecimalIntoNonDecimalTargetRejected() {
         // RowAsserter fails on any put, so a silent write into a non-decimal column is caught too.
         // Zero is what clears transferDecimal's precision guard, leaving the storage switch to reject.
@@ -874,6 +985,29 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolToTimestampChunked() throws Exception {
+        // us lands in the first chunk method of the copier and ns in the last one.
+        assertMemoryLeak(() -> {
+            setCopierType(RecordToRowCopierUtils.COPIER_TYPE_CHUNKED);
+            final String pads = chunkingPadColumns();
+            execute("CREATE TABLE src (us SYMBOL" + pads + ", ns SYMBOL)");
+            execute("CREATE TABLE dst (us TIMESTAMP" + pads + ", ns TIMESTAMP_NS)");
+            assertChunkedCopier("src", "dst");
+            execute("""
+                    INSERT INTO src (us, ns) VALUES
+                    ('2024-09-10T12:01:02.123456789Z', '2024-09-10T12:01:02.123456789Z'),
+                    (NULL, NULL)
+                    """);
+            execute("INSERT INTO dst SELECT * FROM src");
+            assertQuery("SELECT us, ns FROM dst").expectSize().noLeakCheck().returns("""
+                    us\tns
+                    2024-09-10T12:01:02.123456Z\t2024-09-10T12:01:02.123456789Z
+                    \t
+                    """);
+        });
+    }
+
+    @Test
     public void testSymbolToTimestampMalformed() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE src (s SYMBOL)");
@@ -899,8 +1033,176 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSymbolToTimestampMalformedChunked() throws Exception {
+        assertMemoryLeak(() -> {
+            setCopierType(RecordToRowCopierUtils.COPIER_TYPE_CHUNKED);
+            final String pads = chunkingPadColumns();
+            execute("CREATE TABLE src (at SYMBOL" + pads + ")");
+            execute("INSERT INTO src (at) VALUES ('not-a-timestamp')");
+            for (int type : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+                execute("CREATE TABLE dst (at " + ColumnType.nameOf(type) + pads + ")");
+                assertChunkedCopier("src", "dst");
+                try {
+                    execute("INSERT INTO dst SELECT * FROM src");
+                    Assert.fail("expected timestamp conversion failure");
+                } catch (ImplicitCastException e) {
+                    TestUtils.assertEquals(
+                            "inconvertible value: `not-a-timestamp` [SYMBOL -> " + ColumnType.nameOf(type) + ']',
+                            e.getFlyweightMessage()
+                    );
+                }
+                assertQuery("SELECT count(*) FROM dst").expectSize().noRandomAccess().noLeakCheck().returns("count\n0\n");
+                execute("DROP TABLE dst");
+            }
+        });
+    }
+
+    // Asserts that the copier is neither the single-method nor the looping fallback: the chunked generator names its
+    // chunk methods copy0, copy1, ..., and a split copier has at least two of them.
+    private static void assertMultiChunkCopier(String context, RecordToRowCopier copier) {
+        Assert.assertFalse(context, copier instanceof LoopingRecordToRowCopier);
+        final List<String> methodNames = Arrays.stream(copier.getClass().getDeclaredMethods()).map(Method::getName).toList();
+        Assert.assertTrue(context + ": " + methodNames, methodNames.contains("copy0") && methodNames.contains("copy1"));
+    }
+
+    private static String chunkingPadColumns() {
+        final StringBuilder pads = new StringBuilder();
+        for (int i = 0; i < CHUNKING_PAD_COUNT; i++) {
+            pads.append(", p").append(i).append(" INT");
+        }
+        return pads.toString();
+    }
+
+    private static String describePutArg(Object arg) {
+        if (arg instanceof Long256 long256) {
+            return "long256(" + long256.getLong0() + ',' + long256.getLong1() + ',' + long256.getLong2() + ',' + long256.getLong3() + ')';
+        }
+        if (arg instanceof ArrayView array) {
+            return "array(" + ColumnType.nameOf(array.getType()) + (array.isNull() ? ",null)" : ")");
+        }
+        if (arg instanceof BinarySequence binary) {
+            return "binary(" + binary.length() + ')';
+        }
+        return String.valueOf(arg);
+    }
+
+    private static boolean isTargetShapedPut(int toType, String putName) {
+        return switch (ColumnType.tagOf(toType)) {
+            case ColumnType.BOOLEAN -> putName.equals("putBool");
+            case ColumnType.BYTE -> putName.equals("putByte");
+            case ColumnType.SHORT -> putName.equals("putShort");
+            case ColumnType.CHAR -> putName.equals("putChar");
+            case ColumnType.INT -> putName.equals("putInt");
+            case ColumnType.LONG -> putName.equals("putLong");
+            case ColumnType.DATE -> putName.equals("putDate");
+            case ColumnType.TIMESTAMP -> putName.equals("putTimestamp");
+            case ColumnType.FLOAT -> putName.equals("putFloat");
+            case ColumnType.DOUBLE -> putName.equals("putDouble");
+            case ColumnType.STRING -> putName.startsWith("putStr");
+            case ColumnType.SYMBOL -> putName.equals("putSym");
+            case ColumnType.VARCHAR -> putName.equals("putVarchar");
+            case ColumnType.BINARY -> putName.equals("putBin");
+            case ColumnType.LONG256 -> putName.startsWith("putLong256");
+            case ColumnType.UUID -> putName.startsWith("putUuid") || putName.equals("putLong128");
+            case ColumnType.IPv4 -> putName.equals("putIPv4") || putName.equals("putInt");
+            case ColumnType.GEOBYTE -> putName.equals("putByte") || putName.startsWith("putGeo");
+            case ColumnType.GEOSHORT -> putName.equals("putShort") || putName.startsWith("putGeo");
+            case ColumnType.GEOINT -> putName.equals("putInt") || putName.startsWith("putGeo");
+            case ColumnType.GEOLONG -> putName.equals("putLong") || putName.startsWith("putGeo");
+            case ColumnType.DECIMAL8 -> putName.equals("putByte") || putName.startsWith("putDecimal");
+            case ColumnType.DECIMAL16 -> putName.equals("putShort") || putName.startsWith("putDecimal");
+            case ColumnType.DECIMAL32 -> putName.equals("putInt") || putName.startsWith("putDecimal");
+            case ColumnType.DECIMAL64 -> putName.equals("putLong") || putName.startsWith("putDecimal");
+            case ColumnType.DECIMAL128, ColumnType.DECIMAL256 -> putName.startsWith("putDecimal");
+            case ColumnType.ARRAY -> putName.equals("putArray");
+            default -> false;
+        };
+    }
+
     private static int randomCopierType(Rnd rnd) {
         return COPIER_TYPES[rnd.nextInt(COPIER_TYPES.length)];
+    }
+
+    // Generates the copier INSERT INTO dst SELECT * FROM src compiles to and asserts that it is a multi-chunk copier.
+    private void assertChunkedCopier(String srcTableName, String dstTableName) {
+        try (
+                TableReader src = getReader(srcTableName);
+                TableReader dst = getReader(dstTableName)
+        ) {
+            final EntityColumnFilter columnFilter = new EntityColumnFilter();
+            columnFilter.of(dst.getMetadata().getColumnCount());
+            final RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
+                    new BytecodeAssembler(),
+                    src.getMetadata(),
+                    dst.getMetadata(),
+                    columnFilter,
+                    configuration
+            );
+            assertMultiChunkCopier(srcTableName + " -> " + dstTableName, copier);
+        }
+    }
+
+    // Copies every row of the factory's cursor into a recording row and describes the puts into column x.
+    private String describeCopy(RecordCursorFactory factory, int toType, int copierType, int padCount, String pair) throws SqlException {
+        final String context = pair + " [copierType=" + copierType + ']';
+        final GenericRecordMetadata toMetadata = new GenericRecordMetadata();
+        final ListColumnFilter columnFilter = new ListColumnFilter();
+        for (int i = 0; i <= padCount; i++) {
+            final String name = i == 0 ? "x" : "p" + (i - 1);
+            final int type = i == 0 ? toType : ColumnType.INT;
+            toMetadata.add(new TableColumnMetadata(name, type, IndexType.NONE, 0, false, null, i, false));
+            columnFilter.add(i + 1);
+        }
+        setCopierType(copierType);
+        final RecordToRowCopier copier;
+        try {
+            copier = RecordToRowCopierUtils.generateCopier(new BytecodeAssembler(), factory.getMetadata(), toMetadata, columnFilter, configuration);
+        } catch (Throwable th) {
+            throw new AssertionError(context + ": copier generation failed", th);
+        }
+        Assert.assertEquals(context, copierType == RecordToRowCopierUtils.COPIER_TYPE_LOOPING, copier instanceof LoopingRecordToRowCopier);
+        if (copierType == RecordToRowCopierUtils.COPIER_TYPE_CHUNKED) {
+            assertMultiChunkCopier(context, copier);
+        }
+
+        final StringBuilder outcome = new StringBuilder();
+        final TableWriter.Row row = (TableWriter.Row) Proxy.newProxyInstance(
+                TableWriter.Row.class.getClassLoader(),
+                new Class<?>[]{TableWriter.Row.class},
+                (proxy, method, args) -> {
+                    // Column x has writer index 0; the INT pads use the other indexes.
+                    if (args != null && args.length > 0 && args[0] instanceof Integer columnIndex && columnIndex == 0) {
+                        Assert.assertTrue(context + ": unexpected " + method.getName(), isTargetShapedPut(toType, method.getName()));
+                        outcome.append(method.getName()).append('(');
+                        for (int i = 1; i < args.length; i++) {
+                            outcome.append(i > 1 ? "," : "").append(describePutArg(args[i]));
+                        }
+                        outcome.append(");");
+                    }
+                    return null;
+                }
+        );
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            final Record record = cursor.getRecord();
+            boolean isValueRow = true;
+            while (cursor.hasNext()) {
+                final int rowStart = outcome.length();
+                try {
+                    copier.copy(sqlExecutionContext, record, row);
+                } catch (ImplicitCastException e) {
+                    outcome.append("ImplicitCastException: ").append(e.getFlyweightMessage());
+                } catch (Throwable th) {
+                    throw new AssertionError(context + ": copy failed", th);
+                }
+                if (isValueRow) {
+                    Assert.assertTrue(context + ": copier wrote nothing for a non-NULL value", outcome.length() > rowStart);
+                    isValueRow = false;
+                }
+                outcome.append('\n');
+            }
+        }
+        return outcome.toString();
     }
 
     private RecordToRowCopier generateCopier(int fromType, int toType) {

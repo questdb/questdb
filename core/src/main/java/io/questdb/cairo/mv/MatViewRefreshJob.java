@@ -1264,14 +1264,18 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return true;
     }
 
-    private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) throws SqlException {
+    private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) {
         final RecordMetadata fromMetadata = factory.getMetadata();
         final RecordMetadata toMetadata = tableWriter.getMetadata();
         for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
             final int fromType = fromMetadata.getColumnType(i);
             final int toType = toMetadata.getColumnType(i);
-            if (!ColumnType.isConvertibleFrom(fromType, toType)) {
-                throw SqlException.inconvertibleTypes(0, fromType, fromMetadata.getColumnName(i), toType, toMetadata.getColumnName(i));
+            if (!RecordToRowCopierUtils.isCopierConvertible(fromType, toType)) {
+                // The error describes a view/query schema mismatch, not a SQL token, so it carries no position.
+                throw CairoException.nonCritical().put("inconvertible types: ").put(ColumnType.nameOf(fromType))
+                        .put(" -> ").put(ColumnType.nameOf(toType))
+                        .put(" [from=").put(fromMetadata.getColumnName(i))
+                        .put(", to=").put(toMetadata.getColumnName(i)).put(']');
             }
         }
         columnFilter.of(fromMetadata.getColumnCount());
