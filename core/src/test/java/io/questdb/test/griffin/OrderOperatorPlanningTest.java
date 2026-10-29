@@ -1150,6 +1150,97 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubQueryOrderUnderAggregateAtAnyDepth() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, k SYMBOL, a LONG, b LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'k1', 1, 6),
+                        ('2024-01-01T01:00:00.000000Z', 'k2', 2, 5),
+                        ('2024-01-01T02:00:00.000000Z', 'k1', 3, 4),
+                        ('2024-01-01T03:00:00.000000Z', 'k3', 4, 3),
+                        ('2024-01-01T04:00:00.000000Z', 'k2', 5, 2),
+                        ('2024-01-01T05:00:00.000000Z', 'k3', 6, 1)
+                    """);
+            drainWalQueue();
+            assertSubQueryOrderAtAnyDepth(
+                    "SELECT k, sum(a) s FROM (SELECT * FROM x ORDER BY b) ORDER BY k",
+                    true,
+                    """
+                            Encode sort light
+                              keys: [k]
+                                GroupBy vectorized: true workers: 1
+                                  keys: [k]
+                                  values: [sum(a)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                            """,
+                    """
+                            k\ts
+                            k1\t4
+                            k2\t7
+                            k3\t10
+                            """
+            );
+            assertSubQueryOrderAtAnyDepth(
+                    "SELECT count() c FROM (SELECT * FROM x ORDER BY b)",
+                    false,
+                    """
+                            Count
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            """,
+                    """
+                            c
+                            6
+                            """
+            );
+            assertSubQueryOrderAtAnyDepth(
+                    "SELECT string_agg(k::STRING, ',') s, array_agg(a::DOUBLE) arr FROM (SELECT * FROM x ORDER BY b)",
+                    false,
+                    """
+                            GroupBy vectorized: false
+                              values: [string_agg(k::string,,),array_agg(a::double)]
+                                Encode sort light
+                                  keys: [b]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
+                            """,
+                    """
+                            s\tarr
+                            k3,k2,k3,k1,k2,k1\t[6.0,5.0,4.0,3.0,2.0,1.0]
+                            """
+            );
+            assertSubQueryOrderAtAnyDepth(
+                    "SELECT ts, a, sum(a) OVER (ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) s FROM (SELECT * FROM x ORDER BY b)",
+                    false,
+                    """
+                            Window
+                              functions: [sum(a) over ( rows between 1 preceding and current row)]
+                                SelectedRecord
+                                    Encode sort light
+                                      keys: [b]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """,
+                    """
+                            ts\ta\ts
+                            2024-01-01T05:00:00.000000Z\t6\t6.0
+                            2024-01-01T04:00:00.000000Z\t5\t11.0
+                            2024-01-01T03:00:00.000000Z\t4\t9.0
+                            2024-01-01T02:00:00.000000Z\t3\t7.0
+                            2024-01-01T01:00:00.000000Z\t2\t5.0
+                            2024-01-01T00:00:00.000000Z\t1\t3.0
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testSwappableJoinDeclaresNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createSwappableJoinTables();
@@ -1855,6 +1946,21 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                             Row forward scan
                             Frame forward scan on: b
                 """;
+    }
+
+    private void assertSubQueryOrderAtAnyDepth(String select, boolean supportsRandomAccess, String plan, String rows) throws Exception {
+        execute("CREATE VIEW v AS (" + select + ")");
+        drainWalQueue();
+        for (String sql : new String[]{select, "SELECT * FROM (" + select + ")", "SELECT * FROM v"}) {
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .supportsRandomAccess(supportsRandomAccess)
+                    .expectSize()
+                    .withPlan(plan)
+                    .returns(rows);
+        }
+        execute("DROP VIEW v");
+        drainWalQueue();
     }
 
     private void assertTemporalJoin(JoinInput.Algorithm expected, String sql, String plan, String rows) throws Exception {

@@ -134,11 +134,12 @@ public final class BoundExpressionRewriter implements Mutable {
     }
 
     /**
-     * The filter combined with constant conjuncts: a constant false joins as a literal, a constant true drops out.
+     * The filter combined with constant conjuncts: a constant false replaces the filter as a literal, a constant true
+     * drops out.
      */
     public BoundExpression combineConstantFilter(BoundExpression filter, BoundExpression constantFilter, int position) throws SqlException {
         if (constantFilter instanceof ConstantExpression constant) {
-            return constant.getLongValue() == 0 ? combineConjunction(filter, constant.markLiteral(), position) : filter;
+            return constant.getLongValue() == 0 ? constant.markLiteral() : filter;
         }
         return combineConjunction(filter, constantFilter, position);
     }

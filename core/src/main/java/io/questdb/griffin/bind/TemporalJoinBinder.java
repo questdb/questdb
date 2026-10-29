@@ -66,6 +66,8 @@ final class TemporalJoinBinder {
     private final AggregateBinder aggregateBinder;
     private final SqlBinder binder;
     private final BindContext ctx;
+    // The slave column node of each key bindHorizonKeys binds into its step, by key index
+    private final ObjList<ExpressionNode> horizonKeySlaveNodes = new ObjList<>();
     private final JoinBinder joinBinder;
     private final OrderBinder orderBinder;
     private final WindowBinder windowBinder;
@@ -342,7 +344,8 @@ final class TemporalJoinBinder {
 
     /**
      * Binds the equality keys of the ON clause into the step and returns the conjunction of its conjuncts that read
-     * only the slave or no column at all, which filter the slave; rejects any other conjunct.
+     * only the slave or no column at all, which filter the slave, and of the equalities of slave columns the step
+     * filters on instead of keying them, see {@link LogicalPlans#filteredKeyIndex}; rejects any other conjunct.
      */
     private ExpressionNode bindHorizonKeys(ExpressionNode criteria, ExpressionNode slaveFilter, HorizonJoinSlave step, OutputSchema master,
                                            CharSequence masterAlias, OutputSchema slave, CharSequence slaveAlias) throws SqlException {
@@ -364,7 +367,15 @@ final class TemporalJoinBinder {
             final int masterIndex = FunctionBinder.findColumn(masterNode, master, masterAlias);
             final int slaveIndex = FunctionBinder.findColumn(slaveNode, slave, slaveAlias);
             if (masterIndex >= 0 && slaveIndex >= 0) {
-                step.addKey(master.getColumnId(masterIndex), slave.getColumnId(slaveIndex), slaveNode.position);
+                final int masterId = master.getColumnId(masterIndex);
+                final int slaveId = slave.getColumnId(slaveIndex);
+                final int keyIndex = LogicalPlans.filteredKeyIndex(step.getKeys(), masterId, slaveId, slave);
+                if (keyIndex > -1) {
+                    return ctx.combinePredicates(slaveFilter, ctx.binaryNode(ExpressionNode.OPERATION, "=", 0,
+                            horizonKeySlaveNodes.getQuick(keyIndex), slaveNode, criteria.position));
+                }
+                step.addKey(masterId, slaveId, slaveNode.position);
+                horizonKeySlaveNodes.add(slaveNode);
                 return slaveFilter;
             }
         }
@@ -792,6 +803,7 @@ final class TemporalJoinBinder {
             final OutputSchema slaveOutput = slave.getOutput();
             JoinBinder.validateTimeSeriesTimestamps(step.getPosition(), masterOutput.getColumnId(masterTimestampIndex), slave);
             output.addColumnsFrom(slaveOutput, slaveAlias);
+            horizonKeySlaveNodes.clear();
             final ExpressionNode slaveFilter = bindHorizonKeys(occurrence.getJoinCriteria(), null, step, masterOutput, masterAlias,
                     slaveOutput, slaveAlias);
             if (slaveFilter != null) {

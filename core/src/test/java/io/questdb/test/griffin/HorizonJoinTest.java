@@ -2044,6 +2044,65 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinMasterKeySharedBySymbolKeysFiltersSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (a SYMBOL, c SYMBOL, cv VARCHAR, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO s VALUES
+                        ('X', 'X', 'X', 1.0, '2024-01-01T00:00:01Z'),
+                        ('X', 'Y', 'Y', 2.0, '2024-01-01T00:00:02Z'),
+                        (NULL, NULL, NULL, 3.0, '2024-01-01T00:00:03Z'),
+                        ('Y', 'Y', 'Y', 4.0, '2024-01-01T00:00:04Z'),
+                        ('Y', NULL, NULL, 5.0, '2024-01-01T00:00:05Z'),
+                        (NULL, 'Y', 'Y', 6.0, '2024-01-01T00:00:06Z')
+                    """);
+            execute("CREATE TABLE m (mx SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('X', '2024-01-01T00:00:02Z'),
+                        (NULL, '2024-01-01T00:00:04Z'),
+                        ('Y', '2024-01-01T00:00:06Z'),
+                        ('Z', '2024-01-01T00:00:06Z')
+                    """);
+            final String rows = """
+                    ts\toffset\tv
+                    2024-01-01T00:00:02.000000Z\t0\t1.0
+                    2024-01-01T00:00:02.000000Z\t1000000\t1.0
+                    2024-01-01T00:00:04.000000Z\t0\t3.0
+                    2024-01-01T00:00:04.000000Z\t1000000\t3.0
+                    2024-01-01T00:00:06.000000Z\t0\t4.0
+                    2024-01-01T00:00:06.000000Z\t0\tnull
+                    2024-01-01T00:00:06.000000Z\t1000000\t4.0
+                    2024-01-01T00:00:06.000000Z\t1000000\tnull
+                    """;
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery("SELECT m.ts, h.offset, s.v FROM m HORIZON JOIN s ON (s.a = m.mx AND s.c = m.mx) LIST (0s, 1s) AS h ORDER BY 1, 2")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .withPlanContaining("slave filter: a=c")
+                        .returns(rows);
+                assertQuery("SELECT m.ts, h.offset, s.v FROM m HORIZON JOIN s ON (s.a = m.mx AND s.cv = m.mx) LIST (0s, 1s) AS h ORDER BY 1, 2")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .withPlanContaining("slave filter: a=cv")
+                        .returns(rows);
+                assertQuery("SELECT count(*), count(s.v), sum(s.v) FROM m HORIZON JOIN s ON (s.a = m.mx AND s.c = m.mx) LIST (0s, 1s) AS h")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("slave filter: a=c")
+                        .returns("""
+                                count\tcount1\tsum
+                                8\t6\t16.0
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinMasterKeysShareSlaveColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE p (s SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

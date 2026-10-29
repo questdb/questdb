@@ -247,10 +247,15 @@ final class JoinOrderSolver implements Mutable {
      * Keys the input on the master and the slave column. A LEFT input that a key already keys on the master column
      * filters its input on the equality of the two slave columns instead, see {@link OptimiserContext#addKeyFilter}:
      * binding merges such keys only for an input it joins without crossing an outer or temporal step, see
-     * {@code JoinGraphBuilder}, and a RIGHT or FULL input keeps the input rows the filter would drop.
+     * {@code JoinGraphBuilder}, and a RIGHT or FULL input keeps the input rows the filter would drop. An ASOF or LT
+     * input does so where {@link LogicalPlans#filteredKeyIndex} decides.
      */
     private void addKey(JoinInput input, int masterId, int slaveId, CharSequence masterName, CharSequence slaveName, int position) throws SqlException {
-        final int keyIndex = input.getJoinType() == JoinKind.LEFT_OUTER ? input.indexOfMasterKey(masterId) : -1;
+        final int keyIndex = switch (input.getJoinType()) {
+            case LEFT_OUTER -> input.indexOfMasterKey(masterId);
+            case ASOF, LT -> LogicalPlans.filteredKeyIndex(input.getKeys(), masterId, slaveId, input.getSourceOutput());
+            default -> -1;
+        };
         if (keyIndex > -1) {
             context.addKeyFilter(input, keyIndex, slaveId, input.getSourceOutput(), position);
         } else {

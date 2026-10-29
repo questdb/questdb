@@ -2284,6 +2284,126 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSharedSourceUnderInnerOnFalse() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, k INT)");
+            execute("INSERT INTO a VALUES (1, 1), (2, 2), (3, 3), (4, 4)");
+            execute("CREATE TABLE t (k INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10), (1, 11), (2, 20), (2, 21), (3, 30)");
+            execute("CREATE TABLE u (k INT, v INT)");
+            execute("INSERT INTO u VALUES (1, 100), (2, 200), (3, 300)");
+            execute("CREATE TABLE d (id INT, k INT)");
+            execute("INSERT INTO d VALUES (1, 1), (2, 2), (3, 5)");
+            final String unmatched = """
+                    id\tn\tmv\tdid
+                    null\tnull\tnull\t1
+                    null\tnull\tnull\t2
+                    null\tnull\tnull\t3
+                    """;
+            for (String falseConjunct : new String[]{"1 = 0", "false"}) {
+                for (String outerJoin : new String[]{"RIGHT", "FULL"}) {
+                    assertQuery("""
+                            SELECT a.id, o.n, l.mv, d.id did
+                            FROM a
+                            JOIN (SELECT k, count() n FROM t GROUP BY k) o ON a.k = o.k AND %s
+                            CROSS JOIN LATERAL (SELECT max(u.v) mv FROM u WHERE u.k <= o.k) l
+                            %s JOIN d ON d.k = a.k
+                            ORDER BY did, a.id
+                            """.formatted(falseConjunct, outerJoin))
+                            .noLeakCheck()
+                            .withPlan("""
+                                    Encode sort
+                                      keys: [did, id]
+                                        SelectedRecord
+                                            Hash %s Outer Join Light
+                                              condition: d.k=a.k
+                                                Empty table
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: d
+                                    """.formatted(outerJoin.equals("RIGHT") ? "Right" : "Full"))
+                            .returns(unmatched);
+                }
+            }
+            assertQuery("""
+                    SELECT a.id, o.n, u.v mv, d.id did
+                    FROM a
+                    JOIN (SELECT k, count() n FROM t GROUP BY k) o ON a.k = o.k AND 1 = 0
+                    LEFT JOIN u ON u.k = o.k
+                    RIGHT JOIN d ON d.k = a.k
+                    ORDER BY did, a.id
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [did, id]
+                                SelectedRecord
+                                    Hash Right Outer Join Light
+                                      condition: d.k=a.k
+                                        Empty table
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: d
+                            """)
+                    .returns(unmatched);
+            assertQuery("""
+                    SELECT a.id, o.n, l.mv, d.id did
+                    FROM a
+                    LEFT JOIN (SELECT k, count() n FROM t GROUP BY k) o ON a.k = o.k AND 1 = 0
+                    CROSS JOIN LATERAL (SELECT max(u.v) mv FROM u WHERE u.k <= o.k) l
+                    RIGHT JOIN d ON d.k = a.k
+                    ORDER BY did, a.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tn\tmv\tdid
+                            1\tnull\tnull\t1
+                            2\tnull\tnull\t2
+                            null\tnull\tnull\t3
+                            """);
+            assertQuery("""
+                    SELECT a.id, o.n, l.mv, d.id did
+                    FROM a
+                    JOIN (SELECT k, count() n FROM t GROUP BY k) o ON a.k = o.k
+                    RIGHT JOIN d ON d.k = a.k AND 1 = 0
+                    CROSS JOIN LATERAL (SELECT max(u.v) mv FROM u WHERE u.k <= o.k) l
+                    ORDER BY did
+                    """)
+                    .noLeakCheck()
+                    .returns(unmatched);
+            final String gated = """
+                    SELECT a.id, o.n, l.mv, d.id did
+                    FROM a
+                    JOIN (SELECT k, count() n FROM t GROUP BY k) o ON a.k = o.k AND $1
+                    CROSS JOIN LATERAL (SELECT max(u.v) mv FROM u WHERE u.k <= o.k) l
+                    RIGHT JOIN d ON d.k = a.k
+                    ORDER BY did, a.id
+                    """;
+            bindVariableService.clear();
+            bindVariableService.setBoolean(0, false);
+            assertQuery(gated)
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: $0::boolean")
+                    .returns(unmatched);
+            try (RecordCursorFactory factory = select(gated)) {
+                for (boolean flag : new boolean[]{true, false, true}) {
+                    bindVariableService.setBoolean(0, flag);
+                    assertFactory(factory)
+                            .withContext(sqlExecutionContext)
+                            .returns(flag ? """
+                                    id\tn\tmv\tdid
+                                    1\t2\t100\t1
+                                    2\t2\t200\t2
+                                    null\tnull\tnull\t3
+                                    """ : unmatched);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSharedStringAggVarchar() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {

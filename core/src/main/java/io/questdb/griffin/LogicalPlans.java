@@ -40,6 +40,7 @@ import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKey;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
@@ -307,6 +308,31 @@ public final class LogicalPlans {
         return call.getArgumentCount() == 1 && call.argumentAt(0) instanceof ColumnExpression column && column.isDirectReference()
                 && (isTimestampEndpointBackward(call) || Chars.equalsIgnoreCase(call.getName(), "min") || Chars.equalsIgnoreCase(call.getName(), "first"))
                 ? column : null;
+    }
+
+    /**
+     * The index of the first of {@code keys}, the earlier keys of an ASOF, LT or HORIZON JOIN, that keys the master
+     * column on another slave column when the join filters its slave on the equality of that slave column and the
+     * slave column {@code slaveColumnId} instead of keying the master column on it a second time, or -1 when the join
+     * keys it. The join filters when no earlier key keys the slave column, as the join then checks the master instead,
+     * see {@link JoinKey#getLookupKeyIndex}, and join keys on the two slave columns match exactly the values {@code =}
+     * between them pairs, see {@link #isKeyMatchType}: a slave row equals the master column in both keys only when its
+     * two columns hold the same value, so the filter drops no slave row the join can match. {@code slave} is the
+     * output the slave columns come from.
+     */
+    public static int filteredKeyIndex(ObjList<JoinKey> keys, int masterColumnId, int slaveColumnId, OutputSchema slave) {
+        int keyIndex = -1;
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final JoinKey key = keys.getQuick(i);
+            if (key.getSlaveColumnId() == slaveColumnId) {
+                return -1;
+            }
+            if (keyIndex == -1 && key.getMasterColumnId() == masterColumnId) {
+                keyIndex = i;
+            }
+        }
+        return keyIndex > -1 && isKeyMatchType(slave.getColumnType(slave.getColumnIndexById(keys.getQuick(keyIndex).getSlaveColumnId())),
+                slave.getColumnType(slave.getColumnIndexById(slaveColumnId))) ? keyIndex : -1;
     }
 
     /**

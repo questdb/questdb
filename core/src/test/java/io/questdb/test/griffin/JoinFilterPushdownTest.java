@@ -373,6 +373,65 @@ public class JoinFilterPushdownTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTransitiveConstantReachesJoinedTableThroughComputedSetOperationColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tc_a (k INT, v INT)");
+            execute("CREATE TABLE tc_b (k INT, v INT)");
+            execute("CREATE TABLE tc_c (k INT, x INT)");
+            execute("CREATE TABLE tc_d (x INT)");
+            execute("INSERT INTO tc_a VALUES (5, 1), (6, 2)");
+            execute("INSERT INTO tc_b VALUES (5, 3), (7, 4)");
+            execute("INSERT INTO tc_c VALUES (5, 1), (5, 2), (6, 1), (NULL, 1)");
+            execute("INSERT INTO tc_d VALUES (1), (2), (3)");
+            assertQuery("""
+                    SELECT u.v, c.x, d.x dx
+                    FROM (SELECT k, v FROM tc_a UNION ALL SELECT k + 0 AS k, v FROM tc_b) u
+                    JOIN tc_c c ON c.k = u.k
+                    RIGHT JOIN tc_d d ON d.x = c.x
+                    WHERE u.k = 5
+                    ORDER BY v, x
+                    """)
+                    .withPlan("""
+                            Encode sort
+                              keys: [v, x]
+                                SelectedRecord
+                                    Filter filter: u.k=5
+                                        Hash Right Outer Join Light
+                                          condition: d.x=c.x
+                                            Hash Join Light
+                                              condition: c.k=u.k
+                                                Filter filter: k=5
+                                                    Union All
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: tc_a
+                                                        VirtualRecord
+                                                          functions: [k+0,v]
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: tc_b
+                                                Hash
+                                                    Async JIT Filter workers: 1
+                                                      filter: k=5
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: tc_c
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tc_d
+                            """)
+                    .returns("""
+                            v\tx\tdx
+                            1\t1\t1
+                            1\t2\t2
+                            3\t1\t1
+                            3\t2\t2
+                            """);
+        });
+    }
+
     private static void assertExpressionColumns(BoundExpression expression, OutputSchema input) {
         if (expression instanceof ColumnExpression column) {
             Assert.assertTrue(input.getColumnIndexById(column.getColumnId()) >= 0);

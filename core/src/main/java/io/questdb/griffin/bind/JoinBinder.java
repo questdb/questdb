@@ -663,9 +663,9 @@ final class JoinBinder implements Mutable {
      * Binds the constant WHERE terms and the constant ON terms of the inner steps as one conjunction, so they type and
      * fail as a single predicate, and records them as the graph's constant conjuncts for join ordering to place. Without
      * an outer or temporal step, every constant conjunct filters the last step, so the conjunction is the one conjunct.
-     * With one, the constant ON terms of each inner step are a conjunct that join ordering places at that step, so they
-     * and the constant WHERE terms bind again, each on its own, see {@link #bindJoinConstantConjunct}: operator trees
-     * over literals bind without side effects.
+     * With one, the constant ON terms of each inner step are a conjunct that join ordering places at that step, or, when
+     * false, at the last step it empties, so they and the constant WHERE terms bind again, each on its own, see
+     * {@link #bindJoinConstantConjunct}: operator trees over literals bind without side effects.
      */
     private void bindJoinConstants(JoinPlan join, JoinGraph graph, QueryModel source, ExpressionNode whereConstants,
                                    boolean hasBarriers, SqlExecutionContext executionContext) throws SqlException {

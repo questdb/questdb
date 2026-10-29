@@ -188,7 +188,7 @@ public class OuterJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConstantInnerOnFiltersItsStepLikeRuntimeOnWithLeftJoin() throws Exception {
+    public void testConstantInnerOnWithLeftJoin() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
             bindVariableService.setInt(0, 1);
@@ -197,10 +197,14 @@ public class OuterJoinTest extends AbstractCairoTest {
             for (boolean isFullFat : new boolean[]{false, true}) {
                 final String light = isFullFat ? "" : " Light";
                 assertRows(query.formatted("1", 0), isFullFat, """
-                        Hash Left Outer Join%s
-                                  condition: x.k=r.k
-                                    Empty table
-                        """.formatted(light), "lid\txid\n");
+                        SelectedRecord
+                                Empty table
+                        """, "lid\txid\n");
+                assertRows(query.formatted("1", 0).replace(" ORDER BY", " WHERE l.id + x.id > (SELECT max(id) FROM lp_outer_r) ORDER BY"),
+                        isFullFat, """
+                                SelectedRecord
+                                        Empty table
+                                """, "lid\txid\n");
                 assertRows(query.formatted("$1", 0), isFullFat, """
                         Hash Left Outer Join%s
                                   condition: x.k=r.k
@@ -253,8 +257,7 @@ public class OuterJoinTest extends AbstractCairoTest {
                     assertRows(select + "1 = 2 JOIN c c2 ON true" + on + " ORDER BY aid, bid", isFullFat, """
                             %s
                                       condition: b.k=a.k
-                                        Cross Join
-                                            Empty table
+                                        Empty table
                             """.formatted(outerJoin), rightRows);
                     assertRows(select + "NULL AND true" + on + " ORDER BY aid, bid", isFullFat, """
                             %s
@@ -1514,6 +1517,38 @@ public class OuterJoinTest extends AbstractCairoTest {
                     fullNoMatch, fullLeftResidual, crossResidual);
             assertResidualOuterJoin("lp_dup_l l RIGHT JOIN lp_dup_r r ON l.k + 0 = r.k", false, "Nested Loop Right Join",
                     rightNoMatch, rightLeftResidual, crossResidual);
+        });
+    }
+
+    @Test
+    public void testRightAndFullJoinKeyBothSlaveColumnsOfOneMasterColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE dk_a (id INT, k DOUBLE)");
+            execute("CREATE TABLE dk_b (id INT, x DOUBLE, y DOUBLE)");
+            execute("INSERT INTO dk_a VALUES (1, 0.0), (2, 1.0), (3, 2.0), (4, NULL)");
+            execute("INSERT INTO dk_b VALUES (10, 0.0, 0.0), (11, 1.0, 2.0), (12, 2.0, 2.0), (13, NULL, NULL), (14, 1.0, NULL)");
+            final String query = "SELECT a.id aid, b.id bid FROM dk_a a %s JOIN dk_b b ON a.k = b.x AND a.k = b.y ORDER BY aid, bid";
+            assertQuery(query.formatted("RIGHT"))
+                    .withPlanContaining("Hash Right Outer Join Light", "condition: b.x=a.k and b.y=a.k")
+                    .returns("""
+                            aid\tbid
+                            null\t11
+                            null\t14
+                            1\t10
+                            3\t12
+                            4\t13
+                            """);
+            assertQuery(query.formatted("FULL"))
+                    .withPlanContaining("Hash Full Outer Join Light", "condition: b.x=a.k and b.y=a.k")
+                    .returns("""
+                            aid\tbid
+                            null\t11
+                            null\t14
+                            1\t10
+                            2\tnull
+                            3\t12
+                            4\t13
+                            """);
         });
     }
 

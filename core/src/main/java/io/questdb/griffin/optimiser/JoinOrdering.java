@@ -59,7 +59,8 @@ import io.questdb.std.ObjectPool;
  * the join has an outer or temporal step, an ON conjunct filters its own step when it reads no input and otherwise no
  * earlier than its own step unless it reads one input and an ASOF, LT or SPLICE step anchors it, and a WHERE conjunct
  * filters no earlier than the last RIGHT or FULL step after it. The graph's constant conjuncts read no input and follow
- * the same rule; a true one drops out and a false one joins as a literal. A conjunct of the first step filters its
+ * the same rule, except that a false ON conjunct filters the last step before the next RIGHT, FULL or SPLICE step; a
+ * true one drops out and a false one replaces the step's filter as a literal. A conjunct of the first step filters its
  * input.
  */
 final class JoinOrdering implements OptimiserPass {
@@ -117,6 +118,22 @@ final class JoinOrdering implements OptimiserPass {
     @Override
     public String getName() {
         return "join order";
+    }
+
+    /**
+     * The ordered step that a constant conjunct filters, see {@link #inputFreeTarget}. A false one stated in the ON
+     * clause of an inner step empties the rows of every step up to the next RIGHT, FULL or SPLICE step, and filters the
+     * last of them.
+     */
+    private static int constantFilterTarget(ObjList<JoinInput> ordered, boolean hasBarriers, int originPosition, int last,
+                                            BoundExpression constantFilter) {
+        int target = inputFreeTarget(hasBarriers, originPosition, last);
+        if (LogicalPlans.constantTruth(constantFilter) == 0) {
+            while (target < last && !ordered.getQuick(target + 1).getJoinType().isMasterNulling()) {
+                target++;
+            }
+        }
+        return target;
     }
 
     /**
@@ -328,7 +345,7 @@ final class JoinOrdering implements OptimiserPass {
         final ObjList<BoundExpression> constantFilters = graph.getConstantFilters();
         for (int i = 0, n = constantFilters.size(); i < n; i++) {
             final BoundExpression constantFilter = constantFilters.getQuick(i);
-            final int target = inputFreeTarget(hasBarriers, orderedPosition(join, graph.getConstantFilterOrigin(i)), last);
+            final int target = constantFilterTarget(ordered, hasBarriers, orderedPosition(join, graph.getConstantFilterOrigin(i)), last, constantFilter);
             placed.setQuick(target, context.getRewriter().combineConstantFilter(placed.getQuick(target), constantFilter, constantFilter.getPosition()));
         }
         for (int i = 0; i <= last; i++) {

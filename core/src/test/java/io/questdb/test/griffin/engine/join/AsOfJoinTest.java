@@ -1536,6 +1536,87 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinMasterKeyOnTwoSlaveColumnsFiltersSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (a SYMBOL, c SYMBOL, cv VARCHAR, d1 DOUBLE, d2 DOUBLE, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO s VALUES
+                        ('X', 'X', 'X', 1.0, 1.0, 1.0, '2024-01-01T00:00:01Z'),
+                        ('X', 'Y', 'Y', 1.0, 2.0, 2.0, '2024-01-01T00:00:02Z'),
+                        (NULL, NULL, NULL, NULL, NULL, 3.0, '2024-01-01T00:00:03Z'),
+                        ('Y', 'Y', 'Y', 0.0, -0.0, 4.0, '2024-01-01T00:00:04Z'),
+                        ('Y', NULL, NULL, 2.0, NULL, 5.0, '2024-01-01T00:00:05Z'),
+                        (NULL, 'Y', 'Y', NULL, 2.0, 6.0, '2024-01-01T00:00:06Z')
+                    """);
+            execute("CREATE TABLE m (mx SYMBOL, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('X', 1.0, '2024-01-01T00:00:02Z'),
+                        (NULL, NULL, '2024-01-01T00:00:04Z'),
+                        ('Y', 0.0, '2024-01-01T00:00:06Z'),
+                        ('Z', 3.0, '2024-01-01T00:00:06Z')
+                    """);
+            final String expected = """
+                    ts\tsts\tv
+                    2024-01-01T00:00:02.000000Z\t2024-01-01T00:00:01.000000Z\t1.0
+                    2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\t3.0
+                    2024-01-01T00:00:06.000000Z\t2024-01-01T00:00:04.000000Z\t4.0
+                    2024-01-01T00:00:06.000000Z\t\tnull
+                    """;
+            final String asOf = "SELECT m.ts, s.ts sts, s.v FROM m ASOF JOIN s ON s.a = m.mx AND s.c = m.mx";
+            final String lt = "SELECT m.ts, s.ts sts, s.v FROM m LT JOIN s ON s.a = m.mx AND s.c = m.mx";
+            assertQuery(asOf)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Filtered AsOf Join Fast", "filter: c=a", "symbolKeyJoin: true")
+                    .returns(expected);
+            assertQuery(lt)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Lt Join Light", "condition: s.a=m.mx", "symbolKeyJoin: true", "filter: c=a")
+                    .returns(expected);
+            assertQuery(asOf)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery(lt)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT m.ts, s.ts sts, s.v FROM m ASOF JOIN s ON s.a = m.mx AND s.cv = m.mx")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Filtered AsOf Join Fast", "filter: a=cv", "symbolKeyJoin: true")
+                    .returns(expected);
+            assertQuery("SELECT m.ts, s.ts sts, s.v FROM m ASOF JOIN s ON s.d1 = m.d AND s.d2 = m.d")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("AsOf Join Fast", "condition: s.d1=m.d and s.d2=m.d")
+                    .returns("""
+                            ts\tsts\tv
+                            2024-01-01T00:00:02.000000Z\t2024-01-01T00:00:01.000000Z\t1.0
+                            2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\t3.0
+                            2024-01-01T00:00:06.000000Z\t\tnull
+                            2024-01-01T00:00:06.000000Z\t\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testAsOfJoinNoAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
             // ASKS
@@ -2564,7 +2645,8 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     """);
 
             printSql("EXPLAIN SELECT m.ts, s.ts sts, s.a, s.c FROM m ASOF JOIN s ON s.c = m.mx AND s.a = m.mx");
-            TestUtils.assertNotContains(sink, "symbolKeyJoin");
+            TestUtils.assertContains(sink, "filter: a=c");
+            TestUtils.assertContains(sink, "symbolKeyJoin: true");
 
             final String asOfExpected = """
                     ts\tsts\ta\tc

@@ -8535,6 +8535,57 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFromFillLinearLeadingGap() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2021-01-01T03:10:00.000000Z', 4.0), ('2021-01-01T05:10:00.000000Z', 8.0)");
+            for (String source : new String[]{"t", "(SELECT ts, v FROM t WHERE v > 0)"}) {
+                final String select = "SELECT ts, count() c, sum(v) s FROM " + source + " SAMPLE BY 1h FROM '2021-01-01'";
+                assertSampleByCursorFrom(
+                        select + " FILL(NULL, LINEAR)",
+                        "fill: value\n",
+                        """
+                                ts\tc\ts
+                                2021-01-01T00:00:00.000000Z\tnull\tnull
+                                2021-01-01T01:00:00.000000Z\tnull\tnull
+                                2021-01-01T02:00:00.000000Z\tnull\tnull
+                                2021-01-01T03:00:00.000000Z\t1\t4.0
+                                2021-01-01T04:00:00.000000Z\tnull\t6.0
+                                2021-01-01T05:00:00.000000Z\t1\t8.0
+                                """
+                );
+                assertSampleByCursorFrom(
+                        select + " FILL(LINEAR, NULL)",
+                        "fill: value\n",
+                        """
+                                ts\tc\ts
+                                2021-01-01T00:00:00.000000Z\tnull\tnull
+                                2021-01-01T01:00:00.000000Z\tnull\tnull
+                                2021-01-01T02:00:00.000000Z\tnull\tnull
+                                2021-01-01T03:00:00.000000Z\t1\t4.0
+                                2021-01-01T04:00:00.000000Z\t1\tnull
+                                2021-01-01T05:00:00.000000Z\t1\t8.0
+                                """
+                );
+                assertSampleByCursorFrom(
+                        select + " TO '2021-01-01T07:00' FILL(5, LINEAR)",
+                        "fill: value\n",
+                        """
+                                ts\tc\ts
+                                2021-01-01T00:00:00.000000Z\t5\tnull
+                                2021-01-01T01:00:00.000000Z\t5\tnull
+                                2021-01-01T02:00:00.000000Z\t5\tnull
+                                2021-01-01T03:00:00.000000Z\t1\t4.0
+                                2021-01-01T04:00:00.000000Z\t5\t6.0
+                                2021-01-01T05:00:00.000000Z\t1\t8.0
+                                2021-01-01T06:00:00.000000Z\t5\t8.0
+                                """
+                );
+            }
+        });
+    }
+
+    @Test
     public void testSampleByFromRuntimeConstantWithTimezone() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE k (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -22892,7 +22943,8 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleFillPrevNotKeyedFromBeforeFirstRowLinear() throws Exception {
         // A fill list with LINEAR runs on the FILL(value) cursor. Before the first row, its PREV columns show NULL,
-        // as the PREV columns of the other fill cursors do; the LINEAR column has no bucket to interpolate from.
+        // as the PREV columns of the other fill cursors do; the LINEAR column has no bucket to interpolate from and
+        // shows NULL too.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE, l LONG) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -22911,8 +22963,8 @@ public class SampleByTest extends AbstractCairoTest {
                     .withPlanContaining("Sample By\n", "fill: value\n")
                     .returns("""
                             ts\tfv\tll\tmv\tc\tsl
-                            2021-01-01T00:00:00.000000Z\tnull\tnull\t0.0\tnull\t0
-                            2021-01-01T01:00:00.000000Z\tnull\tnull\t0.0\tnull\t0
+                            2021-01-01T00:00:00.000000Z\tnull\tnull\tnull\tnull\t0
+                            2021-01-01T01:00:00.000000Z\tnull\tnull\tnull\tnull\t0
                             2021-01-01T02:00:00.000000Z\t1.0\t10\t1.0\t1\t10
                             2021-01-01T03:00:00.000000Z\t1.0\t10\t2.0\tnull\t0
                             2021-01-01T04:00:00.000000Z\t3.0\t30\t3.0\t1\t30
