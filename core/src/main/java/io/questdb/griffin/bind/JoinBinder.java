@@ -178,6 +178,19 @@ final class JoinBinder implements Mutable {
         return SqlException.$(reference.position, "join condition references a table joined later [column=").put(reference.token).put(']');
     }
 
+    /**
+     * Whether a key of {@code keys} after the one at {@code index} shares a column with it and its columns cannot key
+     * the join, see {@link JoinGraphBuilder#isKeyable}.
+     */
+    private static boolean hasLaterUnkeyableKey(JoinPlan join, ObjList<JoinEquality> keys, int index) {
+        for (int i = index + 1, n = keys.size(); i < n; i++) {
+            if (sharesColumn(keys.getQuick(index), keys.getQuick(i)) && !JoinGraphBuilder.isKeyable(join, keys.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // A temporal join with an ON residual stays after an earlier RIGHT/FULL join, which drops the master timestamp.
     private static boolean hasPrecedingMasterNullingJoin(JoinPlan join, JoinInput slave) {
         if (join.hasExplicitTimestamp()) {
@@ -281,6 +294,21 @@ final class JoinBinder implements Mutable {
         return index < 0 ? -1 : LogicalPlans.joinColumnSource(join, join.getOutput().getColumnId(index));
     }
 
+    /**
+     * The first of {@code keys} other than {@code key} that reads the column {@code columnId} and whose columns can key
+     * the join, see {@link JoinGraphBuilder#isKeyable}, or null when none does.
+     */
+    private static JoinEquality keyableKey(JoinPlan join, ObjList<JoinEquality> keys, JoinEquality key, int columnId) {
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final JoinEquality other = keys.getQuick(i);
+            if (other != key && (other.getLeftColumnId() == columnId || other.getRightColumnId() == columnId)
+                    && JoinGraphBuilder.isKeyable(join, other)) {
+                return other;
+            }
+        }
+        return null;
+    }
+
     private static int mergeJoinSources(int left, int right) {
         return left == -1 ? right : right == -1 || left == right ? left : -2;
     }
@@ -298,6 +326,11 @@ final class JoinBinder implements Mutable {
             hasMasterNullingJoin |= type == QueryModel.JOIN_RIGHT_OUTER || type == QueryModel.JOIN_FULL_OUTER || type == QueryModel.JOIN_SPLICE;
         }
         return hasMasterNullingJoin ? end : start;
+    }
+
+    private static boolean sharesColumn(JoinEquality a, JoinEquality b) {
+        return a.getLeftColumnId() == b.getLeftColumnId() || a.getLeftColumnId() == b.getRightColumnId()
+                || a.getRightColumnId() == b.getLeftColumnId() || a.getRightColumnId() == b.getRightColumnId();
     }
 
     private static int statedOrigin(IntList owners) {
@@ -334,32 +367,20 @@ final class JoinBinder implements Mutable {
         return TimestampSamplerFactory.parsePositiveInterval(token, k, position, "tolerance", maxValue, unit) * multiplier;
     }
 
-    private static void validateJoinKey(JoinPlan join, JoinInput slave, int masterId, int slaveId, int position) throws SqlException {
-        final OutputSchema output = join.getOutput();
-        final OutputSchema slaveOutput = slave.getSourceOutput();
-        if (!LogicalPlans.isJoinKeyTypeCompatible(output.getColumnType(output.getColumnIndexById(masterId)),
-                slaveOutput.getColumnType(slaveOutput.getColumnIndexById(slaveId)))) {
-            throw SqlException.$(position, "join column type mismatch");
-        }
-    }
-
     /**
      * Validates the types of the keys an input joins by, unless equalities a later INNER input implies key it, see
-     * {@link JoinDependency#hasImpliedKeys}, and the equalities its ON clause states filter it instead.
+     * {@link JoinDependency#hasImpliedKeys}, and the equalities its ON clause states filter it instead. Of the keys
+     * whose columns cannot key the input and that share a column, the error names the last.
      */
     private static void validateJoinKeys(JoinPlan join, JoinDependency dependency) throws SqlException {
         if (dependency == null || dependency.hasImpliedKeys()) {
             return;
         }
-        final int source = dependency.getSlave();
-        final JoinInput slave = join.getInputs().getQuick(source);
         final ObjList<JoinEquality> keys = dependency.getKeys();
         for (int i = 0, n = keys.size(); i < n; i++) {
-            final JoinEquality key = keys.getQuick(i);
-            final boolean isLeftSlave = key.getLeftSource() == source;
-            validateJoinKey(join, slave, isLeftSlave ? key.getRightColumnId() : key.getLeftColumnId(),
-                    isLeftSlave ? key.getLeftColumnId() : key.getRightColumnId(),
-                    isLeftSlave ? key.getLeftPosition() : key.getRightPosition());
+            if (!JoinGraphBuilder.isKeyable(join, keys.getQuick(i)) && !hasLaterUnkeyableKey(join, keys, i)) {
+                throw SqlException.$(keys.getQuick(i).getPosition(dependency.getSlave()), "join column type mismatch");
+            }
         }
     }
 
@@ -543,6 +564,7 @@ final class JoinBinder implements Mutable {
             final ExpressionNode whereConstants = collectJoinGraph(join, graph, source, where, dependencyBase, modelBase, hasBarriers);
             scope.joinDerivedEqualities.addAll(joinGraphBuilder.getSourceFilters());
             joinGraphBuilder.clear();
+            demoteUnkeyableKeys(join, graph, source, executionContext);
             if (hasTemporalStep) {
                 validateProvidedTimestamp(inputs.getQuick(0).getInput());
             }
@@ -576,10 +598,8 @@ final class JoinBinder implements Mutable {
             final ObjList<JoinEquality> derivedEqualities = scope.joinDerivedEqualities;
             for (int i = 0, n = derivedEqualities.size(); i < n; i++) {
                 final JoinEquality equality = derivedEqualities.getQuick(i);
-                final ExpressionNode comparison = ctx.binaryNode(ExpressionNode.OPERATION, "=", 0,
-                        ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, equality.getLeftName(), 0, equality.getLeftPosition()),
-                        ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, equality.getRightName(), 0, equality.getRightPosition()),
-                        equality.getLeftPosition());
+                final ExpressionNode comparison = comparison(equality.getLeftName(), equality.getLeftPosition(),
+                        equality.getRightName(), equality.getRightPosition());
                 final IntList owners = equality.getOwners();
                 graph.addResidual(bindJoinConjunct(comparison, comparison, join, source, lastInput, statedOrigin(owners), executionContext), owners);
             }
@@ -1152,6 +1172,13 @@ final class JoinBinder implements Mutable {
         return 0;
     }
 
+    private ExpressionNode comparison(CharSequence leftName, int leftPosition, CharSequence rightName, int rightPosition) {
+        return ctx.binaryNode(ExpressionNode.OPERATION, "=", 0,
+                ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, leftName, 0, leftPosition),
+                ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, rightName, 0, rightPosition),
+                leftPosition);
+    }
+
     private void constrainNullingJoinConsumers(JoinPlan join, int boundary) {
         boolean hasConsumer = false;
         for (int i = boundary + 1, n = join.getInputs().size(); i < n; i++) {
@@ -1189,6 +1216,75 @@ final class JoinBinder implements Mutable {
                     + countJoinFilterConjuncts(conjunction.rhs, filterInput, join, lastInput);
         }
         return joinFilterInput(conjunction, join, lastInput) == filterInput ? 1 : 0;
+    }
+
+    /**
+     * Turns each key whose columns cannot key its input, see {@link JoinGraphBuilder#isKeyable}, and that shares a
+     * column with a key whose columns can, into a predicate the input evaluates instead, and keys the input on the
+     * other key. An INNER or CROSS input filters on the equality of the two columns the keys do not share, the earlier
+     * key's first; a LEFT, ASOF or LT input whose keys share the master column filters its own rows on the equality
+     * of the two slave columns, see {@link JoinInput#getKeyFilter}; any other LEFT, RIGHT or FULL input evaluates the
+     * key as a conjunct of its ON residual. Other such keys stay, and {@link #validateJoinKeys} rejects them.
+     */
+    private void demoteUnkeyableKeys(JoinPlan join, JoinGraph graph, QueryModel source, SqlExecutionContext executionContext) throws SqlException {
+        final BindScope scope = ctx.scope();
+        final ObjList<JoinInput> inputs = join.getInputs();
+        for (int s = 1, n = inputs.size(); s < n; s++) {
+            final JoinDependency dependency = graph.getDependencies().getQuick(s);
+            if (dependency == null || dependency.hasImpliedKeys()) {
+                continue;
+            }
+            final JoinInput step = inputs.getQuick(s);
+            final JoinKind type = step.getJoinType();
+            final ObjList<JoinEquality> keys = dependency.getKeys();
+            ExpressionNode keyFilter = null;
+            for (int i = 0; i < keys.size(); ) {
+                final JoinEquality key = keys.getQuick(i);
+                if (JoinGraphBuilder.isKeyable(join, key)) {
+                    i++;
+                    continue;
+                }
+                final int master = key.getOtherSource(s);
+                final JoinEquality masterKey = keyableKey(join, keys, key, key.getColumnId(master));
+                final JoinEquality keyable = masterKey != null ? masterKey : keyableKey(join, keys, key, key.getColumnId(s));
+                final boolean isSlaveFiltered = masterKey != null && (type == JoinKind.LEFT_OUTER || type == JoinKind.ASOF || type == JoinKind.LT);
+                if (keyable == null || !isSlaveFiltered && !type.isRelational()) {
+                    i++;
+                    continue;
+                }
+                if (type == JoinKind.INNER || type == JoinKind.CROSS) {
+                    final int keyableSide = keyable == masterKey ? s : keyable.getOtherSource(s);
+                    final int side = keyable == masterKey ? s : master;
+                    final boolean isKeyableFirst = keys.indexOf(keyable) < i;
+                    final JoinEquality first = isKeyableFirst ? keyable : key;
+                    final JoinEquality second = isKeyableFirst ? key : keyable;
+                    final int firstSide = isKeyableFirst ? keyableSide : side;
+                    final int secondSide = isKeyableFirst ? side : keyableSide;
+                    final JoinEquality equality = ctx.planNodes.joinEqualities.next().of(
+                            firstSide, first.getColumnId(firstSide), first.getName(firstSide), first.getPosition(firstSide),
+                            secondSide, second.getColumnId(secondSide), second.getName(secondSide), second.getPosition(secondSide)
+                    );
+                    equality.addOwners(first.getOwners());
+                    equality.addOwners(second.getOwners());
+                    scope.joinDerivedEqualities.add(equality);
+                } else if (isSlaveFiltered) {
+                    keyFilter = ctx.combinePredicates(keyFilter, comparison(key.getName(s), key.getPosition(s), masterKey.getName(s), masterKey.getPosition(s)));
+                } else {
+                    final int origin = statedOrigin(key.getOwners());
+                    final ExpressionNode comparison = comparison(key.getLeftName(), key.getLeftPosition(), key.getRightName(), key.getRightPosition());
+                    if (origin >= 0 && inputs.getQuick(origin).getJoinType().isBarrier()) {
+                        scope.joinOnNodes.setQuick(origin, ctx.combinePredicates(scope.joinOnNodes.getQuick(origin), comparison));
+                    } else {
+                        scope.joinResidualNodes.add(comparison);
+                        scope.joinResidualOrigins.add(origin);
+                    }
+                }
+                keys.remove(i);
+            }
+            if (keyFilter != null) {
+                step.setKeyFilter(ctx.functionBinder.bindPredicate(keyFilter, join.getOutput(), sourceAlias(source), executionContext));
+            }
+        }
     }
 
     private ExpressionNode findForwardJoinReference(ExpressionNode expression, JoinPlan join, int origin) {

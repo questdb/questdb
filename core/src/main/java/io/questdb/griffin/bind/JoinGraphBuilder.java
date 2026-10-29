@@ -231,6 +231,17 @@ public final class JoinGraphBuilder implements Mutable {
         return true;
     }
 
+    /**
+     * Whether the columns of the equality between two inputs of the join can key it, see
+     * {@link LogicalPlans#isJoinKeyTypeCompatible}.
+     */
+    static boolean isKeyable(JoinPlan join, JoinEquality key) {
+        final OutputSchema left = join.getInputs().getQuick(key.getLeftSource()).getSourceOutput();
+        final OutputSchema right = join.getInputs().getQuick(key.getRightSource()).getSourceOutput();
+        return LogicalPlans.isJoinKeyTypeCompatible(left.getColumnType(left.getColumnIndexById(key.getLeftColumnId())),
+                right.getColumnType(right.getColumnIndexById(key.getRightColumnId())));
+    }
+
     private static JoinEquality findKey(JoinDependency dependency, JoinEquality key) {
         final ObjList<JoinEquality> keys = dependency.getKeys();
         for (int i = 0, n = keys.size(); i < n; i++) {
@@ -397,6 +408,12 @@ public final class JoinGraphBuilder implements Mutable {
         children.getQuick(parent).add(child);
     }
 
+    /**
+     * Merges the keys of two dependencies of one input. An input that joins across an outer or temporal step keeps
+     * every key. Otherwise a key of {@code b} that shares a column with a key of {@code a} replaces it, and the
+     * equality of their other columns filters the join, unless only one of the two keys can key the input, see
+     * {@link #isKeyable}: binding then turns the other one into a filter, see {@code JoinBinder}.
+     */
     private JoinDependency merge(JoinDependency a, JoinDependency b) {
         assert a.getSlave() == b.getSlave();
         if (crossesBarrier(a) || crossesBarrier(b)) {
@@ -421,8 +438,12 @@ public final class JoinGraphBuilder implements Mutable {
         final ObjList<JoinEquality> bKeys = b.getKeys();
         for (int i = 0, n = bKeys.size(); i < n; i++) {
             final JoinEquality next = bKeys.getQuick(i);
+            final boolean isNextKeyable = isKeyable(join, next);
             for (int k = 0, count = aKeys.size(); k < count; k++) {
                 final JoinEquality previous = aKeys.getQuick(k);
+                if (isKeyable(join, previous) != isNextKeyable) {
+                    continue;
+                }
                 if (previous.getLeftColumnId() == next.getLeftColumnId()) {
                     emit(previous, false, next, false, k);
                     break;

@@ -18377,6 +18377,87 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleFillLinearNullNeighbour() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL, x INT, d DOUBLE, c CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('B', 1, 1.0, 'b', '2024-01-01'), ('A', 10, 10.0, 'a', '2024-01-01'), ('C', NULL, NULL, NULL, '2024-01-01'),
+                        ('B', 1, 1.0, 'b', '2024-01-02'), ('D', NULL, NULL, NULL, '2024-01-02'),
+                        ('B', 1, 1.0, 'b', '2024-01-03'), ('A', NULL, NULL, NULL, '2024-01-03'), ('C', NULL, NULL, NULL, '2024-01-03'),
+                        ('D', 20, 20.0, 'd', '2024-01-03'),
+                        ('B', 1, 1.0, 'b', '2024-01-04'),
+                        ('B', 1, 1.0, 'b', '2024-01-05'), ('A', 30, 30.0, 'f', '2024-01-05'), ('D', 40, 40.0, 'h', '2024-01-05'),
+                        ('B', 1, 1.0, 'b', '2024-01-06')
+                    """);
+            assertQuery("SELECT ts, sym, min(x) i, sum(x) s, min(d) d FROM t SAMPLE BY 1d FILL(LINEAR) ORDER BY ts, sym")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("fill: linear")
+                    .returns("""
+                            ts\tsym\ti\ts\td
+                            2024-01-01T00:00:00.000000Z\tA\t10\t10\t10.0
+                            2024-01-01T00:00:00.000000Z\tB\t1\t1\t1.0
+                            2024-01-01T00:00:00.000000Z\tC\tnull\tnull\tnull
+                            2024-01-01T00:00:00.000000Z\tD\tnull\tnull\tnull
+                            2024-01-02T00:00:00.000000Z\tA\tnull\tnull\tnull
+                            2024-01-02T00:00:00.000000Z\tB\t1\t1\t1.0
+                            2024-01-02T00:00:00.000000Z\tC\tnull\tnull\tnull
+                            2024-01-02T00:00:00.000000Z\tD\tnull\tnull\tnull
+                            2024-01-03T00:00:00.000000Z\tA\tnull\tnull\tnull
+                            2024-01-03T00:00:00.000000Z\tB\t1\t1\t1.0
+                            2024-01-03T00:00:00.000000Z\tC\tnull\tnull\tnull
+                            2024-01-03T00:00:00.000000Z\tD\t20\t20\t20.0
+                            2024-01-04T00:00:00.000000Z\tA\tnull\tnull\tnull
+                            2024-01-04T00:00:00.000000Z\tB\t1\t1\t1.0
+                            2024-01-04T00:00:00.000000Z\tC\tnull\tnull\tnull
+                            2024-01-04T00:00:00.000000Z\tD\t30\t30\t30.0
+                            2024-01-05T00:00:00.000000Z\tA\t30\t30\t30.0
+                            2024-01-05T00:00:00.000000Z\tB\t1\t1\t1.0
+                            2024-01-05T00:00:00.000000Z\tC\tnull\tnull\tnull
+                            2024-01-05T00:00:00.000000Z\tD\t40\t40\t40.0
+                            2024-01-06T00:00:00.000000Z\tA\tnull\tnull\tnull
+                            2024-01-06T00:00:00.000000Z\tB\t1\t1\t1.0
+                            2024-01-06T00:00:00.000000Z\tC\tnull\tnull\tnull
+                            2024-01-06T00:00:00.000000Z\tD\t50\t50\t50.0
+                            """);
+            assertQuery("SELECT ts, min(x) i, sum(x) s, min(d) d FROM t WHERE sym = 'A' SAMPLE BY 1d FROM '2024-01-01' TO '2024-01-06' FILL(LINEAR)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("fill: linear")
+                    .returns("""
+                            ts\ti\ts\td
+                            2024-01-01T00:00:00.000000Z\t10\t10\t10.0
+                            2024-01-02T00:00:00.000000Z\tnull\tnull\tnull
+                            2024-01-03T00:00:00.000000Z\tnull\tnull\tnull
+                            2024-01-04T00:00:00.000000Z\tnull\tnull\tnull
+                            2024-01-05T00:00:00.000000Z\t30\t30\t30.0
+                            """);
+            assertQuery("""
+                    SELECT ts, min(x) i, sum(x) s, min(d) d, first(c) c, count() n FROM t WHERE sym = 'A'
+                    SAMPLE BY 1d FROM '2023-12-31' TO '2024-01-08' FILL(LINEAR, LINEAR, LINEAR, LINEAR, NULL)
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("fill: value")
+                    .returns("""
+                            ts\ti\ts\td\tc\tn
+                            2023-12-31T00:00:00.000000Z\tnull\tnull\tnull\t\tnull
+                            2024-01-01T00:00:00.000000Z\t10\t10\t10.0\ta\t1
+                            2024-01-02T00:00:00.000000Z\tnull\tnull\tnull\t\tnull
+                            2024-01-03T00:00:00.000000Z\tnull\tnull\tnull\t\t1
+                            2024-01-04T00:00:00.000000Z\tnull\tnull\tnull\t\tnull
+                            2024-01-05T00:00:00.000000Z\t30\t30\t30.0\tf\t1
+                            2024-01-06T00:00:00.000000Z\t30\t30\t30.0\tf\tnull
+                            2024-01-07T00:00:00.000000Z\t30\t30\t30.0\tf\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleFillLinearWithAlignment() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));

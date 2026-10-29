@@ -7938,6 +7938,183 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftJoinRepeatedMasterKeyOfMixedTypes() throws Exception {
+        // INNER, LEFT, RIGHT and FULL joins that pair one left column with two right columns of different types key on
+        // the pair of one type, in either order and on either side of =, and return the rows of the spelling that
+        // casts the other pair. An INNER or LEFT join filters its right input on the equality of the two right columns,
+        // a RIGHT or FULL join evaluates the other pair with the rest of ON.
+        assertMemoryLeak(() -> {
+            createMixedKeyTables();
+            assertQuery("SELECT a.x, a.l, c.x, c.l FROM a LEFT JOIN c ON a.x = c.l AND a.x = c.x ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("""
+                            x\tl\tx1\tl1
+                            null\tnull\tnull\tnull
+                            1\t1\t1\t1
+                            2\t5\t2\t2
+                            3\t3\tnull\tnull
+                            """);
+            assertQuery("SELECT a.x, a.l, c.x, c.l FROM a RIGHT JOIN c ON a.x = c.l AND a.x = c.x ORDER BY 3")
+                    .noLeakCheck()
+                    .returns("""
+                            x\tl\tx1\tl1
+                            null\tnull\tnull\tnull
+                            1\t1\t1\t1
+                            2\t5\t2\t2
+                            null\tnull\t3\t7
+                            """);
+            assertQuery("SELECT a.x, c.x, c.l FROM a LEFT JOIN c ON a.x = c.l AND a.x = c.x")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: c.x=a.x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          filter: l=x
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                            """);
+            assertQuery("SELECT a.x, c.x, c.l FROM a JOIN c ON a.x = c.x AND a.x = c.l")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: c.x=a.x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          filter: x=l
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                            """);
+            assertQuery("SELECT a.x, c.x, c.l FROM a RIGHT JOIN c ON a.x = c.l AND a.x = c.x")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: c.x=a.x
+                                  filter: a.x=c.l
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: c
+                            """);
+            final String[] kinds = {"JOIN", "LEFT JOIN", "LEFT OUTER JOIN", "RIGHT JOIN", "FULL JOIN"};
+            // The left column, the right column of its type, the right column of another type and the cast to that type.
+            final String[][] pairs = {
+                    {"a.x", "c.x", "c.l", "::LONG"},
+                    {"a.sh", "c.sh", "c.x", "::INT"},
+                    {"a.d", "c.d", "c.t", "::TIMESTAMP"},
+                    {"a.s", "c.s", "c.y", "::VARCHAR"},
+            };
+            for (String[] pair : pairs) {
+                final String left = pair[0];
+                final String same = pair[1];
+                final String other = pair[2];
+                for (String kind : kinds) {
+                    final String select = "SELECT " + left + ", " + same + ", " + other + " FROM a " + kind + " c ON ";
+                    printSql(select + left + pair[3] + " = " + other + " AND " + left + " = " + same + " ORDER BY 1, 2, 3");
+                    final String expected = sink.toString();
+                    final String[] conditions = {
+                            left + " = " + other + " AND " + left + " = " + same,
+                            left + " = " + same + " AND " + left + " = " + other,
+                            other + " = " + left + " AND " + same + " = " + left,
+                            same + " = " + left + " AND " + other + " = " + left,
+                    };
+                    for (String condition : conditions) {
+                        assertQuery(select + condition + " ORDER BY 1, 2, 3").noLeakCheck().returns(expected);
+                    }
+                }
+            }
+            final String[] joins = {
+                    "a LEFT JOIN b ON a.x = b.x JOIN c ON ",
+                    "a JOIN b ON a.x = b.x LEFT JOIN c ON ",
+            };
+            for (String join : joins) {
+                final String select = "SELECT a.x, b.x, c.x, c.l FROM " + join;
+                printSql(select + "a.x = c.x AND a.x::LONG = c.l ORDER BY 1, 2, 3, 4");
+                final String expected = sink.toString();
+                assertQuery(select + "a.x = c.l AND a.x = c.x ORDER BY 1, 2, 3, 4").noLeakCheck().returns(expected);
+                assertQuery(select + "a.x = c.x AND a.x = c.l ORDER BY 1, 2, 3, 4").noLeakCheck().returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testLeftJoinRepeatedMasterKeyWithoutKeyableType() throws Exception {
+        // A left column equated with right columns of which none has a type the join can key fails at the last of the
+        // equalities, in any order and for any join kind.
+        assertMemoryLeak(() -> {
+            createMixedKeyTables();
+            final String[] kinds = {"JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"};
+            for (String kind : kinds) {
+                final String select = "SELECT a.x FROM a " + kind + " c ON ";
+                assertQuery(select + "a.x = c.l AND a.x = c.d").noLeakCheck()
+                        .fails(select.length() + "a.x = c.l AND a.x = ".length(), "join column type mismatch");
+                assertQuery(select + "a.x = c.d AND a.x = c.l").noLeakCheck()
+                        .fails(select.length() + "a.x = c.d AND a.x = ".length(), "join column type mismatch");
+            }
+        });
+    }
+
+    @Test
+    public void testLeftJoinRepeatedSlaveKeyOfMixedTypes() throws Exception {
+        // INNER, LEFT, RIGHT and FULL joins that pair one right column with two left columns of different types key on
+        // the pair of one type, in either order and on either side of =, and return the rows of the spelling that
+        // casts the other pair. An outer join evaluates the other pair with the rest of ON, so it keeps the left rows
+        // whose two columns differ.
+        assertMemoryLeak(() -> {
+            createMixedKeyTables();
+            assertQuery("SELECT a.x, a.l, c.x FROM a LEFT JOIN c ON a.l = c.x AND a.x = c.x ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("""
+                            x\tl\tx1
+                            null\tnull\tnull
+                            1\t1\t1
+                            2\t5\tnull
+                            3\t3\t3
+                            """);
+            final String[] kinds = {"JOIN", "LEFT JOIN", "LEFT OUTER JOIN", "RIGHT JOIN", "FULL JOIN"};
+            // The left column of the right column's type, the left column of another type, the right column and the
+            // cast to that type.
+            final String[][] pairs = {
+                    {"a.x", "a.l", "c.x", "::LONG"},
+                    {"a.sh", "a.x", "c.sh", "::INT"},
+                    {"a.d", "a.t", "c.d", "::TIMESTAMP"},
+            };
+            for (String[] pair : pairs) {
+                final String same = pair[0];
+                final String other = pair[1];
+                final String right = pair[2];
+                for (String kind : kinds) {
+                    final String select = "SELECT " + same + ", " + other + ", " + right + " FROM a " + kind + " c ON ";
+                    printSql(select + same + " = " + right + " AND " + other + " = " + right + pair[3] + " ORDER BY 1, 2, 3");
+                    final String expected = sink.toString();
+                    final String[] conditions = {
+                            same + " = " + right + " AND " + other + " = " + right,
+                            other + " = " + right + " AND " + same + " = " + right,
+                            right + " = " + other + " AND " + right + " = " + same,
+                    };
+                    for (String condition : conditions) {
+                        assertQuery(select + condition + " ORDER BY 1, 2, 3").noLeakCheck().returns(expected);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLeftJoinWithConstantFalseFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 as (select x i from long_sequence(3))");
@@ -11520,6 +11697,26 @@ public class JoinTest extends AbstractCairoTest {
         execute("INSERT INTO x VALUES (21, 1), (22, 2), (23, 3), (24, 4)");
         execute("CREATE TABLE y (id INT, k INT)");
         execute("INSERT INTO y VALUES (31, 1), (33, 3)");
+    }
+
+    private void createMixedKeyTables() throws Exception {
+        execute("CREATE TABLE a (x INT, l LONG, sh SHORT, d DATE, t TIMESTAMP, s STRING, y SYMBOL)");
+        execute("""
+                INSERT INTO a VALUES
+                    (1, 1, 1, '2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.000000Z', 'a', 'a'),
+                    (2, 5, 2, '2024-01-02T00:00:00.000Z', '2024-01-05T00:00:00.000000Z', 'b', 'e'),
+                    (3, 3, 3, '2024-01-03T00:00:00.000Z', '2024-01-03T00:00:00.000000Z', 'c', 'c'),
+                    (NULL, NULL, 0, NULL, NULL, NULL, NULL)
+                """);
+        execute("CREATE TABLE c (x INT, l LONG, sh SHORT, d DATE, t TIMESTAMP, s STRING, y SYMBOL)");
+        execute("""
+                INSERT INTO c VALUES
+                    (1, 1, 1, '2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.000000Z', 'a', 'a'),
+                    (2, 2, 2, '2024-01-02T00:00:00.000Z', '2024-01-02T00:00:00.000000Z', 'b', 'b'),
+                    (3, 7, 3, '2024-01-03T00:00:00.000Z', '2024-01-07T00:00:00.000000Z', 'c', 'z'),
+                    (NULL, NULL, 0, NULL, NULL, NULL, NULL)
+                """);
+        execute("CREATE TABLE b AS (SELECT * FROM c)");
     }
 
     private void testAsOfJoin0(boolean fullFatJoin) throws Exception {

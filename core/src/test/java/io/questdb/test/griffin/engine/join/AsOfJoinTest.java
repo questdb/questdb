@@ -1617,6 +1617,66 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinMasterKeyOnTwoSlaveColumnsOfMixedTypes() throws Exception {
+        // An ASOF or LT join that pairs one master column with a slave column of its type and one of another type keys
+        // on the first pair and filters the slave on the equality of the two slave columns, in either order. A slave
+        // column paired with master columns of two types still fails: the join has no ON residual to evaluate it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (x INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        (1, 1, '2024-01-01T00:00:02Z'),
+                        (2, 5, '2024-01-01T00:00:04Z'),
+                        (3, 3, '2024-01-01T00:00:06Z'),
+                        (NULL, NULL, '2024-01-01T00:00:08Z')
+                    """);
+            execute("CREATE TABLE s (x INT, l LONG, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO s VALUES
+                        (1, 1, 1.0, '2024-01-01T00:00:01Z'),
+                        (2, 2, 2.0, '2024-01-01T00:00:03Z'),
+                        (3, 7, 3.0, '2024-01-01T00:00:05Z'),
+                        (NULL, NULL, 4.0, '2024-01-01T00:00:07Z')
+                    """);
+            final String expected = """
+                    ts\tsts\tv
+                    2024-01-01T00:00:02.000000Z\t2024-01-01T00:00:01.000000Z\t1.0
+                    2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\t2.0
+                    2024-01-01T00:00:06.000000Z\t\tnull
+                    2024-01-01T00:00:08.000000Z\t2024-01-01T00:00:07.000000Z\t4.0
+                    """;
+            final String[] conditions = {"s.l = m.x AND s.x = m.x", "s.x = m.x AND s.l = m.x"};
+            for (String condition : conditions) {
+                final String asOf = "SELECT m.ts, s.ts sts, s.v FROM m ASOF JOIN s ON " + condition;
+                final String lt = "SELECT m.ts, s.ts sts, s.v FROM m LT JOIN s ON " + condition;
+                assertQuery(asOf)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("Filtered AsOf Join Fast", "filter: l=x")
+                        .returns(expected);
+                assertQuery(lt)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("Lt Join Light", "condition: s.x=m.x", "filter: l=x")
+                        .returns(expected);
+                assertQuery(asOf)
+                        .noLeakCheck()
+                        .fullFatJoins()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+            }
+            final String mirrored = "SELECT m.ts, s.v FROM m ASOF JOIN s ON s.x = m.x AND s.x = m.l";
+            assertQuery(mirrored).noLeakCheck().fails(mirrored.lastIndexOf("s.x"), "join column type mismatch");
+        });
+    }
+
+    @Test
     public void testAsOfJoinNoAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
             // ASKS

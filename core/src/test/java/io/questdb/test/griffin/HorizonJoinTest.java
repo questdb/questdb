@@ -2013,6 +2013,53 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinMasterKeySharedBySlaveColumnsOfMixedTypes() throws Exception {
+        // A HORIZON JOIN that pairs one master column with a slave column of its type and one of another type keys on
+        // the first pair and filters the slave on the equality of the two slave columns, in either order. With no
+        // slave column of a type it can key, it fails at the last pair.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (x INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        (1, 1, '2024-01-01T00:00:02Z'),
+                        (2, 5, '2024-01-01T00:00:04Z'),
+                        (3, 3, '2024-01-01T00:00:06Z'),
+                        (NULL, NULL, '2024-01-01T00:00:08Z')
+                    """);
+            execute("CREATE TABLE s (x INT, l LONG, d DATE, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO s VALUES
+                        (1, 1, NULL, 1.0, '2024-01-01T00:00:01Z'),
+                        (2, 2, NULL, 2.0, '2024-01-01T00:00:03Z'),
+                        (3, 7, NULL, 3.0, '2024-01-01T00:00:05Z'),
+                        (NULL, NULL, NULL, 4.0, '2024-01-01T00:00:07Z')
+                    """);
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                for (String condition : new String[]{"s.l = m.x AND s.x = m.x", "s.x = m.x AND s.l = m.x"}) {
+                    assertQuery("SELECT m.ts, s.v FROM m HORIZON JOIN s ON (" + condition + ") LIST (0s) AS h ORDER BY 1, 2")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .withPlanContaining("slave filter: x=l")
+                            .returns("""
+                                    ts\tv
+                                    2024-01-01T00:00:02.000000Z\t1.0
+                                    2024-01-01T00:00:04.000000Z\t2.0
+                                    2024-01-01T00:00:06.000000Z\tnull
+                                    2024-01-01T00:00:08.000000Z\t4.0
+                                    """);
+                }
+                final String select = "SELECT avg(s.v) FROM m HORIZON JOIN s ON (";
+                assertQuery(select + "s.l = m.x AND s.d = m.x) LIST (0s) AS h").noLeakCheck()
+                        .fails(select.length() + "s.l = m.x AND ".length(), "join column type mismatch");
+                assertQuery(select + "s.d = m.x AND s.l = m.x) LIST (0s) AS h").noLeakCheck()
+                        .fails(select.length() + "s.d = m.x AND ".length(), "join column type mismatch");
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinMasterKeySharedBySymbolKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
