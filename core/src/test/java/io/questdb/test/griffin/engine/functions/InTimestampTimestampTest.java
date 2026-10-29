@@ -363,6 +363,34 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateVariableRangeWithTimeListInDstGap() throws Exception {
+        // On 2024-03-31 London clocks skip from 01:00 to 02:00 local time, and $now - 2h = 01:40
+        // local falls in that hour. The range compares the slots with it in local time: today's
+        // 01:30 is before it, 02:30 BST (01:30Z) after it. The literal compiles to a
+        // CompiledTickExpression, while the parser evaluates the bind variable, and both must
+        // select the same rows.
+        assertMemoryLeak(() -> {
+            // rows every 30 minutes from 2024-03-30T00:00 to 2024-04-01T23:30
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-03-30T00:00:00.000000Z', 1_800_000_000L) ts
+                        FROM long_sequence(144)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-03-31T03:40:00.000000Z"));
+            try {
+                // today's 02:30 BST, and tomorrow's 00:30, 01:30 and 02:30 BST
+                final String expectedRow = "4\t2024-03-31T01:30:00.000000Z\t2024-04-01T01:30:00.000000Z";
+                final String tickExpr = "[$now - 2h..$tomorrow]T[00:30,01:30,02:30]@Europe/London";
+                assertTickExprMatches(tickExpr, expectedRow);
+                assertTickExprBindVariableMatches(tickExpr, expectedRow);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testDenseTickExprBindVariable() throws Exception {
         // A bind variable goes through the parse path, which merges the expanded intervals
         // once they reach the incremental merge threshold (256 intervals). The merge must not
@@ -561,6 +589,27 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Assert.assertTrue("second execution should return a row after now() advances", cursor.hasNext());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testTimeListWithTimezoneAndDayFilter() throws Exception {
+        // The day filter judges the slots of a time list by their local day. 2024-01-02 is a
+        // Tuesday, and 08:00 in Tokyo on that day is 2024-01-01T23:00Z, a Monday.
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z"));
+            try {
+                final String expectedRow = "1\t2024-01-01T23:00:00.000000Z\t2024-01-01T23:00:00.000000Z";
+                // without a date variable, the literal goes through the parser too
+                assertTickExprMatches("2024-01-[02..04]T[08:00]@Asia/Tokyo#Tue", expectedRow);
+                assertTickExprBindVariableMatches("2024-01-[02..04]T[08:00]@Asia/Tokyo#Tue", expectedRow);
+                // $today is Tuesday 2024-01-02
+                assertTickExprMatches("[$today..$today+2d]T[08:00]@Asia/Tokyo#Tue", expectedRow);
+                assertTickExprBindVariableMatches("[$today..$today+2d]T[08:00]@Asia/Tokyo#Tue", expectedRow);
+            } finally {
+                setCurrentMicros(-1);
             }
         });
     }
