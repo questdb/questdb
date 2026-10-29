@@ -10517,20 +10517,19 @@ public class SampleByTest extends AbstractCairoTest {
         // 2024-04-30T23:45Z, into the previous bucket, while the SAMPLE BY cursor put the row into its own bucket.
         // FROM on the 31st anchors the buckets the same way.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY MONTH");
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY MONTH");
             execute("""
                     INSERT INTO t VALUES
-                        ('2024-01-31T23:30:00.000000Z', 'A', 1.0),
-                        ('2024-02-15T10:00:00.000000Z', 'B', 2.0),
-                        ('2024-04-30T23:45:00.000000Z', 'A', 3.0),
-                        ('2024-06-01T00:10:00.000000Z', 'B', 4.0),
-                        ('2024-12-31T23:30:00.000000Z', 'A', 5.0),
-                        ('2025-03-03T00:00:00.000000Z', 'A', 6.0)
+                        ('2024-01-31T23:30:00.000000Z', 1.0),
+                        ('2024-02-15T10:00:00.000000Z', 2.0),
+                        ('2024-04-30T23:45:00.000000Z', 3.0),
+                        ('2024-06-01T00:10:00.000000Z', 4.0),
+                        ('2024-12-31T23:30:00.000000Z', 5.0),
+                        ('2025-03-03T00:00:00.000000Z', 6.0)
                     """);
-            final String notKeyed = "SELECT ts, count() c, sum(v) s";
             final String offset = " ALIGN TO CALENDAR WITH OFFSET '-01:00'";
             assertSampleByNegativeOffset(
-                    notKeyed,
+                    "SELECT ts, count() c, sum(v) s",
                     " SAMPLE BY 1M" + offset,
                     "timestamp_floor_utc(",
                     """
@@ -10543,7 +10542,7 @@ public class SampleByTest extends AbstractCairoTest {
                             """
             );
             assertSampleByNegativeOffset(
-                    notKeyed,
+                    "SELECT ts, count() c, sum(v) s",
                     " SAMPLE BY 1M FILL(NULL)" + offset,
                     "Sample By Fill\n",
                     """

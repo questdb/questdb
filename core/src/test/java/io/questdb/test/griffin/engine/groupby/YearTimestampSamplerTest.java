@@ -42,6 +42,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.test.griffin.engine.groupby.TimestampSamplerTestUtils.assertRoundMatchesGridWalk;
+import static io.questdb.test.griffin.engine.groupby.TimestampSamplerTestUtils.assertRoundOfLargestTimestamps;
+
 public class YearTimestampSamplerTest {
     private static final String FIXED_PART = "-11-16T15:00:00.000000Z\n";
 
@@ -271,36 +274,6 @@ public class YearTimestampSamplerTest {
 
     private static void assertRound(TimestampDriver driver, TimestampSampler sampler, String value, String expected) throws NumericException {
         Assert.assertEquals(driver.parseFloorLiteral(expected), sampler.round(driver.parseFloorLiteral(value)));
-    }
-
-    // Walks the grid from gridPoint, a bucket start, back to lo and then forward to hi, and checks that round()
-    // returns the bucket start for values every step apart and for the instants around each bucket start.
-    private static void assertRoundMatchesGridWalk(TimestampSampler sampler, long gridPoint, long lo, long hi, long step) {
-        long bucketStart = gridPoint;
-        while (bucketStart > lo) {
-            final long previousBucketStart = sampler.previousTimestamp(bucketStart);
-            // the walk fails instead of looping forever when previousTimestamp() doesn't move back
-            Assert.assertTrue(previousBucketStart < bucketStart);
-            bucketStart = previousBucketStart;
-        }
-        long value = lo;
-        while (bucketStart < hi) {
-            final long nextBucketStart = sampler.nextTimestamp(bucketStart);
-            // the walk fails instead of looping forever when nextTimestamp() doesn't move forward
-            Assert.assertTrue(nextBucketStart > bucketStart);
-            for (; value < nextBucketStart; value += step) {
-                Assert.assertEquals(bucketStart, sampler.round(value));
-            }
-            Assert.assertEquals(bucketStart, sampler.round(nextBucketStart - 1));
-            Assert.assertEquals(nextBucketStart, sampler.round(nextBucketStart));
-            Assert.assertEquals(nextBucketStart, sampler.round(nextBucketStart + 1));
-            bucketStart = nextBucketStart;
-        }
-    }
-
-    private static void assertRoundOfLargestTimestamps(TimestampSampler sampler, long expected) {
-        Assert.assertEquals(expected, sampler.round(Long.MAX_VALUE));
-        Assert.assertEquals(expected, sampler.round(Long.MAX_VALUE - 1));
     }
 
     private static void testNegativeOffset(TimestampDriver driver) throws NumericException, SqlException {

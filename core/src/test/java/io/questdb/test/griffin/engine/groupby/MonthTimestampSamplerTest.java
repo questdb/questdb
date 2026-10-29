@@ -42,6 +42,9 @@ import java.time.YearMonth;
 import java.util.Arrays;
 import java.util.Collection;
 
+import static io.questdb.test.griffin.engine.groupby.TimestampSamplerTestUtils.assertRoundMatchesGridWalk;
+import static io.questdb.test.griffin.engine.groupby.TimestampSamplerTestUtils.assertRoundOfLargestTimestamps;
+
 @RunWith(Parameterized.class)
 public class MonthTimestampSamplerTest {
     private final TestTimestampType timestampType;
@@ -744,31 +747,6 @@ public class MonthTimestampSamplerTest {
         );
     }
 
-    // Walks the grid from gridPoint, a bucket start, back to lo and then forward to hi, and checks that round()
-    // returns the bucket start for values every step apart and for the instants around each bucket start.
-    private void assertRoundMatchesGridWalk(TimestampSampler sampler, long gridPoint, long lo, long hi, long step) {
-        long bucketStart = gridPoint;
-        while (bucketStart > lo) {
-            final long previousBucketStart = sampler.previousTimestamp(bucketStart);
-            // the walk fails instead of looping forever when previousTimestamp() doesn't move back
-            Assert.assertTrue(previousBucketStart < bucketStart);
-            bucketStart = previousBucketStart;
-        }
-        long value = lo;
-        while (bucketStart < hi) {
-            final long nextBucketStart = sampler.nextTimestamp(bucketStart);
-            // the walk fails instead of looping forever when nextTimestamp() doesn't move forward
-            Assert.assertTrue(nextBucketStart > bucketStart);
-            for (; value < nextBucketStart; value += step) {
-                Assert.assertEquals(bucketStart, sampler.round(value));
-            }
-            Assert.assertEquals(bucketStart, sampler.round(nextBucketStart - 1));
-            Assert.assertEquals(nextBucketStart, sampler.round(nextBucketStart));
-            Assert.assertEquals(nextBucketStart, sampler.round(nextBucketStart + 1));
-            bucketStart = nextBucketStart;
-        }
-    }
-
     // Checks round() against JavaTimeMonthGrid for the values around the start of each month and around the grid's
     // day and time in each month, which is a bucket start in the months of the grid, and for the middle of each
     // month, in years before and after 1970.
@@ -802,11 +780,6 @@ public class MonthTimestampSamplerTest {
         if (actual != expected) {
             Assert.fail("round(" + value + ") returned " + actual + " instead of " + expected + " on " + grid);
         }
-    }
-
-    private void assertRoundOfLargestTimestamps(TimestampSampler sampler, long expected) {
-        Assert.assertEquals(expected, sampler.round(Long.MAX_VALUE));
-        Assert.assertEquals(expected, sampler.round(Long.MAX_VALUE - 1));
     }
 
     // Bucket starts that java.time computes without the sampler: bucket k starts in the month with the index

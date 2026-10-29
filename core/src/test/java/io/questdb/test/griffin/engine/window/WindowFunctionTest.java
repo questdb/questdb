@@ -21675,7 +21675,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // The expression alias id shadows the base column id, and the projection also selects the base column
         // as id2. The window ORDER BY id sorts by the base column, so it must not bind to the expression.
         // The outer query projects only id and rn: the window projection of id2 reads the shadowing
-        // expression, a separate issue that this test does not cover.
+        // expression, a separate issue, #8122, that this test does not cover.
         assertMemoryLeak(() -> {
             createColumnSelectedTwiceTable();
 
@@ -21727,7 +21727,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // as a2. The function call abs(abs) carries the same token as the column and keeps the inner virtual
         // model. The window ORDER BY abs and the window argument abs read the base column, not the function
         // result. The outer query does not project a2: the window projection of a2 reads the shadowing
-        // function, a separate issue that this test does not cover.
+        // function, a separate issue, #8122, that this test does not cover.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE g (abs DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
