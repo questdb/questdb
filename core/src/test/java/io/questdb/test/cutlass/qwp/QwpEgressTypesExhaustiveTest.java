@@ -762,6 +762,83 @@ public class QwpEgressTypesExhaustiveTest extends AbstractReusedServerQwpEgressT
     }
 
     @Test
+    public void testDecimalSmallWidthsColumnTopNative() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // Rows written before and after ADD COLUMN share one native partition, so the
+                // page-frame path reads the column top and the column data side by side.
+                serverMain.execute("CREATE TABLE t(x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("""
+                        INSERT INTO t VALUES
+                            (1, '1970-01-01T00:00:00Z'),
+                            (2, '1970-01-01T01:00:00Z')
+                        """);
+                serverMain.execute("ALTER TABLE t ADD COLUMN d2 DECIMAL(2, 1)");
+                serverMain.execute("ALTER TABLE t ADD COLUMN d4 DECIMAL(4, 2)");
+                serverMain.execute("ALTER TABLE t ADD COLUMN d9 DECIMAL(9, 3)");
+                serverMain.execute("""
+                        INSERT INTO t(x, ts, d2, d4, d9) VALUES
+                            (3, '1970-01-01T02:00:00Z', -1.5m, 12.34m, -123456.789m),
+                            (4, '1970-01-01T03:00:00Z', NULL, NULL, NULL),
+                            (5, '1970-01-01T04:00:00Z', 9.9m, -99.99m, 999999.999m)
+                        """);
+                serverMain.awaitTable("t");
+                serverMain.assertSql(
+                        "SELECT count() partitions, sum(isParquet::INT) parquet FROM table_partitions('t')",
+                        "partitions\tparquet\n1\t0\n"
+                );
+
+                final int[] expectedScales = {1, 2, 3};
+                final long[][] expected = {
+                        null,
+                        null,
+                        {-15, 1_234, -123_456_789},
+                        null,
+                        {99, -9_999, 999_999_999}
+                };
+                assertSmallDecimals("SELECT d2, d4, d9 FROM t", expected, expectedScales);
+                assertSmallDecimals(
+                        "SELECT d2, d4, d9 FROM t WHERE x >= 2",
+                        new long[][]{expected[1], expected[2], expected[3], expected[4]},
+                        expectedScales
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testDecimalSmallWidthsLargeFrame() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                // 5,000 rows in one native partition are appended in 1,024-row page-frame
+                // slices, so the narrow decimals are read from slices that start past row 0.
+                final int rowCount = 5_000;
+                serverMain.execute("""
+                        CREATE TABLE t AS (
+                            SELECT
+                                CASE WHEN x % 7 = 0 THEN NULL ELSE ((x % 19) - 9)::DECIMAL(2,0) END d2,
+                                CASE WHEN x % 7 = 0 THEN NULL ELSE ((x % 9_999) - 4_999)::DECIMAL(4,0) END d4,
+                                CASE WHEN x % 7 = 0 THEN NULL ELSE ((x % 199) - 99)::DECIMAL(4,2) END d4s,
+                                CASE WHEN x % 7 = 0 THEN NULL ELSE (x * 1_000 - 7)::DECIMAL(9,0) END d9,
+                                x::TIMESTAMP ts
+                            FROM long_sequence(5_000)
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """);
+                serverMain.assertSql("SELECT count() FROM table_partitions('t')", "count\n1\n");
+
+                final long[][] expected = new long[rowCount][];
+                for (int r = 0; r < rowCount; r++) {
+                    final long x = r + 1;
+                    if (x % 7 != 0) {
+                        expected[r] = new long[]{(x % 19) - 9, (x % 9_999) - 4_999, ((x % 199) - 99) * 100, x * 1_000 - 7};
+                    }
+                }
+                assertSmallDecimals("SELECT d2, d4, d4s, d9 FROM t", expected, new int[]{0, 0, 2, 0});
+            }
+        });
+    }
+
+    @Test
     public void testDouble() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startEgressServer()) {
