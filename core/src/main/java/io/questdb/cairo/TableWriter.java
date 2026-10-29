@@ -2800,30 +2800,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     .$(", from=").$(other)
                                     .$(", to=").$(detachedPath)
                                     .I$();
-                        } else if (CommitMode.isPowerLossDurable(getFlushCommitMode())) {
-                            // Make the copied files and both directory-entry sets durable before _txn names them.
-                            try {
-                                DurableEpochManifest.fsyncDirectoryFiles(
-                                        configuration,
-                                        detachedPath.trimTo(detachedPathLen),
-                                        detachedPathLen,
-                                        false
-                                );
-                                TableUtils.fsyncDirDurable(ff, other.trimTo(pathSize).$());
-                            } catch (CairoException e) {
-                                attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY;
-                                LOG.critical().$("could not sync detached partition [path=").$(detachedPath)
-                                        .$(", e=").$((Throwable) e).I$();
-                                if (engine.isDataSyncFailureFatal(e)) {
-                                    distressed = true;
-                                    engine.handleDataSyncFailure(e);
+                        } else {
+                            // The Delta catalog copy goes first, so the flush below covers its directory entry.
+                            attachDetachStatus = detachDelta(partitionIndex, detachedPath, detachedPathLen);
+                            if (attachDetachStatus == AttachDetachStatus.OK && CommitMode.isPowerLossDurable(getFlushCommitMode())) {
+                                // Make the copied files and both directory-entry sets durable before _txn names them.
+                                try {
+                                    DurableEpochManifest.fsyncDirectoryFiles(
+                                            configuration,
+                                            detachedPath.trimTo(detachedPathLen),
+                                            detachedPathLen,
+                                            false
+                                    );
+                                    TableUtils.fsyncDirDurable(ff, other.trimTo(pathSize).$());
+                                } catch (CairoException e) {
+                                    attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY;
+                                    LOG.critical().$("could not sync detached partition [path=").$(detachedPath)
+                                            .$(", e=").$((Throwable) e).I$();
+                                    if (engine.isDataSyncFailureFatal(e)) {
+                                        distressed = true;
+                                        engine.handleDataSyncFailure(e);
+                                    }
                                 }
                             }
                         }
                     }
-                }
-                if (attachDetachStatus == AttachDetachStatus.OK) {
-                    attachDetachStatus = detachDelta(partitionIndex, detachedPath, detachedPathLen);
                 }
             }
 
