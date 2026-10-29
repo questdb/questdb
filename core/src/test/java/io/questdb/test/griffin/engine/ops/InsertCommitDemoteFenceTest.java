@@ -54,6 +54,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -240,7 +241,7 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                 TableToken token = new TableToken("ias_flip", "ias_flip~1", null, 1, false, false, false);
                 TableWriterAPI writer = fakeWriter(token, commitCalled, rollbackCalled);
                 InsertAsSelectOperationImpl op = new InsertAsSelectOperationImpl(
-                        flipEngine, token, fakeFactory(), null, 7L, -1, 0, 0
+                        flipEngine, token, fakeFactory(), null, new io.questdb.std.IntList(), 7L, -1, 0, 0
                 );
                 try {
                     SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(flipEngine);
@@ -274,7 +275,7 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                 TableToken token = new TableToken("ias_ok", "ias_ok~1", null, 1, false, false, false);
                 TableWriterAPI writer = fakeWriter(token, commitCalled, rollbackCalled);
                 InsertAsSelectOperationImpl op = new InsertAsSelectOperationImpl(
-                        primaryEngine, token, fakeFactory(), null, 7L, -1, 0, 0
+                        primaryEngine, token, fakeFactory(), null, new io.questdb.std.IntList(), 7L, -1, 0, 0
                 );
                 try {
                     SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(primaryEngine);
@@ -1068,6 +1069,7 @@ public class InsertCommitDemoteFenceTest extends AbstractCairoTest {
                 TableWriterAPI.class.getClassLoader(),
                 new Class[]{TableWriterAPI.class},
                 (proxy, method, args) -> switch (method.getName()) {
+                    case "commitWithRoleFence" -> InvocationHandler.invokeDefault(proxy, method, args);
                     case "commit" -> {
                         commitCalled.incrementAndGet();
                         yield null;

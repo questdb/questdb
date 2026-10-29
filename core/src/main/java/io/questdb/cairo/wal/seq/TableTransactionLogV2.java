@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MemorySerializer;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriteMode;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
@@ -223,6 +224,62 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             }
         }
         return 0;
+    }
+
+    @Override
+    public long addDeltaRunEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long minTimestamp, long maxTimestamp, long rowCount) {
+        openTxnPart();
+        final long appendOffset = txnPartMem.getAppendOffset();
+        final int commitMode = configuration.getCommitMode();
+        try {
+            txnPartMem.putLong(structureVersion);
+            txnPartMem.putInt(walId);
+            txnPartMem.putInt(segmentId);
+            txnPartMem.putInt(segmentTxn);
+            txnPartMem.putLong(timestamp);
+            txnPartMem.putLong(minTimestamp);
+            txnPartMem.putLong(maxTimestamp);
+            txnPartMem.putLong(rowCount);
+            txnPartMem.putLong(0L);
+            if (commitMode != CommitMode.NOSYNC) {
+                txnPartMem.sync(commitMode == CommitMode.ASYNC);
+            }
+        } catch (Throwable th) {
+            txnPartMem.jumpTo(appendOffset);
+            throw th;
+        }
+        Unsafe.storeFence();
+        final long nextTxn = maxTxn.incrementAndGet();
+        txnMem.putLong(MAX_TXN_OFFSET_64, nextTxn);
+        sync0();
+        return nextTxn;
+    }
+
+    @Override
+    public long addDeltaTableSwitchEntry(long structureVersion, long timestamp) {
+        openTxnPart();
+        long appendOffset = txnPartMem.getAppendOffset();
+        try {
+            txnPartMem.putLong(structureVersion);
+            txnPartMem.putInt(DELTA_TABLE_SWITCH_WAL_ID);
+            txnPartMem.putInt(DELTA_TABLE_SWITCH_VERSION);
+            txnPartMem.putInt(TableWriteMode.DELTA_RUNS);
+            txnPartMem.putLong(timestamp);
+            txnPartMem.putLong(0L);
+            txnPartMem.putLong(0L);
+            txnPartMem.putLong(0L);
+            txnPartMem.putLong(0L);
+            // The record lives in a separate mapping; syncing only the header cannot persist it.
+            txnPartMem.sync(false);
+        } catch (Throwable th) {
+            txnPartMem.jumpTo(appendOffset);
+            throw th;
+        }
+        Unsafe.storeFence();
+        long nextTxn = maxTxn.incrementAndGet();
+        txnMem.putLong(MAX_TXN_OFFSET_64, nextTxn);
+        txnMem.sync(false);
+        return nextTxn;
     }
 
     @Override

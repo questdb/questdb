@@ -22,8 +22,9 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.wal;
+package io.questdb.cairo;
 
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
 import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpBooleanColumnCursor;
@@ -36,7 +37,7 @@ import io.questdb.cutlass.qwp.protocol.QwpSymbolColumnCursor;
 import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
 
 /**
- * Interface for bulk column-oriented row appending to WAL.
+ * Interface for bulk column-oriented appending to a table writer.
  * <p>
  * This interface provides an alternative to the row-by-row {@link io.questdb.cairo.TableWriter.Row} API,
  * allowing entire columns to be written at once. This is particularly efficient when the source
@@ -53,7 +54,7 @@ import io.questdb.cutlass.qwp.protocol.QwpTimestampColumnCursor;
  * for all rows when {@link #endColumnarWrite(long, long, boolean)} is called. Columns that are
  * written must provide values for the full batch size, encoding per-row NULLs in the column data
  * itself (for example via a null bitmap). The designated timestamp column is special: it must be
- * written explicitly for the batch, unless the caller uses a separate server-assigned timestamp path.
+ * written explicitly for the batch, including when using putServerAssignedTimestamp.
  * <p>
  * <b>Error handling:</b> If any error occurs during column writes, call {@link #cancelColumnarWrite()}
  * to rollback the partial write.
@@ -513,6 +514,20 @@ public interface ColumnarRowAppender {
     );
 
     /**
+     * Appends a native, sentinel-null column. The addresses must remain pinned until
+     * endColumnarWrite or cancelColumnarWrite returns. Variable columns use their
+     * native auxiliary vector; offsets address the supplied data buffer.
+     * Symbol keys must instead go through putNativeSymbolColumn.
+     */
+    void putNativeColumn(int columnIndex, long dataAddress, long dataSize, long auxAddress, long auxSize, int rowCount);
+
+    /** Appends source-local symbol keys, resolving them through the source dictionary. */
+    void putNativeSymbolColumn(int columnIndex, long keysAddress, int rowCount, SymbolTable dictionary);
+
+    /** Assigns the caller's captured server timestamp to every row in the batch. */
+    void putServerAssignedTimestamp(int rowCount, long timestamp);
+
+    /**
      * Writes a STRING column.
      * <p>
      * STRING uses a different storage format than VARCHAR (legacy format with offset pointers).
@@ -758,4 +773,10 @@ public interface ColumnarRowAppender {
      * @param rowCount    total number of rows
      */
     void putVarcharColumn(int columnIndex, QwpStringColumnCursor cursor, int rowCount) throws QwpParseException;
+
+    /**
+     * Writes Parquet VARCHAR_SLICE entries. The caller pins the auxiliary vector and
+     * every referenced byte span until this call returns. Each entry is 16 bytes.
+     */
+    void putVarcharSliceColumn(int columnIndex, long auxAddress, int rowCount);
 }

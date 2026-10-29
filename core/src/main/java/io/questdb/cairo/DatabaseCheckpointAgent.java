@@ -276,6 +276,19 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
+    private void checkNoDeltaTable(TableToken tableToken) {
+        TableToken current = engine.getUpdatedTableToken(tableToken);
+        if (current == null || engine.isTableDropped(current)) {
+            return;
+        }
+        final boolean pending = current.isWal() && engine.getTableSequencerAPI().getPendingDeltaTableSwitch(current) > 0;
+        // Completing the switch replaces the token before clearing the pending marker.
+        current = engine.getUpdatedTableToken(current);
+        if (pending || current != null && current.isDelta()) {
+            throw CairoException.nonCritical().put("checkpoint and backup are not supported for Delta tables [table=").put(tableToken).put(']');
+        }
+    }
+
     private void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, CharSequence checkpointRoot, boolean isIncrementalBackup) throws SqlException {
         try {
             final long startedAt = microClock.getTicks();
@@ -347,6 +360,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                 continue;
                             }
 
+                            checkNoDeltaTable(tableToken);
                             boolean isWalTable = engine.isWalTable(tableToken);
                             path.of(checkpointRoot).concat(configuration.getDbDirectory());
                             LOG.info().$("creating table checkpoint [table=").$(tableToken).I$();
@@ -634,6 +648,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                             continue;
                                         }
 
+                                        checkNoDeltaTable(tableToken);
+                                        if (reader.getMetadata().getWriteMode() == TableWriteMode.DELTA_RUNS) {
+                                            throw CairoException.nonCritical().put("checkpoint and backup are not supported for Delta tables [table=").put(tableToken).put(']');
+                                        }
                                         // restore the path
                                         path.of(checkpointRoot).concat(configuration.getDbDirectory()).concat(tableToken);
 
@@ -647,7 +665,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         // _txn this image ships rather than trusting the bytes dumpTo() copied - a pooled
                                         // reader copy keeps a private _meta snapshot that TableWriter's in-place storage
                                         // version write never reaches, so those bytes can lag their own _txn.
-                                        mem.putInt(TableUtils.META_OFFSET_VERSION, reader.getTxFile().hasCompositePartitions()
+                                        mem.putInt(TableUtils.META_OFFSET_VERSION, reader.getMetadata().getWriteMode() == TableWriteMode.DELTA_RUNS
+                                                ? TableUtils.META_FORMAT_VERSION_DELTA
+                                                : reader.getTxFile().hasCompositePartitions()
                                                 ? ColumnType.MAX_STORAGE_VERSION
                                                 : ColumnType.VERSION);
                                         mem.close(false);
@@ -703,6 +723,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                             // separately to know which sequencer txn the metadata corresponds to.
                                             metadata.clear();
                                             long lastTxn = engine.getTableSequencerAPI().getTableMetadata(tableToken, metadata);
+                                            checkNoDeltaTable(tableToken);
                                             path.trimTo(rootLen).concat(WalUtils.SEQ_DIR);
                                             metadata.switchTo(path, path.size(), true); // dump sequencer metadata to checkpoint's  "db/tableName/txn_seq/_meta"
                                             metadata.close(true, Vm.TRUNCATE_TO_POINTER);
@@ -996,6 +1017,13 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 throw SqlException.position(0).put("Snapshot is not supported on Windows");
             }
             throw SqlException.position(0).put("Checkpoint is not supported on Windows");
+        }
+
+        // Refuse before replacing either an existing checkpoint or a legacy snapshot.
+        final ObjHashSet<TableToken> tables = new ObjHashSet<>();
+        engine.getTableTokens(tables, false);
+        for (int i = 0, n = tables.size(); i < n; i++) {
+            checkNoDeltaTable(tables.get(i));
         }
 
         if (!lock.tryLock()) {

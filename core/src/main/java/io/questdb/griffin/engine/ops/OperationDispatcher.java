@@ -28,6 +28,8 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriteMode;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.SqlExecutionContext;
@@ -101,6 +103,28 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
         // writer thread will call `apply()` when thread is ready to do so
         // `apply()` will use context stored in the operation
         operation.withContext(sqlExecutionContext);
+        if (operation instanceof AlterOperation alter && alter.getCommand() == AlterOperation.SET_TABLE_TYPE_DELTA) {
+            try {
+                alter.authorize();
+                final TableToken tableToken = alter.getTableToken();
+                final long metadataVersion = engine.validateDeltaTableSwitch(tableToken);
+                if (sqlExecutionContext.isValidationOnly() || engine.isDeltaTableSwitchComplete(tableToken, -1)) {
+                    return doneFuture.of(0);
+                }
+                long switchTxn = engine.getTableSequencerAPI().beginDeltaTableSwitch(tableToken, metadataVersion);
+                if (switchTxn == 0) {
+                    return doneFuture.of(0);
+                }
+                OperationFutureImpl future = futurePool.pop();
+                future.ofDeltaTableSwitch(tableToken, switchTxn, sqlExecutionContext, alter.getTableNamePosition());
+                return future;
+            } finally {
+                operation.clearSecurityContext();
+                if (closeOnDone) {
+                    operation.close();
+                }
+            }
+        }
         // With closeOnDone the caller hands the operation over, so this method closes it on every
         // exit, a failed apply included, unless a future took it. A caller that sees an exception
         // compiles the statement again, and nothing else would close the plan the operation holds.
@@ -261,6 +285,12 @@ public abstract class OperationDispatcher<T extends AbstractOperation> {
                 throw CairoException.readOnlyAccess();
             }
             firePreApplyObserver();
+            if (forceWalBypass && writer instanceof TableWriter tableWriter
+                    && tableWriter.getTableToken().isWal()
+                    && (tableWriter.getMetadata().getWriteMode() == TableWriteMode.DELTA_RUNS
+                    || engine.getTableSequencerAPI().isDeltaTableSwitchPending(tableWriter.getTableToken()))) {
+                throw CairoException.nonCritical().put("force WAL bypass is not supported during or after Delta conversion");
+            }
             return apply(operation, writer);
         } finally {
             lock.unlock();

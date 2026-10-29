@@ -379,6 +379,25 @@ class WalEventWriter implements Closeable {
         return txn++;
     }
 
+    int appendDeltaRun(long minTimestamp, long maxTimestamp, long rowCount, WalEventPayloadWriter symbols) {
+        startOffset = eventMem.getAppendOffset() - Integer.BYTES;
+        eventMem.putLong(txn);
+        eventMem.putByte(WalTxnType.DELTA_RUN_WRITE);
+        eventMem.putLong(0);
+        eventMem.putLong(rowCount);
+        eventMem.putLong(minTimestamp);
+        eventMem.putLong(maxTimestamp);
+        eventMem.putBool(false);
+        symbols.write(eventMem);
+        eventMem.putInt(SymbolMapDiffImpl.END_OF_SYMBOL_DIFFS);
+        eventMem.putInt(startOffset, (int) (eventMem.getAppendOffset() - startOffset));
+        eventMem.putInt(-1);
+        appendIndex(eventMem.getAppendOffset() - Integer.BYTES);
+        eventMem.putInt(WALE_MAX_TXN_OFFSET_32, txn);
+        return txn++;
+    }
+
+
     int appendMatViewInvalidate(
             long lastRefreshBaseTxn,
             long lastRefreshTimestamp,

@@ -50,6 +50,7 @@ import io.questdb.cairo.TableNameRegistry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriteMode;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
@@ -63,6 +64,8 @@ import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -666,6 +669,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     // returns number of copied rows
+    private static void commitCopyBatch(CairoEngine engine, TableWriterAPI writer, long o3MaxLag) {
+        if (writer.supportsMultipleWriters()) {
+            // WAL and Delta commits do not retain an O3 lag buffer.
+            writer.commitWithRoleFence(engine, false);
+        } else {
+            writer.ic(o3MaxLag);
+        }
+    }
+
     private static long copyOrderedBatched0(
             SqlExecutionContext context,
             TableWriterAPI writer,
@@ -690,7 +702,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 copier.copy(context, record, row);
                 row.append();
                 if (++rowCount >= commitTarget) {
-                    writer.ic(o3MaxLag);
+                    commitCopyBatch(context.getCairoEngine(), writer, o3MaxLag);
                     commitTarget = rowCount + batchSize;
                 }
                 if (reportFrequency > 0 && rowCount % reportFrequency == 0) {
@@ -704,7 +716,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 copier.copy(context, record, row);
                 row.append();
                 if (++rowCount >= commitTarget) {
-                    writer.ic(o3MaxLag);
+                    commitCopyBatch(context.getCairoEngine(), writer, o3MaxLag);
                     commitTarget = rowCount + batchSize;
                 }
                 if (reportFrequency > 0 && rowCount % reportFrequency == 0) {
@@ -740,7 +752,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             copier.copy(context, record, row);
             row.append();
             if (++rowCount >= commitTarget) {
-                writer.ic(o3MaxLag);
+                commitCopyBatch(context.getCairoEngine(), writer, o3MaxLag);
                 commitTarget = rowCount + batchSize;
             }
             if (rowCount % 50000 == 0) {
@@ -775,7 +787,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             copier.copy(context, record, row);
             row.append();
             if (++rowCount >= commitTarget) {
-                writer.ic(o3MaxLag);
+                commitCopyBatch(context.getCairoEngine(), writer, o3MaxLag);
                 commitTarget = rowCount + batchSize;
             }
             if (rowCount % 50000 == 0) {
@@ -2119,11 +2131,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         executionContext.getSecurityContext().authorizeAlterTableSetType(tableToken);
         // A SET TYPE to the table's current type converts nothing: it cancels a pending request,
         // so no refusal stands in its way.
-        final boolean isCancel = (walFlag == TableUtils.TABLE_TYPE_WAL) == tableToken.isWal();
+        // Delta uses the WAL sequencer but is a distinct table type. SET TYPE WAL/BYPASS WAL
+        // must not be mistaken for cancelling a pending ordinary WAL conversion.
+        final boolean isCancel = !tableToken.isDelta()
+                && (walFlag == TableUtils.TABLE_TYPE_WAL) == tableToken.isWal();
         try {
             try (TableReader reader = isCancel ? null : engine.getReader(tableToken)) {
                 if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
                     throw SqlException.$(pos, "Cannot convert non-partitioned table");
+                }
+                if (reader != null && reader.getMetadata().getWriteMode() == TableWriteMode.DELTA_RUNS) {
+                    throw SqlException.$(pos, "cannot change table type of a Delta table");
                 }
                 if (reader != null && reader.getTxFile().hasDeltaState()) {
                     throw SqlException.$(pos, "cannot change table type, table has a delta-active partition or delta data");
@@ -3027,7 +3045,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else if (isFormatKeyword(tok)) {
                     alterTableSetFormat(tableToken, tableNamePosition, tableMetadata);
                 } else if (isTypeKeyword(tok)) {
-                    tok = expectToken(lexer, "'bypass' or 'wal'");
+                    tok = expectToken(lexer, "'bypass', 'wal' or 'delta'");
                     if (isBypassKeyword(tok)) {
                         tok = expectToken(lexer, "'wal'");
                         if (isWalKeyword(tok)) {
@@ -3037,8 +3055,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
                     } else if (isWalKeyword(tok)) {
                         alterTableSetType(executionContext, tableNamePosition, tableToken, (byte) 1);
+                    } else if (SqlKeywords.isDeltaKeyword(tok)) {
+                        executionContext.getSecurityContext().authorizeAlterTableSetType(tableToken);
+                        compiledQuery.ofAlter(alterOperationBuilder.ofSetTableTypeDelta(tableNamePosition, tableToken).build());
                     } else {
-                        throw SqlException.$(lexer.lastTokenPosition(), "'bypass' or 'wal' expected");
+                        throw SqlException.$(lexer.lastTokenPosition(), "'bypass', 'wal' or 'delta' expected");
                     }
                 }
             } else if (isResumeKeyword(tok)) {
@@ -3932,8 +3953,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 );
             }
 
-            return new InsertAsSelectOperationImpl(engine, tableToken, factory, copier,
-                    metadataVersion, timestampIndexFound, model.getBatchSize(), model.getO3MaxLag());
+            final IntList destinationWriterIndexes = new IntList(cursorColumnCount);
+            for (int i = 0, n = columnSetSize > 0 ? columnSetSize : writerMetadata.getColumnCount(); i < n; i++) {
+                final int index = columnSetSize > 0 ? listColumnFilter.getColumnIndex(i) - 1 : i;
+                destinationWriterIndexes.add(writerMetadata.getColumnMetadata(index).getOriginalWriterIndex());
+            }
+            return new InsertAsSelectOperationImpl(engine, tableToken, factory, copier, destinationWriterIndexes,
+                    metadataVersion, timestampIndexFound, !model.isBatchExplicit(), model.getBatchSize(), model.getO3MaxLag());
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
@@ -4743,7 +4769,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } else {
             rowCount = copyOrderedBatched(context, writer, metadata, cursor, recordToRowCopier, timestampIndex, Long.MAX_VALUE, o3MaxLag, reporter, configuration.getParquetExportCopyReportFrequencyLines());
         }
-        writer.commit();
+        writer.commitWithRoleFence(context.getCairoEngine(), false);
         return rowCount;
     }
 
@@ -4754,12 +4780,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SqlExecutionContext context,
             TableToken tableToken,
             boolean isWalEnabled,
+            RecordCursorFactory factory,
+            PageFrameCursor pageFrameCursor,
             RecordCursor cursor,
             RecordMetadata cursorMetadata,
+            boolean isAdaptive,
             long batchSize,
             long o3MaxLag,
             CopyDataProgressReporter reporter
-    ) {
+    ) throws SqlException {
         TableWriterAPI writerAPI = null;
         TableWriter writer = null;
 
@@ -4780,26 +4809,46 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 writerAPI = engine.getTableWriterAPI(tableToken, "create as select");
             }
 
-            RecordMetadata writerMetadata = writerAPI.getMetadata();
-            entityColumnFilter.of(writerMetadata.getColumnCount());
-            this.insertCount = copyTableData(
-                    context,
-                    cursor,
-                    cursorMetadata,
-                    writerAPI,
-                    writerMetadata,
-                    RecordToRowCopierUtils.generateCopier(
-                            asm,
+            final TableRecordMetadata writerMetadata = writerAPI.getMetadata();
+            final IntList writerIndexes = new IntList(writerMetadata.getColumnCount());
+            for (int i = 0, n = writerMetadata.getColumnCount(); i < n; i++) {
+                writerIndexes.add(writerMetadata.getColumnMetadata(i).getOriginalWriterIndex());
+            }
+            if (pageFrameCursor != null && writerAPI.getColumnarRowAppender() != null && writerAPI.getTableToken().isDelta()
+                    && InsertAsSelectOperationImpl.haveMatchingBatchTypes(cursorMetadata, writerMetadata, writerIndexes)) {
+                reporter.onProgress(CopyDataProgressReporter.Stage.Start, pageFrameCursor.size());
+                insertCount = InsertAsSelectOperationImpl.copyPageFrames(context, writerAPI, factory, pageFrameCursor,
+                        writerIndexes, writerMetadata.getTimestampIndex(), isAdaptive, batchSize, o3MaxLag);
+                writerAPI.commitWithRoleFence(engine, false);
+                reporter.onProgress(CopyDataProgressReporter.Stage.Finish, insertCount);
+            } else {
+                final RecordCursor effectiveCursor = cursor != null ? cursor : factory.getCursor(context);
+                try {
+                    entityColumnFilter.of(writerMetadata.getColumnCount());
+                    this.insertCount = copyTableData(
+                            context,
+                            effectiveCursor,
                             cursorMetadata,
+                            writerAPI,
                             writerMetadata,
-                            entityColumnFilter,
-                            configuration
-                    ),
-                    batchSize,
-                    o3MaxLag,
-                    reporter,
-                    configuration.getParquetExportCopyReportFrequencyLines()
-            );
+                            RecordToRowCopierUtils.generateCopier(
+                                    asm,
+                                    cursorMetadata,
+                                    writerMetadata,
+                                    entityColumnFilter,
+                                    configuration
+                            ),
+                            batchSize,
+                            o3MaxLag,
+                            reporter,
+                            configuration.getParquetExportCopyReportFrequencyLines()
+                    );
+                } finally {
+                    if (cursor == null) {
+                        Misc.free(effectiveCursor);
+                    }
+                }
+            }
         } catch (CairoException e) {
             // Close writer, the table will be removed
             writerAPI = Misc.free(writerAPI);
@@ -4935,7 +4984,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
                 if (createTableOp.getSelectText() != null) {
                     RecordCursorFactory newFactory = null;
-                    RecordCursor newCursor;
+                    RecordCursor newCursor = null;
+                    PageFrameCursor newPageFrameCursor = null;
                     for (int retryCount = 0; ; retryCount++) {
                         try {
                             compileMatViewQuery(executionContext, createMatViewOp);
@@ -5060,7 +5110,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     this.insertCount = -1;
                     final int position = createTableOp.getTableNamePosition();
                     RecordCursorFactory newFactory = null;
-                    RecordCursor newCursor;
+                    RecordCursor newCursor = null;
+                    PageFrameCursor newPageFrameCursor = null;
                     for (int retryCount = 0; ; retryCount++) {
                         try {
                             lexer.of(createTableOp.getSelectText());
@@ -5068,7 +5119,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             compileInner(executionContext, createTableOp.getSelectText(), false);
                             Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
-                            newCursor = newFactory.getCursor(executionContext);
+                            if (createTableOp.getWriteMode() == TableWriteMode.DELTA_RUNS
+                                    && InsertAsSelectOperationImpl.canCopyPageFrames(executionContext, newFactory)) {
+                                newPageFrameCursor = newFactory.getPageFrameCursor(executionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                            } else {
+                                newCursor = newFactory.getCursor(executionContext);
+                            }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
                             if (retryCount == maxRecompileAttempts) {
@@ -5088,6 +5144,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                     try (
                             RecordCursorFactory factory = newFactory;
+                            PageFrameCursor pageFrameCursor = newPageFrameCursor;
                             RecordCursor cursor = newCursor
                     ) {
                         final RecordMetadata metadata = factory.getMetadata();
@@ -5098,24 +5155,36 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         final SuspensionScope.Mode previousMode = keepLock ? SuspensionScope.enterBlocking(suspensionScope) : null;
                         try {
                             // todo: test create table if exists with select
-                            tableToken = engine.createTable(
-                                    executionContext.getSecurityContext(),
-                                    mem,
-                                    path,
-                                    createTableOp.ignoreIfExists(),
-                                    createTableOp,
-                                    keepLock,
-                                    volumeAlias != null,
-                                    createTableOp.getTableKind()
-                            );
+                            final Lock creationLock = engine.getRoleSwitchReadLock();
+                            creationLock.lock();
+                            try {
+                                if (engine.isReadOnlyMode()) {
+                                    throw CairoException.readOnlyAccess();
+                                }
+                                tableToken = engine.createTable(
+                                        executionContext.getSecurityContext(),
+                                        mem,
+                                        path,
+                                        createTableOp.ignoreIfExists(),
+                                        createTableOp,
+                                        keepLock,
+                                        volumeAlias != null,
+                                        createTableOp.getTableKind()
+                                );
+                            } finally {
+                                creationLock.unlock();
+                            }
 
                             try {
                                 copyTableDataAndUnlock(
                                         executionContext,
                                         tableToken,
                                         createTableOp.isWalEnabled(),
+                                        factory,
+                                        pageFrameCursor,
                                         cursor,
                                         metadata,
+                                        !createTableOp.isBatchExplicit(),
                                         createTableOp.getBatchSize(),
                                         createTableOp.getBatchO3MaxLag(),
                                         createTableOp.getCopyDataProgressReporter()
@@ -5133,8 +5202,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     LOG.error().$("could not create table as select [message=").$safe(e instanceof FlyweightMessageContainer
                                             ? ((FlyweightMessageContainer) e).getFlyweightMessage() : e.getMessage()).I$();
                                 }
-                                engine.dropTableOrViewOrMatView(path, tableToken);
-                                engine.unlockTableName(tableToken);
+                                final Lock cleanupLock = engine.getRoleSwitchReadLock();
+                                cleanupLock.lock();
+                                try {
+                                    // A demotion between CTAS batches must not run cleanup DDL on the replica.
+                                    // The created table and any accepted prefix remain; the client receives refusal.
+                                    if (engine.isReadOnlyMode()) {
+                                        throw CairoException.readOnlyAccess();
+                                    }
+                                    engine.dropTableOrViewOrMatView(path, tableToken);
+                                    engine.unlockTableName(tableToken);
+                                } finally {
+                                    cleanupLock.unlock();
+                                }
                                 throw e;
                             }
                         } finally {
@@ -5245,7 +5325,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 final CreateTableOperation createTableOp = createViewOp.getCreateTableOperation();
                 if (createTableOp.getSelectText() != null) {
                     RecordCursorFactory newFactory = null;
-                    RecordCursor newCursor;
+                    RecordCursor newCursor = null;
+                    PageFrameCursor newPageFrameCursor = null;
                     for (int retryCount = 0; ; retryCount++) {
                         try {
                             compileViewQuery(executionContext, createViewOp);

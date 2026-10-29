@@ -830,7 +830,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.appendTimestampSetter = timestampSetter;
             discardWalLag("open");
             configureAppendPosition();
-            purgeUnusedPartitionsAtOpen(privateRootWriter);
+            if (metadata.getWriteMode() != TableWriteMode.DELTA_RUNS) {
+                purgeUnusedPartitionsAtOpen(privateRootWriter);
+            }
             foldCompositePartitionsWhenMergeAppendDisabled();
             minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
             clearTodoLog();
@@ -2056,6 +2058,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /** Publishes already durable partition catalogs and canonical symbol counts in one table transaction. */
+    public void commitDeltaTxn(long seqTxn, long minTimestamp, long maxTimestamp) {
+        if (metadata.getWriteMode() != TableWriteMode.DELTA_RUNS || seqTxn != txWriter.getSeqTxn() + 1) {
+            throw CairoException.critical(0).put("invalid Delta table publication [table=").put(tableToken)
+                    .put(", applied=").put(txWriter.getSeqTxn()).put(", txn=").put(seqTxn).put(']');
+        }
+        final int commitMode = configuration.getCommitMode();
+        if (commitMode != CommitMode.NOSYNC) {
+            for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
+                denseSymbolMapWriters.getQuick(i).sync(commitMode == CommitMode.ASYNC);
+            }
+        }
+        txWriter.finishPartitionSizeUpdate(Math.min(txWriter.getMinTimestamp(), minTimestamp), Math.max(txWriter.getMaxTimestamp(), maxTimestamp));
+        txWriter.bumpPartitionTableVersion();
+        txWriter.setSeqTxn(seqTxn);
+        commitTxWriter();
+    }
+
+    /** Call only after accepted Delta descriptors have been recovered and attached. */
+    public void purgeUnpublishedDeltaPartitions() {
+        purgeUnusedPartitions();
+    }
+
     public void commitSeqTxn(long seqTxn) {
         txWriter.setSeqTxn(seqTxn);
         commitTxWriter();
@@ -2069,8 +2094,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commitTxWriterAndPublishPendingPostingSealPurges(effectiveCommitMode);
     }
 
+    // A null WAL path commits only persisted lag, through the same merge and publication path.
     public void commitWalInsertTransactions(
-            @Transient Path walPath,
+            @Nullable @Transient Path walPath,
             long seqTxn,
             TableWriterPressureControl pressureControl,
             long txnCommitTimestamp
@@ -2091,12 +2117,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         hasTtlEvictedPartitionsSinceLastCommit = false;
         txWriter.beginPartitionSizeUpdate();
         walApplyCommitTimestamp = txnCommitTimestamp;
-        long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
-        int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
+        final boolean isLagCommit = walPath == null;
+        long commitToTimestamp = isLagCommit ? WalTxnDetails.FORCE_FULL_COMMIT : walTxnDetails.getCommitToTimestamp(seqTxn);
+        int transactionBlock = isLagCommit ? 1 : calculateInsertTransactionBlock(seqTxn, pressureControl);
         // Read before the apply changes the lag: with lag pending, calculateInsertTransactionBlock() returns 1
         // without walking the transactions, and the flag is the previous block's.
-        boolean isBlockCutByRowLimit = txWriter.getLagRowCount() == 0 && walTxnDetails.isLastBlockCutByRowLimit();
-        bufferClusterTxnRanges(seqTxn, transactionBlock);
+        boolean isBlockCutByRowLimit = !isLagCommit && txWriter.getLagRowCount() == 0 && walTxnDetails.isLastBlockCutByRowLimit();
+        if (isLagCommit) {
+            o3ClusterTxnRanges.clear();
+        } else {
+            bufferClusterTxnRanges(seqTxn, transactionBlock);
+        }
         // Capture wall clock once to reduce syscalls. Used for:
         // - commit latency threshold check in processWalCommit()
         // - recording last WAL commit timestamp
@@ -2108,7 +2139,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         walRowsProcessed = 0;
 
         try {
-            if (transactionBlock == 1) {
+            if (isLagCommit) {
+                walApplySeqTxn = seqTxn;
+                initDeltaPartitions(txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
+                committed = txWriter.getLagRowCount() == 0 || processWalCommit(
+                        null, true, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, null,
+                        commitToTimestamp, 0, true, pressureControl, wallClockMicros
+                );
+            } else if (transactionBlock == 1) {
                 committed = processWalCommit(walPath, seqTxn, pressureControl, commitToTimestamp, wallClockMicros);
             } else {
                 try {
@@ -2151,7 +2189,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             walApplySeqTxn = -1;
         }
 
-        walTxnDetails.setIncrementRowsCommitted(walRowsProcessed);
+        if (!isLagCommit) {
+            walTxnDetails.setIncrementRowsCommitted(walRowsProcessed);
+        }
         if (committed) {
             assert txWriter.getLagRowCount() == 0;
 
@@ -2169,7 +2209,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             lastWalCommitTimestampMicros = wallClockMicros;
             housekeep(wallClockMicros);
             shrinkO3Mem();
-            if (configuration.getWalApplyBlockSize() > 0) {
+            if (!isLagCommit && configuration.getWalApplyBlockSize() > 0) {
                 learnWalBlockCopyRatios();
                 if (isBlockCutByRowLimit) {
                     growWalBlockRows();
@@ -2343,6 +2383,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         return rewritten;
+    }
+
+    public void completeDeltaTableSwitch(long seqTxn) {
+        if (txWriter.getSeqTxn() < seqTxn) {
+            txWriter.setSeqTxn(seqTxn);
+            txWriter.bumpPartitionTableVersion();
+            commitTxWriterAndPublishPendingPostingSealPurges(CommitMode.SYNC);
+        }
+        if (metadata.getWriteMode() != TableWriteMode.DELTA_RUNS) {
+            metadata.setWriteMode(TableWriteMode.DELTA_RUNS);
+            rewriteAndSwapMetadata(metadata, false);
+        }
+        // A failed directory/todo sync can leave the new mode visible in memory.
+        // Re-establish both durable boundaries on every pending-switch retry.
+        syncDeltaTableDirectory(path.trimTo(pathSize));
+        clearTodoLog(true);
     }
 
     @Override
@@ -3208,6 +3264,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /** Commit already applied WAL lag without reading or accepting another WAL transaction. */
+    public void forceWalLagCommit(TableWriterPressureControl pressureControl) {
+        if (txWriter.getLagTxnCount() > 0 || txWriter.getLagRowCount() > 0) {
+            commitWalInsertTransactions(null, getAppliedSeqTxn(), pressureControl, configuration.getMicrosecondClock().getTicks());
+        }
+    }
+
     public long getAppliedSeqTxn() {
         return txWriter.getSeqTxn() + txWriter.getLagTxnCount();
     }
@@ -3421,6 +3484,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return -partitionIndex - 1;
         }
         return partitionIndex;
+    }
+
+    public PartitionDeltaWriter getPartitionDeltaWriter() {
+        if (!partitionDeltaWriterInitialized) {
+            partitionDeltaWriter = configuration.newPartitionDeltaWriter();
+            partitionDeltaWriterInitialized = true;
+        }
+        return partitionDeltaWriter;
     }
 
     public int getPartitionIndexByTimestamp(long timestamp) {
@@ -4035,6 +4106,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private Row newRow0(long timestamp) {
+        if (metadata.getWriteMode() == TableWriteMode.DELTA_RUNS) {
+            throw CairoException.nonCritical().put("native row writes are not supported for Delta tables");
+        }
         if (rowAction != ROW_ACTION_NO_TIMESTAMP) {
             timestampDriver.validateBounds(timestamp);
         }
@@ -4120,6 +4194,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (Throwable e) {
             freeColumns(false);
             throw e;
+        }
+    }
+
+    public void prepareDeltaTableBases() {
+        syncColumns(CommitMode.SYNC);
+        // A fast-lag commit drops the covered-column maps that a full seal rebuilds the sidecars from.
+        configureCoveringForLastPartitionFastLag();
+        for (int i = 0, n = denseIndexers.size(); i < n; i++) {
+            ColumnIndexer indexer = denseIndexers.getQuick(i);
+            indexer.seal();
+            indexer.getWriter().sync(false);
+        }
+        // Seal visibility is committed at the old seqTxn before a catalog captures it.
+        commitTxWriterAndPublishPendingPostingSealPurges(CommitMode.SYNC);
+        closeActivePartition(false);
+        try (Path syncPath = new Path()) {
+            for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                syncPath.of(configuration.getDbRoot()).concat(tableToken);
+                setPathForNativePartition(syncPath, timestampType, partitionBy, getPartitionTimestamp(i), getPartitionNameTxn(i));
+                if (!txWriter.isPartitionParquet(i) && !txWriter.getPartitionHasDelta(i)) {
+                    try (Frame frame = engine.getFrameFactory().openRO(syncPath, getPartitionTimestamp(i), metadata, columnVersionWriter, getPartitionSize(i))) {
+                        for (int column = 0, count = metadata.getColumnCount(); column < count; column++) {
+                            try (var ignored = frame.createColumn(column)) {
+                                // Open every required source file, respecting deleted and all-top columns.
+                            }
+                        }
+                    }
+                }
+                syncDeltaTableFiles(syncPath);
+            }
+            syncPath.of(configuration.getDbRoot()).concat(tableToken).concat(COLUMN_VERSION_FILE_NAME);
+            syncDeltaTableFile(syncPath);
+            syncDeltaTableDirectory(syncPath.of(configuration.getDbRoot()).concat(tableToken));
         }
     }
 
@@ -5018,6 +5125,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public void skipWalTransactions(long seqTxn) {
+        if (metadata.getWriteMode() == TableWriteMode.DELTA_RUNS) {
+            throw CairoException.nonCritical().put("cannot skip accepted Delta transactions");
+        }
         for (int i = 0, n = getPartitionCount(); i < n; i++) {
             if (isPartitionDeltaActive(i)) {
                 final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
@@ -5596,6 +5706,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                                         {@link Long#MAX_VALUE} to drain the whole queue without a time bound.
      */
     public void tick(boolean contextAllowsAnyStructureChanges, long deadlineMicros) {
+        if (tableToken.isWal() && engine.getTableSequencerAPI().isDeltaTableSwitchPending(tableToken)) {
+            return;
+        }
         // Some alter table trigger commit() which trigger tick()
         // If already inside the tick(), do not re-enter it.
         processCommandQueue(contextAllowsAnyStructureChanges, deadlineMicros);
@@ -7530,6 +7643,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void clearTodoLog() {
+        clearTodoLog(false);
+    }
+
+    private void clearTodoLog(boolean strict) {
         try {
             todoMem.putLong(0, ++todoTxn); // write txn, reader will first read txn at offset 24 and then at offset 0
             Unsafe.storeFence(); // make sure we do not write hash before writing txn (view from another thread)
@@ -7546,6 +7663,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (engine.isDataSyncFailureFatal(th)) {
                 distressed = true;
                 engine.handleDataSyncFailure(th);
+            }
+            if (strict) {
+                throw th;
             }
             // Otherwise the out-of-date _todo_ is ignored, as it always was: its txn no longer matches.
             handleHousekeepingException(th);
@@ -7811,7 +7931,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * a failure before the write leaves both conservatively high, and the next commit tries again.
      */
     private void maybeDowngradeStorageVersion() {
-        if (compositePartitionCount == 0 && metadata.getStorageVersion() > ColumnType.VERSION) {
+        if (metadata.getWriteMode() != TableWriteMode.DELTA_RUNS && compositePartitionCount == 0 && metadata.getStorageVersion() > ColumnType.VERSION) {
             try {
                 writeStorageVersionToMeta(ColumnType.VERSION);
             } catch (Throwable th) {
@@ -7974,11 +8094,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * The storage version that {@code _meta} should carry for the table's current shape:
-     * {@link ColumnType#MAX_STORAGE_VERSION} while it holds composite partitions, otherwise
-     * {@link ColumnType#VERSION}. Used when a full meta rewrite must reproduce the elevated version.
+     * Delta tables always retain {@link TableUtils#META_FORMAT_VERSION_DELTA}; other tables use
+     * {@link ColumnType#MAX_STORAGE_VERSION} while holding composite partitions and
+     * {@link ColumnType#VERSION} otherwise.
      */
     private int storageVersionForCurrentState() {
-        return compositePartitionCount > 0 ? ColumnType.MAX_STORAGE_VERSION : ColumnType.VERSION;
+        return metadata.getWriteMode() == TableWriteMode.DELTA_RUNS
+                ? META_FORMAT_VERSION_DELTA
+                : compositePartitionCount > 0 ? ColumnType.MAX_STORAGE_VERSION : ColumnType.VERSION;
     }
 
     /**
@@ -8251,6 +8374,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void configureAppendPosition() {
+        if (metadata.getWriteMode() == TableWriteMode.DELTA_RUNS) {
+            // Delta bases are immutable. Opening native append mappings would truncate a new empty base.
+            return;
+        }
         final boolean partitioned = PartitionBy.isPartitioned(partitionBy);
         if (this.txWriter.getMaxTimestamp() > Long.MIN_VALUE || !partitioned) {
             initLastPartition(this.txWriter.getMaxTimestamp());
@@ -8911,12 +9038,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             final int primaryColumnIndex = getPrimaryColumnIndex(columnIndex);
             final MemoryMA lagMem = columns.getQuick(primaryColumnIndex);
-            final MemoryCR mappedMem = o3Columns.getQuick(primaryColumnIndex);
+            final boolean hasMappedRows = mappedRowHi > mappedRowLo;
+            final MemoryCR mappedMem = hasMappedRows ? o3Columns.getQuick(primaryColumnIndex) : null;
             final MemoryCARW destMem = o3MemColumns2.getQuick(primaryColumnIndex);
 
             final int shl = ColumnType.pow2SizeOf(columnType);
             destMem.jumpTo(mergeCount << shl);
-            final long srcMapped = mappedMem.addressOf(mappedRowLo << shl) - (mappedRowLo << shl);
+            final long srcMapped = hasMappedRows ? mappedMem.addressOf(mappedRowLo << shl) - (mappedRowLo << shl) : 0;
             long lagMemOffset = lagRows > 0 ? (txWriter.getTransientRowCount() - getColumnTop(columnIndex)) << shl : 0;
             long lagAddr = mapAppendColumnBuffer(lagMem, lagMemOffset, lagRows << shl, false);
             try {
@@ -8931,7 +9059,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .put(", lagRows=").put(lagRows)
                             .put(']');
                 }
-                if (srcMapped == 0) {
+                if (hasMappedRows && srcMapped == 0) {
                     throw CairoException.critical(0)
                             .put("cannot sort WAL data, rows are missing [table").put(tableToken.getTableName())
                             .put(", column=").put(getColumnNameSafe(columnIndex))
@@ -9002,8 +9130,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int primaryIndex = getPrimaryColumnIndex(columnIndex);
             final int secondaryIndex = primaryIndex + 1;
 
-            final MemoryCR o3dataMem = o3Columns.getQuick(primaryIndex);
-            final MemoryCR o3auxMem = o3Columns.getQuick(secondaryIndex);
+            final boolean hasMappedRows = mappedRowHi > mappedRowLo;
+            final MemoryCR o3dataMem = hasMappedRows ? o3Columns.getQuick(primaryIndex) : null;
+            final MemoryCR o3auxMem = hasMappedRows ? o3Columns.getQuick(secondaryIndex) : null;
             final MemoryMA lagDataMem = columns.getQuick(primaryIndex);
             final MemoryMA lagAuxMem = columns.getQuick(secondaryIndex);
 
@@ -9012,11 +9141,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
 
-            final long srcMappedDataAddr = o3dataMem.addressOf(0);
-            final long srcMappedAuxAddr = o3auxMem.addressOf(0);
+            final long srcMappedDataAddr = hasMappedRows ? o3dataMem.addressOf(0) : 0;
+            final long srcMappedAuxAddr = hasMappedRows ? o3auxMem.addressOf(0) : 0;
 
-            final long src1DataSize = columnTypeDriver.getDataVectorSize(srcMappedAuxAddr, mappedRowLo, mappedRowHi - 1);
-            assert o3dataMem.size() >= src1DataSize;
+            final long src1DataSize = hasMappedRows ? columnTypeDriver.getDataVectorSize(srcMappedAuxAddr, mappedRowLo, mappedRowHi - 1) : 0;
+            assert !hasMappedRows || o3dataMem.size() >= src1DataSize;
             final long lagAuxOffset = lagRows > 0 ? columnTypeDriver.getAuxVectorOffset(txWriter.getTransientRowCount() - getColumnTop(columnIndex)) : 0;
             final long lagAuxSize = columnTypeDriver.getAuxVectorSize(lagRows);
             final long signedLagAuxAddr = lagRows > 0 ? mapAppendColumnBuffer(lagAuxMem, lagAuxOffset, lagAuxSize, false) : 0;
@@ -9402,7 +9531,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private long deduplicateSortedIndex(long longIndexLength, long indexSrcAddr, long indexDstAddr, long tempIndexAddr, long lagRows) {
+    private long deduplicateSortedIndex(long longIndexLength, long indexSrcAddr, long indexDstAddr, long tempIndexAddr, long lagRows, boolean hasMappedRows) {
         int dedupKeyIndex = 0;
         long dedupCommitAddr = 0;
         final long dedupRowCount;
@@ -9433,17 +9562,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // Map column buffers for lag rows for deduplication
                             long lagKeyAddr = lagRows > 0 ? mapAppendColumnBuffer(columns.get(getPrimaryColumnIndex(i)), lagMemOffset, lagMapSize, false) : 0L;
                             DedupColumnCommitAddresses.setReservedValuesSet1(addr, lagKeyAddr, lagMemOffset, lagMapSize);
-                            long o3ColumnData = o3Columns.get(getPrimaryColumnIndex(i)).addressOf(0);
-                            assert o3ColumnData != 0;
+                            long o3ColumnData = hasMappedRows ? o3Columns.get(getPrimaryColumnIndex(i)).addressOf(0) : 0;
+                            assert !hasMappedRows || o3ColumnData != 0;
 
                             DedupColumnCommitAddresses.setColAddressValues(addr, o3ColumnData);
                             DedupColumnCommitAddresses.setO3DataAddressValues(addr, Math.abs(lagKeyAddr));
                         } else {
                             ColumnTypeDriver driver = ColumnType.getDriver(columnType);
-                            MemoryCR o3VarColumn = o3Columns.get(getPrimaryColumnIndex(i));
-                            long o3ColumnVarDataAddr = o3VarColumn.addressOf(0);
-                            long o3ColumnVarAuxAddr = o3Columns.get(getSecondaryColumnIndex(i)).addressOf(0);
-                            long o3ColumnVarDataSize = o3VarColumn.addressHi() - o3ColumnVarDataAddr;
+                            MemoryCR o3VarColumn = hasMappedRows ? o3Columns.get(getPrimaryColumnIndex(i)) : null;
+                            long o3ColumnVarDataAddr = hasMappedRows ? o3VarColumn.addressOf(0) : 0;
+                            long o3ColumnVarAuxAddr = hasMappedRows ? o3Columns.get(getSecondaryColumnIndex(i)).addressOf(0) : 0;
+                            long o3ColumnVarDataSize = hasMappedRows ? o3VarColumn.addressHi() - o3ColumnVarDataAddr : 0;
                             DedupColumnCommitAddresses.setColAddressValues(addr, o3ColumnVarAuxAddr, o3ColumnVarDataAddr, o3ColumnVarDataSize);
 
                             if (lagRows > 0) {
@@ -10836,14 +10965,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private long getO3RowCount0() {
         return (masterRef - o3MasterRef + 1) / 2;
-    }
-
-    private PartitionDeltaWriter getPartitionDeltaWriter() {
-        if (!partitionDeltaWriterInitialized) {
-            partitionDeltaWriter = configuration.newPartitionDeltaWriter();
-            partitionDeltaWriterInitialized = true;
-        }
-        return partitionDeltaWriter;
     }
 
     private long getPartitionTimestampOrMax(int partitionIndex) {
@@ -14159,6 +14280,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // assert is a redundant consumer-side check that the invariant still holds.
             assert !tableToken.isWal() || !asyncWriterCommand.isStructural()
                     : "structural command must not reach a WAL table's async command queue";
+            if (metadata.getWriteMode() == TableWriteMode.DELTA_RUNS) {
+                throw CairoException.nonCritical().put("legacy writer command is not supported for Delta tables");
+            }
             affectedRowsCount = applyOutsideWal(asyncWriterCommand, contextAllowsAnyStructureChanges);
         } catch (TableReferenceOutOfDateException ex) {
             LOG.info()
@@ -14825,7 +14949,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // returns true if the tx was committed into the table and can be made visible to readers
     // returns false if the tx was only copied to LAG and not committed - in this case the tx is not visible to readers
     private boolean processWalCommit(
-            @Transient Path walPath,
+            @Nullable @Transient Path walPath,
             boolean ordered,
             long rowLo,
             long rowHi,
@@ -14838,9 +14962,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             TableWriterPressureControl pressureControl,
             long wallClockMicros
     ) {
+        final boolean hasIncomingRows = rowHi > rowLo;
         int initialSize = segmentFileCache.getWalMappedColumns().size();
         int timestampIndex = metadata.getTimestampIndex();
-        int walRootPathLen = walPath.size();
+        int walRootPathLen = hasIncomingRows ? walPath.size() : 0;
         long maxTimestamp = txWriter.getMaxTimestamp();
         if (isLastPartitionClosed()) {
             if (isEmptyTable()) {
@@ -14885,8 +15010,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean forceFullCommit = commitToTimestamp == WalTxnDetails.FORCE_FULL_COMMIT;
             final long maxLagRows = getWalMaxLagRows();
             final long walLagMaxTimestampBefore = txWriter.getLagMaxTimestamp();
-            segmentFileCache.mmapSegments(metadata, walPath, walIdSegmentId, rowLo, rowHi);
-            o3Columns = segmentFileCache.getWalMappedColumns();
+            if (hasIncomingRows) {
+                segmentFileCache.mmapSegments(metadata, walPath, walIdSegmentId, rowLo, rowHi);
+                o3Columns = segmentFileCache.getWalMappedColumns();
+            }
             final long newMinLagTimestamp = Math.min(o3TimestampMin, txWriter.getLagMinTimestamp());
             long initialPartitionTimestampHi = partitionTimestampHi;
 
@@ -14956,7 +15083,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() > configuration.getWalMaxLagTxnCount());
                 }
 
-                if (!needFullCommit || canFastCommitNew) {
+                if (hasIncomingRows && (!needFullCommit || canFastCommitNew)) {
                     // Don't commit anything, move everything to lag area of last partition instead.
                     // This usually happens when WAL transactions are very small, so it's faster
                     // to squash several of them together before writing anything to all the partitions.
@@ -14994,6 +15121,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     walLagRowCount = txWriter.getLagRowCount();
                     totalUncommitted = walLagRowCount + commitRowCount;
                 }
+                if (totalUncommitted == 0) {
+                    return true;
+                }
 
                 // Re-valuate WAL lag min/max with impact of the current transaction.
                 txWriter.setLagMinTimestamp(Math.min(o3TimestampMin, txWriter.getLagMinTimestamp()));
@@ -15002,8 +15132,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 boolean needsDedup = isCommitDedupMode();
 
                 long timestampAddr = 0;
-                MemoryCR walTimestampColumn = segmentFileCache.getWalMappedColumns().getQuick(getPrimaryColumnIndex(timestampIndex));
-                o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+                MemoryCR walTimestampColumn = hasIncomingRows ? segmentFileCache.getWalMappedColumns().getQuick(getPrimaryColumnIndex(timestampIndex)) : null;
+                if (hasIncomingRows) {
+                    o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+                }
 
                 if (needsOrdering || needsDedup) {
                     if (needsOrdering) {
@@ -15020,8 +15152,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         MemoryMA timestampColumn = columns.get(getPrimaryColumnIndex(timestampIndex));
                         final long tsLagOffset = txWriter.getTransientRowCount() << 3;
                         final long tsLagSize = walLagRowCount << 3;
-                        final long mappedTimestampIndexAddr = walTimestampColumn.addressOf(rowLo << 4);
                         timestampAddr = o3TimestampMem.getAddress();
+                        final long mappedTimestampIndexAddr = hasIncomingRows ? walTimestampColumn.addressOf(rowLo << 4) : timestampAddr;
 
                         final long tsLagBufferAddr = mapAppendColumnBuffer(timestampColumn, tsLagOffset, tsLagSize, false);
                         try {
@@ -15035,7 +15167,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     txWriter.getLagMinTimestamp(),
                                     txWriter.getLagMaxTimestamp()
                             );
-                            assert rowCount == totalUncommitted : "radix sort error, result: " + rowCount + " expected " + totalUncommitted;
+                            if (rowCount != totalUncommitted) {
+                                throw CairoException.critical(0).put("invalid WAL or lag timestamps [result=").put(rowCount)
+                                        .put(", expected=").put(totalUncommitted).put(']');
+                            }
                         } finally {
                             mapAppendColumnBufferRelease(tsLagBufferAddr, tsLagOffset, tsLagSize);
                         }
@@ -15053,7 +15188,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 timestampAddr,
                                 dedupTimestampAddr,
                                 o3TimestampMemCpy.addressOf(0),
-                                walLagRowCount
+                                walLagRowCount,
+                                hasIncomingRows
                         );
                         if (deduplicatedRowCount > 0) {
                             // There are timestamp duplicates, reshuffle the records
@@ -15103,8 +15239,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (memColumnShifted) {
                 clearMemColumnShifts();
             }
-            walPath.trimTo(walRootPathLen);
-            segmentFileCache.closeWalFiles(isLastSegmentUsage || !success, walIdSegmentId, initialSize);
+            if (hasIncomingRows) {
+                walPath.trimTo(walRootPathLen);
+                segmentFileCache.closeWalFiles(isLastSegmentUsage || !success, walIdSegmentId, initialSize);
+            }
         }
     }
 
@@ -18637,9 +18775,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void rewriteAndSwapMetadata(TableWriterMetadata metadata) {
+        rewriteAndSwapMetadata(metadata, true);
+    }
+
+    private void rewriteAndSwapMetadata(TableWriterMetadata metadata, boolean incrementVersion) {
         final int metadataEffectiveCommitMode = metaSwapCommitMode(getFlushCommitMode());
         // create new _meta.swp
-        this.metaSwapIndex = rewriteMetadata(metadata, metadataEffectiveCommitMode);
+        this.metaSwapIndex = rewriteMetadata(metadata, incrementVersion, metadataEffectiveCommitMode);
 
         // validate new meta
         validateSwapMeta();
@@ -18660,7 +18802,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         metadata.setStorageVersion(storageVersionForCurrentState());
     }
 
-    private int rewriteMetadata(TableWriterMetadata metadata, int commitMode) {
+    private int rewriteMetadata(TableWriterMetadata metadata, boolean incrementVersion, int commitMode) {
         try {
             int columnCount = metadata.getColumnCount();
             int index = openMetaSwapFile(ff, ddlMem, path, pathSize, configuration.getMaxSwapFileCount());
@@ -18676,13 +18818,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ddlMem.putInt(metadata.getMaxUncommittedRows());
             ddlMem.putLong(metadata.getO3MaxLag());
 
-            int version = txWriter.getMetadataVersion() + 1;
+            int version = txWriter.getMetadataVersion() + (incrementVersion ? 1 : 0);
             metadata.setMetadataVersion(version);
             ddlMem.putLong(metadata.getMetadataVersion());
             ddlMem.putBool(metadata.isWalEnabled());
             ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
             ddlMem.putInt(metadata.getTableFormat());
+            ddlMem.jumpTo(META_OFFSET_WRITE_MODE);
+            ddlMem.putInt(metadata.getWriteMode());
 
             ddlMem.jumpTo(META_OFFSET_COLUMN_TYPES);
             for (int i = 0; i < columnCount; i++) {
@@ -20938,6 +21082,60 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ff.close(dirFd);
             }
         }
+    }
+
+    private void syncDeltaTableDirectory(Path syncPath) {
+        if (!Os.isWindows()) {
+            ff.fsyncAndClose(openRO(ff, syncPath.$(), LOG));
+        }
+    }
+
+    private void syncDeltaTableFile(Path syncPath) {
+        final long size = ff.length(syncPath.$());
+        if (size < 0) {
+            throw CairoException.critical(ff.errno()).put("missing Delta base file [path=").put(syncPath).put(']');
+        }
+        final long fd = Os.isWindows() ? openRW(ff, syncPath.$(), LOG, CairoConfiguration.O_NONE) : openRO(ff, syncPath.$(), LOG);
+        try {
+            if (ff.length(fd) != size) {
+                throw CairoException.critical(0).put("Delta base changed during sync [path=").put(syncPath).put(']');
+            }
+            ff.fsync(fd);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    private void syncDeltaTableFiles(Path syncPath) {
+        final int len = syncPath.size();
+        final long find = ff.findFirst(syncPath.$());
+        if (find <= 0) {
+            throw CairoException.critical(ff.errno()).put("cannot sync Delta base [path=").put(syncPath).put(']');
+        }
+        try {
+            int next;
+            do {
+                long name = ff.findName(find);
+                if (Files.notDots(name)) {
+                    int type = ff.findType(find);
+                    syncPath.trimTo(len).concat(name);
+                    if (type == Files.DT_DIR) {
+                        syncDeltaTableFiles(syncPath);
+                    } else if (type == Files.DT_FILE) {
+                        syncDeltaTableFile(syncPath);
+                    } else {
+                        throw CairoException.nonCritical().put("unsupported linked Delta base file [path=").put(syncPath).put(']');
+                    }
+                }
+            } while ((next = ff.findNext(find)) > 0);
+            if (next < 0) {
+                throw CairoException.critical(ff.errno()).put("cannot list Delta base [path=").put(syncPath).put(']');
+            }
+        } finally {
+            ff.findClose(find);
+            syncPath.trimTo(len);
+        }
+        syncDeltaTableDirectory(syncPath);
     }
 
     // System tables (sys.*, telemetry, query trace) are written by background jobs, not by users.

@@ -34,7 +34,8 @@ import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
-import io.questdb.cairo.wal.ColumnarRowAppender;
+import io.questdb.cairo.ColumnarRowAppender;
+import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.wal.WalReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
@@ -53,6 +54,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.cutlass.qwp.QwpNullBitmapTestUtil;
@@ -1160,6 +1162,33 @@ public class WalColumnarRowAppenderTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testParquetVarcharSlices() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE slices (value VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (WalWriter writer = engine.getWalWriter(engine.verifyTableName("slices"));
+                 MemoryCARWImpl values = new MemoryCARWImpl(64, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
+                 MemoryCARWImpl aux = new MemoryCARWImpl(64, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                final Utf8String text = new Utf8String("βeta longer than inline");
+                values.putVarchar(text);
+                aux.putLong((long) text.size() << 4); aux.putLong(values.getAddress());
+                aux.putLong(2); aux.putLong(0);
+                aux.putLong(4); aux.putLong(0);
+                final ColumnarRowAppender appender = writer.getColumnarRowAppender();
+                appender.beginColumnarWrite(3);
+                appender.putVarcharSliceColumn(0, aux.getAddress(), 3);
+                appender.putServerAssignedTimestamp(3, 1);
+                appender.endColumnarWrite(1, 1, false);
+                writer.commit();
+            }
+            drainWalQueue();
+            assertQuery("SELECT value, length(value) len FROM slices")
+                    .expectSize()
+                    .returns("value\tlen\nβeta longer than inline\t23\n\t0\n\t-1\n");
+        });
+    }
+
 
     @Test
     public void testPutArrayColumn_1D_Double_AllNull() throws Exception {

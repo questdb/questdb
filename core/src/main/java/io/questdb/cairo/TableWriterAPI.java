@@ -31,6 +31,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
+import java.util.concurrent.locks.Lock;
 
 public interface TableWriterAPI extends Closeable {
 
@@ -85,6 +86,39 @@ public interface TableWriterAPI extends Closeable {
     void close();
 
     void commit();
+
+    /**
+     * Commits ingress data while excluding a role change. Writers that wait for a
+     * mode transition must perform that wait before acquiring the role fence.
+     */
+    default void commitWithRoleFence(CairoEngine engine, boolean withLag) {
+        if (engine.isReadOnlyMode()) {
+            throw CairoException.readOnlyAccess();
+        }
+        final Lock lock = engine.getRoleSwitchReadLock();
+        lock.lock();
+        try {
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.readOnlyAccess();
+            }
+            if (withLag) {
+                ic();
+            } else {
+                commit();
+            }
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    /**
+     * Returns this writer's optional synchronous columnar append capability.
+     * Batches share the existing transaction and never commit implicitly.
+     * Reacquire before each batch: a held WAL writer can switch to Delta at a batch boundary.
+     */
+    default @Nullable ColumnarRowAppender getColumnarRowAppender() {
+        return null;
+    }
 
     /**
      * Returns the sequencer txn assigned to the most recent commit on this writer,
@@ -148,6 +182,22 @@ public interface TableWriterAPI extends Closeable {
     TableWriter.Row newRow(long timestamp);
 
     void rollback();
+
+    /**
+     * Enables transaction-budget-aware retries for a producer whose existing
+     * contract permits independent intermediate commits. Call only with no
+     * uncommitted rows. Writers without adaptive batching ignore this hint.
+     */
+    default void setBatchAdaptive(boolean isAdaptive) {
+    }
+
+    /**
+     * Selects preparation for a producer that guarantees nondecreasing designated
+     * timestamps across the next transaction. Call only with no uncommitted rows.
+     * The default preserves existing writers' behavior. Equal timestamps are valid.
+     */
+    default void setBatchOrdered(boolean isOrdered) {
+    }
 
     /**
      * Declares type of behavior of the implementing class.

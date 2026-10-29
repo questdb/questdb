@@ -156,7 +156,9 @@ public class TableConverter {
                                 // The WAL replay above may have made Delta active, or an upload may have run since
                                 // SQL accepted the request, and SQL now refuses a new one. Cancel it rather than
                                 // keep it for a restart that would convert a table cold storage holds keys for.
-                                boolean isConverted = !txWriter.hasDeltaState() && !txWriter.hasUploadedPartitions();
+                                boolean isConverted = TableUtils.getWriteMode(metaMem) != TableWriteMode.DELTA_RUNS
+                                        && !txWriter.hasDeltaState()
+                                        && !txWriter.hasUploadedPartitions();
                                 if (!isConverted) {
                                     LOG.advisory().$("cancelled the pending table type conversion, table has delta or cold storage state [table=")
                                             .$(token).I$();

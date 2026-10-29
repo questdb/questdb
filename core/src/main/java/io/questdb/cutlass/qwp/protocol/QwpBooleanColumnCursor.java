@@ -49,6 +49,7 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
     // Wire pointers
     private long nullBitmapAddress;
     private long valueBitmapAddress;
+    private int valueCount;
 
     @Override
     public boolean advanceRow() {
@@ -76,7 +77,12 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
     public void clear() {
         nullBitmapAddress = 0;
         valueBitmapAddress = 0;
+        valueCount = 0;
         resetRowPosition();
+    }
+
+    public long getNullBitmapAddress() {
+        return nullBitmapAddress;
     }
 
     @Override
@@ -89,6 +95,14 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
      */
     public boolean getValue() {
         return currentValue;
+    }
+
+    public int getValueCount() {
+        return valueCount;
+    }
+
+    public long getValuesAddress() {
+        return valueBitmapAddress;
     }
 
     @Override
@@ -138,7 +152,7 @@ public final class QwpBooleanColumnCursor implements QwpColumnCursor {
             nullCount = 0;
         }
 
-        int valueCount = rowCount - nullCount;
+        this.valueCount = rowCount - nullCount;
         int valueBitmapSize = (valueCount + 7) / 8;
         if (offset + valueBitmapSize > dataLength) {
             throw QwpParseException.create(

@@ -36,10 +36,12 @@ import io.questdb.cairo.IDGenerator;
 import io.questdb.cairo.IDGeneratorFactory;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableStructure;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
+import io.questdb.cairo.TableWriteMode;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -81,7 +83,9 @@ public class TableSequencerImpl implements TableSequencer {
     private final IDGenerator walIdGenerator;
     volatile long releaseTime = Long.MAX_VALUE;
     private volatile boolean closed = false;
+    private long deltaReservedTxn;
     private boolean distressed = false;
+    private volatile boolean isDeltaTableSwitchPending;
     private TableToken tableToken;
 
     TableSequencerImpl(
@@ -146,6 +150,7 @@ public class TableSequencerImpl implements TableSequencer {
             openOrRecoverMetadata(tableTransactionLog.getMaxMetadataVersion());
             // For a newly created table and an existing one alike.
             seqTxnTracker.setStructureVersion(metadata.getMetadataVersion());
+            readDeltaTableSwitch();
         } catch (CairoException ex) {
             closeLocked();
             if (ex.isTableDropped()) {
@@ -228,7 +233,7 @@ public class TableSequencerImpl implements TableSequencer {
         }
         writeLock();
         try {
-            return closeLocked();
+            return (pool.closed || deltaReservedTxn == 0) && closeLocked();
         } finally {
             unlockWrite();
         }
@@ -254,6 +259,7 @@ public class TableSequencerImpl implements TableSequencer {
     @Override
     public void dropTable() {
         checkDropped();
+        checkNoDeltaPublication();
         final long timestamp = microClock.getTicks();
         final long txn;
         try {
@@ -312,6 +318,7 @@ public class TableSequencerImpl implements TableSequencer {
 
     @Override
     public int getNextWalId() {
+        checkNoTableModeTransition();
         return (int) walIdGenerator.getNextId();
     }
 
@@ -451,6 +458,8 @@ public class TableSequencerImpl implements TableSequencer {
         assert !closed;
         checkDropped();
         checkHardSuspended();
+        checkNoTableModeTransition();
+        checkNoDeltaPublication();
         long txn;
         try {
             // From sequencer perspective metadata version is the same as column structure version
@@ -533,6 +542,8 @@ public class TableSequencerImpl implements TableSequencer {
         assert !closed;
         checkDropped();
         checkHardSuspended();
+        checkNoTableModeTransition();
+        checkNoDeltaPublication();
         long txn;
         final long timestamp = microClock.getTicks();
         try {
@@ -574,6 +585,7 @@ public class TableSequencerImpl implements TableSequencer {
 
         reconcileMetadataWithCommittedLog(tableTransactionLog.getMaxMetadataVersion());
         seqTxnTracker.setStructureVersion(metadata.getMetadataVersion());
+        readDeltaTableSwitch();
         long lastTxn = tableTransactionLog.lastTxn();
         LOG.info()
                 .$("reloaded table sequencer [table=").$(tableToken)
@@ -802,6 +814,25 @@ public class TableSequencerImpl implements TableSequencer {
         }
     }
 
+    private void readDeltaTableSwitch() {
+        isDeltaTableSwitchPending = false;
+        long txn = tableTransactionLog.lastTxn();
+        if (txn > 0 && !tableTransactionLog.isDropped()) {
+            try (TransactionLogCursor cursor = getTransactionLogCursor(txn - 1)) {
+                if (!cursor.hasNext()) {
+                    throw CairoException.critical(0).put("missing committed sequencer tail");
+                }
+                WalUtils.checkWalId(cursor.getWalId());
+                boolean isSwitch = cursor.getWalId() == WalUtils.DELTA_TABLE_SWITCH_WAL_ID;
+                isDeltaTableSwitchPending = isSwitch && !tableToken.isDelta();
+                if (isSwitch && (cursor.getSegmentId() != WalUtils.DELTA_TABLE_SWITCH_VERSION
+                        || cursor.getSegmentTxn() != TableWriteMode.DELTA_RUNS)) {
+                    throw CairoException.critical(0).put("invalid Delta table switch record");
+                }
+            }
+        }
+    }
+
     private void rebuildMetadataFromCommittedLog(long committedStructureVersion) {
         metadata.openFromInitialMetadata(path, rootLen, tableToken);
         replayCommittedMetadataChanges(0, committedStructureVersion, false);
@@ -863,6 +894,102 @@ public class TableSequencerImpl implements TableSequencer {
         // rename sidecars can otherwise move metadata away from the registry after abandoned renames or rename chains.
         // skipTableRename() still bumps structureVersion so the replay matches the committed log's version count.
         metadata.skipTableRename();
+    }
+
+    long beginDeltaTableSwitch(long validatedMetadataVersion) {
+        checkDropped();
+        if (isDeltaTableSwitchPending) {
+            return lastTxn();
+        }
+        if (tableToken.isDelta()) {
+            return 0;
+        }
+        checkHardSuspended();
+        if (metadata.getMetadataVersion() != validatedMetadataVersion) {
+            throw CairoException.nonCritical().put("table has unapplied schema changes, retry Delta conversion after they are applied [validatedMetadataVersion=")
+                    .put(validatedMetadataVersion).put(", metadataVersion=").put(metadata.getMetadataVersion()).put(']');
+        }
+        final long previousTxn = lastTxn();
+        try {
+            long txn = tableTransactionLog.addDeltaTableSwitchEntry(metadata.getMetadataVersion(), microClock.getTicks());
+            notifyTxnCommitted(txn);
+            return txn;
+        } finally {
+            // A header-sync failure can occur after the switch has become visible.
+            isDeltaTableSwitchPending = lastTxn() > previousTxn;
+        }
+    }
+
+    long acceptDeltaTxn(long txn, long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long minTimestamp, long maxTimestamp, long rowCount) {
+        checkDropped();
+        checkHardSuspended();
+        if (deltaReservedTxn != txn || lastTxn() + 1 != txn || !tableToken.isDelta()
+                || metadata.getMetadataVersion() != structureVersion || walId <= 0 || segmentId < 0 || segmentTxn < 0) {
+            throw CairoException.critical(0).put("Delta transaction reservation changed [table=").put(tableToken).put(", txn=").put(txn).put(']');
+        }
+        try {
+            return tableTransactionLog.addDeltaRunEntry(structureVersion, walId, segmentId, segmentTxn, timestamp, minTimestamp, maxTimestamp, rowCount);
+        } finally {
+            if (lastTxn() == txn) {
+                notifyTxnCommitted(txn);
+            }
+        }
+    }
+
+    void finishDeltaRecovery(long appliedTxn) {
+        if (lastTxn() != appliedTxn || deltaReservedTxn > appliedTxn + 1) {
+            throw CairoException.critical(0).put("Delta recovery did not reach the journal frontier [table=")
+                    .put(tableToken).put(", appliedTxn=").put(appliedTxn).put(']');
+        }
+        deltaReservedTxn = 0;
+    }
+
+    void finishDeltaTxn(long txn) {
+        if (deltaReservedTxn != 0 && deltaReservedTxn != txn) {
+            throw CairoException.critical(0).put("unexpected Delta publication fence [table=").put(tableToken).put(", txn=").put(txn).put(']');
+        }
+        deltaReservedTxn = 0;
+    }
+
+    long reserveDeltaTxn(long structureVersion, long appliedTxn) {
+        checkDropped();
+        checkHardSuspended();
+        checkNoTableModeTransition();
+        checkNoDeltaPublication();
+        if (!tableToken.isDelta() || metadata.getMetadataVersion() != structureVersion) {
+            throw TableReferenceOutOfDateException.of(tableToken);
+        }
+        if (lastTxn() != appliedTxn) {
+            throw CairoException.critical(0).put("Delta publication requires recovery [table=").put(tableToken)
+                    .put(", appliedTxn=").put(appliedTxn).put(", journalTxn=").put(lastTxn()).put(']');
+        }
+        return deltaReservedTxn = lastTxn() + 1;
+    }
+
+    private void checkNoDeltaPublication() {
+        if (deltaReservedTxn != 0) {
+            throw CairoException.nonCritical().put("Delta publication is pending [table=").put(tableToken)
+                    .put(", txn=").put(deltaReservedTxn).put(']');
+        }
+    }
+
+    void checkNoTableModeTransition() {
+        if (isDeltaTableSwitchPending) {
+            throw CairoException.nonCritical().put("Delta table switch is pending [table=").put(tableToken).put(']');
+        }
+    }
+
+    void completeDeltaTableSwitch(TableToken token) {
+        notifyRename(token);
+        isDeltaTableSwitchPending = false;
+    }
+
+    long getPendingDeltaTableSwitch() {
+        return isDeltaTableSwitchPending ? lastTxn() : -1;
+    }
+
+    boolean isDeltaTableSwitchPending() {
+        return isDeltaTableSwitchPending;
     }
 
     void readLock() {

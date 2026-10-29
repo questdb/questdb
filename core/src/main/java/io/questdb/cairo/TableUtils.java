@@ -136,6 +136,7 @@ public final class TableUtils {
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
+    public static final int META_FORMAT_VERSION_DELTA = 431;
     /**
      * Marks a whole LOGICAL partition's merge - every folder of one period, the main directory and all its splits,
      * copied into one - staged next to the source directories before the writer has agreed to swap it in. Named
@@ -157,6 +158,7 @@ public final class TableUtils {
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
     public static final long META_OFFSET_TABLE_FORMAT = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
+    public static final long META_OFFSET_WRITE_MODE = 56; // INT; present only in the Delta metadata format
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(2);
@@ -1574,6 +1576,13 @@ public final class TableUtils {
             return ColumnType.NULL;
         }
         return structure.getColumnType(timestampIndex);
+    }
+
+    public static int getWriteMode(MemoryR metaMem) {
+        // Reserved bytes in older table metadata were not initialized by all producers.
+        return metaMem.getInt(META_OFFSET_VERSION) == META_FORMAT_VERSION_DELTA
+                ? metaMem.getInt(META_OFFSET_WRITE_MODE)
+                : TableWriteMode.WAL_SEGMENTS;
     }
 
     public static void handleMetadataLoadException(
@@ -3353,7 +3362,16 @@ public final class TableUtils {
     ) {
         try {
             final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);
-            validateMetaVersion(metaPath, metaMem, META_OFFSET_VERSION, expectedVersion, ColumnType.MAX_STORAGE_VERSION);
+            if (metaMem.getInt(META_OFFSET_VERSION) == META_FORMAT_VERSION_DELTA) {
+                if (metaMem.getInt(META_OFFSET_WRITE_MODE) != TableWriteMode.DELTA_RUNS
+                        || !metaMem.getBool(META_OFFSET_WAL_ENABLED)
+                        || !PartitionBy.isPartitioned(metaMem.getInt(META_OFFSET_PARTITION_BY))
+                        || metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX) < 0) {
+                    throw validationException().put("invalid Delta table metadata [path=").put(metaPath).put(']');
+                }
+            } else {
+                validateMetaVersion(metaPath, metaMem, META_OFFSET_VERSION, expectedVersion, ColumnType.MAX_STORAGE_VERSION);
+            }
             final int columnCount = getColumnCount(metaPath, metaMem, META_OFFSET_COUNT);
 
             long offset = getColumnNameOffset(columnCount);
@@ -3544,7 +3562,7 @@ public final class TableUtils {
                 (timestampIndex >= 0 && timestampIndex < count && ColumnType.isTimestamp(tableStruct.getColumnType(timestampIndex)))
                 : String.format("timestampIndex %d count %d columnType %d", timestampIndex, count, tableStruct.getColumnType(timestampIndex));
         mem.putInt(timestampIndex);
-        mem.putInt(tableVersion);
+        mem.putInt(tableStruct.getWriteMode() == TableWriteMode.DELTA_RUNS ? META_FORMAT_VERSION_DELTA : tableVersion);
         mem.putInt(tableId);
         mem.putInt(tableStruct.getMaxUncommittedRows());
         mem.putLong(tableStruct.getO3MaxLag());
@@ -3553,6 +3571,8 @@ public final class TableUtils {
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.putInt(tableStruct.getTableFormat());
+        mem.jumpTo(META_OFFSET_WRITE_MODE);
+        mem.putInt(tableStruct.getWriteMode());
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;

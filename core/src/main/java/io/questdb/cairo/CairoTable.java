@@ -51,6 +51,7 @@ public class CairoTable implements Sinkable {
     private int timestampType;
     private TableToken token;
     private int ttlHoursOrMonths;
+    private int writeMode;
 
     public CairoTable(@NotNull TableToken token) {
         this.token = token;
@@ -75,6 +76,7 @@ public class CairoTable implements Sinkable {
         timestampIndex = fromTab.getTimestampIndex();
         ttlHoursOrMonths = fromTab.getTtlHoursOrMonths();
         tableFormat = fromTab.getTableFormat();
+        writeMode = fromTab.getWriteMode();
         softLink = fromTab.isSoftLink();
         dedup = fromTab.hasDedup();
         hasParquetPartitions = fromTab.hasParquetPartitions();
@@ -187,6 +189,10 @@ public class CairoTable implements Sinkable {
         return ttlHoursOrMonths;
     }
 
+    public int getWriteMode() {
+        return writeMode;
+    }
+
     public boolean hasDedup() {
         return dedup;
     }
@@ -249,6 +255,10 @@ public class CairoTable implements Sinkable {
 
     public void setTtlHoursOrMonths(int ttlHoursOrMonths) {
         this.ttlHoursOrMonths = ttlHoursOrMonths;
+    }
+
+    public void setWriteMode(int writeMode) {
+        this.writeMode = writeMode;
     }
 
     @Override

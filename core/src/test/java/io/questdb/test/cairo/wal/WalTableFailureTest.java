@@ -248,10 +248,10 @@ public class WalTableFailureTest extends AbstractCairoTest {
             TableToken tableToken = createStandardWalTable(testName.getMethodName());
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set", "'param', 'ttl', 'format' or 'type' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set typ", "'param', 'ttl', 'format' or 'type' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type", "'bypass' or 'wal' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type byoass", "'bypass' or 'wal' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type", "'bypass', 'wal' or 'delta' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type byoass", "'bypass', 'wal' or 'delta' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type bypass", "'wal' expected");
-            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type wall", "'bypass' or 'wal' expected");
+            assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type wall", "'bypass', 'wal' or 'delta' expected");
             assertAlterTableTypeFail("alter table " + tableToken.getTableName() + " set type bypass wa", "'wal' expected");
         });
     }

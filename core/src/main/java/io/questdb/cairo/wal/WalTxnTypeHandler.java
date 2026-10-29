@@ -24,8 +24,29 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 
 public interface WalTxnTypeHandler {
+    default void applyDeltaRunWrite(CairoEngine engine, TableWriter writer, long seqTxn) {
+        throw CairoException.critical(0).put("Delta transaction recovery is unavailable [table=")
+                .put(writer.getTableToken()).put(", txn=").put(seqTxn).put(']');
+    }
+
+    default void applyDeltaTableSwitch(TableWriter writer, long seqTxn) {
+        throw CairoException.critical(0)
+                .put("unsupported sequencer transaction kind for WAL apply [walId=").put(WalUtils.DELTA_TABLE_SWITCH_WAL_ID)
+                .put(", table=").put(writer.getTableToken()).put(", seqTxn=").put(seqTxn).put(']');
+    }
+
     int applyUnknownWalTxn(byte walTxnType, TableWriter writer, WalEventCursor cursor, long seqTxn);
+
+    /**
+     * Publishes accepted but unpublished Delta transactions. Returns the applied seqTxn, or -1 when skipped.
+     */
+    default long recoverDeltaTable(CairoEngine engine, TableToken tableToken) {
+        throw CairoException.critical(0).put("Delta transaction recovery is unavailable [table=").put(tableToken).put(']');
+    }
 }

@@ -290,6 +290,25 @@ public class TableTransactionLog implements Closeable {
         return instance;
     }
 
+    long addDeltaRunEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long minTimestamp, long maxTimestamp, long rowCount) {
+        try {
+            return txnLogFile.addDeltaRunEntry(structureVersion, walId, segmentId, segmentTxn, timestamp, minTimestamp, maxTimestamp, rowCount);
+        } finally {
+            // Header publication can precede a sync failure; this is still an accepted transaction.
+            lastTxn = txnLogFile.lastTxn();
+        }
+    }
+
+    long addDeltaTableSwitchEntry(long structureVersion, long timestamp) {
+        try {
+            return txnLogFile.addDeltaTableSwitchEntry(structureVersion, timestamp);
+        } finally {
+            // Header publication can precede a sync failure. Admission must still see the
+            // accepted switch rather than mistake that failure for a reversible append.
+            lastTxn = txnLogFile.lastTxn();
+        }
+    }
+
     long addEntry(long structureVersion, int walId, int segmentId, int segmentTxn, long timestamp, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
         return lastTxn = txnLogFile.addEntry(structureVersion, walId, segmentId, segmentTxn, timestamp, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
     }

@@ -38,7 +38,9 @@ import io.questdb.test.griffin.fuzz.types.TimestampType;
 import io.questdb.test.griffin.fuzz.types.VarcharKeyType;
 
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 
 /**
  * Builds a random WAL table and a sibling shadow table holding the same
@@ -125,8 +127,14 @@ public final class FuzzTableFactory {
         ObjList<FuzzColumn> primaryColumns = buildColumnList(rnd);
         ObjList<FuzzColumn> shadowColumns = mirrorColumns(rnd, primaryColumns);
 
-        executor.execute(buildCreateDdl(primaryName, primaryColumns));
-        executor.execute(buildCreateDdl(shadowName, shadowColumns));
+        // Own stream for the Delta shadow's draws, so the same seed builds the same tables and queries with the option off.
+        Rnd shadowRnd = new Rnd(rnd.getSeed0() ^ 0x5DEECE66DL, rnd.getSeed1() + 0xBL);
+        ShadowKind shadowKind = config.isShadowDeltaEnabled()
+                ? (shadowRnd.nextBoolean() ? ShadowKind.FRESH_DELTA : ShadowKind.CONVERTED_DELTA)
+                : ShadowKind.WAL;
+
+        executor.execute(buildCreateDdl(primaryName, primaryColumns, "WAL"));
+        executor.execute(buildCreateDdl(shadowName, shadowColumns, shadowKind == ShadowKind.FRESH_DELTA ? "DELTA" : "WAL"));
 
         // Generate the random data on the primary, drain so it's committed,
         // then copy onto the shadow via SELECT * FROM primary so both tables
@@ -143,13 +151,21 @@ public final class FuzzTableFactory {
             drainWal.run();
         }
 
-        executor.execute("INSERT INTO " + shadowName + " SELECT * FROM " + primaryName);
+        ParquetConversion primaryParquet = pickParquetConversion(rnd);
+        ParquetConversion shadowParquet = pickParquetConversion(rnd);
+        if (shadowKind == ShadowKind.WAL) {
+            executor.execute("INSERT INTO " + shadowName + " SELECT * FROM " + primaryName);
 
-        // Convert statements are queued behind the shadow insert in the WAL
-        // queue and processed by the second drain.
-        ParquetConversion primaryParquet = applyParquetConversion(rnd, primaryName, executor);
-        ParquetConversion shadowParquet = applyParquetConversion(rnd, shadowName, executor);
-        drainWal.run();
+            // Convert statements are queued behind the shadow insert in the WAL
+            // queue and processed by the second drain.
+            applyParquetConversion(primaryName, primaryParquet, executor);
+            applyParquetConversion(shadowName, shadowParquet, executor);
+            drainWal.run();
+        } else {
+            applyParquetConversion(primaryName, primaryParquet, executor);
+            drainWal.run();
+            shadowParquet = copyIntoDeltaShadow(shadowRnd, shadowKind, primaryName, shadowName, shadowParquet, executor, drainWal);
+        }
 
         FuzzTable shadow = new FuzzTable(shadowName, shadowColumns, TS_COLUMN,
                 shadowParquet.mode, shadowParquet.partitions, null, null);
@@ -185,25 +201,15 @@ public final class FuzzTableFactory {
         return day;
     }
 
-    private ParquetConversion applyParquetConversion(Rnd rnd, String tableName, SqlExecutor executor) throws SqlException {
-        ParquetMode mode = pickParquetMode(rnd);
-        String partitions = null;
-        switch (mode) {
+    private void applyParquetConversion(String tableName, ParquetConversion conversion, SqlExecutor executor) throws SqlException {
+        switch (conversion.mode) {
             case NONE -> {
             }
             case ALL -> executor.execute("ALTER TABLE " + tableName
                     + " CONVERT PARTITION TO PARQUET WHERE " + TS_COLUMN + " >= 0");
-            case PARTIAL -> {
-                partitions = pickPartialPartitionList(rnd);
-                if (partitions != null) {
-                    executor.execute("ALTER TABLE " + tableName
-                            + " CONVERT PARTITION TO PARQUET LIST " + partitions);
-                } else {
-                    mode = ParquetMode.NONE;
-                }
-            }
+            case PARTIAL -> executor.execute("ALTER TABLE " + tableName
+                    + " CONVERT PARTITION TO PARQUET LIST " + conversion.partitions);
         }
-        return new ParquetConversion(mode, partitions);
     }
 
     /**
@@ -267,7 +273,7 @@ public final class FuzzTableFactory {
         return FuzzColumnTypes.pickRandom(rnd);
     }
 
-    private String buildCreateDdl(String tableName, ObjList<FuzzColumn> columns) {
+    private String buildCreateDdl(String tableName, ObjList<FuzzColumn> columns, String storage) {
         StringSink ddl = new StringSink();
         ddl.put("CREATE TABLE ").put(tableName).put(" (");
         for (int i = 0, n = columns.size(); i < n; i++) {
@@ -280,7 +286,7 @@ public final class FuzzTableFactory {
                 c.getIndex().appendDdl(ddl);
             }
         }
-        ddl.put(") TIMESTAMP(").put(TS_COLUMN).put(") PARTITION BY DAY WAL");
+        ddl.put(") TIMESTAMP(").put(TS_COLUMN).put(") PARTITION BY DAY ").put(storage);
         return ddl.toString();
     }
 
@@ -336,6 +342,79 @@ public final class FuzzTableFactory {
         }
         dml.put(" FROM long_sequence(").put(rowCount).put(')');
         return dml.toString();
+    }
+
+    /**
+     * Copies the primary's rows into the Delta shadow as 3 to 8 transactions over shuffled timestamp
+     * ranges, so a partition gets several Runs and late rows land in earlier days. A converted shadow
+     * takes the first part as WAL rows, optionally converts them to Parquet, switches to Delta and
+     * takes the rest. Returns the Parquet conversion applied before the switch.
+     */
+    private ParquetConversion copyIntoDeltaShadow(
+            Rnd rnd,
+            ShadowKind kind,
+            String primaryName,
+            String shadowName,
+            ParquetConversion planned,
+            SqlExecutor executor,
+            Runnable drainWal
+    ) throws SqlException {
+        int numRows = config.getRowsPerTable();
+        int numChunks = 3 + rnd.nextInt(6);
+        // numChunks - 1 distinct cut rows in 1..numRows - 1, then the chunk order is shuffled.
+        int[] cuts = new int[numChunks + 1];
+        cuts[numChunks] = numRows;
+        for (int i = 1; i < numChunks; i++) {
+            int cut;
+            boolean isUnique;
+            do {
+                cut = 1 + rnd.nextInt(numRows - 1);
+                isUnique = true;
+                for (int j = 1; j < i; j++) {
+                    isUnique &= cuts[j] != cut;
+                }
+            } while (!isUnique);
+            cuts[i] = cut;
+        }
+        Arrays.sort(cuts, 1, numChunks);
+        int[] order = new int[numChunks];
+        for (int i = 0; i < numChunks; i++) {
+            order[i] = i;
+        }
+        for (int i = numChunks - 1; i > 0; i--) {
+            int j = rnd.nextInt(i + 1);
+            int tmp = order[i];
+            order[i] = order[j];
+            order[j] = tmp;
+        }
+
+        int walChunks = kind == ShadowKind.CONVERTED_DELTA ? 1 + rnd.nextInt(numChunks - 1) : 0;
+        ParquetConversion conversion = new ParquetConversion(ParquetMode.NONE, null);
+        for (int i = 0; i < numChunks; i++) {
+            if (i == walChunks && kind == ShadowKind.CONVERTED_DELTA) {
+                drainWal.run();
+                conversion = planned;
+                applyParquetConversion(shadowName, conversion, executor);
+                drainWal.run();
+                executor.execute("ALTER TABLE " + shadowName + " SET TYPE DELTA");
+                drainWal.run();
+            }
+            int chunk = order[i];
+            // Boundaries sit on row steps; the first and last chunks are open-ended.
+            StringSink where = new StringSink();
+            where.put(" WHERE ");
+            if (chunk > 0) {
+                where.put(TS_COLUMN).put(" >= '").put(rowTimestamp(cuts[chunk])).put("' AND ");
+            }
+            if (chunk < numChunks - 1) {
+                where.put(TS_COLUMN).put(" < '").put(rowTimestamp(cuts[chunk + 1])).put('\'');
+            } else {
+                where.put(TS_COLUMN).put(" >= 0");
+            }
+            executor.execute("INSERT INTO " + shadowName + " SELECT * FROM " + primaryName + where);
+            drainWal.run();
+        }
+        return conversion;
     }
 
     private boolean isIndexedSymbol(Rnd rnd) {
@@ -439,8 +518,26 @@ public final class FuzzTableFactory {
         return picked == 0 ? null : sink.toString();
     }
 
+    private ParquetConversion pickParquetConversion(Rnd rnd) {
+        ParquetMode mode = pickParquetMode(rnd);
+        String partitions = null;
+        if (mode == ParquetMode.PARTIAL) {
+            partitions = pickPartialPartitionList(rnd);
+            if (partitions == null) {
+                mode = ParquetMode.NONE;
+            }
+        }
+        return new ParquetConversion(mode, partitions);
+    }
+
     private ParquetMode pickParquetMode(Rnd rnd) {
         return ParquetMode.values()[rnd.nextInt(ParquetMode.values().length)];
+    }
+
+    private String rowTimestamp(int row) {
+        return LocalDate.parse(config.getTsStart(), DateTimeFormatter.ISO_LOCAL_DATE)
+                .atStartOfDay().toInstant(ZoneOffset.UTC)
+                .plusMillis(config.getStepMicros() / 1000 * row).toString();
     }
 
     @FunctionalInterface
@@ -454,6 +551,8 @@ public final class FuzzTableFactory {
     }
 
     public enum ParquetMode {NONE, ALL, PARTIAL}
+
+    private enum ShadowKind {WAL, FRESH_DELTA, CONVERTED_DELTA}
 
     /**
      * Result of {@link #applyParquetConversion}: the realised {@link ParquetMode}

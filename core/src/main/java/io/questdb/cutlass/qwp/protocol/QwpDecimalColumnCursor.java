@@ -67,6 +67,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     private byte scale;
     // Configuration
     private byte typeCode;
+    private int valueCount;
     private int valueSize;
     private long valuesAddress;
 
@@ -93,6 +94,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     @Override
     public void clear() {
         typeCode = TYPE_DECIMAL64;
+        valueCount = 0;
         valueSize = 8;
         scale = 0;
         nullBitmapAddress = 0;
@@ -163,6 +165,10 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
         return currentValue64;
     }
 
+    public long getNullBitmapAddress() {
+        return nullBitmapAddress;
+    }
+
     /**
      * Returns the scale (number of decimal places) for this column.
      * All values in the column share the same scale.
@@ -176,6 +182,14 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
     @Override
     public byte getTypeCode() {
         return typeCode;
+    }
+
+    public int getValueCount() {
+        return valueCount;
+    }
+
+    public long getValuesAddress() {
+        return valuesAddress;
     }
 
     @Override
@@ -235,7 +249,7 @@ public final class QwpDecimalColumnCursor implements QwpColumnCursor {
         this.scale = Unsafe.getByte(dataAddress + offset);
         offset += 1;
 
-        int valueCount = rowCount - nullCount;
+        this.valueCount = rowCount - nullCount;
         long valuesSize = (long) valueCount * valueSize;
         if (offset + valuesSize > dataLength) {
             throw QwpParseException.create(

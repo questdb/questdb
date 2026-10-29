@@ -66,6 +66,8 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     boolean ignoreIfExists();
 
+    boolean isBatchExplicit();
+
     boolean needRegister();
 
     void setCopyDataProgressReporter(CopyDataProgressReporter reporter);

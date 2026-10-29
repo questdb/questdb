@@ -46,6 +46,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriteMode;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
@@ -60,6 +61,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StatefulAtom;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.view.ViewState;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -1686,6 +1688,9 @@ public final class TestUtils {
         if (token == null) {
             throw new RuntimeException("table already exists: " + tableName);
         }
+        if (structure.getWriteMode() == TableWriteMode.DELTA_RUNS) {
+            token = token.withDelta();
+        }
         path.of(engine.getConfiguration().getDbRoot()).concat(token);
         TableUtils.createTable(engine.getConfiguration(), memory, engine.getTelemetry(), path, structure, ColumnType.VERSION, tableId, token.getDirName());
         engine.registerTableToken(token);
@@ -1941,6 +1946,12 @@ public final class TestUtils {
             return Paths.get(resource.toURI()).toFile().getAbsolutePath();
         } catch (URISyntaxException e) {
             throw new RuntimeException("Could not determine resource path", e);
+        }
+    }
+
+    public static long getSequencerMetadataVersion(CairoEngine engine, TableToken tableToken) {
+        try (TableRecordMetadata metadata = engine.getSequencerMetadata(tableToken)) {
+            return metadata.getMetadataVersion();
         }
     }
 

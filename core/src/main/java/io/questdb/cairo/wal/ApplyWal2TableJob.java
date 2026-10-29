@@ -36,6 +36,7 @@ import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriteMode;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewRefreshTask;
@@ -458,6 +459,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     while (!isTerminating && ((finishedAll = microClock.getTicks() <= timeLimit) || firstRun) && transactionLogCursor.hasNext()) {
                         firstRun = false;
                         final int walId = transactionLogCursor.getWalId();
+                        WalUtils.checkWalId(walId);
                         final int segmentId = transactionLogCursor.getSegmentId();
                         final long segmentTxn = transactionLogCursor.getSegmentTxn();
                         final long commitTimestamp = transactionLogCursor.getCommitTimestamp();
@@ -543,12 +545,25 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 purgeTableFiles(tableToken, writer, engine, tempPath);
                                 return;
 
-                            case 0:
-                                throw CairoException.critical(0)
-                                        .put("broken table transaction record in sequencer log, walId cannot be 0 [table=")
-                                        .put(tableToken).put(", seqTxn=").put(seqTxn).put(']');
+                            case DELTA_TABLE_SWITCH_WAL_ID:
+                                if (segmentId != DELTA_TABLE_SWITCH_VERSION || segmentTxn != TableWriteMode.DELTA_RUNS) {
+                                    throw CairoException.critical(0).put("invalid Delta table switch record");
+                                }
+                                writer.forceWalLagCommit(pressureControl);
+                                if (writer.getSeqTxn() != seqTxn - 1 || writer.getTxWriter().getLagTxnCount() != 0
+                                        || writer.getTxWriter().getLagRowCount() != 0) {
+                                    throw CairoException.critical(0).put("Delta switch requires a fully committed WAL prefix");
+                                }
+                                engine.getWalTxnTypeHandler().applyDeltaTableSwitch(writer, seqTxn);
+                                // Ownership passes to the Delta writer. Do not run legacy queued commands.
+                                return;
 
                             default:
+                                if (writer.getMetadata().getWriteMode() == TableWriteMode.DELTA_RUNS) {
+                                    // The coordinator validates the referenced event before recovering Run payloads.
+                                    engine.getWalTxnTypeHandler().applyDeltaRunWrite(engine, writer, seqTxn);
+                                    return;
+                                }
                                 // Always set full path when using thread static path
                                 operationExecutor.setNowAndFixClock(commitTimestamp, writer.getTimestampType());
                                 tempPath.of(engine.getConfiguration().getDbRoot()).concat(tableToken).slash().putAscii(WAL_NAME_BASE).put(walId).slash().put(segmentId);
@@ -1311,7 +1326,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 // normal one: the request is asked again at a later purge pass.
                 final boolean idleRunOnly = txnTracker.isIdleEpochRequested() && txnTracker.getSeqTxn() <= txnTracker.getWriterTxn();
                 TableWriterPressureControl pressureControl = txnTracker.getMemPressureControl();
+                long switchTxn = engine.getTableSequencerAPI().getPendingDeltaTableSwitch(updatedToken);
+                if (updatedToken.isDelta() && switchTxn < 0) {
+                    if (txnTracker.isInitialised() && txnTracker.getWriterTxn() >= txnTracker.getSeqTxn()) {
+                        return;
+                    }
+                    // Publish Delta commits accepted before their publication failed.
+                    final long recoveredTxn = engine.getWalTxnTypeHandler().recoverDeltaTable(engine, updatedToken);
+                    if (recoveredTxn > -1 && engine.getTableSequencerAPI().updateWriterTxns(tableToken, recoveredTxn, recoveredTxn)) {
+                        engine.notifyWalTxnCommitted(tableToken);
+                    }
+                    return;
+                }
                 TableWriter writer = null;
+                boolean isDelta = false;
                 try {
                     writer = engine.getWriterUnsafe(updatedToken, WAL_2_TABLE_WRITE_REASON);
                     assert writer.getMetadata().getTableId() == tableToken.getTableId();
@@ -1319,7 +1347,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         // rely on CheckWalTransactionsJob to notify us when to apply transactions
                         return;
                     }
-                    applyOutstandingWalTransactions(tableToken, writer, engine, operationExecutor, tempPath, runStatus, pressureControl);
+                    if (switchTxn > 0 && writer.getSeqTxn() >= switchTxn) {
+                        // The table commit survived but mode/registry publication did not.
+                        engine.getWalTxnTypeHandler().applyDeltaTableSwitch(writer, switchTxn);
+                    } else {
+                        applyOutstandingWalTransactions(tableToken, writer, engine, operationExecutor, tempPath, runStatus, pressureControl);
+                    }
+                    isDelta = writer.getMetadata().getWriteMode() == TableWriteMode.DELTA_RUNS;
                     // A role switch during the batch is reconciled before the writer goes back to the pool: the
                     // table may get no next batch, and a notification dropped while the writer was busy is not
                     // republished.
@@ -1378,6 +1412,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     throw th;
                 } finally {
                     Misc.free(writer);
+                }
+                if (isDelta) {
+                    engine.finishDeltaTableSwitch(updatedToken);
                 }
                 if (engine.getTableSequencerAPI().updateWriterTxns(tableToken, writerTxn, dirtyWriterTxn)) {
                     engine.notifyWalTxnCommitted(tableToken);

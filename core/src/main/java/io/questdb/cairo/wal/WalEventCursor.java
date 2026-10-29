@@ -110,6 +110,13 @@ public class WalEventCursor {
         }
     }
 
+    public DataInfo getDeltaDataInfo() {
+        if (type != DELTA_RUN_WRITE) {
+            throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not DELTA_RUN_WRITE, type=").put(type);
+        }
+        return dataInfo;
+    }
+
     public LiveViewDataInfo getLiveViewDataInfo() {
         if (type != LIVE_VIEW_DATA) {
             throw CairoException.critical(CairoException.ILLEGAL_OPERATION).put("WAL event type is not LIVE_VIEW_DATA, type=").put(type);
@@ -186,6 +193,13 @@ public class WalEventCursor {
         nextOffset = WALE_HEADER_SIZE; // skip wal meta version
         txn = END_OF_EVENTS;
         type = WalTxnType.NONE;
+    }
+
+    public void validateDeltaRecordEnd() {
+        if (type != DELTA_RUN_WRITE || offset != nextOffset) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("invalid Delta event length [offset=").put(offset).put(", end=").put(nextOffset).put(']');
+        }
     }
 
     /**
@@ -364,6 +378,7 @@ public class WalEventCursor {
         type = readByte();
         switch (type) {
             case DATA:
+            case DELTA_RUN_WRITE:
                 dataInfo.read();
                 break;
             case MAT_VIEW_DATA:
@@ -536,7 +551,7 @@ public class WalEventCursor {
             replaceRangeTsLow = 0;
             replaceRangeTsHi = 0;
 
-            if (nextOffset - offset >= Integer.BYTES + DEDUP_FOOTER_SIZE) {
+            if (type != DELTA_RUN_WRITE && nextOffset - offset >= Integer.BYTES + DEDUP_FOOTER_SIZE) {
                 // This is big enough to contain the footer.
                 // But it can be still populated with symbol map values instead of the footer.
                 // Check that the last symbol map diff entry contains the END of symbol diffs marker.

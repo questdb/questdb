@@ -45,7 +45,7 @@ public class TableTokenTest {
         Assert.assertEquals(t1.getTableId(), t1.hashCode());
 
         final String descr = t1.toString();
-        Assert.assertEquals("TableToken{tableName=table1, dirName=dir1, tableId=1, isView=false, isMatView=false, isLiveView=false, isWal=true, isSystem=false, isProtected=false, isPublic=false}", descr);
+        Assert.assertEquals("TableToken{tableName=table1, dirName=dir1, tableId=1, isView=false, isMatView=false, isLiveView=false, isWal=true, isDelta=false, isSystem=false, isProtected=false, isPublic=false}", descr);
 
         final TableToken t2 = t1.renamed("table2");
         Assert.assertEquals("table2", t2.getTableName());
@@ -68,7 +68,42 @@ public class TableTokenTest {
         Assert.assertEquals(t3.getTableId(), t3.hashCode());
 
         final String descr3 = t3.toString();
-        Assert.assertEquals("TableToken{tableName=table3, dirName=dir3, tableId=3, isView=false, isMatView=false, isLiveView=false, isWal=false, isSystem=true, isProtected=true, isPublic=false}", descr3);
+        Assert.assertEquals("TableToken{tableName=table3, dirName=dir3, tableId=3, isView=false, isMatView=false, isLiveView=false, isWal=false, isDelta=false, isSystem=true, isProtected=true, isPublic=false}", descr3);
+    }
+
+    @Test
+    public void testDeltaCopyAndRename() {
+        TableToken wal = new TableToken("table1", "dir1", "db", 42, TableToken.Type.TABLE, true, true, true, true);
+        TableToken delta = wal.withDelta();
+        Assert.assertFalse(wal.isDelta());
+        Assert.assertTrue(delta.isDelta());
+        Assert.assertTrue(delta.isWal());
+        Assert.assertEquals(TableToken.Type.TABLE, delta.getType());
+        Assert.assertEquals(wal, delta);
+        Assert.assertEquals(delta, wal);
+        Assert.assertEquals(wal.hashCode(), delta.hashCode());
+        Assert.assertNotEquals(delta, new TableToken("table1", "dir1", "db", 43, TableToken.Type.TABLE, true, true, true, true).withDelta());
+        Assert.assertNotEquals(delta, new TableToken("table1", "differentDir", "db", 42, TableToken.Type.TABLE, true, true, true, true).withDelta());
+        Assert.assertEquals(wal.getTableId(), delta.getTableId());
+        Assert.assertEquals(wal.getDirName(), delta.getDirName());
+        Assert.assertSame(delta, delta.withDelta());
+        Assert.assertTrue(delta.isProtected());
+        Assert.assertTrue(delta.isPublic());
+        Assert.assertTrue(delta.isSystem());
+        TableToken renamed = delta.renamed("table2");
+        Assert.assertTrue(renamed.isDelta());
+        Assert.assertEquals(delta, renamed.renamed("table1"));
+        Assert.assertEquals(delta.hashCode(), renamed.hashCode());
+    }
+
+    @Test
+    public void testDeltaRequiresRegularWalTable() {
+        Assert.assertThrows(IllegalArgumentException.class, () -> new TableToken("t", "d", null, 1, false, false, false).withDelta());
+        for (TableToken.Type type : TableToken.Type.values()) {
+            if (type != TableToken.Type.TABLE) {
+                Assert.assertThrows(IllegalArgumentException.class, () -> new TableToken("t", "d", null, 1, type, true, false, false, false).withDelta());
+            }
+        }
     }
 
     @Test

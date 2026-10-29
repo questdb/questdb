@@ -135,20 +135,25 @@ public class WalTxnDetails implements QuietCloseable {
         long max = Long.MIN_VALUE, min = Long.MAX_VALUE;
         int txn = 0;
         for (; txn < txnCount && transactionLogCursor.hasNext(); txn++) {
-            long long1 = Numbers.encodeLowHighInts(transactionLogCursor.getSegmentId(), transactionLogCursor.getWalId() - MIN_WAL_ID);
+            // Validate before packing: unknown control kinds must not become zero-row barriers.
+            int walId = transactionLogCursor.getWalId();
+            checkWalId(walId);
+            long long1 = Numbers.encodeLowHighInts(transactionLogCursor.getSegmentId(), walId - MIN_WAL_ID);
             max = Math.max(max, long1);
             min = Math.min(min, long1);
             txnList.add(long1);
             txnList.add(Numbers.encodeLowHighInts(transactionLogCursor.getSegmentTxn(), txn));
         }
         assert txn > 0;
-        Vect.radixSortLongIndexAscChecked(
-                txnList.getAddress(),
-                txn,
-                txnList.getAddress() + txn * 2L * Long.BYTES,
-                min,
-                max
-        );
+        final long address = txnList.getAddress();
+        final long scratch = address + txn * 2L * Long.BYTES;
+        if (min < 0) {
+            // The largest WAL IDs set the packed key's sign bit. Sort their full
+            // unsigned keys without computing a potentially overflowing signed range.
+            Vect.radixSortLongIndexAscInPlace(address, txn, scratch);
+        } else {
+            Vect.radixSortLongIndexAscChecked(address, txn, scratch, min, max);
+        }
         return txn;
     }
 
@@ -863,7 +868,8 @@ public class WalTxnDetails implements QuietCloseable {
                     } else {
                         walTxnType = NONE;
                     }
-                    // If there is ALTER or UPDATE, we have to flush everything without keeping anything in the lag.
+                    // ALTER, UPDATE and sequencer control records, including Delta switches, must
+                    // flush everything before this transaction without keeping anything in the lag.
                     transactionMeta.set(txnMetaOffset + SEQ_TXN_OFFSET, seqTxn);
                     transactionMeta.set(txnMetaOffset + COMMIT_TO_TIMESTAMP_OFFSET, FORCE_FULL_COMMIT); // commit to timestamp
                     transactionMeta.set(txnMetaOffset + WAL_TXN_ID_WAL_SEG_ID_OFFSET, Numbers.encodeLowHighInts(segmentId, walId));

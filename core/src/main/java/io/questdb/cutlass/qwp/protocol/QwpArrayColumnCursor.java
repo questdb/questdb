@@ -54,6 +54,7 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
     private long dataAddress;
     private boolean isDoubleArray;
     private long nullBitmapAddress;
+    private int dataSize;
     private int[] rowDims = new int[INITIAL_ROW_CAPACITY];
     private int[] rowElementCounts = new int[INITIAL_ROW_CAPACITY];
     // Pre-computed row offsets for fast random access
@@ -96,7 +97,16 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
         isDoubleArray = true;
         nullBitmapAddress = 0;
         dataAddress = 0;
+        dataSize = 0;
         resetRowPosition();
+    }
+
+    public long getDataAddress() {
+        return dataAddress;
+    }
+
+    public int getDataSize() {
+        return dataSize;
     }
 
     /**
@@ -116,6 +126,10 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
      */
     public int getNDims() {
         return currentNDims;
+    }
+
+    public long getNullBitmapAddress() {
+        return nullBitmapAddress;
     }
 
     @TestOnly
@@ -305,7 +319,8 @@ public final class QwpArrayColumnCursor implements QwpColumnCursor {
             }
         }
 
-        offset += (int) (scanAddr - this.dataAddress);
+        this.dataSize = (int) (scanAddr - this.dataAddress);
+        offset += dataSize;
         resetRowPosition();
         return offset;
     }

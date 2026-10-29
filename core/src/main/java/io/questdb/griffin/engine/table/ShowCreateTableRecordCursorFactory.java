@@ -35,6 +35,7 @@ import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriteMode;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -423,7 +424,9 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         }
 
         protected void putWal() {
-            if (!table.isWalEnabled()) {
+            if (table.getWriteMode() == TableWriteMode.DELTA_RUNS) {
+                sink.putAscii(" DELTA");
+            } else if (!table.isWalEnabled()) {
                 sink.putAscii(" BYPASS");
                 sink.putAscii(" WAL");
             }

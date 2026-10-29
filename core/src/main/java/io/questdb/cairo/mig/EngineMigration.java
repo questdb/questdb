@@ -186,11 +186,12 @@ public class EngineMigration {
                                     ? currentTableVersion + 1
                                     : Math.max(currentTableVersion, recordedMigrationVersion) + 1;
                             // A version above latestTableVersion is an elevated storage version (a table
-                            // that currently holds composite partitions carries ColumnType.MAX_STORAGE_VERSION).
+                            // that currently holds composite partitions carries ColumnType.MAX_STORAGE_VERSION,
+                            // and a Delta table permanently carries META_FORMAT_VERSION_DELTA).
                             // It is not a migration-version number, so migration must leave it alone: the table
                             // is already current, and re-running backward-compatible migrations against it is
-                            // neither needed nor guaranteed safe. The writer folds such a table back to plain
-                            // and restores latestTableVersion on its own when composite partitions go away.
+                            // neither needed nor guaranteed safe. Composite tables return to latestTableVersion
+                            // when their last composite partition goes away; Delta tables keep their marker.
                             if (currentTableVersion <= latestTableVersion && firstVersion <= latestMigrationVersion) {
                                 LOG.info()
                                         .$("upgrading [path=").$(copyPath.$())

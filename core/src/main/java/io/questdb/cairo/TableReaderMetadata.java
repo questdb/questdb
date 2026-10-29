@@ -65,6 +65,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     private MemoryMR transitionMeta;
     private int ttlHoursOrMonths;
     private boolean walEnabled;
+    private int writeMode;
     private int writerColumnCount;
 
     public TableReaderMetadata(CairoConfiguration configuration, TableToken tableToken) {
@@ -129,6 +130,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         o3MaxLag = 0;
         ttlHoursOrMonths = 0;
         tableFormat = TableUtils.TABLE_FORMAT_NATIVE;
+        writeMode = TableWriteMode.WAL_SEGMENTS;
         writerColumnCount = 0;
     }
 
@@ -237,6 +239,12 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         return ttlHoursOrMonths;
     }
 
+    @Override
+    public int getWriteMode() {
+        // A mode-only conversion keeps the schema version; checkout refreshes the canonical token.
+        return tableToken != null && tableToken.isDelta() ? TableWriteMode.DELTA_RUNS : writeMode;
+    }
+
     public int getWriterColumnCount() {
         return writerColumnCount;
     }
@@ -332,6 +340,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.walEnabled = mem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(mem);
         this.tableFormat = TableUtils.getTableFormat(mem);
+        this.writeMode = TableUtils.getWriteMode(mem);
         this.columnMetadata.clear();
         this.timestampIndex = -1;
 
@@ -403,6 +412,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
         this.walEnabled = newMetaMem.getBool(TableUtils.META_OFFSET_WAL_ENABLED);
         this.ttlHoursOrMonths = TableUtils.getTtlHoursOrMonths(newMetaMem);
         this.tableFormat = TableUtils.getTableFormat(newMetaMem);
+        this.writeMode = TableUtils.getWriteMode(newMetaMem);
 
         int shiftLeft = 0, existingIndex = 0;
         TableUtils.buildColumnListFromMetadataFile(newMetaMem, columnCount, columnOrderList);

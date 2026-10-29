@@ -131,7 +131,7 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     public void commit() {
         if (writer != null) {
-            writer.commit();
+            writer.commitWithRoleFence(engine, false);
         }
     }
 
@@ -254,7 +254,11 @@ public class CairoTextWriter implements Closeable, Mutable {
 
     private void checkUncommittedRowCount() {
         if (writer != null && maxUncommittedRows > 0 && writer.getUncommittedRowCount() >= maxUncommittedRows) {
-            writer.ic(o3MaxLag);
+            if (writer.supportsMultipleWriters()) {
+                writer.commitWithRoleFence(engine, false);
+            } else {
+                writer.ic(o3MaxLag);
+            }
         }
     }
 

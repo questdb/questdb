@@ -30,15 +30,20 @@ import io.questdb.TelemetryEvent;
 import io.questdb.cairo.AlterTableContextException;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.ColumnarRowAppender;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DdlListener;
 import io.questdb.cairo.EmptySymbolMapReader;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.NativeFrameBatchAppender;
+import io.questdb.cairo.NativeWriterRow;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SymbolMapReader;
@@ -49,14 +54,16 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
-import io.questdb.cairo.VarcharTypeDriver;
-import io.questdb.cairo.arr.ArrayTypeDriver;
-import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.pool.RecentWriteTracker;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.vm.MemoryCARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.NullMemory;
@@ -64,7 +71,7 @@ import io.questdb.cairo.wal.seq.MetadataServiceStub;
 import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableMetadataChangeLog;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
-import io.questdb.griffin.SqlUtil;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.SymbolMapWriterLite;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
@@ -73,32 +80,29 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.AtomicIntList;
-import io.questdb.std.BinarySequence;
 import io.questdb.std.BoolList;
 import io.questdb.std.Chars;
-import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
-import io.questdb.std.Long256;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 import io.questdb.std.Utf8StringIntHashMap;
-import io.questdb.std.Uuid;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.SingleCharCharSequence;
-import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
-import io.questdb.std.str.Utf8StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.TelemetryWalTask;
 import org.jetbrains.annotations.NotNull;
@@ -150,7 +154,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final ObjList<Utf8StringIntHashMap> utf8SymbolMaps = new ObjList<>();
-    private final Uuid uuid = new Uuid();
     private final boolean walTelemetryEnabled;
     private long avgRecordSize;
     private SegmentColumnRollSink columnConversionSink;
@@ -166,6 +169,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private long pendingDurableSeqTxn = -1L;
     // Wall-clock micros of the oldest pending commit. The flush fires once now - pendingSinceMicros >= W.
     private long pendingSinceMicros = -1L;
+    private TableWriterAPI deltaWriter;
+    private boolean deltaHandoffAllowed = true;
+    private boolean isCommitRoleFenced;
     private boolean isCommittingData;
     private byte lastDedupMode = WAL_DEDUP_MODE_DEFAULT;
     private long lastMatViewPeriodHi = WAL_DEFAULT_LAST_PERIOD_HI;
@@ -324,6 +330,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         alterOp.authorize();
+        if (needsDeltaSwitch()) {
+            throw CairoException.nonCritical().put("WAL schema changes are not supported for Delta tables [table=").put(tableToken).put(']');
+        }
         if (alterOp.getCommand() == AlterOperation.ADD_INDEX || alterOp.isIndexedColumnAdded()) {
             validateIndexCreation(alterOp);
         }
@@ -342,6 +351,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     @Override
     public long apply(UpdateOperation operation) {
         operation.authorize();
+        if (needsDeltaSwitch()) {
+            throw CairoException.nonCritical().put("UPDATE is not supported for Delta tables [table=").put(tableToken).put(']');
+        }
         if (inTransaction()) {
             throw CairoException.critical(0).put("cannot update table with uncommitted inserts [table=")
                     .put(tableToken.getTableName()).put(']');
@@ -381,6 +393,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     @Override
     public void commit() {
+        if (switchToDeltaIfNeeded()) {
+            deltaWriter.commit();
+            return;
+        }
         // plain old commit
         commit0(
                 WalTxnType.DATA,
@@ -483,6 +499,39 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         );
     }
 
+    @Override
+    public void commitWithRoleFence(CairoEngine engine, boolean withLag) {
+        while (true) {
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.readOnlyAccess();
+            }
+            if (switchToDeltaIfNeeded()) {
+                deltaWriter.commitWithRoleFence(engine, withLag);
+                return;
+            }
+            final var lock = engine.getRoleSwitchReadLock();
+            lock.lock();
+            try {
+                isCommitRoleFenced = true;
+                if (engine.isReadOnlyMode()) {
+                    throw CairoException.readOnlyAccess();
+                }
+                commit();
+                return;
+            } catch (DeltaSwitchRetry ignored) {
+                // A switch raced the precheck. Release the fence before waiting and transferring the tail.
+            } finally {
+                isCommitRoleFenced = false;
+                lock.unlock();
+            }
+        }
+    }
+
+    @Override
+    public long getLastSeqTxn() {
+        return deltaWriter != null ? Math.max(lastSeqTxn, deltaWriter.getLastSeqTxn()) : lastSeqTxn;
+    }
+
     /**
      * Returns a columnar row appender for bulk column-oriented writes.
      * <p>
@@ -492,7 +541,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      *
      * @return the columnar row appender for this writer
      */
+    @Override
     public ColumnarRowAppender getColumnarRowAppender() {
+        if (!isInColumnarWrite() && switchToDeltaIfNeeded()) {
+            return deltaWriter.getColumnarRowAppender();
+        }
         if (columnarAppender == null) {
             columnarAppender = new WalColumnarRowAppender(this);
         }
@@ -509,12 +562,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     @Override
     public TableRecordMetadata getMetadata() {
-        return metadata;
+        return deltaWriter != null ? deltaWriter.getMetadata() : metadata;
     }
 
     @Override
     public long getMetadataVersion() {
-        return metadata.getMetadataVersion();
+        return deltaWriter != null ? deltaWriter.getMetadataVersion() : metadata.getMetadataVersion();
     }
 
     /**
@@ -526,6 +579,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     @Override
     public int getSymbolCountWatermark(int columnIndex) {
+        if (deltaWriter != null) {
+            return deltaWriter.getSymbolCountWatermark(columnIndex);
+        }
         // It could be the case that ILP I/O thread has newer metadata version than
         // the writer, so it may be requesting a watermark for a recently added column.
         if (columnIndex > initialSymbolCounts.size() - 1) {
@@ -540,7 +596,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     @Override
     public long getUncommittedRowCount() {
-        return segmentRowCount - currentTxnStartRowNum;
+        return deltaWriter != null ? deltaWriter.getUncommittedRowCount() : segmentRowCount - currentTxnStartRowNum;
     }
 
     public void goActive() {
@@ -548,6 +604,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     public void goActive(long maxStructureVersion) {
+        if (switchToDeltaIfNeeded()) {
+            return;
+        }
         try {
             applyMetadataChangeLog(maxStructureVersion);
         } catch (CairoException e) {
@@ -591,6 +650,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     @Override
     public TableWriter.Row newRow(long timestamp) {
         checkDistressed();
+        if (deltaWriter != null) {
+            return deltaWriter.newRow(timestamp);
+        }
         if (isInColumnarWrite()) {
             throw CairoException.nonCritical().put("cannot use row-oriented newRow() during columnar write");
         }
@@ -676,11 +738,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     @Override
     public void rollback() {
-        throwIfInColumnarWrite("rollback");
-        rollback0();
+        if (deltaWriter != null) {
+            deltaWriter.rollback();
+        } else {
+            throwIfInColumnarWrite("rollback");
+            rollback0();
+        }
     }
 
     protected final void cleanupBeforeClose() {
+        deltaWriter = Misc.free(deltaWriter);
+        deltaHandoffAllowed = true;
         // If distressed, no need to rollback, WalWriter will not be used any more.
         if (isDistressed()) {
             // A distressed writer is discarded, but the batch it already sequenced still needs its flush, or
@@ -749,6 +817,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             dataMem.putLong128(timestamp, startRowId + row);
         }
         setRowValueNotNullColumnar(timestampIndex, startRowId + rowCount - 1);
+    }
+
+    @Override
+    public void setBatchOrdered(boolean isOrdered) {
+        if (!isInColumnarWrite() && switchToDeltaIfNeeded()) {
+            deltaWriter.setBatchOrdered(isOrdered);
+        }
+    }
+
+    public void setDeltaHandoffAllowed(boolean allowed) {
+        deltaHandoffAllowed = allowed;
     }
 
     @TestOnly
@@ -1220,6 +1299,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     ) {
         checkDistressed();
         throwIfInColumnarWrite("commit");
+        boolean eventAppended = false;
+        final long acceptedPrefixSeqTxn = lastSeqTxn;
         try {
             if (inTransaction() || dedupMode == WAL_DEDUP_MODE_REPLACE_RANGE) {
                 final long txnRowCount = getUncommittedRowCount();
@@ -1255,6 +1336,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         replaceRangeHiTs,
                         dedupMode
                 );
+                eventAppended = true;
                 // Flush before getting the next txn. Under ADAPTIVE with no window, syncIfRequired and getSequencerTxn
                 // fdatasync data, events and sequencer in order; with a window they msync, and flushPendingDurable
                 // does the batch's device flush.
@@ -1326,6 +1408,21 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
             }
         } catch (CairoException | TableReferenceOutOfDateException ex) {
+            final boolean canTransfer;
+            try {
+                canTransfer = eventAppended && needsDeltaSwitch() && !isCurrentWalEventAccepted(acceptedPrefixSeqTxn);
+            } catch (Throwable probeFailure) {
+                // Unknown acceptance must not allow pool rollback to truncate a possibly committed WAL payload.
+                distressed = true;
+                throw probeFailure;
+            }
+            if (canTransfer) {
+                events.rollback();
+                lastSegmentTxn--;
+                switchToDeltaIfNeeded();
+                deltaWriter.commit();
+                return;
+            }
             distressed = true;
             if (sequencer.isDataSyncFailureFatal(ex)) {
                 dropPendingDurable();
@@ -1580,6 +1677,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             } catch (Throwable th) {
                 closeError = th;
             }
+            try {
+                deltaWriter = Misc.free(deltaWriter);
+            } catch (Throwable th) {
+                closeError = closeError != null ? closeError : th;
+            }
             if (metadata != null) {
                 try {
                     metadata.close(truncate, Vm.TRUNCATE_TO_POINTER);
@@ -1766,6 +1868,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return segmentRowCount > currentTxnStartRowNum;
     }
 
+    private boolean isCurrentWalEventAccepted(long acceptedPrefixSeqTxn) {
+        try (TransactionLogCursor cursor = sequencer.getCursor(tableToken, Math.max(0, acceptedPrefixSeqTxn))) {
+            while (cursor.hasNext()) {
+                if (cursor.getWalId() == walId && cursor.getSegmentId() == segmentId && cursor.getSegmentTxn() == lastSegmentTxn) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
     private boolean isTruncateFilesOnClose() {
         return walDirectoryPolicy.truncateFilesOnClose();
     }
@@ -1788,6 +1901,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         rollSegmentOnNextRow = (segmentRowCount >= configuration.getWalSegmentRolloverRowCount())
                 || breachedRolloverSizeThreshold()
                 || (lastSegmentTxn > Integer.MAX_VALUE - 2);
+    }
+
+    private boolean needsDeltaSwitch() {
+        final TableToken current = sequencer.getEngine().getUpdatedTableToken(tableToken);
+        return current != null && current.isDelta() || sequencer.getPendingDeltaTableSwitch(tableToken) > 0;
     }
 
     private void openColumnFiles(CharSequence columnName, int columnType, int columnIndex, int pathTrimToLen) {
@@ -2518,6 +2636,73 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
+    private boolean switchToDeltaIfNeeded() {
+        checkDistressed();
+        if (deltaWriter != null) {
+            return true;
+        }
+        if (!needsDeltaSwitch()) {
+            return false;
+        }
+        if (!deltaHandoffAllowed) {
+            throw CairoException.schemaMismatch().put("durable acknowledgements are not supported for Delta tables [table=")
+                    .put(tableToken).put(']');
+        }
+        if (isCommitRoleFenced) {
+            throw DeltaSwitchRetry.INSTANCE;
+        }
+        final CairoEngine engine = sequencer.getEngine();
+        if (!engine.isDeltaTableSupported()) {
+            // An OSS engine cannot apply this transition or provide the destination writer.
+            sequencer.checkNoTableModeTransition(tableToken);
+            throw CairoException.nonCritical().put("Delta table writer is not available [table=").put(tableToken).put(']');
+        }
+        final long switchTxn = sequencer.getPendingDeltaTableSwitch(tableToken);
+        final TableToken transitionToken = engine.getUpdatedTableToken(tableToken);
+        if (transitionToken == null || transitionToken.getTableId() != tableToken.getTableId()) {
+            throw TableReferenceOutOfDateException.of(tableToken);
+        }
+        final long deadline = System.nanoTime() + configuration.getWriterAsyncCommandMaxTimeout() * 1_000_000L;
+        while (!engine.isDeltaTableSwitchComplete(transitionToken, switchTxn)) {
+            // every waiter refuses a demotion, so rows it holds cannot land after a re-promotion
+            if (engine.isReadOnlyMode()) {
+                throw CairoException.readOnlyAccess();
+            }
+            final var tracker = sequencer.getTxnTracker(tableToken);
+            if (tracker.isSuspended()) {
+                throw CairoException.nonCritical().put("Delta table switch is suspended [table=").put(tableToken)
+                        .put(", error=").put(tracker.getErrorMessage()).put(']');
+            }
+            if (System.nanoTime() - deadline >= 0) {
+                throw CairoException.nonCritical().put("timed out waiting for Delta table switch [table=").put(tableToken).put(']');
+            }
+            Os.sleep(1);
+        }
+        applyMetadataChangeLog(Long.MAX_VALUE);
+        TableWriterAPI destination = engine.getTableWriterAPI(engine.getUpdatedTableToken(tableToken), "WAL to Delta handoff");
+        try {
+            if (inTransaction()) {
+                final GenericRecordMetadata sourceMetadata = GenericRecordMetadata.copyDense(metadata);
+                try (WalFrameMemory frame = new WalFrameMemory(); NativeFrameBatchAppender appender = new NativeFrameBatchAppender()) {
+                    for (long rowLo = currentTxnStartRowNum; rowLo < segmentRowCount; ) {
+                        final int rows = (int) Math.min(65_536, segmentRowCount - rowLo);
+                        frame.of(rowLo, rows);
+                        appender.append(frame, sourceMetadata, frame, frame.writerIndexes, rows, destination.getMetadata(), destination.getColumnarRowAppender());
+                        rowLo += rows;
+                    }
+                }
+            }
+            // Only the unaccepted tail was copied. A failed transfer leaves all WAL source buffers intact.
+            rollback0();
+            deltaWriter = destination;
+            destination = null;
+            tableToken = deltaWriter.getTableToken();
+            return true;
+        } finally {
+            Misc.free(destination);
+        }
+    }
+
     private void syncIfRequired0(int commitMode) {
         if (commitMode != CommitMode.NOSYNC) {
             // ADAPTIVE flushes these writer-private files before sequencing, at every window, with flushFile()
@@ -2940,6 +3125,182 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
+
+    private static final class DeltaSwitchRetry extends RuntimeException {
+        private static final DeltaSwitchRetry INSTANCE = new DeltaSwitchRetry();
+
+        private DeltaSwitchRetry() {
+            super(null, null, false, false);
+        }
+    }
+
+    private final class WalFrameMemory implements PageFrameMemory, SymbolTableSource, QuietCloseable {
+        private DirectLongList auxAddresses;
+        private DirectLongList auxSizes;
+        private DirectLongList dataAddresses;
+        private DirectLongList dataSizes;
+        private final IntList sourceIndexes = new IntList(columnCount);
+        private final MemoryCARWImpl timestamps = new MemoryCARWImpl(4096, 128, MemoryTag.NATIVE_TABLE_WRITER);
+        private final IntList writerIndexes = new IntList(columnCount);
+
+        private WalFrameMemory() {
+            try {
+                auxAddresses = new DirectLongList(columnCount, MemoryTag.NATIVE_TABLE_WRITER);
+                auxSizes = new DirectLongList(columnCount, MemoryTag.NATIVE_TABLE_WRITER);
+                dataAddresses = new DirectLongList(columnCount, MemoryTag.NATIVE_TABLE_WRITER);
+                dataSizes = new DirectLongList(columnCount, MemoryTag.NATIVE_TABLE_WRITER);
+                for (int i = 0, n = columnCount; i < n; i++) {
+                    if (metadata.hasColumn(i)) {
+                        sourceIndexes.add(i);
+                        writerIndexes.add(metadata.getColumnMetadata(i).getOriginalWriterIndex());
+                    }
+                }
+            } catch (Throwable th) {
+                close();
+                throw th;
+            }
+        }
+
+        @Override
+        public void close() {
+            auxAddresses = Misc.free(auxAddresses);
+            auxSizes = Misc.free(auxSizes);
+            dataAddresses = Misc.free(dataAddresses);
+            dataSizes = Misc.free(dataSizes);
+            timestamps.close();
+        }
+
+        @Override
+        public long getAuxPageAddress(int columnIndex) {
+            return auxAddresses.get(columnIndex);
+        }
+
+        @Override
+        public DirectLongList getAuxPageAddresses() {
+            return auxAddresses;
+        }
+
+        @Override
+        public DirectLongList getAuxPageSizes() {
+            return auxSizes;
+        }
+
+        @Override
+        public int getColumnCount() {
+            return sourceIndexes.size();
+        }
+
+        @Override
+        public int getColumnOffset() {
+            return 0;
+        }
+
+        @Override
+        public byte getFrameFormat() {
+            return PartitionFormat.NATIVE;
+        }
+
+        @Override
+        public int getFrameIndex() {
+            return 0;
+        }
+
+        @Override
+        public long getPageAddress(int columnIndex) {
+            return dataAddresses.get(columnIndex);
+        }
+
+        @Override
+        public DirectLongList getPageAddresses() {
+            return dataAddresses;
+        }
+
+        @Override
+        public long getPageSize(int columnIndex) {
+            return dataSizes.get(columnIndex);
+        }
+
+        @Override
+        public DirectLongList getPageSizes() {
+            return dataSizes;
+        }
+
+        @Override
+        public PageFrameMemoryPool getPool() {
+            return null;
+        }
+
+        @Override
+        public long getRowIdOffset() {
+            return 0;
+        }
+
+        @Override
+        public int getSourceColumnType(int columnIndex) {
+            return -1;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return getConversionSymbolMapReader(sourceIndexes.getQuick(columnIndex));
+        }
+
+        @Override
+        public boolean hasColumnTops() {
+            return false;
+        }
+
+        @Override
+        public boolean hasColumnTypeCasts() {
+            return false;
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean populateRemainingColumns(IntHashSet columns, DirectLongList rows, boolean fillWithNulls) {
+            return false;
+        }
+
+        private void of(long rowLo, int rows) {
+            auxAddresses.clear();
+            auxSizes.clear();
+            dataAddresses.clear();
+            dataSizes.clear();
+            timestamps.jumpTo(0);
+            for (int i = 0, n = sourceIndexes.size(); i < n; i++) {
+                final int sourceIndex = sourceIndexes.getQuick(i);
+                final int type = metadata.getColumnType(sourceIndex);
+                final MemoryMA data = getDataColumn(sourceIndex);
+                if (sourceIndex == timestampIndex) {
+                    for (int row = 0; row < rows; row++) {
+                        timestamps.putLong(Unsafe.getLong(data.addressOf((rowLo + row) * 16)));
+                    }
+                    dataAddresses.add(timestamps.addressOf(0));
+                    dataSizes.add((long) rows * Long.BYTES);
+                    auxAddresses.add(0);
+                    auxSizes.add(0);
+                } else if (ColumnType.isVarSize(type)) {
+                    final ColumnTypeDriver driver = ColumnType.getDriver(type);
+                    final MemoryMA aux = getAuxColumn(sourceIndex);
+                    final long offset = driver.getAuxVectorOffset(rowLo);
+                    dataAddresses.add(data.getAppendOffset() == 0 ? 0 : data.addressOf(0));
+                    dataSizes.add(data.getAppendOffset());
+                    auxAddresses.add(aux.addressOf(offset));
+                    auxSizes.add(driver.getAuxVectorSize(rowLo + rows) - offset);
+                } else {
+                    final int size = ColumnType.sizeOf(type);
+                    dataAddresses.add(data.addressOf(rowLo * size));
+                    dataSizes.add((long) rows * size);
+                    auxAddresses.add(0);
+                    auxSizes.add(0);
+                }
+            }
+        }
+    }
 
     private static class ConversionSymbolTable implements SymbolTable {
         private final IntList symbols = new IntList();
@@ -3501,10 +3862,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
-    private class RowImpl implements TableWriter.Row {
-        private final Decimal256 decimal256Sink = new Decimal256();
-        private final StringSink tempSink = new StringSink();
-        private final Utf8StringSink tempUtf8Sink = new Utf8StringSink();
+    private class RowImpl extends NativeWriterRow {
         private long timestamp;
 
         @Override
@@ -3515,231 +3873,6 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         @Override
         public void cancel() {
             setAppendPosition(segmentRowCount);
-        }
-
-        @Override
-        public void putArray(int columnIndex, @NotNull ArrayView arrayView) {
-            ArrayTypeDriver.appendValue(
-                    getSecondaryColumn(columnIndex),
-                    getPrimaryColumn(columnIndex),
-                    arrayView
-            );
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putBin(int columnIndex, long address, long len) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putBin(address, len));
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putBin(int columnIndex, BinarySequence sequence) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putBin(sequence));
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putBool(int columnIndex, boolean value) {
-            getPrimaryColumn(columnIndex).putBool(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putByte(int columnIndex, byte value) {
-            getPrimaryColumn(columnIndex).putByte(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putChar(int columnIndex, char value) {
-            getPrimaryColumn(columnIndex).putChar(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putDate(int columnIndex, long value) {
-            putLong(columnIndex, value);
-        }
-
-        @Override
-        public void putDecimal(int columnIndex, Decimal256 value) {
-            int type = metadata.getColumnType(columnIndex);
-            WriterRowUtils.putDecimal(columnIndex, value, type, this);
-        }
-
-        @Override
-        public void putDecimal128(int columnIndex, long high, long low) {
-            getPrimaryColumn(columnIndex).putDecimal128(high, low);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putDecimal256(int columnIndex, long hh, long hl, long lh, long ll) {
-            getPrimaryColumn(columnIndex).putDecimal256(hh, hl, lh, ll);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putDecimalChar(int columnIndex, char decimalValue) {
-            int columnType = metadata.getColumnType(columnIndex);
-            WriterRowUtils.putDecimalChar(columnIndex, decimal256Sink, decimalValue, columnType, this);
-        }
-
-        @Override
-        public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
-            int columnType = metadata.getColumnType(columnIndex);
-            WriterRowUtils.putDecimalStr(columnIndex, decimal256Sink, decimalValue, columnType, this);
-        }
-
-        @Override
-        public void putDecimalVarchar(int columnIndex, Utf8Sequence decimalValue) {
-            int columnType = metadata.getColumnType(columnIndex);
-            WriterRowUtils.putDecimalVarchar(columnIndex, decimal256Sink, decimalValue, columnType, this);
-        }
-
-        @Override
-        public void putDouble(int columnIndex, double value) {
-            getPrimaryColumn(columnIndex).putDouble(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putFloat(int columnIndex, float value) {
-            getPrimaryColumn(columnIndex).putFloat(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putGeoHash(int columnIndex, long value) {
-            int type = metadata.getColumnType(columnIndex);
-            WriterRowUtils.putGeoHash(columnIndex, value, type, this);
-        }
-
-        @Override
-        public void putGeoHashDeg(int columnIndex, double lat, double lon) {
-            final int type = metadata.getColumnType(columnIndex);
-            WriterRowUtils.putGeoHash(columnIndex, GeoHashes.fromCoordinatesDegUnsafe(lat, lon, ColumnType.getGeoHashBits(type)), type, this);
-        }
-
-        @Override
-        public void putGeoStr(int columnIndex, CharSequence hash) {
-            final int type = metadata.getColumnType(columnIndex);
-            WriterRowUtils.putGeoStr(columnIndex, hash, type, this);
-        }
-
-        @Override
-        public void putGeoVarchar(int columnIndex, Utf8Sequence hash) {
-            final int type = metadata.getColumnType(columnIndex);
-            WriterRowUtils.putGeoVarchar(columnIndex, hash, type, this);
-        }
-
-        @Override
-        public void putIPv4(int columnIndex, int value) {
-            putInt(columnIndex, value);
-        }
-
-        @Override
-        public void putInt(int columnIndex, int value) {
-            getPrimaryColumn(columnIndex).putInt(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong(int columnIndex, long value) {
-            getPrimaryColumn(columnIndex).putLong(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong128(int columnIndex, long lo, long hi) {
-            MemoryMA primaryColumn = getPrimaryColumn(columnIndex);
-            primaryColumn.putLong(lo);
-            primaryColumn.putLong(hi);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong256(int columnIndex, long l0, long l1, long l2, long l3) {
-            getPrimaryColumn(columnIndex).putLong256(l0, l1, l2, l3);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong256(int columnIndex, Long256 value) {
-            getPrimaryColumn(columnIndex).putLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3());
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong256(int columnIndex, CharSequence hexString) {
-            getPrimaryColumn(columnIndex).putLong256(hexString);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong256(int columnIndex, @NotNull CharSequence hexString, int start, int end) {
-            getPrimaryColumn(columnIndex).putLong256(hexString, start, end);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong256Utf8(int columnIndex, DirectUtf8Sequence hexString) {
-            getPrimaryColumn(columnIndex).putLong256Utf8(hexString);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putLong256Utf8(int columnIndex, Utf8Sequence hexString) {
-            if (hexString == null) {
-                putLong256(columnIndex, (CharSequence) null);
-                return;
-            }
-            if (hexString instanceof DirectUtf8Sequence) {
-                putLong256Utf8(columnIndex, (DirectUtf8Sequence) hexString);
-                return;
-            }
-            // Long256 hex strings are always ASCII
-            putLong256(columnIndex, hexString.asAsciiCharSequence());
-        }
-
-        @Override
-        public void putShort(int columnIndex, short value) {
-            getPrimaryColumn(columnIndex).putShort(value);
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putStr(int columnIndex, CharSequence value) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value));
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putStr(int columnIndex, char value) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value));
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putStr(int columnIndex, CharSequence value, int pos, int len) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value, pos, len));
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
-            getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value));
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putStrUtf8(int columnIndex, Utf8Sequence value) {
-            if (value instanceof DirectUtf8Sequence directValue) {
-                putStrUtf8(columnIndex, directValue);
-                return;
-            }
-            putStr(columnIndex, value != null ? Utf8s.utf8ToUtf16OrThrow(value, tempSink) : null);
         }
 
         @Override
@@ -3797,43 +3930,23 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public void putUuid(int columnIndex, CharSequence uuidStr) {
-            SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
-            putLong128(columnIndex, uuid.getLo(), uuid.getHi());
+        protected int getColumnType(int columnIndex) {
+            return metadata.getColumnType(columnIndex);
         }
 
         @Override
-        public void putUuidUtf8(int columnIndex, Utf8Sequence uuidStr) {
-            SqlUtil.implicitCastStrAsUuid(uuidStr, uuid);
-            putLong128(columnIndex, uuid.getLo(), uuid.getHi());
-        }
-
-        @Override
-        public void putVarchar(int columnIndex, char value) {
-            tempUtf8Sink.clear();
-            tempUtf8Sink.put(value);
-            VarcharTypeDriver.appendValue(
-                    getSecondaryColumn(columnIndex), getPrimaryColumn(columnIndex),
-                    tempUtf8Sink
-            );
-            setRowValueNotNull(columnIndex);
-        }
-
-        @Override
-        public void putVarchar(int columnIndex, Utf8Sequence value) {
-            VarcharTypeDriver.appendValue(
-                    getSecondaryColumn(columnIndex), getPrimaryColumn(columnIndex),
-                    value
-            );
-            setRowValueNotNull(columnIndex);
-        }
-
-        private MemoryMA getPrimaryColumn(int columnIndex) {
+        protected MemoryMA getPrimaryColumn(int columnIndex) {
             return columns.getQuick(getDataColumnOffset(columnIndex));
         }
 
-        private MemoryMA getSecondaryColumn(int columnIndex) {
+        @Override
+        protected MemoryMA getSecondaryColumn(int columnIndex) {
             return columns.getQuick(getAuxColumnOffset(columnIndex));
+        }
+
+        @Override
+        protected void setRowValueNotNull(int columnIndex) {
+            WalWriter.this.setRowValueNotNull(columnIndex);
         }
 
         private int putSym0(int columnIndex, CharSequence utf16Value, SymbolMapReader symbolMapReader) {
