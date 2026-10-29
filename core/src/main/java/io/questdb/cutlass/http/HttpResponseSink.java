@@ -800,8 +800,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         public void sendStatusNoContent(int code, @Nullable CharSequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
             if (!headerSent) {
-                buffer.clearAndPrepareToWriteToBuffer();
-                headerImpl.status(httpVersion, code, null, -2L);
+                initNoContentHeader(code);
                 if (header != null) {
                     headerImpl.put(header).put(Misc.EOL);
                 }
@@ -813,8 +812,7 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         public void sendStatusNoContent(int code, @NotNull Utf8Sequence header) throws PeerDisconnectedException, PeerIsSlowToReadException {
             if (!headerSent) {
-                buffer.clearAndPrepareToWriteToBuffer();
-                headerImpl.status(httpVersion, code, null, -2L);
+                initNoContentHeader(code);
                 headerImpl.put(header).put(Misc.EOL);
                 prepareHeaderSink();
                 headerSent = true;
@@ -875,6 +873,15 @@ public class HttpResponseSink implements Closeable, Mutable {
 
         public void shutdownWrite() {
             socket.shutdown(Net.SHUT_WR);
+        }
+
+        private void initNoContentHeader(int code) {
+            buffer.clearAndPrepareToWriteToBuffer();
+            headerImpl.status(httpVersion, code, null, -2L);
+            // 1xx/204 prohibit Content-Length; 304 would require the selected representation's length.
+            if (code >= 200 && code != HTTP_NO_CONTENT && code != HTTP_NOT_MODIFIED) {
+                headerImpl.put("Content-Length: 0").put(Misc.EOL);
+            }
         }
 
         private void sendStatusWithContent(
