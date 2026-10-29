@@ -893,6 +893,8 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
         // The replace covers every row of 2024-01-02, so the commit removes that parquet
         // partition. Removing its directory after the commit fails once: the table must not
         // see the partition, and the async partition purge removes the directory.
+        // ADAPTIVE never removes the directory inline: it waits for the save points.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         final AtomicReference<String> pqDir = new AtomicReference<>();
         final AtomicBoolean armed = new AtomicBoolean(false);
         final AtomicInteger faults = new AtomicInteger();

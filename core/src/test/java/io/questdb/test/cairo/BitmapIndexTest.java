@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
@@ -53,6 +54,7 @@ import io.questdb.griffin.engine.table.LatestByArguments;
 import io.questdb.std.BitmapIndexUtilsNative;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
@@ -1470,6 +1472,87 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollbackOnEmptyIndexDiskFullKeepsHeaderCovered() throws Exception {
+        // At the smallest value page the OS allows (4 KiB on Linux x86, 16 KiB on macOS arm64, 64 KiB on Windows) a
+        // block of a quarter page of values (two pages and 16 bytes) is larger than the value file a new writer maps,
+        // so the column-top rollback of an empty index has to grow the file before it publishes one block. When that
+        // growth fails, the rollback must fail and leave the published size where the file still covers it.
+        final long pageSize = Files.PAGE_SIZE;
+        final int blockValueCount = (int) (pageSize / 4);
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, pageSize);
+        final ValueFileDiskFullFacade ff = new ValueFileDiskFullFacade();
+        assertMemoryLeak(ff, () -> {
+            Assert.assertEquals(pageSize, configuration.getDataIndexValueAppendPageSize());
+            create(configuration, path.trimTo(plen), "x", blockValueCount);
+            final long blockCapacity = blockValueCount * 8L + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                Assert.assertTrue(valueFileLength() < blockCapacity);
+                ff.isDiskFull = true;
+                try {
+                    writer.rollbackConditionally(10);
+                    Assert.fail("the rollback must fail when the value file cannot grow to the size it publishes");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
+                }
+                Assert.assertEquals(0, writer.getValueMemSize());
+                Assert.assertEquals(0, readValueMemSizeHeader());
+                try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    Assert.assertEquals(0, reader.getKeyCount());
+                }
+                // what a kill at this point leaves on disk
+                writer.closeNoTruncate();
+            }
+            ff.isDiskFull = false;
+            final LongList values = new LongList();
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                writer.rollbackConditionally(10);
+                Assert.assertEquals(blockCapacity, writer.getValueMemSize());
+                Assert.assertTrue(valueFileLength() >= blockCapacity);
+                writer.add(0, 10);
+                writer.setMaxValue(10);
+            }
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                assertThat("[10]", reader.getCursor(0, 0, Long.MAX_VALUE), values);
+            }
+        });
+    }
+
+    @Test
+    public void testRollbackOnEmptyIndexKeepsValueFileCoveringHeader() throws Exception {
+        // The first commit after ADD COLUMN ... INDEX into a partition that has rows rolls the empty index back to
+        // the column top, then adds keys. Every value size the writer publishes after that must be covered by the
+        // value file: a reader opens the file after each add, and a writer reopens it after a close that does not
+        // truncate, which leaves the files as a kill would. At the smallest value page the OS allows, blocks of a
+        // sixteenth of a page of values (half a page and 16 bytes) put a page boundary inside the second block.
+        final long pageSize = Files.PAGE_SIZE;
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, pageSize);
+        assertMemoryLeak(() -> {
+            Assert.assertEquals(pageSize, configuration.getDataIndexValueAppendPageSize());
+            create(configuration, path.trimTo(plen), "x", (int) (pageSize / 16));
+            final LongList values = new LongList();
+            final int keyCount = 40;
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                writer.rollbackConditionally(10);
+                for (int key = 0; key < keyCount; key++) {
+                    writer.add(key, 10 + key);
+                    writer.setMaxValue(10 + key);
+                    try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                        assertThat("[" + (10 + key) + "]", reader.getCursor(key, 0, Long.MAX_VALUE), values);
+                    }
+                    Assert.assertTrue("value file shorter than the published size at key " + key, valueFileLength() >= writer.getValueMemSize());
+                }
+                writer.closeNoTruncate();
+            }
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                Assert.assertEquals(keyCount, writer.getKeyCount());
+                for (int key = 0; key < keyCount; key++) {
+                    assertThat("[" + (10 + key) + "]", writer.getCursor(key), values);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSimpleRollback() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             Rnd modelRnd = new Rnd();
@@ -1674,6 +1757,137 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testValueBlockAllocationDiskFullKeepsHeaderCovered() throws Exception {
+        // At the smallest value page the OS allows, with blocks of a sixteenth of a page of values (half a page and
+        // 16 bytes), the next block after the column-top rollback of an empty index ends past the one page the writer
+        // has mapped, so adding the first key has to grow the value file. When that growth fails, the add must fail
+        // before it publishes the block.
+        final long pageSize = Files.PAGE_SIZE;
+        final int blockValueCount = (int) (pageSize / 16);
+        node1.setProperty(PropertyKey.CAIRO_WRITER_DATA_INDEX_VALUE_APPEND_PAGE_SIZE, pageSize);
+        final ValueFileDiskFullFacade ff = new ValueFileDiskFullFacade();
+        assertMemoryLeak(ff, () -> {
+            Assert.assertEquals(pageSize, configuration.getDataIndexValueAppendPageSize());
+            create(configuration, path.trimTo(plen), "x", blockValueCount);
+            final long blockCapacity = blockValueCount * 8L + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
+            final LongList values = new LongList();
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                writer.rollbackConditionally(10);
+                Assert.assertEquals(blockCapacity, writer.getValueMemSize());
+                ff.isDiskFull = true;
+                try {
+                    writer.add(0, 10);
+                    Assert.fail("the add must fail when the value file cannot grow to cover the new block");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
+                }
+                Assert.assertEquals(blockCapacity, writer.getValueMemSize());
+                Assert.assertEquals(blockCapacity, readValueMemSizeHeader());
+                Assert.assertTrue(valueFileLength() >= blockCapacity);
+                try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    Assert.assertEquals(0, reader.getKeyCount());
+                }
+                // what a kill at this point leaves on disk
+                writer.closeNoTruncate();
+            }
+            ff.isDiskFull = false;
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                // the failed add raised the max value; the retry rolls back to the same column top first
+                writer.rollbackConditionally(10);
+                writer.add(0, 10);
+                writer.add(1, 11);
+                writer.setMaxValue(11);
+                Assert.assertTrue(valueFileLength() >= writer.getValueMemSize());
+            }
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                assertThat("[10]", reader.getCursor(0, 0, Long.MAX_VALUE), values);
+                assertThat("[11]", reader.getCursor(1, 0, Long.MAX_VALUE), values);
+            }
+        });
+    }
+
+    @Test
+    public void testValueFileShortByMoreThanLastBlockStillFails() throws Exception {
+        // A value file that does not reach the first cell of the last block lost a value a writer had written, so
+        // it is a torn file, and every way of opening the index refuses it.
+        TestUtils.assertMemoryLeak(() -> {
+            final long valueMemSize = writeThreeKeysEndingWithSingleValueBlock();
+            final long blockCapacity = 256 * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
+            final FilesFacade ff = configuration.getFilesFacade();
+            for (long length : new long[]{valueMemSize - blockCapacity + Long.BYTES - 1, valueMemSize - blockCapacity}) {
+                truncateValueFile(length);
+                assertBackwardReaderConstructorFail(configuration, "bitmap index value file too short");
+                assertWriterConstructorFail("bitmap index value file too short");
+                final long keyFd = TableUtils.openRW(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE), LOG, configuration.getWriterFileOpenOpts());
+                final long valueFd = TableUtils.openRW(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE), LOG, configuration.getWriterFileOpenOpts());
+                path.trimTo(plen);
+                try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration)) {
+                    writer.of(configuration, keyFd, valueFd, false, 256);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "bitmap index value file too short");
+                }
+                Assert.assertEquals(length, valueFileLength());
+            }
+        });
+    }
+
+    @Test
+    public void testValueFileShortByPartOfLastBlockOpens() throws Exception {
+        // An earlier build could publish a block before the value file covered all of it: the file then ends past
+        // the block's first cell, which the writer wrote first, but before the block's end. A writer stopped there
+        // (a kill, or a close that does not truncate) leaves the file that way. It holds every written value, so
+        // readers open it, and a writer extends it, through both ways of opening a writer. Windows cannot map a
+        // read-only file past its end, so there a reader fails cleanly until a writer has extended the file, as it
+        // did before the length checks.
+        TestUtils.assertMemoryLeak(() -> {
+            final long valueMemSize = writeThreeKeysEndingWithSingleValueBlock();
+            final long blockCapacity = 256 * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED;
+            final long shortLength = valueMemSize - blockCapacity + Long.BYTES;
+            final FilesFacade ff = configuration.getFilesFacade();
+            final LongList values = new LongList();
+
+            truncateValueFile(shortLength);
+            if (Os.isWindows()) {
+                try (BitmapIndexBwdReader ignored = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    Assert.fail("Windows cannot map the value file past its end");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not mmap");
+                }
+            } else {
+                try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                    assertThat("[2,0]", reader.getCursor(0, 0, Long.MAX_VALUE), values);
+                    assertThat("[1]", reader.getCursor(1, 0, Long.MAX_VALUE), values);
+                    assertThat("[3]", reader.getCursor(2, 0, Long.MAX_VALUE), values);
+                }
+            }
+
+            final long keyFd = TableUtils.openRW(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE), LOG, configuration.getWriterFileOpenOpts());
+            final long valueFd = TableUtils.openRW(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE), LOG, configuration.getWriterFileOpenOpts());
+            path.trimTo(plen);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration)) {
+                writer.of(configuration, keyFd, valueFd, false, 256);
+                Assert.assertEquals(valueMemSize, writer.getValueMemSize());
+                Assert.assertTrue(valueFileLength() >= valueMemSize);
+            }
+
+            truncateValueFile(shortLength);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+                Assert.assertTrue(valueFileLength() >= valueMemSize);
+                writer.add(2, 4);
+                writer.add(3, 5);
+                writer.setMaxValue(5);
+            }
+            try (BitmapIndexBwdReader reader = new BitmapIndexBwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                assertThat("[2,0]", reader.getCursor(0, 0, Long.MAX_VALUE), values);
+                assertThat("[1]", reader.getCursor(1, 0, Long.MAX_VALUE), values);
+                assertThat("[4,3]", reader.getCursor(2, 0, Long.MAX_VALUE), values);
+                assertThat("[5]", reader.getCursor(3, 0, Long.MAX_VALUE), values);
+            }
+        });
+    }
+
+    @Test
     public void testWriterConstructorBadSequence() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             setupIndexHeader();
@@ -1711,7 +1925,8 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 mem.skip(BitmapIndexUtils.KEY_FILE_RESERVED - mem.getAppendOffset());
 
             }
-            assertWriterConstructorFail("corrupt file");
+            // The map-size guard fires first (value file missing -> too short).
+            assertWriterConstructorFail("bitmap index value file too short");
         });
     }
 
@@ -1938,6 +2153,17 @@ public class BitmapIndexTest extends AbstractCairoTest {
             );
             mem.toTop();
             return mem;
+        }
+    }
+
+    private long readValueMemSizeHeader() {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final long fd = TableUtils.openRO(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE), LOG);
+        try {
+            return ff.readNonNegativeLong(fd, BitmapIndexUtils.KEY_RESERVED_OFFSET_VALUE_MEM_SIZE);
+        } finally {
+            ff.close(fd);
+            path.trimTo(plen);
         }
     }
 
@@ -2312,6 +2538,40 @@ public class BitmapIndexTest extends AbstractCairoTest {
         });
     }
 
+    private void truncateValueFile(long length) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final long fd = TableUtils.openRW(ff, BitmapIndexUtils.valueFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE), LOG, configuration.getWriterFileOpenOpts());
+        try {
+            Assert.assertTrue(ff.truncate(fd, length));
+        } finally {
+            ff.close(fd);
+            path.trimTo(plen);
+        }
+    }
+
+    private long valueFileLength() {
+        try {
+            return configuration.getFilesFacade().length(BitmapIndexUtils.valueFileName(path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE));
+        } finally {
+            path.trimTo(plen);
+        }
+    }
+
+    // Writes keys 0 and 1 into one block each, a second value of key 0 into its block, and key 2's single value
+    // into the last block, the state a new key's block allocation leaves, and returns the value size.
+    private long writeThreeKeysEndingWithSingleValueBlock() {
+        create(configuration, path.trimTo(plen), "x", 256);
+        try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
+            writer.add(0, 0);
+            writer.add(1, 1);
+            writer.add(0, 2);
+            writer.add(2, 3);
+            writer.setMaxValue(3);
+            Assert.assertEquals(3 * (256 * 8 + BitmapIndexUtils.VALUE_BLOCK_FILE_RESERVED), writer.getValueMemSize());
+            return writer.getValueMemSize();
+        }
+    }
+
     private void writeTripleValues(int N) {
         try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE)) {
             for (int i = 0; i < N; i++) {
@@ -2322,6 +2582,30 @@ public class BitmapIndexTest extends AbstractCairoTest {
                 writer.add(0, i);
                 writer.add(0, i);
             }
+        }
+    }
+
+    private static class ValueFileDiskFullFacade extends TestFilesFacadeImpl {
+        private boolean isDiskFull;
+        private long valueFd = -1;
+
+        @Override
+        public boolean allocate(long fd, long size) {
+            return !(isDiskFull && fd == valueFd) && super.allocate(fd, size);
+        }
+
+        @Override
+        public boolean allocate(long fd, long allocatedSize, long size) {
+            return !(isDiskFull && fd == valueFd) && super.allocate(fd, allocatedSize, size);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            if (Utf8s.endsWithAscii(name, ".v")) {
+                valueFd = fd;
+            }
+            return fd;
         }
     }
 }

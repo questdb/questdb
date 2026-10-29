@@ -364,6 +364,8 @@ public class ParquetDedupIdenticalCommitTest extends AbstractCairoTest {
                     "d\n-1.0\n"
             );
 
+            // Under ADAPTIVE the save points still name the superseded directory.
+            releaseSavePointHolds("pq");
             TableUtils.schedulePurgeO3Partitions(engine.getMessageBus(), engine.verifyTableName("pq"), ColumnType.TIMESTAMP, PartitionBy.DAY);
             try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
                 purgeJob.drain(0);

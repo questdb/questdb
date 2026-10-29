@@ -445,6 +445,8 @@ public class ParquetInPlaceIndexConcurrentReaderTest extends AbstractCairoTest {
 
             // no reader is left: the purge must remove every superseded index version
             engine.releaseAllReaders();
+            // under ADAPTIVE the save points must move past the superseded versions first
+            releaseSavePointHolds("pq");
             try (
                     ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(engine);
                     PostingSealPurgeJob postingPurgeJob = new PostingSealPurgeJob(engine)

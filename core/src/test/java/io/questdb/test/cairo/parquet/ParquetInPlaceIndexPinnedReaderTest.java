@@ -910,6 +910,8 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
                     }
 
                     engine.releaseAllReaders();
+                    // Under ADAPTIVE the save points still name the orphans' column versions.
+                    releaseSavePointHolds("pq");
                     execute("VACUUM TABLE pq");
                     runPurgeJob(purgeJob);
                     final Map<String, byte[]> afterVacuum = indexFiles();
@@ -980,7 +982,9 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
             }
 
             // The reader is released: the purge removes every superseded file and
-            // keeps the new version.
+            // keeps the new version. Under ADAPTIVE the save points must move past
+            // the superseded versions first.
+            releaseSavePointHolds("pq");
             runPurgeJob(purgeJob);
             final Map<String, byte[]> filesAfter = indexFiles();
             for (String name : filesBefore.keySet()) {
