@@ -517,7 +517,7 @@ public class TxnScoreboardTest extends AbstractCairoTest {
                 Assert.assertEquals(100, scoreboard.getMinSeqTxn(12, 120));
 
                 scoreboard.releaseTxn(1, 11);
-                Assert.assertTrue(scoreboard.acquireTxn(0, 12, TxnScoreboard.NO_SEQ_TXN_FLOOR));
+                Assert.assertTrue(scoreboard.acquireTxn(0, 12, TxnScoreboard.UNKNOWN_SEQ_TXN));
                 Assert.assertEquals(TxnScoreboard.UNKNOWN_SEQ_TXN, scoreboard.getMinSeqTxn(12, 120));
                 scoreboard.releaseTxn(0, 12);
             }
