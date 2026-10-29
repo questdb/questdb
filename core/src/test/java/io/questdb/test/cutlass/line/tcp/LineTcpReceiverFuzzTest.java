@@ -166,6 +166,14 @@ public class LineTcpReceiverFuzzTest extends AbstractLineTcpReceiverFuzzTest {
         runTest();
     }
 
+    // Added test case with non-ascii symbols with space to check that we do not have any issues with symbol names containing spaces and non-ascii characters when we reorder columns, add new columns, skip duplicates
+    @Test
+    public void testReorderingAddSkipDuplicateWithNonAsciiSymbolsWithSpace() throws Exception {
+        initLoadParameters(100, Os.isWindows() ? 3 : 5, 5, 5, 50);
+        initFuzzParameters(4, 4, 4, -1, 4, true, true, true);
+        runTest();
+    }
+
     @Override
     protected Log getLog() {
         return LOG;
