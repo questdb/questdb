@@ -172,7 +172,8 @@ public class WindowJoinParquetMasterTest extends AbstractCairoTest {
     public void testConstFalseWindowJoinOverTableMasterCountsEmptyWindowAsZero() throws Exception {
         // Page frames carry no data for the spliced columns, so a splice that reports count() as 0
         // must hide the table base's page-frame capability. It keeps the time-frame capability,
-        // whose records report the same values as its record cursor.
+        // whose records report the same values as its record cursor, but not the concurrent one,
+        // which reads page frames.
         assertMemoryLeak(() -> {
             createFixture();
             execute("""
@@ -189,6 +190,7 @@ public class WindowJoinParquetMasterTest extends AbstractCairoTest {
                 Assert.assertNotNull("const-false WINDOW JOIN must compile to the ExtraNullColumn splice", splice);
                 Assert.assertFalse("the splice must not offer page frames once it reports count() as 0", splice.supportsPageFrameCursor());
                 Assert.assertTrue("the splice must keep the table base time-frame capability", splice.supportsTimeFrameCursor());
+                Assert.assertFalse("page frames carry no spliced columns for concurrent time frames to read", splice.supportsConcurrentTimeFrameCursor());
             }
             assertQuery(windowJoin)
                     .timestamp("ts")
@@ -218,8 +220,8 @@ public class WindowJoinParquetMasterTest extends AbstractCairoTest {
     @Test
     public void testConstFalseWindowJoinOverTableMasterPageFrameSurface() throws Exception {
         // A table base must keep the TablePageFrameCursor contract through the null-padding
-        // splice. Window and horizon joins use this surface for table readers and partition
-        // positioning when the splice appears as a slave of another join.
+        // splice. Parallel hash-join row-count checks and live-view routing read the table reader
+        // and interval filter through this surface.
         assertMemoryLeak(() -> {
             createFixture();
             execute("""
@@ -232,6 +234,7 @@ public class WindowJoinParquetMasterTest extends AbstractCairoTest {
                 Assert.assertNotNull("const-false WINDOW JOIN must compile to the ExtraNullColumn splice", splice);
                 Assert.assertTrue("the splice must keep the table base page-frame capability", splice.supportsPageFrameCursor());
                 Assert.assertTrue("the splice must keep the table base time-frame capability", splice.supportsTimeFrameCursor());
+                Assert.assertFalse("page frames carry no spliced columns for concurrent time frames to read", splice.supportsConcurrentTimeFrameCursor());
                 try (PageFrameCursor cursor = splice.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
                     Assert.assertTrue(
                             "the splice must preserve TablePageFrameCursor over a table base",

@@ -235,6 +235,41 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateInBeforeEpochMatchesJava() throws Exception {
+        // The JIT compares a DATE key in milliseconds and rounds the bounds of a micro interval
+        // inward, as the Java filter matches a DATE d when d * 1000 lies in the interval. Before
+        // 1970 the bounds are negative, where truncation rounds toward zero rather than inward:
+        // the upper bound of 1969-12-31, -1 us, would include 1970-01-01T00:00:00.000 (k = 5).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k INT, dt DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '1969-12-30T23:59:59.999Z', '2024-01-01T00:00:00.000000Z'),
+                    (2, '1969-12-31T00:00:00.000Z', '2024-01-01T01:00:00.000000Z'),
+                    (3, '1969-12-31T23:59:59.998Z', '2024-01-01T02:00:00.000000Z'),
+                    (4, '1969-12-31T23:59:59.999Z', '2024-01-01T03:00:00.000000Z'),
+                    (5, '1970-01-01T00:00:00.000Z', '2024-01-01T04:00:00.000000Z'),
+                    (6, NULL, '2024-01-01T05:00:00.000000Z')
+                    """);
+            assertFilterWithAndWithoutJit("dt IN '1969-12-31'", "k\n2\n3\n4\n", true);
+            assertFilterWithAndWithoutJit("dt IN ('1969-12-31')", "k\n2\n3\n4\n", true);
+            assertFilterWithAndWithoutJit("dt NOT IN '1969-12-31'", "k\n1\n5\n6\n", true);
+            assertFilterWithAndWithoutJit("dt IN '1969-12-31' OR k = 1", "k\n1\n2\n3\n4\n", true);
+            assertFilterWithAndWithoutJit("dt IN '1969-12-31T23:59:59.998'", "k\n3\n", true);
+            // [-1500 us, -501 us] holds -1 ms only, and [-500 us, 499 us] holds 0 ms only.
+            assertFilterWithAndWithoutJit("dt IN '1969-12-31T23:59:59.998500;1T'", "k\n4\n", true);
+            assertFilterWithAndWithoutJit("dt IN '1969-12-31T23:59:59.999500;1T'", "k\n5\n", true);
+
+            // CompiledFilterTickBounds rounds the bounds of a date variable the same way.
+            final long dec31At10 = -Micros.DAY_MICROS + 10 * Micros.HOUR_MICROS;
+            final long jan1At10 = 10 * Micros.HOUR_MICROS;
+            assertFilterFollowsClock("dt IN '$today'", true, dec31At10, "k\n2\n3\n4\n", jan1At10, "k\n5\n");
+            assertFilterFollowsClock("dt NOT IN '$today'", true, dec31At10, "k\n1\n5\n6\n", jan1At10, "k\n1\n2\n3\n4\n6\n");
+            assertFilterFollowsClock("dt IN '$now - 500u;1T'", true, -Micros.MILLI_MICROS, "k\n4\n", 0, "k\n5\n");
+        });
+    }
+
+    @Test
     public void testDateInIntervalCountThreshold() throws Exception {
         // An unparenthesised IN over a DATE key used to run on the Java filter, whose binary search
         // outpaces the JIT's range checks past a few dozen intervals. The IN list threshold (10 by

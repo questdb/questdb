@@ -1995,6 +1995,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
     }
 
+    // Names a master column of the constant-false WINDOW JOIN splice under a reordering projection.
+    // The splice holds every master column next to the aggregates, and a projection alias may repeat
+    // the name of a master column it does not stand for. Such a master column takes its own alias
+    // when the projection lists it. Otherwise it takes a name that neither the projection nor the
+    // master uses, since nothing reads an unprojected column by name.
+    private static TableColumnMetadata spliceMasterColumnMetadata(
+            RecordMetadata masterMetadata,
+            int masterIndex,
+            RecordMetadata projectionMetadata,
+            IntList projectionColumnIndex
+    ) {
+        final TableColumnMetadata column = masterMetadata.getColumnMetadata(masterIndex);
+        final String name = column.getColumnName();
+        final int aliasIndex = projectionMetadata.getColumnIndexQuiet(name);
+        if (aliasIndex < 0 || projectionColumnIndex.getQuick(aliasIndex) == masterIndex) {
+            return column;
+        }
+        final int projectedIndex = projectionColumnIndex.indexOf(masterIndex, 0, projectionColumnIndex.size());
+        if (projectedIndex > -1) {
+            return projectionMetadata.getColumnMetadata(projectedIndex);
+        }
+        String freeName;
+        int suffix = 1;
+        do {
+            freeName = name + '_' + suffix++;
+        } while (projectionMetadata.getColumnIndexQuiet(freeName) > -1 || masterMetadata.getColumnIndexQuiet(freeName) > -1);
+        return new TableColumnMetadata(freeName, column.getColumnType(), column.getIndexType(),
+                column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata());
+    }
+
     private static long tolerance(IQueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
         ExpressionNode tolerance = slaveModel.getAsOfJoinTolerance();
         long toleranceInterval = Numbers.LONG_NULL;
@@ -5879,6 +5909,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.position(slaveModel.getJoinKeywordPosition())
                         .put("right-hand side of HORIZON JOIN can only be a table with an optional filter");
             }
+            if (!slaveFactory.supportsConcurrentTimeFrameCursor()) {
+                supportsParallelism = false;
+            }
 
             final int workerCount = executionContext.getSharedQueryWorkerCount();
             final int masterTimestampColumnIndex = masterMetadata.getTimestampIndex();
@@ -7253,8 +7286,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             if (colIndex >= splitIndex) {
                                                 throw SqlException.position(ast.position).put("WINDOW join cannot reference right table non-aggregate column: ").put(ast.token);
                                             }
-                                            if (colIndex == masterMetadata.getTimestampIndex()) {
-                                                timestampIndex = colIndex;
+                                            // outerProjectionMetadata is indexed by projection position, so the
+                                            // designated timestamp is the first projection slot that holds it.
+                                            if (colIndex == masterMetadata.getTimestampIndex() && timestampIndex == -1) {
+                                                timestampIndex = j;
                                             }
                                             columnIndex.add(colIndex);
                                         } else {
@@ -7407,26 +7442,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (joinFilter != null && joinFilter.isConstant()) {
                                     joinFilter.init(null, executionContext);
                                     if (!joinFilter.getBool(null)) {
-                                        // An empty window still has a value for some aggregates, e.g. count() is 0.
-                                        // Spliced column k maps to groupByFunctions[k] only when every aggregate
-                                        // column assembled into a group-by function. When an aggregate folds to a
-                                        // constant, the lists no longer line up, and the shortcut keeps NULL mode.
+                                        // An empty window still has a value for some aggregates, e.g. count() is 0,
+                                        // isOrdered() is true and haversine_dist_deg() is 0.0. Spliced column k maps
+                                        // to groupByFunctions[k] only when every aggregate column assembled into a
+                                        // group-by function. When an aggregate folds to a constant, the lists no
+                                        // longer line up, and the shortcut keeps NULL mode.
+                                        final IntList emptyValueTypes = new IntList();
                                         final LongList emptyValues = groupByFunctions.size() == aggregateCols.size()
-                                                ? GroupByUtils.computeNonNullEmptyValues(groupByFunctions, valueTypes.getColumnCount())
+                                                ? GroupByUtils.computeNonNullEmptyValues(groupByFunctions, valueTypes.getColumnCount(), emptyValueTypes)
                                                 : null;
+                                        final IntList spliceEmptyValueTypes = emptyValues != null ? emptyValueTypes : null;
                                         RecordCursorFactory factory;
                                         if (isLastWindowJoin) {
                                             if (columnIndex == null) {
-                                                factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master, emptyValues);
+                                                factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master, emptyValues, spliceEmptyValueTypes);
                                             } else {
-                                                GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(masterMetadata);
-                                                for (int k = 0, m = aggregateCols.size(); k < m; k++) {
-                                                    metadata.add(new TableColumnMetadata(SqlUtil.toColumnName(aggregateCols.get(k).getAlias()), groupByFunctions.get(k).getType()));
+                                                // SelectedRecordCursorFactory exposes outerProjectionMetadata and reads the splice by index, so
+                                                // spliced column k takes the projection slot that maps to it, the metadata the regular path
+                                                // reports. A parallel Top K peels the SelectedRecord and prints its sort keys by the splice's
+                                                // column names, so the splice names no column in a way the query does not.
+                                                final GenericRecordMetadata metadata = new GenericRecordMetadata();
+                                                for (int c = 0; c < splitIndex; c++) {
+                                                    metadata.add(spliceMasterColumnMetadata(masterMetadata, c, outerProjectionMetadata, columnIndex));
                                                 }
-                                                factory = new SelectedRecordCursorFactory(outerProjectionMetadata, columnIndex, new ExtraNullColumnCursorFactory(metadata, masterMetadata.getColumnCount(), master, emptyValues));
+                                                metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
+                                                for (int j = 0, m = columnIndex.size(); j < m; j++) {
+                                                    if (columnIndex.getQuick(j) >= splitIndex) {
+                                                        metadata.add(outerProjectionMetadata.getColumnMetadata(j));
+                                                    }
+                                                }
+                                                factory = new SelectedRecordCursorFactory(outerProjectionMetadata, columnIndex,
+                                                        new ExtraNullColumnCursorFactory(metadata, splitIndex, master, emptyValues, spliceEmptyValueTypes));
                                             }
                                         } else {
-                                            factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master, emptyValues);
+                                            factory = new ExtraNullColumnCursorFactory(outerProjectionMetadata, masterMetadata.getColumnCount(), master, emptyValues, spliceEmptyValueTypes);
                                         }
 
                                         Misc.free(slaveToFree);
@@ -7472,7 +7521,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (parallelWindowJoinEnabled
                                         && masterSupportsPageFrames
                                         && GroupByUtils.isParallelismSupported(groupByFunctions)
-                                        && slaveToFree.supportsTimeFrameCursor()) {
+                                        && slaveToFree.supportsConcurrentTimeFrameCursor()) {
                                     // try to steal master filter
                                     CompiledFilter compiledFilter = null;
                                     MemoryCARW bindVarMemory = null;
@@ -8788,6 +8837,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (!slaveFactory.supportsTimeFrameCursor()) {
                     throw SqlException.position(slaveModels.getQuick(s).getJoinKeywordPosition())
                             .put("right-hand side of HORIZON JOIN can only be a table with an optional filter");
+                }
+                if (!slaveFactory.supportsConcurrentTimeFrameCursor()) {
+                    supportsParallelism = false;
                 }
             }
 

@@ -24,26 +24,56 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 
 /**
  * Spliced-column record of a constant-false WINDOW JOIN whose aggregates include a function with a
- * non-NULL empty value, such as count(). {@link #getLong(int)} reports each spliced column's empty
- * value from {@code emptyValues}; a {@link io.questdb.std.Numbers#LONG_NULL} entry reproduces the
- * NULL that {@link ExtraNullColumnRecord} reports. Every other getter keeps the NULL behaviour.
+ * non-NULL empty value, such as count() or isOrdered(). For each spliced column, {@code emptyValueTypes}
+ * holds the type tag of its empty value and {@code emptyValues} the value's raw bits.
+ * {@link #getBool(int)}, {@link #getDouble(int)} and {@link #getLong(int)} report the empty value of a
+ * spliced column whose tag is BOOLEAN, DOUBLE or LONG respectively. A column tagged
+ * {@link ColumnType#UNDEFINED}, a getter that does not match the tag, and every other getter keep
+ * the NULL behaviour of {@link ExtraNullColumnRecord}.
  */
 public class ExtraEmptyValueColumnRecord extends ExtraNullColumnRecord {
     private final int columnSplit;
+    private final IntList emptyValueTypes;
     private final LongList emptyValues;
 
-    public ExtraEmptyValueColumnRecord(int columnSplit, LongList emptyValues) {
+    public ExtraEmptyValueColumnRecord(int columnSplit, LongList emptyValues, IntList emptyValueTypes) {
         super(columnSplit);
         this.columnSplit = columnSplit;
         this.emptyValues = emptyValues;
+        this.emptyValueTypes = emptyValueTypes;
+    }
+
+    @Override
+    public boolean getBool(int col) {
+        if (isEmptyValueOfType(col, ColumnType.BOOLEAN)) {
+            return emptyValues.getQuick(col - columnSplit) != 0;
+        }
+        return super.getBool(col);
+    }
+
+    @Override
+    public double getDouble(int col) {
+        if (isEmptyValueOfType(col, ColumnType.DOUBLE)) {
+            return Double.longBitsToDouble(emptyValues.getQuick(col - columnSplit));
+        }
+        return super.getDouble(col);
     }
 
     @Override
     public long getLong(int col) {
-        return col < columnSplit ? super.getLong(col) : emptyValues.getQuick(col - columnSplit);
+        if (isEmptyValueOfType(col, ColumnType.LONG)) {
+            return emptyValues.getQuick(col - columnSplit);
+        }
+        return super.getLong(col);
+    }
+
+    private boolean isEmptyValueOfType(int col, short typeTag) {
+        return col >= columnSplit && emptyValueTypes.getQuick(col - columnSplit) == typeTag;
     }
 }

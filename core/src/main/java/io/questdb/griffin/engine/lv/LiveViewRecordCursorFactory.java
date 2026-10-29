@@ -514,7 +514,7 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
      * anything this method does. See {@link #getTimeFrameCursor}, which is the single-
      * threaded half of the same bridge.
      * <p>
-     * Delegating is not optional. {@link #supportsTimeFrameCursor()} governs whether a
+     * Delegating is not optional. {@link #supportsConcurrentTimeFrameCursor()} governs whether a
      * caller may call this at all, and this factory answers that with the base's verdict,
      * which holds for a plain ascending scan - very nearly the same shape
      * {@link #isInMemRoutable} accepts. The inherited default returns null, so a parallel
@@ -538,6 +538,11 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
+    }
+
+    @Override
+    public boolean supportsConcurrentTimeFrameCursor() {
+        return base.supportsConcurrentTimeFrameCursor();
     }
 
     /**

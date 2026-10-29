@@ -6565,13 +6565,6 @@ public class TickExprTest {
         assertCompiledTickExpr(expression);
     }
 
-    private void assertMaxIntervalCount(String expression, int cap, int expectedCount) throws SqlException {
-        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
-                timestampType.getDriver(), configuration, expression, 0, expression.length(), 0)) {
-            Assert.assertEquals(expression, expectedCount, compiled.getMaxIntervalCount(cap));
-        }
-    }
-
     private void assertCompiledTickExprWithNow(String expression, String nowStr) throws SqlException {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         long now = timestampDriver.parseFloorLiteral(nowStr);
@@ -6750,6 +6743,13 @@ public class TickExprTest {
             parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
             Assert.fail();
         } catch (SqlException ignore) {
+        }
+    }
+
+    private void assertMaxIntervalCount(String expression, int cap, int expectedCount) throws SqlException {
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampType.getDriver(), configuration, expression, 0, expression.length(), 0)) {
+            Assert.assertEquals(expression, expectedCount, compiled.getMaxIntervalCount(cap));
         }
     }
 

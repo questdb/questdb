@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
@@ -41,10 +42,15 @@ class ExtraNullColumnRecordCursor implements RecordCursor {
     private final ExtraNullColumnRecord recordB;
     private RecordCursor baseCursor;
 
-    public ExtraNullColumnRecordCursor(int columnSplit, boolean supportsRandomAccess, @Nullable LongList emptyValues) {
-        this.recordA = newRecord(columnSplit, emptyValues);
+    public ExtraNullColumnRecordCursor(
+            int columnSplit,
+            boolean supportsRandomAccess,
+            @Nullable LongList emptyValues,
+            @Nullable IntList emptyValueTypes
+    ) {
+        this.recordA = newRecord(columnSplit, emptyValues, emptyValueTypes);
         if (supportsRandomAccess) {
-            this.recordB = newRecord(columnSplit, emptyValues);
+            this.recordB = newRecord(columnSplit, emptyValues, emptyValueTypes);
         } else {
             this.recordB = null;
         }
@@ -134,7 +140,9 @@ class ExtraNullColumnRecordCursor implements RecordCursor {
         }
     }
 
-    static ExtraNullColumnRecord newRecord(int columnSplit, @Nullable LongList emptyValues) {
-        return emptyValues != null ? new ExtraEmptyValueColumnRecord(columnSplit, emptyValues) : new ExtraNullColumnRecord(columnSplit);
+    static ExtraNullColumnRecord newRecord(int columnSplit, @Nullable LongList emptyValues, @Nullable IntList emptyValueTypes) {
+        return emptyValues != null
+                ? new ExtraEmptyValueColumnRecord(columnSplit, emptyValues, emptyValueTypes)
+                : new ExtraNullColumnRecord(columnSplit);
     }
 }

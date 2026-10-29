@@ -143,7 +143,7 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
         super(outMetadata);
         this.joinMetadata = joinMetadata;
         assert masterFactory.supportsPageFrameCursor();
-        assert slaveFactory.supportsTimeFrameCursor();
+        assert slaveFactory.supportsConcurrentTimeFrameCursor();
 
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;

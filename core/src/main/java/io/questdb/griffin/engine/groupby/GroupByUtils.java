@@ -410,16 +410,23 @@ public class GroupByUtils {
 
     /**
      * Computes the value each function reports over an empty group, for functions whose
-     * {@link GroupByFunction#hasNonNullEmptyValue()} is true. The result is parallel to
-     * {@code functions}: entry i holds {@code functions[i]}'s empty value, or
-     * {@link Numbers#LONG_NULL} when that function reports NULL over an empty group.
+     * {@link GroupByFunction#hasNonNullEmptyValue()} is true. The result and
+     * {@code emptyValueTypes} are parallel to {@code functions}. For a function with a non-NULL
+     * empty value, entry i of {@code emptyValueTypes} holds the function's type tag (BOOLEAN,
+     * DOUBLE or LONG) and entry i of the result holds the value's raw bits: 1 or 0 for BOOLEAN,
+     * {@link Double#doubleToRawLongBits(double)} for DOUBLE, the value itself for LONG. For any
+     * other function, the type tag is {@link ColumnType#UNDEFINED}, which means the function
+     * reports NULL over an empty group, and the value is {@link Numbers#LONG_NULL}.
      *
-     * @param functions  assembled group-by functions, with their value types already initialized
-     * @param valueCount number of map value slots the functions' value types occupy
+     * @param functions       assembled group-by functions, with their value types already initialized
+     * @param valueCount      number of map value slots the functions' value types occupy
+     * @param emptyValueTypes receives the per-function type tags; cleared first, and left empty
+     *                        when the method returns null
      * @return the per-function empty values, or null when every function reports NULL
      */
     @Nullable
-    public static LongList computeNonNullEmptyValues(ObjList<GroupByFunction> functions, int valueCount) {
+    public static LongList computeNonNullEmptyValues(ObjList<GroupByFunction> functions, int valueCount, IntList emptyValueTypes) {
+        emptyValueTypes.clear();
         final int n = functions.size();
         boolean hasNonNullEmptyValue = false;
         for (int i = 0; i < n; i++) {
@@ -434,6 +441,7 @@ public class GroupByUtils {
 
         final LongList values = new LongList(n);
         values.setAll(n, Numbers.LONG_NULL);
+        emptyValueTypes.setAll(n, ColumnType.UNDEFINED);
         try (SimpleMapValue value = new SimpleMapValue(valueCount)) {
             // Zero the value so that every slot, including those of functions not flagged
             // here, starts from a known state.
@@ -441,9 +449,29 @@ public class GroupByUtils {
             for (int i = 0; i < n; i++) {
                 final GroupByFunction function = functions.getQuick(i);
                 if (function.hasNonNullEmptyValue()) {
-                    assert ColumnType.tagOf(function.getType()) == ColumnType.LONG;
-                    function.setEmpty(value);
-                    values.setQuick(i, function.getLong(value));
+                    final short typeTag = ColumnType.tagOf(function.getType());
+                    switch (typeTag) {
+                        case ColumnType.BOOLEAN -> {
+                            function.setEmpty(value);
+                            values.setQuick(i, function.getBool(value) ? 1 : 0);
+                            emptyValueTypes.setQuick(i, typeTag);
+                        }
+                        case ColumnType.DOUBLE -> {
+                            function.setEmpty(value);
+                            values.setQuick(i, Double.doubleToRawLongBits(function.getDouble(value)));
+                            emptyValueTypes.setQuick(i, typeTag);
+                        }
+                        case ColumnType.LONG -> {
+                            function.setEmpty(value);
+                            values.setQuick(i, function.getLong(value));
+                            emptyValueTypes.setQuick(i, typeTag);
+                        }
+                        // GroupByFunction.hasNonNullEmptyValue() admits no other type. Without
+                        // assertions the entry stays UNDEFINED, so the column reports NULL.
+                        default -> {
+                            assert false : "non-NULL empty value of unsupported type: " + ColumnType.nameOf(typeTag);
+                        }
+                    }
                 }
             }
         }

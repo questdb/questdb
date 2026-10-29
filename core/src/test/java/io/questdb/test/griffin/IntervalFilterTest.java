@@ -749,8 +749,8 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             """
             );
             final String overCap = "ts IN '[2001..2005]-[01..12]-[01..28]T09:00#workday;1h'";
-            assertExceptionNoLeakCheck("SELECT k FROM x WHERE " + runtimePredicate + " AND " + overCap, 62, "Bracket expansion produces too many intervals (max 1024)");
-            assertExceptionNoLeakCheck("SELECT k FROM x WHERE " + overCap + " AND " + runtimePredicate, 28, "Bracket expansion produces too many intervals (max 1024)");
+            assertOverMaxIntervalsError("SELECT k FROM x WHERE " + runtimePredicate + " AND " + overCap);
+            assertOverMaxIntervalsError("SELECT k FROM x WHERE " + overCap + " AND " + runtimePredicate);
         });
     }
 

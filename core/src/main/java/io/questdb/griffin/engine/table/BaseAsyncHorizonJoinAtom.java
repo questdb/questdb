@@ -137,7 +137,7 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
             long slaveTsScale,
             int workerCount
     ) {
-        assert slaveFactory.supportsTimeFrameCursor();
+        assert slaveFactory.supportsConcurrentTimeFrameCursor();
         assert resources.getPerWorkerFilters() == null || resources.getPerWorkerFilters().size() == workerCount;
 
         // Adopt the worker function views before configuration or allocation can fail. The

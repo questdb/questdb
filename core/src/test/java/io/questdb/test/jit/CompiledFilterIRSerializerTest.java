@@ -1190,7 +1190,12 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i64 1577836800001L)(i64 adate)(>=)(i64 1577836800002L)(i64 adate)(<=)(&&)(ret)");
         serialize("adate in null");
         assertIR("(i64 -9223372036854775808L)(i64 adate)(=)(ret)");
-        // Before 1970, flooring and ceiling differ from truncation.
+        // Before 1970, flooring differs from truncation. The upper bound of 1969-12-31, -1 us,
+        // floors to -1 ms. Truncation would give 0 ms, which is 1970-01-01T00:00:00.000.
+        serialize("adate in '1969-12-31'");
+        assertIR("(i64 -86400000L)(i64 adate)(>=)(i64 -1L)(i64 adate)(<=)(&&)(ret)");
+        // [-500 us, 499 us] holds 0 ms only. Ceiling the lower bound gives 0 ms, where flooring
+        // would give -1 ms.
         serialize("adate in '1969-12-31T23:59:59.999500;1T'");
         assertIR("(i64 0L)(i64 adate)(=)(ret)");
     }

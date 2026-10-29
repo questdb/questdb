@@ -91,6 +91,24 @@ public class CompiledFilterTickBoundsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateBoundsBeforeEpochInMilliseconds() throws Exception {
+        // Before 1970, a bound in micros is negative, and truncation rounds it toward zero rather
+        // than inward. 1969-12-31 is [-86_400_000_000, -1] in micros and holds the DATE values
+        // [-86_400_000, -1]. Truncating the hi would give 0, which is 1970-01-01T00:00:00.000.
+        setCurrentMicros(-Micros.DAY_MICROS + 10 * Micros.HOUR_MICROS);
+        CompiledFilterTickBounds bounds = newBounds("$today", ColumnType.TIMESTAMP, 1, true);
+        bounds.init(sqlExecutionContext);
+        assertBounds(bounds, -86_400_000, -1);
+
+        // [23:59:58.999500, 23:59:59.000499] holds 23:59:59.000 only, which is -1000 ms. Flooring
+        // the lo would give -1001 ms, and truncating the hi -999 ms.
+        setCurrentMicros(-Micros.SECOND_MICROS);
+        bounds = newBounds("$now - 500u;1T", ColumnType.TIMESTAMP, 1, true);
+        bounds.init(sqlExecutionContext);
+        assertBounds(bounds, -1000, -1000);
+    }
+
+    @Test
     public void testDateBoundsInMilliseconds() throws Exception {
         // The JIT compares a DATE key in milliseconds, and a micro interval holds the DATE values
         // whose micros it holds. The padding keeps its values.
