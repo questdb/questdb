@@ -70,12 +70,12 @@ public final class StreamGroupByMap implements QuietCloseable {
     private final SelectedRecord record;
     private final int segmentIndex;
     private final int segmentType;
-    private final int smallMapKeyCapacity;
     private final RecordSink stateSink;
     private final ArrayColumnTypes stateTypes;
     private final GroupByFunctionsUpdater updater;
     private final FlyweightPackedMapValue value;
     private final RecordValueSink valueSink;
+    private int initialKeyCapacity;
     // The most keys a batch of the current segment reserved map capacity for.
     private long reservedKeys;
     private long segmentKey;
@@ -97,7 +97,6 @@ public final class StreamGroupByMap implements QuietCloseable {
         segmentIndex = valueTypes.getColumnCount();
         segmentType = keyTypes.getColumnType(streamKeyIndex);
         batchSize = configuration.getGroupByBatchSize();
-        smallMapKeyCapacity = configuration.getSqlSmallMapKeyCapacity();
         try {
             final ArrayColumnTypes mapKeyTypes = new ArrayColumnTypes();
             final ArrayColumnTypes mapValueTypes = new ArrayColumnTypes().addAll(valueTypes);
@@ -188,7 +187,7 @@ public final class StreamGroupByMap implements QuietCloseable {
         // Map.clear() zeroes the whole table, which keeps the capacity of the largest segment so far.
         // Give that capacity back once a segment needs a fraction of it, so a single high-cardinality
         // segment does not make every later segment pay for it.
-        if (map.getKeyCapacity() > SHRINK_RATIO * Math.max(map.size() + reservedKeys, smallMapKeyCapacity)) {
+        if (map.getKeyCapacity() > Math.max(initialKeyCapacity, SHRINK_RATIO * (map.size() + reservedKeys))) {
             map.restoreInitialCapacity();
         }
         // OrderedMap.restoreInitialCapacity() clears only when it reallocates.
@@ -256,6 +255,7 @@ public final class StreamGroupByMap implements QuietCloseable {
         mergeMemory.setMemoryTracker(tracker);
         batchRows.setMemoryTracker(tracker);
         map.reopen();
+        initialKeyCapacity = map.getKeyCapacity();
         map.setBatchEmptyValue(updater);
     }
 

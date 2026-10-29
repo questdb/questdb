@@ -435,10 +435,12 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 GroupByUtils.setAllocator(groupByFunctions, allocator);
                 if (preAggregatedSink != null) {
-                    final long pageSize = Math.min(configuration.getSqlSmallMapPageSize(), configuration.getSqlSortValuePageSize());
-                    final long maxPages = Math.max(1L, configuration.getSqlSortValueMaxBytes() / Numbers.ceilPow2(pageSize));
-                    preAggregatedRecords = new RecordChain(preAggregatedTypes, preAggregatedSink, pageSize,
-                            (int) Math.min(maxPages, Integer.MAX_VALUE), PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath());
+                    // The data map later holds every copied row in a larger entry, so the copy grows only as far
+                    // as the heap of the data map may: one page doubled at most max resizes times.
+                    final int maxResizes = configuration.getSqlMapMaxResizes();
+                    preAggregatedRecords = new RecordChain(preAggregatedTypes, preAggregatedSink, configuration.getSqlSmallMapPageSize(),
+                            maxResizes < Integer.SIZE - 1 ? 1 << maxResizes : Integer.MAX_VALUE,
+                            PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES.getPropertyPath());
                 } else {
                     preAggregatedRecords = null;
                 }

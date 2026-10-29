@@ -163,12 +163,25 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeyedCacheLimitAndReuse() throws Exception {
+    public void testKeyedCacheIgnoresSortLimit() throws Exception {
+        // The legacy plan keeps the aggregates in a map rather than a sort, so the sort limit does not bound the copy.
         setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 8 * 1024);
         run((engine, compiler, context) -> {
             createPrices(context);
             engine.execute("INSERT INTO prices SELECT "
-                    + "timestamp_sequence('2024-01-01'::timestamp, 120000000L)::" + timestampType
+                    + "timestamp_sequence('2024-01-01'::timestamp, 120_000_000L)::" + timestampType
+                    + ", 'A', x::double FROM long_sequence(2049)", context);
+            assertMatchesLegacy(context, "SELECT ts, sym, avg(price) mean FROM prices SAMPLE BY 1m FILL(LINEAR)", " ORDER BY ts, sym");
+        });
+    }
+
+    @Test
+    public void testKeyedCacheLimitAndReuse() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, 0);
+        run((engine, compiler, context) -> {
+            createPrices(context);
+            engine.execute("INSERT INTO prices SELECT "
+                    + "timestamp_sequence('2024-01-01'::timestamp, 120_000_000L)::" + timestampType
                     + ", 'A', x::double FROM long_sequence(2049)", context);
             context.getBindVariableService().setDouble("max_price", 2049);
             final String sql = "SELECT ts, sym, avg(price) mean FROM prices WHERE price <= :max_price "
@@ -185,7 +198,7 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
                             Assert.fail("expected interpolation cache limit breach");
                         } catch (CairoException e) {
                             TestUtils.assertContains(e.getFlyweightMessage(), "breached in VirtualMemory");
-                            TestUtils.assertContains(e.getFlyweightMessage(), "(raise cairo.sql.sort.value.max.bytes)");
+                            TestUtils.assertContains(e.getFlyweightMessage(), "(raise cairo.sql.map.max.resizes)");
                         }
                         Assert.assertEquals(0, tracker.getUsed());
                         context.getBindVariableService().setDouble("max_price", 3);

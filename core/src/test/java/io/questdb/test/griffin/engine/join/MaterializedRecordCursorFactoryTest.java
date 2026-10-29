@@ -51,15 +51,20 @@ import java.util.Collection;
 
 /**
  * Parents that rewind their input, nested loop joins and negative LIMIT, read a stream GROUP BY through a copy,
- * so the aggregation runs once per cursor. The expected rows come from the same aggregation over a table without a
- * designated timestamp, which runs a hash GROUP BY. The test_match() filter under each stream GROUP BY counts the
- * rewinds that reach the aggregation.
+ * so the aggregation runs once per cursor. Splice and serial horizon joins read it through a strict copy, which
+ * gives them random access. The expected rows come from the same aggregation over a table without a designated
+ * timestamp, which runs a hash GROUP BY. The test_match() filter under each stream GROUP BY counts the rewinds that
+ * reach the aggregation.
  */
 @RunWith(Parameterized.class)
 public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
     private static final String CROSS_JOIN = "SELECT m.x, s.* FROM m CROSS JOIN ($sub) s ORDER BY x, $keys";
     private static final String FULL_JOIN = "SELECT m.x, s.* FROM m FULL JOIN ($sub) s ON s.s < m.x * 30 ORDER BY x, $keys";
+    private static final String HORIZON_JOIN = "SELECT h.offset, count() n, sum(s.s) total, sum(q.x) qx "
+            + "FROM (($sub) TIMESTAMP(ts)) s HORIZON JOIN q RANGE FROM 0s TO 1h STEP 30m AS h ORDER BY 1";
     private static final String LEFT_JOIN = "SELECT m.x, s.* FROM m LEFT JOIN ($sub) s ON s.s < m.x * 30 ORDER BY x, $keys";
+    private static final String MULTI_HORIZON_JOIN = "SELECT h.offset, count() n, sum(s.s) total, sum(q.x) qx, sum(r.x) rx "
+            + "FROM (($sub) TIMESTAMP(ts)) s HORIZON JOIN q HORIZON JOIN q r RANGE FROM 0s TO 1h STEP 30m AS h ORDER BY 1";
     private static final String NEGATIVE_LIMIT = "SELECT * FROM (SELECT * FROM ($sub) LIMIT -10) ORDER BY $keys, c";
     private static final String RIGHT_JOIN = "SELECT m.x, s.* FROM ($sub) s RIGHT JOIN m ON s.s < m.x * 30 ORDER BY x, $keys";
     // The stream subquery, the same aggregation over the table without a designated timestamp, and the keys.
@@ -173,6 +178,15 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoin() throws Exception {
+        run((engine, compiler, context) -> {
+            createTables(engine, context);
+            assertMaterialized(engine, context, HORIZON_JOIN, null, true, true);
+            assertMaterialized(engine, context, MULTI_HORIZON_JOIN, null, true, true);
+        });
+    }
+
+    @Test
     public void testInputsHiddenFromBaseFactory() throws Exception {
         run((engine, compiler, context) -> {
             createTables(engine, context);
@@ -211,6 +225,47 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMemoryLimit() throws Exception {
+        // The aggregation fits in the limit and a copy of its 10_000 rows does not.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 65_536);
+        run((engine, compiler, context) -> {
+            createTables(engine, context);
+            engine.execute(
+                    """
+                            CREATE TABLE big AS (
+                                SELECT timestamp_sequence('2024-01-01', 1_000_000L) ts, x v FROM long_sequence(10_000)
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    context
+            );
+            final String sub = "SELECT ts, count() c, sum(v) s FROM big WHERE test_match() GROUP BY ts";
+            try (MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH)) {
+                context.setMemoryTracker(tracker);
+                try {
+                    final int topCount = TestMatchFunctionFactory.getTopCounter();
+                    assertQuery("SELECT count() FROM m CROSS JOIN (" + sub + ")")
+                            .withEngine(engine)
+                            .withContext(context)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Materialize")
+                            .returns("count\n50000\n");
+                    // The copy released its rows and streamed the aggregation, which the join rewinds.
+                    Assert.assertTrue(TestMatchFunctionFactory.getTopCounter() > topCount);
+                    assertQuery("SELECT m.x, s.* FROM m FULL JOIN (" + sub + ") s ON s.s < m.x")
+                            .withEngine(engine)
+                            .withContext(context)
+                            .noLeakCheck()
+                            .failsWith("query memory limit exceeded [workload=MAT_VIEW_REFRESH");
+                    Assert.assertEquals(0, tracker.getUsed());
+                } finally {
+                    context.setMemoryTracker(null);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMemoryTrackerBalanced() throws Exception {
         // The single-key SAMPLE BY copy fits in 1024 bytes, the others stream or, under FULL JOIN, fail.
         setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 256);
@@ -222,15 +277,18 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
                     final String sql = query.replace("$sub", subquery[0]).replace("$keys", subquery[2]);
                     try (
                             RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory();
-                            MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.QUERY)
+                            // QueryRegistry replaces a QUERY tracker with its own, but keeps a refresh tracker.
+                            MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH)
                     ) {
                         context.setMemoryTracker(tracker);
                         try {
                             for (int i = 0; i < 2; i++) {
                                 try (RecordCursor cursor = factory.getCursor(context)) {
+                                    long peak = 0;
                                     while (cursor.hasNext()) {
-                                        // drain the join
+                                        peak = Math.max(peak, tracker.getUsed());
                                     }
+                                    Assert.assertTrue(sql, peak > 0);
                                 } catch (CairoException e) {
                                     Assert.assertSame(sql, FULL_JOIN, query);
                                     TestUtils.assertContains(e.getFlyweightMessage(), "materialized rows exceed the memory limit");
@@ -299,6 +357,23 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
         run((engine, compiler, context) -> {
             createTables(engine, context);
             assertMaterialized(engine, context, RIGHT_JOIN, null, true, false);
+        });
+    }
+
+    @Test
+    public void testSpliceJoin() throws Exception {
+        run((engine, compiler, context) -> {
+            createTables(engine, context);
+            for (String query : new String[]{
+                    "SELECT * FROM (($sub) TIMESTAMP(ts)) s SPLICE JOIN q",
+                    "SELECT * FROM q SPLICE JOIN (($sub) TIMESTAMP(ts)) s"
+            }) {
+                // The multi-key rows of an hour share a timestamp, and their order, which differs between the
+                // plans, decides which of them the splice pairs.
+                for (int i = 0; i < SUBQUERIES.length; i += 2) {
+                    Assert.assertEquals(query, 0, assertMaterialized(engine, context, query, SUBQUERIES[i], null, false, false));
+                }
+            }
         });
     }
 
@@ -392,6 +467,10 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
         engine.execute("CREATE TABLE t_hash (ts TIMESTAMP, sym SYMBOL, v LONG)", context);
         engine.execute("INSERT INTO t_hash SELECT * FROM t", context);
         engine.execute("CREATE TABLE m AS (SELECT x FROM long_sequence(5))", context);
+        engine.execute(
+                "CREATE TABLE q AS (SELECT timestamp_sequence('2024-01-01T00:30', 3_600_000_000L) ts, x FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY",
+                context
+        );
     }
 
     private void run(CustomisableRunnable runnable) throws Exception {

@@ -143,7 +143,7 @@ public class StreamSampleByFillTest extends AbstractCairoTest {
         run((engine, compiler, context) -> {
             createPrices(context);
             engine.execute("INSERT INTO prices SELECT "
-                    + "timestamp_sequence('2024-01-01'::timestamp, 120000000L)::" + timestampType
+                    + "timestamp_sequence('2024-01-01'::timestamp, 120_000_000L)::" + timestampType
                     + ", 'A', x::double FROM long_sequence(2049)", context);
             context.getBindVariableService().setDouble("max_price", 2049);
             final String sql = "SELECT ts, sym, max(price) max FROM prices WHERE price <= :max_price "

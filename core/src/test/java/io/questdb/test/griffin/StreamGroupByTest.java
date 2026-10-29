@@ -106,7 +106,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
     public void testAllNullGroups() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("create table trades as (select "
-                    + "timestamp_sequence('2024-01-01'::timestamp, 1000000L) ts, "
+                    + "timestamp_sequence('2024-01-01'::timestamp, 1_000_000L) ts, "
                     + "case when x > 60 and x <= 120 then x end v "
                     + "from long_sequence(181)) timestamp(ts) partition by day", context);
             engine.execute("create table hash_input (ts timestamp, v long)", context);
@@ -248,11 +248,11 @@ public class StreamGroupByTest extends AbstractCairoTest {
     @Test
     public void testByteAndBooleanDistinctColumnTop() throws Exception {
         run((engine, compiler, context) -> {
-            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence(0, 1000000L) ts "
+            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence(0, 1_000_000L) ts "
                     + "FROM long_sequence(2)) TIMESTAMP(ts) PARTITION BY DAY", context);
             engine.execute("ALTER TABLE trades ADD COLUMN b BYTE, flag BOOLEAN", context);
-            engine.execute("INSERT INTO trades VALUES (3000000, -128, false), (3000000, 0, true), "
-                    + "(3000000, 127, false), (4000000, null, null)", context);
+            engine.execute("INSERT INTO trades VALUES (3_000_000, -128, false), (3_000_000, 0, true), "
+                    + "(3_000_000, 127, false), (4_000_000, null, null)", context);
             engine.execute("CREATE TABLE hash_input (ts timestamp, b byte, flag boolean)", context);
             engine.execute("INSERT INTO hash_input SELECT * FROM trades", context);
             final String values = "count(*) n, count_distinct(b) bytes, count_distinct(flag) flags, approx_count_distinct(b) approx";
@@ -313,7 +313,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
         run((engine, compiler, context) -> {
             engine.execute("create table trades (ts timestamp, v long) timestamp(ts) partition by day", context);
             for (String start : new String[]{"2024-03-10T05:00:00", "2024-11-03T04:00:00"}) {
-                engine.execute("insert into trades select timestamp_sequence('" + start + "'::timestamp, 60000000L), x from long_sequence(600)", context);
+                engine.execute("insert into trades select timestamp_sequence('" + start + "'::timestamp, 60_000_000L), x from long_sequence(600)", context);
             }
             engine.execute("create table hash_input (ts timestamp, v long)", context);
             engine.execute("insert into hash_input select * from trades", context);
@@ -593,7 +593,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 2048);
         run((engine, compiler, context) -> {
             engine.execute("CREATE TABLE trades AS (SELECT "
-                    + "timestamp_sequence('2024-01-01'::timestamp, 1000000L) ts, "
+                    + "timestamp_sequence('2024-01-01'::timestamp, 1_000_000L) ts, "
                     + "x v, (x % 31)::double d, (x % 17)::symbol sym "
                     + "FROM long_sequence(2001)) TIMESTAMP(ts) PARTITION BY DAY", context);
             engine.execute("CREATE TABLE hash_input (ts timestamp, v long, d double, sym symbol)", context);
@@ -626,7 +626,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
     public void testSegmentedMapGrowth() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("CREATE TABLE trades AS (SELECT "
-                    + "timestamp_sequence('2024-01-01'::timestamp, 1000000L) ts, "
+                    + "timestamp_sequence('2024-01-01'::timestamp, 1_000_000L) ts, "
                     + "CASE WHEN x % 17 = 0 THEN null ELSE (x % 257)::symbol END sym, x v "
                     + "FROM long_sequence(2001)) TIMESTAMP(ts) PARTITION BY DAY", context);
             engine.execute("CREATE TABLE hash_input (ts timestamp, sym symbol, v long)", context);
@@ -641,29 +641,40 @@ public class StreamGroupByTest extends AbstractCairoTest {
     @Test
     public void testSegmentedMapShrinksAfterHighCardinalitySegment() throws Exception {
         run((engine, compiler, context) -> {
-            // The first second holds 5_000 distinct keys, each of the 1_000 seconds after it a single key.
-            engine.execute("""
-                    CREATE TABLE trades AS (
-                        SELECT '2024-01-01'::timestamp + CASE WHEN x <= 5_000 THEN 0 ELSE (x - 5_000) * 1_000_000 END ts,
-                            CASE WHEN x <= 5_000 THEN x ELSE 0 END k
-                        FROM long_sequence(6_000)
-                    ) TIMESTAMP(ts) PARTITION BY DAY
-                    """, context);
-            for (String keys : new String[]{"k", "k::varchar k", "k, k % 7 m"}) {
-                try (RecordCursorFactory factory = compiler.compile("SELECT timestamp_floor('1s', ts) bucket, " + keys
-                        + ", count(*) FROM trades", context).getRecordCursorFactory()) {
-                    assertStream(factory, true);
-                    try (RecordCursor cursor = factory.getCursor(context)) {
+            for (int[] segment : new int[][]{{5_000, 5_000}, {600, 100}}) {
+                // The first second holds segment[0] rows of segment[1] keys, each of the 1_000 seconds after it one key.
+                engine.execute("DROP TABLE IF EXISTS trades", context);
+                engine.execute("""
+                        CREATE TABLE trades AS (
+                            SELECT '2024-01-01'::timestamp + CASE WHEN x <= %1$d THEN 0 ELSE (x - %1$d) * 1_000_000 END ts,
+                                CASE WHEN x <= %1$d THEN x %% %2$d ELSE 0 END k
+                            FROM long_sequence(%1$d + 1_000)
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """.formatted(segment[0], segment[1]), context);
+                for (String keys : new String[]{"k", "k::varchar k", "k, k % 7 m"}) {
+                    final String sql = "SELECT timestamp_floor('1s', ts) bucket, " + keys + ", count(*) FROM trades";
+                    final int initialCapacity;
+                    try (
+                            RecordCursorFactory factory = compiler.compile(sql + " WHERE ts > '2024-01-01'", context).getRecordCursorFactory();
+                            RecordCursor cursor = factory.getCursor(context)
+                    ) {
                         Assert.assertTrue(cursor.hasNext());
-                        final StreamGroupByMap map = getSegmentMap(factory);
-                        Assert.assertTrue(keys + ": " + map.getKeyCapacity(), map.getKeyCapacity() >= 5_000);
-                        long count = 1;
-                        while (cursor.hasNext()) {
-                            count++;
+                        initialCapacity = getSegmentMap(factory).getKeyCapacity();
+                    }
+                    try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                        assertStream(factory, true);
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            Assert.assertTrue(cursor.hasNext());
+                            final StreamGroupByMap map = getSegmentMap(factory);
+                            Assert.assertTrue(keys + ": " + map.getKeyCapacity(), map.getKeyCapacity() > initialCapacity);
+                            long count = 1;
+                            while (cursor.hasNext()) {
+                                count++;
+                            }
+                            Assert.assertEquals(segment[1] + 1_000, count);
+                            // The single-key segments must not keep clearing the capacity the first one grew.
+                            Assert.assertEquals(keys, initialCapacity, map.getKeyCapacity());
                         }
-                        Assert.assertEquals(6_000, count);
-                        // The single-key segments must not keep clearing the capacity the first one grew.
-                        Assert.assertTrue(keys + ": " + map.getKeyCapacity(), map.getKeyCapacity() < 1_000);
                     }
                 }
             }
@@ -675,7 +686,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
         run((engine, compiler, context) -> {
             final String columns = "(ts TIMESTAMP, a DOUBLE[], b BINARY, id UUID, d DECIMAL(38,2), w DECIMAL(76,2), v LONG)";
             engine.execute("CREATE TABLE trades " + columns + " TIMESTAMP(ts) PARTITION BY DAY", context);
-            engine.execute("INSERT INTO trades SELECT timestamp_sequence('2024-01-01'::timestamp, 1000000L), "
+            engine.execute("INSERT INTO trades SELECT timestamp_sequence('2024-01-01'::timestamp, 1_000_000L), "
                     + "CASE WHEN x % 5 = 0 THEN null ELSE ARRAY[(x % 3)::double, 1.0] END, "
                     + "rnd_bin(8, 16, 3), CASE WHEN x % 7 = 0 THEN null ELSE to_uuid(x % 3, x % 7) END, "
                     + "CASE WHEN x % 11 = 0 THEN null ELSE (x % 13)::decimal(38,2) END, (x % 17)::decimal(76,2), x "
@@ -730,10 +741,10 @@ public class StreamGroupByTest extends AbstractCairoTest {
     @Test
     public void testSegmentedColumnTopsAndPartitions() throws Exception {
         run((engine, compiler, context) -> {
-            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01T23:59:30'::timestamp, 1000000L) ts, "
+            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01T23:59:30'::timestamp, 1_000_000L) ts, "
                     + "x v FROM long_sequence(101)) TIMESTAMP(ts) PARTITION BY DAY", context);
             engine.execute("ALTER TABLE trades ADD COLUMN name varchar", context);
-            engine.execute("INSERT INTO trades SELECT timestamp_sequence('2024-01-02T00:02:00'::timestamp, 1000000L), x, "
+            engine.execute("INSERT INTO trades SELECT timestamp_sequence('2024-01-02T00:02:00'::timestamp, 1_000_000L), x, "
                     + "CASE WHEN x % 3 = 0 THEN null WHEN x % 2 = 0 THEN '東京' ELSE 'é' END::varchar FROM long_sequence(301)", context);
             engine.execute("CREATE TABLE hash_input (ts timestamp, v long, name varchar)", context);
             engine.execute("INSERT INTO hash_input SELECT * FROM trades", context);
@@ -773,6 +784,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     "select timestamp_floor('2147483647d', ts), sum(v) from trades",
                     "select timestamp_floor('3n', ts), sum(v) from trades",
                     "select dateadd('M', 1, ts), sum(v) from trades",
+                    "select dateadd('h', 1, ts, 'Europe/Berlin'), sum(v) from trades",
                     "select timestamp_floor('1h', ts, null, '00:00', 'America/New_York'), sum(v) from trades",
                     "select ts, sym, count_distinct(v) from trades sample by 1m fill(prev) align to calendar"
             }) {
@@ -823,7 +835,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
     public void testNanosecondTimestamps() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("create table trades as (select "
-                    + "timestamp_sequence_ns('2024-01-01'::timestamp_ns, 123456789L) ts, x v "
+                    + "timestamp_sequence_ns('2024-01-01'::timestamp_ns, 123_456_789L) ts, x v "
                     + "from long_sequence(501)) timestamp(ts) partition by day", context);
             engine.execute("create table hash_input (ts timestamp_ns, v long)", context);
             engine.execute("insert into hash_input select * from trades", context);
@@ -865,7 +877,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
     public void testFixedStateTypes() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("create table trades as (select "
-                    + "timestamp_sequence('2024-01-01'::timestamp, 1000000L) ts, "
+                    + "timestamp_sequence('2024-01-01'::timestamp, 1_000_000L) ts, "
                     + "case when x % 5 = 0 then null else (x % 37)::int end i, "
                     + "case when x % 7 = 0 then null else (x % 29)::float end f, "
                     + "(x % 11)::byte b, (x % 17)::short s, (65 + x % 5)::char ch, "
@@ -1044,7 +1056,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
     public void testStatisticalNullGroups() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("CREATE TABLE trades AS (SELECT "
-                    + "timestamp_sequence('2024-01-01'::timestamp, 1000000L) ts, "
+                    + "timestamp_sequence('2024-01-01'::timestamp, 1_000_000L) ts, "
                     + "CASE WHEN x = 61 OR x > 120 THEN (x % 19)::double END d "
                     + "FROM long_sequence(181)) TIMESTAMP(ts) PARTITION BY DAY", context);
             engine.execute("CREATE TABLE hash_input (ts timestamp, d double)", context);
@@ -1064,7 +1076,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     + "g1 geohash(5b), g2 geohash(10b), g4 geohash(20b), g8 geohash(40b))";
             engine.execute("CREATE TABLE trades " + columns + " TIMESTAMP(ts) PARTITION BY DAY", context);
             engine.execute("INSERT INTO trades SELECT "
-                    + "timestamp_sequence('2024-01-01'::timestamp, 1000000L) ts, "
+                    + "timestamp_sequence('2024-01-01'::timestamp, 1_000_000L) ts, "
                     + "CASE WHEN x <= 120 OR x % 7 = 0 THEN null ELSE x::int::ipv4 END ip, "
                     + "CASE WHEN x <= 120 OR x % 7 = 0 THEN null ELSE to_uuid(x, x) END id, "
                     + "CASE WHEN x <= 120 OR x % 7 = 0 THEN null ELSE (x % 19)::symbol END sym, "
@@ -1240,7 +1252,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
     public void testDstRepeatedBucketUsesHash() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("create table trades as (select "
-                    + "timestamp_sequence('2024-11-03T04:50:00'::timestamp, 1200000000L) ts, x v "
+                    + "timestamp_sequence('2024-11-03T04:50:00'::timestamp, 1_200_000_000L) ts, x v "
                     + "from long_sequence(7)) timestamp(ts) partition by day", context);
             try (RecordCursorFactory factory = compiler.compile(
                     "select timestamp_floor_utc('1d', ts, null, '01:30', 'America/New_York') bucket, count(*), sum(v) "
@@ -1313,7 +1325,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
 
     private static void createTable(SqlCompiler compiler, SqlExecutionContext context) throws Exception {
         context.getCairoEngine().execute("create table trades as (select "
-                + "timestamp_sequence('2024-01-01T00:00:00'::timestamp, 1000000L) ts, "
+                + "timestamp_sequence('2024-01-01T00:00:00'::timestamp, 1_000_000L) ts, "
                 + "case when x % 11 = 0 then null else x end v, "
                 + "case when x % 13 = 0 then null else (x % 29)::double end d, "
                 + "case when x % 2 = 0 then 'A' else 'B' end::symbol sym "

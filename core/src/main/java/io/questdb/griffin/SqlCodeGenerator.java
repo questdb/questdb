@@ -6216,6 +6216,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (!supportsParallelism) {
+                if (masterFactory.isRewindRecomputing()) {
+                    final RecordCursorFactory masterToMaterialize = masterFactory;
+                    masterFactory = null;
+                    masterFactory = materialize(masterToMaterialize, true);
+                }
                 // Single-threaded path: verify master factory supports random access (needed to revisit rows in sorted order)
                 if (!masterFactory.recordCursorSupportsRandomAccess()) {
                     throw SqlException.position(slaveModel.getJoinKeywordPosition())
@@ -7225,6 +7230,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestampOrders(master, slaveToFree, slaveModel.getJoinKeywordPosition());
                                 validateOuterJoinExpressions(slaveModel, "SPLICE");
                                 processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                if (master.isRewindRecomputing()) {
+                                    final RecordCursorFactory masterToMaterialize = master;
+                                    master = null;
+                                    master = materialize(masterToMaterialize, true);
+                                }
+                                if (slaveToFree.isRewindRecomputing()) {
+                                    final RecordCursorFactory slaveToMaterialize = slaveToFree;
+                                    slaveToFree = null;
+                                    slaveToFree = materialize(slaveToMaterialize, true);
+                                }
                                 if (slaveToFree.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     master = createSpliceJoin(
                                             // splice join result does not have timestamp
@@ -9175,6 +9190,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (!supportsParallelism) {
+                if (masterFactory.isRewindRecomputing()) {
+                    final RecordCursorFactory masterToMaterialize = masterFactory;
+                    masterFactory = null;
+                    masterFactory = materialize(masterToMaterialize, true);
+                }
                 // Verify master supports random access for ST path
                 if (!masterFactory.recordCursorSupportsRandomAccess()) {
                     throw SqlException.position(slaveModels.getQuick(0).getJoinKeywordPosition())

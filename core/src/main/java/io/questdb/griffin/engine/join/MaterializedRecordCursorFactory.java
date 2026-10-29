@@ -33,7 +33,6 @@ import io.questdb.cairo.RecordArray;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.DelegatingRecord;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
-import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -52,9 +51,10 @@ import io.questdb.std.Numbers;
  * Copies the rows of its base into a record array as a cursor first reads them and replays the copy after every
  * rewind, so a parent that rewinds its input computes the base rows once per execution. If the copy reaches its
  * page budget or the query memory limit, it releases the copy and streams the base. A strict factory fails with a
- * limit error instead, for a parent that relies on the row ids of the copy.
+ * limit error instead, and gives random access to the copied rows to a parent that relies on their row ids.
  */
 public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final boolean isStrict;
     private RecordCursorFactory base;
     private MaterializedRecordCursor cursor;
 
@@ -69,6 +69,7 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
     ) {
         super(base.getMetadata());
         this.base = base;
+        this.isStrict = isStrict;
         RecordArray rows = null;
         try {
             // The copy holds what a full-fat join's value pages may hold and grows from the light join's
@@ -124,7 +125,7 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     public boolean recordCursorSupportsRandomAccess() {
-        return false;
+        return isStrict;
     }
 
     @Override
@@ -207,7 +208,7 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
      * Joins bind {@link #getRecord()} once per cursor; the record delegates to the copy or, after the fallback,
      * to the base record, so the parent needs no rebinding.
      */
-    private static class MaterializedRecordCursor implements DelegatingRecordCursor, NoRandomAccessRecordCursor {
+    private static class MaterializedRecordCursor implements DelegatingRecordCursor {
         private final boolean isStrict;
         private final long maxBytes;
         private final DelegatingRecord record = new DelegatingRecord();
@@ -260,6 +261,14 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
         }
 
         @Override
+        public Record getRecordB() {
+            if (!isStrict) {
+                throw new UnsupportedOperationException();
+            }
+            return rows.getRecordB();
+        }
+
+        @Override
         public SymbolTable getSymbolTable(int columnIndex) {
             return baseCursor.getSymbolTable(columnIndex);
         }
@@ -289,6 +298,14 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
         @Override
         public long preComputedStateSize() {
             return isStreaming ? baseCursor.preComputedStateSize() : rows.size();
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+            if (!isStrict) {
+                throw new UnsupportedOperationException();
+            }
+            rows.recordAt(record == this.record ? rows.getRecord() : record, atRowId);
         }
 
         @Override
