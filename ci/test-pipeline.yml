@@ -77,11 +77,42 @@ stages:
         parameters:
           flavour: light
 
+  # Compiles the Rust library once per architecture; the self-hosted Linux legs below download
+  # it instead of compiling the crate in every leg (templates/rust-build-job.yml). dependsOn []
+  # starts it next to CheckChanges. Fork PRs run no code on the self-hosted pools, so this stage
+  # skips them like the test stages do. The coverage legs compile the crate themselves: their
+  # library is instrumented for coverage, so it cannot be this release build.
+  - stage: BuildRustLibrary
+    displayName: "Build Rust library"
+    dependsOn: []
+    condition: ne(variables['System.PullRequest.IsFork'], 'true')
+    jobs:
+      - template: templates/rust-build-job.yml
+        parameters:
+          name: linux_x64
+          displayName: "linux-x86-64"
+          pool:
+            name: "hetzner-incus"
+          artifact: qdbr-native-linux-x86-64
+          libName: libquestdbr.so
+          expectedArch: x86_64
+      - template: templates/rust-build-job.yml
+        parameters:
+          name: linux_arm64
+          displayName: "linux-aarch64"
+          pool:
+            name: "hetzner-incus-arm"
+          artifact: qdbr-native-linux-aarch64
+          libName: libquestdbr.so
+          expectedArch: aarch64
+
   - stage: SelfHostedRunGriffin
     displayName: "SelfHosted Griffin tests"
-    condition: ne(variables['System.PullRequest.IsFork'], 'true')
+    # succeeded(): the legs need the Rust library BuildRustLibrary published.
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     dependsOn:
       - CheckChanges
+      - BuildRustLibrary
     jobs:
       - template: templates/self-hosted-jobs.yml
     variables:
@@ -89,9 +120,11 @@ stages:
 
   - stage: SelfHostedRunCairoA
     displayName: "SelfHosted Cairo tests (A)"
-    condition: ne(variables['System.PullRequest.IsFork'], 'true')
+    # succeeded(): the legs need the Rust library BuildRustLibrary published.
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     dependsOn:
       - CheckChanges
+      - BuildRustLibrary
     jobs:
       - template: templates/self-hosted-jobs.yml
     variables:
@@ -99,9 +132,11 @@ stages:
 
   - stage: SelfHostedRunCairoB
     displayName: "SelfHosted Cairo tests (B)"
-    condition: ne(variables['System.PullRequest.IsFork'], 'true')
+    # succeeded(): the legs need the Rust library BuildRustLibrary published.
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     dependsOn:
       - CheckChanges
+      - BuildRustLibrary
     jobs:
       - template: templates/self-hosted-jobs.yml
     variables:
@@ -109,9 +144,11 @@ stages:
 
   - stage: SelfHostedRunOtherA
     displayName: "SelfHosted Other tests (A)"
-    condition: ne(variables['System.PullRequest.IsFork'], 'true')
+    # succeeded(): the legs need the Rust library BuildRustLibrary published.
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     dependsOn:
       - CheckChanges
+      - BuildRustLibrary
     jobs:
       - template: templates/self-hosted-jobs.yml
     variables:
@@ -119,9 +156,11 @@ stages:
 
   - stage: SelfHostedRunOtherB
     displayName: "SelfHosted Other tests (B)"
-    condition: ne(variables['System.PullRequest.IsFork'], 'true')
+    # succeeded(): the legs need the Rust library BuildRustLibrary published.
+    condition: and(succeeded(), ne(variables['System.PullRequest.IsFork'], 'true'))
     dependsOn:
       - CheckChanges
+      - BuildRustLibrary
     jobs:
       - template: templates/self-hosted-jobs.yml
     variables:
@@ -232,7 +271,7 @@ stages:
               mavenPomFile: "pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
               goals: "compile"
-              options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode -pl core -am -DskipTests $(CLIENT_PROFILE) -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) $(MAVEN_KEEPALIVE_OPT)"
+              options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode -pl core -am -DskipTests -DskipNative $(CLIENT_PROFILE) -Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) $(MAVEN_KEEPALIVE_OPT)"
               jdkVersionOption: $(jdk)
 
           - task: Maven@3
