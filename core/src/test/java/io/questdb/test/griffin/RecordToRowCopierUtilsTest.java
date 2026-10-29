@@ -933,34 +933,6 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
         });
     }
 
-    private static @NotNull Record getLongRecord(int fromType, long value) {
-        return new Record() {
-            @Override
-            public byte getByte(int col) {
-                Assert.assertEquals(ColumnType.BYTE, fromType);
-                return (byte) value;
-            }
-
-            @Override
-            public int getInt(int col) {
-                Assert.assertEquals(ColumnType.INT, fromType);
-                return (int) value;
-            }
-
-            @Override
-            public long getLong(int col) {
-                Assert.assertEquals(ColumnType.LONG, fromType);
-                return value;
-            }
-
-            @Override
-            public short getShort(int col) {
-                Assert.assertEquals(ColumnType.SHORT, fromType);
-                return (short) value;
-            }
-        };
-    }
-
     @Test
     public void testSymbolToTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -1052,6 +1024,34 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
                 execute("DROP TABLE dst");
             }
         });
+    }
+
+    private static @NotNull Record getLongRecord(int fromType, long value) {
+        return new Record() {
+            @Override
+            public byte getByte(int col) {
+                Assert.assertEquals(ColumnType.BYTE, fromType);
+                return (byte) value;
+            }
+
+            @Override
+            public int getInt(int col) {
+                Assert.assertEquals(ColumnType.INT, fromType);
+                return (int) value;
+            }
+
+            @Override
+            public long getLong(int col) {
+                Assert.assertEquals(ColumnType.LONG, fromType);
+                return value;
+            }
+
+            @Override
+            public short getShort(int col) {
+                Assert.assertEquals(ColumnType.SHORT, fromType);
+                return (short) value;
+            }
+        };
     }
 
     // Asserts that the copier is neither the single-method nor the looping fallback: a split copier has at least
