@@ -26,27 +26,21 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByLongList;
-import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.std.Numbers.LONG_NULL;
 
-public class PercentileDiscLongGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
+public class PercentileDiscLongGroupByFunction extends LongFunction implements BinaryFunction, GroupByFunction {
     private final Function arg;
     private final GroupByLongList listA;
     private final GroupByLongList listB;
@@ -67,11 +61,6 @@ public class PercentileDiscLongGroupByFunction extends LongFunction implements U
     public void clear() {
         listA.resetPtr();
         listB.resetPtr();
-    }
-
-    @Override
-    public void close() {
-        CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, arg), percentileFunc));
     }
 
     @Override
@@ -96,7 +85,7 @@ public class PercentileDiscLongGroupByFunction extends LongFunction implements U
     }
 
     @Override
-    public Function getArg() {
+    public Function getLeft() {
         return arg;
     }
 
@@ -124,15 +113,13 @@ public class PercentileDiscLongGroupByFunction extends LongFunction implements U
     }
 
     @Override
-    public int getValueIndex() {
-        return valueIndex;
+    public Function getRight() {
+        return percentileFunc;
     }
 
     @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        super.init(symbolTableSource, sqlExecutionContext);
-        arg.init(symbolTableSource, sqlExecutionContext);
-        percentileFunc.init(symbolTableSource, sqlExecutionContext);
+    public int getValueIndex() {
+        return valueIndex;
     }
 
     @Override
@@ -194,16 +181,6 @@ public class PercentileDiscLongGroupByFunction extends LongFunction implements U
 
     @Override
     public boolean supportsParallelism() {
-        return UnaryFunction.super.supportsParallelism();
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val("percentile_disc(").val(arg).val(',').val(percentileFunc).val(')');
-    }
-
-    @Override
-    public void toTop() {
-        UnaryFunction.super.toTop();
+        return arg.supportsParallelism();
     }
 }

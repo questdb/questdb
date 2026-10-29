@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
@@ -34,13 +33,9 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByDoubleList;
 import io.questdb.std.Misc;
@@ -51,7 +46,7 @@ import java.util.Arrays;
 
 import static io.questdb.std.Numbers.LONG_NULL;
 
-public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction implements UnaryFunction, GroupByFunction {
+public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction implements BinaryFunction, GroupByFunction {
     protected final Function arg;
     protected final GroupByDoubleList listA;
     protected final GroupByDoubleList listB;
@@ -83,7 +78,7 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
     @Override
     public void close() {
         Misc.free(out);
-        CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, arg), percentileFunc));
+        BinaryFunction.super.close();
     }
 
     @Override
@@ -105,11 +100,6 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
             listA.add(value);
             mapValue.putLong(valueIndex, listA.ptr());
         }
-    }
-
-    @Override
-    public Function getArg() {
-        return arg;
     }
 
     @Override
@@ -165,8 +155,18 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
     }
 
     @Override
+    public Function getLeft() {
+        return arg;
+    }
+
+    @Override
     public String getName() {
         return "percentile_disc";
+    }
+
+    @Override
+    public Function getRight() {
+        return percentileFunc;
     }
 
     @Override
@@ -177,13 +177,6 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
     @Override
     public int getValueIndex() {
         return valueIndex;
-    }
-
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        super.init(symbolTableSource, sqlExecutionContext);
-        arg.init(symbolTableSource, sqlExecutionContext);
-        percentileFunc.init(symbolTableSource, sqlExecutionContext);
     }
 
     @Override
@@ -245,16 +238,6 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
 
     @Override
     public boolean supportsParallelism() {
-        return UnaryFunction.super.supportsParallelism();
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val("percentile_disc(").val(arg).val(',').val(percentileFunc).val(')');
-    }
-
-    @Override
-    public void toTop() {
-        UnaryFunction.super.toTop();
+        return arg.supportsParallelism();
     }
 }

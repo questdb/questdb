@@ -678,6 +678,50 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUpdateWithSubqueryOverTargetReadsPendingUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            assertUpdateAfterPendingUpdate("UPDATE w SET v = 7 WHERE v = (SELECT v FROM w WHERE k = 1)", """
+                    k\tv
+                    1\t7
+                    2\t20
+                    """);
+            assertUpdateAfterPendingUpdate("UPDATE w SET v = 7 WHERE ts >= (SELECT ts FROM w WHERE k = 1)", """
+                    k\tv
+                    1\t7
+                    2\t7
+                    """);
+            assertUpdateAfterPendingUpdate("UPDATE w SET v = 7 WHERE (SELECT v FROM w WHERE k = 1) = 10", """
+                    k\tv
+                    1\t7
+                    2\t7
+                    """);
+        });
+    }
+
+    @Test
+    public void testUpdateWithNowAndSubqueryOverTargetReadsPendingUpdate() throws Exception {
+        assertMemoryLeak(() -> assertUpdateAfterPendingUpdate(
+                "UPDATE w SET v = 7 WHERE ts < now() AND v = (SELECT v FROM w WHERE k = 1 AND ts < now())",
+                """
+                        k\tv
+                        1\t7
+                        2\t20
+                        """
+        ));
+    }
+
+    @Test
+    public void testUpdateWithMultiRowSubqueryOverTargetSuspendsWalTable() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        assertMemoryLeak(() -> {
+            createKeyedTable();
+            update("UPDATE w SET v = 7 WHERE v = (SELECT v FROM w WHERE k = 1)");
+            drainWalQueue();
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("w")));
+        });
+    }
+
     // The target's own name is allowed to occur more than once, and every occurrence is the target:
     // an UPDATE already reads and writes the same table, and a sub-query may name it again. Scoping
     // the remap by name must not turn that second occurrence into an ordinary lookup.
@@ -1337,6 +1381,24 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
     }
 
     /**
+     * Runs {@code updateSql} while the UPDATE before it is still pending in the WAL, and asserts the table the two
+     * leave behind.
+     */
+    private void assertUpdateAfterPendingUpdate(String updateSql, String expectedRows) throws Exception {
+        createKeyedTable();
+        update("UPDATE w SET k = 2 WHERE v = 20");
+        update(updateSql);
+        assertQuery("SELECT k, v FROM w")
+                .noLeakCheck()
+                .expectSize()
+                .returns(expectedRows);
+        if (walEnabled) {
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("w")));
+        }
+        execute("DROP TABLE w");
+    }
+
+    /**
      * Sequences a WAL UPDATE whose SQL names a table other than its target, without going through
      * the client compiler - which now refuses to compile one. The only way such a statement can
      * still reach WAL apply is as a segment written by a build from before that rejection existed
@@ -1395,6 +1457,14 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
             values.append("('2020-01-0").append(i).append("T00:00:00.000000Z')");
         }
         execute("INSERT INTO bounds VALUES " + values);
+    }
+
+    private void createKeyedTable() throws Exception {
+        execute("CREATE TABLE w (k INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY" + (walEnabled ? " WAL" : ""));
+        execute("INSERT INTO w VALUES (1, 10, '2024-01-01'), (1, 20, '2024-01-02')");
+        if (walEnabled) {
+            drainWalQueue();
+        }
     }
 
     private void createTargetTable(int rows) throws Exception {

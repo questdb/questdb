@@ -74,6 +74,7 @@ public final class LogicalPlans {
     public static final int SELF_COMPARISON_NONE = -1;
     public static final int SELF_COMPARISON_TRUE = 1;
     private static final ExpressionVisitor COLUMN_READS = expression -> expression instanceof ColumnExpression ? TreeWalk.STOP : TreeWalk.CONTINUE;
+    private static final ExpressionVisitor CURSORS = expression -> expression instanceof CursorExpression ? TreeWalk.STOP : TreeWalk.CONTINUE;
     private static final PlanVisitor EXTERNAL_SOURCES = plan -> plan instanceof FunctionSourcePlan source && source.hasExternalDataSource()
             ? TreeWalk.STOP : TreeWalk.CONTINUE;
     private static final int ORDER_STABLE = 2;
@@ -430,6 +431,13 @@ public final class LogicalPlans {
             plan = project.getChild();
         }
         return plan instanceof SortPlan sort && !sort.isMarkoutHorizon() && sort.isLimited();
+    }
+
+    /**
+     * True when the expression evaluates a sub-query.
+     */
+    public static boolean hasSubquery(BoundExpression expression) {
+        return !expression.walk(CURSORS);
     }
 
     /**

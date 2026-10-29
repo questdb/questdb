@@ -562,6 +562,58 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitFromLastRowOnMatchesNonIndexedRead() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 1024L);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x id, ('k' || (x % 4))::SYMBOL s, timestamp_sequence(0, 864_000_000) ts
+                        FROM long_sequence(200)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
+            // the Parquet partition, which the read gathers, and the native partition, which the passes of the keys read
+            final String[] intervals = {"ts IN '1970-01-01'", "ts IN '1970-01-02'"};
+            final String[] predicates = {"", " AND s IN ('k0', 'k1')", " AND s IN ('k0', 'k1') AND id > 0"};
+            final long[] rowCounts = {100, 50, 50};
+            final String[] orders = {"s, ts", "s DESC, ts DESC"};
+            final StringSink expected = new StringSink();
+            final StringSink actual = new StringSink();
+            for (int p = 0; p < predicates.length; p++) {
+                final long rowCount = rowCounts[p];
+                for (String interval : intervals) {
+                    for (String order : orders) {
+                        final String query = "id, s, ts FROM t WHERE " + interval + predicates[p] + " ORDER BY " + order;
+                        final String[] limits = {
+                                " LIMIT " + (rowCount - 1) + ", " + (rowCount + 4),
+                                " LIMIT " + rowCount + ", " + (rowCount + 5),
+                                " LIMIT " + (rowCount + 1) + ", " + (rowCount + 6),
+                                " LIMIT -" + (rowCount + 5) + ", -" + rowCount
+                        };
+                        for (String limit : limits) {
+                            printSql("SELECT /*+ no_index(t) */ " + query + limit, expected);
+                            assertQuery("SELECT " + query + limit).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+                        }
+                    }
+                }
+                // a read that a skip exhausted reads every row from its top
+                final String query = "id, s, ts FROM t WHERE ts IN '1970-01-01'" + predicates[p] + " ORDER BY s, ts";
+                printSql("SELECT /*+ no_index(t) */ " + query, expected);
+                try (RecordCursorFactory factory = select("SELECT " + query); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final RecordCursor.Counter counter = new RecordCursor.Counter();
+                    counter.set(rowCount);
+                    cursor.skipRows(counter, 5);
+                    Assert.assertEquals(0, counter.get());
+                    Assert.assertFalse(cursor.hasNext());
+                    cursor.toTop();
+                    TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, actual);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNonuniformWidthGatherDoesNotDecodeUnselectedPayload() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);

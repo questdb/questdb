@@ -233,6 +233,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final BindScopeStack scopes = new BindScopeStack();
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final ObjList<Subquery> subqueries = new ObjList<>();
+    private final SubqueryReads subqueryReads = new SubqueryReads();
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final CompilerTemporaries temporaries;
@@ -6726,7 +6727,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     updateTarget.getMetadataVersion(),
                     lexer.getPosition(),
                     updateColumnNames,
-                    recordCursorFactory
+                    subqueryReads.isReadBy(root) ? Misc.free(recordCursorFactory) : recordCursorFactory
             );
         }
     }

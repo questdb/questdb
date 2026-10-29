@@ -26,28 +26,22 @@ package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByDoubleList;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.std.Numbers.LONG_NULL;
 
-public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implements UnaryFunction, GroupByFunction {
+public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implements BinaryFunction, GroupByFunction {
     protected final Function arg;
     protected final GroupByDoubleList listA;
     protected final GroupByDoubleList listB;
@@ -68,11 +62,6 @@ public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implemen
     public void clear() {
         listA.resetPtr();
         listB.resetPtr();
-    }
-
-    @Override
-    public void close() {
-        CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, arg), percentileFunc));
     }
 
     @Override
@@ -97,11 +86,6 @@ public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implemen
     }
 
     @Override
-    public Function getArg() {
-        return arg;
-    }
-
-    @Override
     public double getDouble(Record record) {
         long listPtr = record.getLong(valueIndex);
         if (listPtr <= 0) {
@@ -120,20 +104,23 @@ public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implemen
     }
 
     @Override
+    public Function getLeft() {
+        return arg;
+    }
+
+    @Override
     public String getName() {
         return "percentile_disc";
     }
 
     @Override
-    public int getValueIndex() {
-        return valueIndex;
+    public Function getRight() {
+        return percentileFunc;
     }
 
     @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        super.init(symbolTableSource, sqlExecutionContext);
-        arg.init(symbolTableSource, sqlExecutionContext);
-        percentileFunc.init(symbolTableSource, sqlExecutionContext);
+    public int getValueIndex() {
+        return valueIndex;
     }
 
     @Override
@@ -195,16 +182,6 @@ public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implemen
 
     @Override
     public boolean supportsParallelism() {
-        return UnaryFunction.super.supportsParallelism();
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val("percentile_disc(").val(arg).val(',').val(percentileFunc).val(')');
-    }
-
-    @Override
-    public void toTop() {
-        UnaryFunction.super.toTop();
+        return arg.supportsParallelism();
     }
 }

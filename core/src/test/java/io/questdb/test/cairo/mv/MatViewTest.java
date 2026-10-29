@@ -9857,6 +9857,108 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampFloorDstRefreshesExistingBucket() throws Exception {
+        assertMemoryLeak(() -> {
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1d', ts, null, null, 'America/New_York') k, count() c, sum(x) s FROM t GROUP BY 1",
+                    "(1, '2024-03-10T10:00:00Z'), (2, '2024-03-11T02:00:00Z')",
+                    "(3, '2024-03-10T12:00:00Z')",
+                    "k\tc\ts\n2024-03-10T05:00:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1d', ts, null, null, 'Europe/Berlin') k, count() c, sum(x) s FROM t",
+                    "(1, '2024-10-27T10:00:00Z'), (2, '2024-10-27T22:30:00Z')",
+                    "(3, '2024-10-27T12:00:00Z')",
+                    "k\tc\ts\n2024-10-26T22:00:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1h', ts, null, '00:30', 'Europe/Berlin') k, count() c, sum(x) s FROM t GROUP BY 1",
+                    "(1, '2024-03-31T00:40:00Z'), (2, '2024-03-31T01:10:00Z')",
+                    "(3, '2024-03-31T00:50:00Z')",
+                    "k\tc\ts\n2024-03-31T00:30:00.000000Z\t3\t6\n"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampFloorMonthRefreshesExistingBucket() throws Exception {
+        assertMemoryLeak(() -> {
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1M', ts, null, null, 'America/New_York') k, count() c, sum(x) s FROM t GROUP BY 1",
+                    "(1, '2024-02-10T00:00:00Z'), (2, '2024-03-01T02:00:00Z')",
+                    "(3, '2024-02-15T00:00:00Z')",
+                    "k\tc\ts\n2024-02-01T05:00:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor('1M', ts, null, '10:00', null) k, count() c, sum(x) s FROM t",
+                    "(1, '2024-02-10T00:00:00Z'), (2, '2024-03-01T05:00:00Z')",
+                    "(3, '2024-02-15T00:00:00Z')",
+                    "k\tc\ts\n2024-02-01T10:00:00.000000Z\t3\t6\n"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampFloorOffsetRefreshesExistingBucket() throws Exception {
+        assertMemoryLeak(() -> {
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor('1h', ts, null, '00:30', null) k, count() c, sum(x) s FROM t",
+                    "(1, '2024-01-02T10:40:00Z'), (2, '2024-01-02T11:10:00Z')",
+                    "(3, '2024-01-02T10:50:00Z')",
+                    "k\tc\ts\n2024-01-02T10:30:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor('1h', ts::#TYPE, null, '00:30', 'UTC') k, count() c, sum(x) s FROM t ORDER BY k",
+                    "(1, '2024-01-02T10:40:00Z'), (2, '2024-01-02T11:10:00Z')",
+                    "(3, '2024-01-02T10:50:00Z')",
+                    "k\tc\ts\n2024-01-02T10:30:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1h', ts, null, '00:30', null) k, count() c, sum(x) s FROM t GROUP BY 1",
+                    "(1, '2024-01-02T10:40:00Z'), (2, '2024-01-02T11:10:00Z')",
+                    "(3, '2024-01-02T10:50:00Z')",
+                    "k\tc\ts\n2024-01-02T10:30:00.000000Z\t3\t6\n"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampFloorUtcTimeZoneRefreshesExistingBucket() throws Exception {
+        assertMemoryLeak(() -> {
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1d', ts, null, null, 'America/New_York') k, count() c, sum(x) s FROM t GROUP BY 1",
+                    "(1, '2024-01-02T10:00:00Z'), (2, '2024-01-03T02:00:00Z')",
+                    "(3, '2024-01-02T12:00:00Z')",
+                    "k\tc\ts\n2024-01-02T05:00:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1d', ts, null, null, '-05:00') k, count() c, sum(x) s FROM t",
+                    "(1, '2024-01-02T10:00:00Z'), (2, '2024-01-03T02:00:00Z')",
+                    "(3, '2024-01-02T12:00:00Z')",
+                    "k\tc\ts\n2024-01-02T05:00:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1d', ts, null, '02:00', 'Europe/Berlin') k, count() c, sum(x) s FROM t GROUP BY k",
+                    "(1, '2024-01-02T05:00:00Z'), (2, '2024-01-03T00:30:00Z')",
+                    "(3, '2024-01-02T06:00:00Z')",
+                    "k\tc\ts\n2024-01-02T01:00:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1d', ts, null, null, 'America/New_York') ts, count() c, sum(x) s FROM t GROUP BY 1",
+                    "(1, '2024-01-02T10:00:00Z'), (2, '2024-01-03T02:00:00Z')",
+                    "(3, '2024-01-02T12:00:00Z')",
+                    "ts\tc\ts\n2024-01-02T05:00:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1d', ts, null, null, 'America/New_York') k, count() c, sum(x) s FROM (SELECT ts, x FROM t WHERE x > 0)",
+                    "(1, '2024-01-02T10:00:00Z'), (2, '2024-01-03T02:00:00Z')",
+                    "(3, '2024-01-02T12:00:00Z')",
+                    "k\tc\ts\n2024-01-02T05:00:00.000000Z\t3\t6\n"
+            );
+        });
+    }
+
+    @Test
     public void testTimestampGetsRefreshedOnInvalidation() throws Exception {
         // The base table is renamed, dropped, swapped or has its WAL purged here, so the
         // transaction the composite randomiser commits against it cannot be subtracted back
@@ -10724,11 +10826,13 @@ public class MatViewTest extends AbstractCairoTest {
         // Recovery needs one query over the widened envelope, not randomized one-day batches.
         setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
         createFloorBase(isNanos);
-        final String suffix = isNanos ? ".000000000Z" : ".000000Z";
-        final String query = "SELECT timestamp_floor('1d', to_timezone(ts, 'Europe/Berlin')) bucket, count() c FROM t";
-        final String initial = "bucket\tc\n2024-03-01T00:00:00" + suffix + "\t46\n2024-03-02T00:00:00" + suffix + "\t2\n";
+        final String fraction = isNanos ? "999999999" : "999999";
+        execute("INSERT INTO t VALUES (49, '2024-03-01T23:59:59." + fraction + "Z')");
+        drainWalAndMatViewQueues();
+        final String query = "SELECT dateadd('" + (isNanos ? 'n' : 'u') + "', 1, last) bucket, c FROM (SELECT timestamp_floor('1d', ts) k, max(ts) last, count() c FROM t)";
+        final String initial = "bucket\tc\n2024-03-02T00:00:00" + (isNanos ? ".000000000Z" : ".000000Z") + "\t49\n";
         assertQuery(query + " ORDER BY bucket").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(initial);
-        execute("CREATE MATERIALIZED VIEW mv WITH BASE t AS (" + query + ") PARTITION BY DAY");
+        execute("CREATE MATERIALIZED VIEW mv WITH BASE t AS (" + query + ") TIMESTAMP(bucket) PARTITION BY DAY");
         drainWalAndMatViewQueues();
         assertFloorViewState("invalid");
         assertFloorRangeError();
@@ -10749,12 +10853,11 @@ public class MatViewTest extends AbstractCairoTest {
         execute("REFRESH MATERIALIZED VIEW mv FULL");
         drainWalAndMatViewQueues();
         assertFloorViewState("valid");
-        final String recovered = initial + "2024-03-03T00:00:00" + suffix + "\t1\n";
+        final String recovered = initial + "2024-03-03T12:00:00" + (isNanos ? ".000000001Z" : ".000001Z") + "\t1\n";
         assertQuery("SELECT * FROM mv ORDER BY bucket").noLeakCheck().timestamp("bucket").expectSize().returns(recovered);
 
         // RANGE rounds the high to March 2; rejection must preserve the recovered rows.
-        execute("REFRESH MATERIALIZED VIEW mv RANGE FROM '2024-03-01' TO '2024-03-01T23:59:59."
-                + (isNanos ? "999999999" : "999999") + "Z'");
+        execute("REFRESH MATERIALIZED VIEW mv RANGE FROM '2024-03-01' TO '2024-03-01T23:59:59." + fraction + "Z'");
         drainWalAndMatViewQueues();
         assertFloorViewState("invalid");
         assertFloorRangeError();
@@ -10837,6 +10940,30 @@ public class MatViewTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
+        }
+    }
+
+    /**
+     * Refreshes a view whose bucket, its first column, is spelled by {@code query} after a row lands in an existing
+     * bucket, over a micros and a nanos base table whose type replaces {@code #TYPE}, and asserts that the view holds
+     * what the query returns.
+     */
+    private void assertTimestampFloorRefresh(String query, String initialRows, String insertedRows, String expected) throws Exception {
+        for (String type : new String[]{"TIMESTAMP", "TIMESTAMP_NS"}) {
+            final String typedQuery = query.replace("#TYPE", type);
+            execute("CREATE TABLE t (x INT, ts " + type + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES " + initialRows);
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (" + typedQuery + ") PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO t VALUES " + insertedRows);
+            drainWalAndMatViewQueues();
+            final String typed = "TIMESTAMP".equals(type) ? expected : expected.replace(".000000Z", ".000000000Z");
+            assertQuery("SELECT * FROM (" + typedQuery + ") ORDER BY 1").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(typed);
+            assertQuery("mv").noLeakCheck().timestamp(expected.substring(0, expected.indexOf('\t'))).expectSize().returns(typed);
+            assertFloorViewState("valid");
+            execute("DROP MATERIALIZED VIEW mv");
+            execute("DROP TABLE t");
         }
     }
 

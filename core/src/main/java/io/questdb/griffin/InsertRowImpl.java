@@ -70,7 +70,7 @@ public final class InsertRowImpl implements QuietCloseable {
                 rowFactory = this::getRowWithStringTimestamp;
                 this.timestampFunctionConverter = null;
             } else {
-                timestampFunctionConverter = timestampDriver.getTimestampUnitConverter(type);
+                timestampFunctionConverter = timestampDriver.getTimestampUnitConverter(ColumnType.getTimestampType(type));
                 if (timestampFunctionConverter == null) {
                     rowFactory = this::getRowWithTimestamp;
                 } else {

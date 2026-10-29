@@ -25,12 +25,14 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -122,6 +124,34 @@ public class SymbolInIndexTest extends AbstractCairoTest {
                 assertRowsOnly(factory, "id\n11\n");
                 bindVariableService.setStr(1, "A");
                 assertRowsOnly(factory, "id\n1\n4\n5\n11\n");
+            }
+        });
+    }
+
+    @Test
+    public void testRepeatedBindValuesReadEachKeyOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows(false);
+            final String sql = "SELECT id FROM lp_in WHERE s IN ($1,$2,$3)";
+            final String interval = " AND ts>='2020-01-02T00:00:00.000000Z' AND ts<'2020-01-03T00:00:00.000000Z'";
+            final ObjList<String> tails = new ObjList<>("", " ORDER BY ts", interval + " ORDER BY s", interval + " ORDER BY s DESC,ts DESC");
+            final ObjList<String> planFragments = new ObjList<>("FilterOnValues", "FilterOnValues", "FilterOnValues symbolOrder: asc", "FilterOnValues symbolOrder: desc");
+            final ObjList<String> singleKeyRows = new ObjList<>("id\n1\n4\n5\n", "id\n1\n4\n5\n", "id\n4\n5\n", "id\n5\n4\n");
+            final ObjList<String> twoKeyRows = new ObjList<>("id\n1\n2\n4\n5\n8\n", "id\n1\n2\n4\n5\n8\n", "id\n4\n5\n8\n", "id\n8\n5\n4\n");
+            for (int i = 0; i < tails.size(); i++) {
+                final String tailSql = sql + tails.getQuick(i);
+                final ObjList<BindVarTuple> cases = new ObjList<>();
+                cases.add(BindVarTuple.ok("A,A,A", singleKeyRows.getQuick(i), binds -> setStrBinds(binds, "A", "A", "A")));
+                cases.add(BindVarTuple.ok("A,A,B", twoKeyRows.getQuick(i), binds -> setStrBinds(binds, "A", "A", "B")));
+                cases.add(BindVarTuple.ok("A,B,B", twoKeyRows.getQuick(i), binds -> setStrBinds(binds, "A", "B", "B")));
+                cases.add(BindVarTuple.ok("A,B,A", twoKeyRows.getQuick(i), binds -> setStrBinds(binds, "A", "B", "A")));
+                cases.add(BindVarTuple.ok("B,A,B", twoKeyRows.getQuick(i), binds -> setStrBinds(binds, "B", "A", "B")));
+                assertQuery(tailSql)
+                        .noLeakCheck()
+                        .assertsPlanContaining(planFragments.getQuick(i));
+                assertQuery(tailSql)
+                        .noLeakCheck()
+                        .assertBinds(cases);
             }
         });
     }
@@ -651,6 +681,12 @@ public class SymbolInIndexTest extends AbstractCairoTest {
                 assertIndex("SELECT id FROM lp_in WHERE " + predicates.getQuick(i), "", shapes5[i], predicatesRows.getQuick(i));
             }
         });
+    }
+
+    private static void setStrBinds(BindVariableService bindVariableService, String... values) throws SqlException {
+        for (int i = 0; i < values.length; i++) {
+            bindVariableService.setStr(i, values[i]);
+        }
     }
 
     private void assertIndex(String sql, String specialization, String shape, String expected) throws Exception {

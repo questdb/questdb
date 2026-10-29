@@ -189,7 +189,7 @@ public class WalUpdateFilterValidationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFullReaderPoolFailsAsBusyBeforeSequencing() throws Exception {
+    public void testFullReaderPoolDoesNotBlockSequencing() throws Exception {
         Assume.assumeTrue(walEnabled);
         assertMemoryLeak(() -> {
             createTargetTable();
@@ -204,8 +204,6 @@ public class WalUpdateFilterValidationTest extends AbstractCairoTest {
                 }
                 try (OperationFuture future = cq.execute(new SCSequence())) {
                     future.await();
-                    Assert.fail();
-                } catch (EntryUnavailableException ignore) {
                 }
             } finally {
                 Misc.freeObjList(readers);
@@ -213,12 +211,18 @@ public class WalUpdateFilterValidationTest extends AbstractCairoTest {
             drainWalQueue();
             final TableToken token = engine.verifyTableName("t");
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
-            Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(token));
+            Assert.assertEquals(2, engine.getTableSequencerAPI().lastTxn(token));
             assertQuery("SELECT ts, v FROM t")
                     .noLeakCheck()
                     .expectSize()
                     .timestamp("ts")
-                    .returns("ts\tv\n" + FOUR_ROWS_UNCHANGED);
+                    .returns("""
+                            ts\tv
+                            2024-07-06T00:00:00.000000Z\t101
+                            2024-07-07T00:00:00.000000Z\t102
+                            2024-07-08T00:00:00.000000Z\t103
+                            2024-07-09T00:00:00.000000Z\t4
+                            """);
         });
     }
 
@@ -234,6 +238,7 @@ public class WalUpdateFilterValidationTest extends AbstractCairoTest {
             assertInvalidTextBind("other < $1::varchar", 35, "VARCHAR");
             assertInvalidTextBind("ts = $1::string", 32, "STRING");
             assertInvalidTextBind("other = $1", 33, "STRING");
+            assertInvalidTextBind("ts < now() AND other = $1", 48, "STRING");
             if (walEnabled) {
                 drainWalQueue();
                 final TableToken token = engine.verifyTableName("u");

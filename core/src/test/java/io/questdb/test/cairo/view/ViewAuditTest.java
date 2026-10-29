@@ -1454,16 +1454,15 @@ public class ViewAuditTest extends AbstractCairoTest {
             // A WAL table's UPDATE reads no table but the one it writes, so the view reads t.
             createAuditedView("v", "SELECT s, l FROM t");
 
-            // The principal's UPDATE of a WAL table only sequences the statement: it opens its plan,
-            // which reads no rows, as a metadata probe to check the statement's values, which records
-            // no read. ApplyWal2TableJob compiles the statement again and runs it under the root
+            // The principal's UPDATE of a WAL table only sequences the statement: its plan closes
+            // unopened. ApplyWal2TableJob compiles the statement again and runs it under the root
             // context, once on every node that applies the WAL. The statement was the principal's,
             // but the re-execution is not, so the context has to say it belongs to a job, or
             // Enterprise records the read on every node.
             auditedPlanCursorOpens = new ObjList<>();
             try {
                 execute("UPDATE t SET l = 42 WHERE l < (SELECT count() FROM v)");
-                assertAuditedPlanCursorOpens("SqlExecutionContextImpl isBackgroundJob=false isMetadataProbe=true");
+                assertAuditedPlanCursorOpens();
                 drainWalQueue();
                 assertAuditedPlanCursorOpens("WalApplySqlExecutionContext isBackgroundJob=true isMetadataProbe=false");
             } finally {

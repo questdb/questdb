@@ -744,6 +744,108 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewGroupByTimestampFloorDefinition() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2, true, "timestamp_ns");
+            final String[] queries = {
+                    "select timestamp_floor_utc('1d', ts, null, '02:00', 'Europe/Berlin') bucket, avg(v) from " + TABLE1 + " group by 1",
+                    "select timestamp_floor('1h', ts, null, '00:30', null) bucket, avg(v) from " + TABLE1,
+                    "select timestamp_floor('1d', ts, null, null, 'UTC') bucket, avg(v) from " + TABLE1,
+                    "select timestamp_floor('1d', ts::timestamp) bucket, avg(v) from " + TABLE1,
+                    "select timestamp_floor('1d', ts::date) bucket, avg(v) from " + TABLE1 + " group by 1",
+                    "select timestamp_floor('1d', ts::timestamp_ns) bucket, avg(v) from " + TABLE2
+            };
+            final String[] timeZones = {"Europe/Berlin", null, "UTC", null, null, null};
+            final String[] offsets = {"02:00", "00:30", null, null, null, null};
+            for (int i = 0; i < queries.length; i++) {
+                final String baseTableName = i < queries.length - 1 ? TABLE1 : TABLE2;
+                final char unit = i == 1 ? 'h' : 'd';
+                execute("create materialized view test" + i + " as (" + queries[i] + ") partition by day");
+                assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test" + i, queries[i], baseTableName, 1, unit, timeZones[i], offsets[i]);
+                assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test" + i, queries[i], baseTableName, 1, unit, timeZones[i], offsets[i]);
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewGroupByTimestampFloorFromOrigin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('1d', ts, '2024-01-01T06:00:00Z') bucket, avg(v) from " + TABLE1,
+                    "'2024-01-01T06:00:00Z'",
+                    "timestamp_floor() in a materialized view does not support a from origin, use the offset argument"
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor_utc('1d', ts, 1000::timestamp, null, 'Europe/Berlin') bucket, avg(v) from " + TABLE1 + " group by 1",
+                    "::timestamp",
+                    "timestamp_floor_utc() in a materialized view does not support a from origin, use the offset argument"
+            );
+        });
+    }
+
+    @Test
+    public void testCreateMatViewGroupByTimestampFloorLocalTimeZone() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('1d', ts, null, null, 'Europe/Berlin') bucket, avg(v) from " + TABLE1 + " group by 1",
+                    "'Europe/Berlin'",
+                    "timestamp_floor() with a time zone floors to local time, use timestamp_floor_utc() in a materialized view"
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('1h', ts, null, '00:30', '+01:00') bucket, avg(v) from " + TABLE1,
+                    "'+01:00'",
+                    "timestamp_floor() with a time zone floors to local time, use timestamp_floor_utc() in a materialized view"
+            );
+        });
+    }
+
+    @Test
+    public void testCreateMatViewGroupByTimestampFloorNotDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            execute("create table t (ts timestamp, ts2 timestamp, v long) timestamp(ts) partition by day wal");
+            execute("create table tn (ts timestamp_ns, v long) timestamp(ts) partition by day wal");
+            final String message = "() in a materialized view must floor the designated timestamp of the base table";
+            assertTimestampFloorRejected("t", "select timestamp_floor('1d', ts2) bucket, avg(v) from t", "ts2", "timestamp_floor" + message);
+            assertTimestampFloorRejected("t", "select timestamp_floor_utc('1d', ts2, null, null, 'Europe/Berlin') bucket, avg(v) from t group by 1", "ts2", "timestamp_floor_utc" + message);
+            assertTimestampFloorRejected("t", "select timestamp_floor('500U', ts::date) bucket, avg(v) from t", "::date", "timestamp_floor" + message);
+            assertTimestampFloorRejected("t", "select timestamp_floor('1d', ts::timestamp_ns) bucket, avg(v) from t", "::timestamp_ns", "timestamp_floor" + message);
+            assertTimestampFloorRejected("tn", "select timestamp_floor('1d', ts::timestamp) bucket, avg(v) from tn", "::timestamp", "timestamp_floor" + message);
+            assertTimestampFloorRejected("tn", "select timestamp_floor('1d', ts::date) bucket, avg(v) from tn", "::date", "timestamp_floor" + message);
+            assertTimestampFloorRejected("t", "select timestamp_floor('1d', to_timezone(ts, 'Europe/Berlin')) bucket, avg(v) from t", "to_timezone", "timestamp_floor" + message);
+            assertTimestampFloorRejected("t", "select timestamp_floor('1d', ts) bucket, avg(v) from (select ts2 ts, v from t)", "ts) bucket", "timestamp_floor" + message);
+            assertTimestampFloorRejected("t", "select timestamp_floor('1h', p.ts) bucket, avg(t.v) from t join " + TABLE1 + " p on t.v = p.v", "p.ts", "timestamp_floor" + message);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewGroupByTimestampFloorRuntimeConstantArguments() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String message = "timestamp_floor_utc() in a materialized view requires a constant offset and time zone";
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor_utc('1d', ts, null, null, current_user()) bucket, avg(v) from " + TABLE1 + " group by 1",
+                    "current_user",
+                    message
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor_utc('1d', ts, null, current_user(), 'Europe/Berlin') bucket, avg(v) from " + TABLE1,
+                    "current_user",
+                    message
+            );
+        });
+    }
+
+    @Test
     public void testCreateMatViewInvalidColumn() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -2771,6 +2873,14 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 .expectSize()
                 .noLeakCheck()
                 .returns(expected);
+    }
+
+    private void assertTimestampFloorRejected(String baseTableName, String query, String offender, String message) throws Exception {
+        final String prefix = "create materialized view test with base " + baseTableName + " as (";
+        assertQuery(prefix + query + ") partition by day")
+                .noLeakCheck()
+                .fails(prefix.length() + query.indexOf(offender), message);
+        assertNull(getMatViewDefinition("test"));
     }
 
     private void createTable(String tableName, boolean walEnabled, String timestampType) throws SqlException {

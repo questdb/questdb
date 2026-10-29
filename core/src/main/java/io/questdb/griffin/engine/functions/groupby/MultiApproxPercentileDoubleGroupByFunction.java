@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ArrayColumnTypes;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
@@ -33,19 +32,15 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram;
 
-public class MultiApproxPercentileDoubleGroupByFunction extends ArrayFunction implements UnaryFunction, GroupByFunction {
+public class MultiApproxPercentileDoubleGroupByFunction extends ArrayFunction implements BinaryFunction, GroupByFunction {
     private final Function exprFunc;
     private final Function percentileFunc;
     private final int percentilesPos;
@@ -79,7 +74,7 @@ public class MultiApproxPercentileDoubleGroupByFunction extends ArrayFunction im
     @Override
     public void close() {
         Misc.free(out);
-        CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, exprFunc), percentileFunc));
+        BinaryFunction.super.close();
     }
 
     @Override
@@ -107,11 +102,6 @@ public class MultiApproxPercentileDoubleGroupByFunction extends ArrayFunction im
         if (Numbers.isFinite(val)) {
             histogram.recordValue(val);
         }
-    }
-
-    @Override
-    public Function getArg() {
-        return exprFunc;
     }
 
     @Override
@@ -148,8 +138,18 @@ public class MultiApproxPercentileDoubleGroupByFunction extends ArrayFunction im
     }
 
     @Override
+    public Function getLeft() {
+        return exprFunc;
+    }
+
+    @Override
     public String getName() {
         return "approx_percentile";
+    }
+
+    @Override
+    public Function getRight() {
+        return percentileFunc;
     }
 
     @Override
@@ -160,13 +160,6 @@ public class MultiApproxPercentileDoubleGroupByFunction extends ArrayFunction im
     @Override
     public int getValueIndex() {
         return valueIndex;
-    }
-
-    @Override
-    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        super.init(symbolTableSource, sqlExecutionContext);
-        exprFunc.init(symbolTableSource, sqlExecutionContext);
-        percentileFunc.init(symbolTableSource, sqlExecutionContext);
     }
 
     @Override
@@ -210,10 +203,5 @@ public class MultiApproxPercentileDoubleGroupByFunction extends ArrayFunction im
     @Override
     public boolean supportsParallelism() {
         return false;
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val("approx_percentile(").val(exprFunc).val(',').val(percentileFunc).val(')');
     }
 }

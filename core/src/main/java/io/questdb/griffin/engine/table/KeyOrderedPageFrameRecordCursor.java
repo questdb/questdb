@@ -713,7 +713,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             final long boundRowCount = (long) Math.min(rowCount * windowBoundScale, Long.MAX_VALUE / 2.0);
             long room = boundRowCount;
             int key = keyLo;
-            long keyRowCount = Math.max(getKeyRowBound(key) - rankLo, 0);
+            long keyRowCount = key < keyLimit ? Math.max(getKeyRowBound(key) - rankLo, 0) : 0;
             while (key < keyLimit && keyRowCount <= room) {
                 room -= keyRowCount;
                 if (++key < keyLimit) {

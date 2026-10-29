@@ -80,6 +80,16 @@ public class CancelQueryFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void close() {
+            queryIdFunc.close();
+        }
+
+        @Override
+        public void cursorClosed() {
+            queryIdFunc.cursorClosed();
+        }
+
+        @Override
         public boolean getBool(Record rec) {
             long queryId = queryIdFunc.getLong(rec);
             if (queryId < 0) {
@@ -95,13 +105,25 @@ public class CancelQueryFunctionFactory implements FunctionFactory {
 
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
+            queryIdFunc.init(symbolTableSource, executionContext);
             this.executionContext = executionContext;
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof Func other) {
+                queryIdFunc.offerStateTo(other.queryIdFunc);
+            }
         }
 
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(NAME).val('(').val(queryIdFunc).val(')');
+        }
+
+        @Override
+        public void toTop() {
+            queryIdFunc.toTop();
         }
     }
 }

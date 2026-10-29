@@ -71,7 +71,8 @@ public class UpdateOperation extends AbstractOperation {
      * An UPDATE of a WAL table, which the WAL records as SQL text and its bind variables.
      *
      * @param clientPlan the plan the client compiled for the statement, over no rows, which the operation adopts;
-     *                   see {@link #validate()}
+     *                   null for a statement that evaluates a sub-query, whose rows only the WAL apply job reads; see
+     *                   {@link #validate()}
      */
     public UpdateOperation(
             @NotNull TableToken tableToken,

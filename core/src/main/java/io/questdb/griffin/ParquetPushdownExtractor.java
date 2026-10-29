@@ -32,11 +32,8 @@ import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
-import io.questdb.griffin.plan.logical.CursorExpression;
-import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
-import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -45,7 +42,6 @@ import io.questdb.std.ObjList;
  * Derives Parquet row-group pushdown conditions from a bound residual predicate.
  */
 public final class ParquetPushdownExtractor {
-    private static final ExpressionVisitor CURSORS = expression -> expression instanceof CursorExpression ? TreeWalk.STOP : TreeWalk.CONTINUE;
     private final ObjList<BoundExpression> conditionValues;
     private final ObjList<PushdownFilterCondition> conditions = new ObjList<>();
     private final IntList valueCounts;
@@ -113,7 +109,7 @@ public final class ParquetPushdownExtractor {
             FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        if (hasCursor(value)) {
+        if (LogicalPlans.hasSubquery(value)) {
             return false;
         }
         Function function = instantiator.instantiate(value, input, metadata, executionContext);
@@ -156,10 +152,6 @@ public final class ParquetPushdownExtractor {
             case PushdownFilterExtractor.OP_GE -> PushdownFilterExtractor.OP_LE;
             default -> operation;
         };
-    }
-
-    private static boolean hasCursor(BoundExpression expression) {
-        return !expression.walk(CURSORS);
     }
 
     private static boolean isNull(BoundExpression expression) {

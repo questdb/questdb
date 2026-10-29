@@ -800,6 +800,48 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSharedMultiApproxPercentileFromSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE items (lval LONG, dval DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_val DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO items VALUES
+                    (10, 10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20, 20.0, '2024-01-01T01:00:00.000000Z'),
+                    (30, 30.0, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO rates VALUES
+                    (10.0, 0.1, '2024-01-01T00:00:00.000000Z'),
+                    (25.0, 0.2, '2024-01-01T00:00:01.000000Z')
+                    """);
+            assertQuery("""
+                    SELECT o.p_double, o.p_double4, o.p_long, o.p_long4, sub.rate
+                    FROM (
+                        SELECT approx_percentile(dval, ARRAY[0.5, CASE WHEN (SELECT max(rate) > 0.15 FROM rates) THEN 0.9 ELSE 0.1 END]) AS p_double,
+                               approx_percentile(dval, ARRAY[0.5, CASE WHEN (SELECT max(rate) > 0.15 FROM rates) THEN 0.9 ELSE 0.1 END], 4) AS p_double4,
+                               approx_percentile(lval, ARRAY[0.5, CASE WHEN (SELECT max(rate) > 0.15 FROM rates) THEN 0.9 ELSE 0.1 END]) AS p_long,
+                               approx_percentile(lval, ARRAY[0.5, CASE WHEN (SELECT max(rate) > 0.15 FROM rates) THEN 0.9 ELSE 0.1 END], 4) AS p_long4
+                        FROM items
+                    ) o
+                    JOIN LATERAL (
+                        SELECT rate FROM rates
+                        WHERE min_val <= o.p_double[1] AND min_val <= o.p_double4[1]
+                          AND min_val <= o.p_long[1] AND min_val <= o.p_long4[1]
+                    ) sub
+                    ORDER BY sub.rate
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("[state-shared]")
+                    .returns("""
+                            p_double\tp_double4\tp_long\tp_long4\trate
+                            [20.5,30.5]\t[20.00048828125,30.00048828125]\t[20.0,30.0]\t[20.0,30.0]\t0.1
+                            """);
+        });
+    }
+
+    @Test
     public void testSharedPercentile() throws Exception {
         // percentile_disc() and percentile_cont() keep their values in the GROUP BY allocator, which
         // the shared copy reads through the map value it shares with the computing instance
