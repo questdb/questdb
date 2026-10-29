@@ -24,22 +24,21 @@
 
 package io.questdb.griffin.engine.groupby;
 
-import io.questdb.PropertyKey;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.ListColumnFilter;
-import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
@@ -222,21 +221,14 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             this.yDataSize = groupByFunctionCount * 16;
             this.yData = Unsafe.malloc(yDataSize, MemoryTag.NATIVE_FUNC_RSS);
 
-            final ArrayColumnTypes preAggregatedTypes;
-            final RecordSink preAggregatedSink;
             if (isPreAggregated) {
-                preAggregatedTypes = new ArrayColumnTypes().addAll(valueTypes).addAll(keyTypes).add(timestampType);
+                final ArrayColumnTypes preAggregatedTypes = new ArrayColumnTypes().addAll(valueTypes).addAll(keyTypes).add(timestampType);
                 final ListColumnFilter keyFilter = new ListColumnFilter();
                 for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
                     keyFilter.add(valueTypes.getColumnCount() + i + 1);
                 }
                 this.mapSink = RecordSinkFactory.getInstance(configuration, asm, preAggregatedTypes, keyFilter);
-                entityColumnFilter.of(preAggregatedTypes.getColumnCount());
-                preAggregatedSink = keyTypes.getColumnCount() > 0
-                        ? RecordSinkFactory.getInstance(configuration, asm, preAggregatedTypes, entityColumnFilter) : null;
             } else {
-                preAggregatedTypes = null;
-                preAggregatedSink = null;
                 this.mapSink = RecordSinkFactory.getInstance(configuration, asm, base.getMetadata(), listColumnFilter);
             }
             entityColumnFilter.of(keyTypes.getColumnCount());
@@ -244,7 +236,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             entityColumnFilter.of(valueTypes.getColumnCount());
             this.valueSink = isPreAggregated ? RecordValueSinkFactory.getInstance(asm, valueTypes, entityColumnFilter) : null;
 
-            this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleToFunc, preAggregatedTypes, preAggregatedSink);
+            this.cursor = new SampleByInterpolateRecordCursor(configuration, recordFunctions, groupByFunctions, keyTypes, valueTypes, timestampType, timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, sampleFromFunc, sampleToFunc);
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
@@ -381,9 +373,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         protected final Map recordKeyMap;
         private final GroupByAllocator allocator;
         private final Map dataMap;
+        private final DataMapCursor dataMapCursor;
         private final Function offsetFunc;
         private final int offsetFuncPos;
-        private final RecordChain preAggregatedRecords;
         private final Function sampleFromFunc;
         private final int sampleFromFuncType;
         private final Function sampleToFunc;
@@ -394,10 +386,12 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long fixedOffset;
         private long hiSample = -1;
+        private long inOrderEntryCount;
         private boolean isMapBuilt;
         private boolean isMapFilled;
         private boolean isMapInitialized;
         private boolean isOpen;
+        private long lateGapHi;
         private long loSample = -1;
         private Record managedRecord;
         private long prevSample = -1;
@@ -417,9 +411,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 Function offsetFunc,
                 int offsetFuncPos,
                 Function sampleFromFunc,
-                Function sampleToFunc,
-                ColumnTypes preAggregatedTypes,
-                RecordSink preAggregatedSink
+                Function sampleToFunc
         ) {
             super(functions);
             try {
@@ -432,18 +424,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 // data map will contain rounded timestamp value as last key column
                 keyTypes.add(timestampType);
                 dataMap = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes, false);
+                dataMapCursor = new DataMapCursor(dataMap.newCursor(), valueTypes.getColumnCount() + keyTypes.getColumnCount() - 1);
                 allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 GroupByUtils.setAllocator(groupByFunctions, allocator);
-                if (preAggregatedSink != null) {
-                    // The data map later holds every copied row in a larger entry, so the copy grows only as far
-                    // as the heap of the data map may: one page doubled at most max resizes times.
-                    final int maxResizes = configuration.getSqlMapMaxResizes();
-                    preAggregatedRecords = new RecordChain(preAggregatedTypes, preAggregatedSink, configuration.getSqlSmallMapPageSize(),
-                            maxResizes < Integer.SIZE - 1 ? 1 << maxResizes : Integer.MAX_VALUE,
-                            PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES.getPropertyPath());
-                } else {
-                    preAggregatedRecords = null;
-                }
 
                 this.timezoneNameFunc = timezoneNameFunc;
                 this.timezoneNameFuncPos = timezoneNameFuncPos;
@@ -464,10 +447,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             final RecordCursor sourceCursor = managedCursor;
             managedCursor = null;
             managedRecord = null;
-            Throwable failure = Misc.freeBestEffort(null, preAggregatedRecords);
-            if (preAggregatedRecords != null) {
-                preAggregatedRecords.setMemoryTracker(null);
-            }
+            Throwable failure = null;
             try {
                 super.close();
             } catch (Throwable th) {
@@ -505,16 +485,13 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 allocator.reopen();
             }
             circuitBreaker = executionContext.getCircuitBreaker();
-            if (preAggregatedRecords != null) {
-                preAggregatedRecords.setMemoryTracker(executionContext.getMemoryTracker());
-                managedRecord = preAggregatedRecords.getRecord();
-            } else {
-                managedRecord = isPreAggregated ? ((VirtualRecord) managedCursor.getRecord()).getBaseRecord() : managedCursor.getRecord();
-            }
+            managedRecord = isPreAggregated ? ((VirtualRecord) managedCursor.getRecord()).getBaseRecord() : managedCursor.getRecord();
             loSample = -1;
             hiSample = -1;
             prevSample = -1;
-            rowId = isPreAggregated ? -1 : 0;
+            lateGapHi = Numbers.LONG_NULL;
+            inOrderEntryCount = -1;
+            rowId = 0;
             isMapInitialized = false;
             isMapFilled = false;
             isMapBuilt = false;
@@ -544,14 +521,13 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 loSample = -1;
                 hiSample = -1;
                 prevSample = -1;
-                rowId = isPreAggregated ? -1 : 0;
+                lateGapHi = Numbers.LONG_NULL;
+                inOrderEntryCount = -1;
+                rowId = 0;
                 isMapInitialized = false;
                 isMapFilled = false;
                 if (isPreAggregated) {
                     managedCursor.toTop();
-                    if (preAggregatedRecords != null) {
-                        preAggregatedRecords.clear();
-                    }
                     areTimestampsInitialized = false;
                 }
             }
@@ -697,7 +673,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 }
             }
             // refresh map cursor
-            baseCursor = dataMap.getCursor();
+            baseCursor = inOrderEntryCount < 0 ? dataMap.getCursor() : dataMapCursor.of(inOrderEntryCount);
         }
 
         private void buildMapConditionally() {
@@ -744,11 +720,10 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             // entries. Values for these entries will be interpolated later.
 
             assert prevSample != -1;
-            final RecordCursor aggregationCursor = preAggregatedRecords != null ? preAggregatedRecords : managedCursor;
 
             do {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-                if (isPreAggregated && preAggregatedRecords == null) {
+                if (isPreAggregated) {
                     managedRecord = ((VirtualRecord) managedCursor.getRecord()).getBaseRecord();
                 }
 
@@ -764,6 +739,14 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     fillGaps(prevSample, sample);
                     prevSample = sample;
                     GroupByUtils.toTop(groupByFunctions);
+                }
+
+                if (isPreAggregated) {
+                    final MapKey recordKey = recordKeyMap.withKey();
+                    mapSink.copy(managedRecord, recordKey);
+                    if (recordKey.create() && sample != loSample) {
+                        lateGapHi = sample;
+                    }
                 }
 
                 // same data group - evaluate group-by functions
@@ -785,13 +768,14 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                         groupByFunctions.getQuick(i).computeNext(value, managedRecord, rowId++);
                     }
                 }
-            } while (aggregationCursor.hasNext());
+            } while (managedCursor.hasNext());
 
             hiSample = sampler.nextTimestamp(prevSample);
             // fill gaps if any at the end of base cursor
             fillGaps(prevSample, hiSample);
-            if (preAggregatedRecords != null) {
-                preAggregatedRecords.clear();
+            if (lateGapHi != Numbers.LONG_NULL) {
+                inOrderEntryCount = dataMap.size();
+                fillGaps(loSample, lateGapHi);
             }
         }
 
@@ -818,23 +802,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
         private boolean initMap() {
             if (isPreAggregated) {
-                if (preAggregatedRecords == null) {
-                    if (!managedCursor.hasNext()) {
-                        return false;
-                    }
-                    recordKeyMap.withKey().createValue();
-                    return true;
-                }
-                while (managedCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-                    final Record record = ((VirtualRecord) managedCursor.getRecord()).getBaseRecord();
-                    final MapKey key = recordKeyMap.withKey();
-                    mapSink.copy(record, key);
-                    key.createValue();
-                    rowId = preAggregatedRecords.put(record, rowId);
-                }
-                preAggregatedRecords.toTop();
-                return recordKeyMap.size() > 0;
+                return managedCursor.hasNext();
             }
             // Collect map of unique key values.
             // using these values we will fill gaps in main
@@ -910,11 +878,10 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 return;
             }
 
-            final boolean good = (isPreAggregated && preAggregatedRecords == null)
-                    || (preAggregatedRecords != null ? preAggregatedRecords : managedCursor).hasNext();
+            final boolean good = isPreAggregated || managedCursor.hasNext();
             assert good;
 
-            if (isPreAggregated && preAggregatedRecords == null) {
+            if (isPreAggregated) {
                 managedRecord = ((VirtualRecord) managedCursor.getRecord()).getBaseRecord();
             }
 
@@ -984,6 +951,112 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 fixedOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(val));
             } else {
                 fixedOffset = Long.MIN_VALUE;
+            }
+        }
+
+        // Emits the data map in timestamp order: fillMap() appends the entries in order,
+        // then the earlier gaps of the keys it first saw past the first bucket.
+        private class DataMapCursor implements RecordCursor {
+            private final MapRecordCursor lateGapCursor;
+            private final MapRecord lateGapRecord;
+            private final int timestampColumn;
+            private MapRecordCursor cursor;
+            private boolean hasInOrder;
+            private boolean hasLateGap;
+            private long inOrderCount;
+            private long inOrderRemaining;
+            private long inOrderRowId;
+            private long inOrderTimestamp;
+            private long lateGapRowId;
+            private long lateGapTimestamp;
+            private MapRecord record;
+
+            private DataMapCursor(MapRecordCursor lateGapCursor, int timestampColumn) {
+                this.lateGapCursor = lateGapCursor;
+                this.lateGapRecord = lateGapCursor.getRecord();
+                this.timestampColumn = timestampColumn;
+            }
+
+            @Override
+            public void close() {
+            }
+
+            @Override
+            public Record getRecord() {
+                return record;
+            }
+
+            @Override
+            public Record getRecordB() {
+                return cursor.getRecordB();
+            }
+
+            @Override
+            public boolean hasNext() {
+                final long rowId;
+                if (hasInOrder && (!hasLateGap || inOrderTimestamp <= lateGapTimestamp)) {
+                    rowId = inOrderRowId;
+                    nextInOrder();
+                } else if (hasLateGap) {
+                    rowId = lateGapRowId;
+                    nextLateGap();
+                } else {
+                    return false;
+                }
+                cursor.recordAt(record, rowId);
+                return true;
+            }
+
+            @Override
+            public long preComputedStateSize() {
+                return 0;
+            }
+
+            @Override
+            public void recordAt(Record record, long atRowId) {
+                cursor.recordAt(record, atRowId);
+            }
+
+            @Override
+            public long size() {
+                return dataMap.size();
+            }
+
+            @Override
+            public void toTop() {
+                cursor.toTop();
+                inOrderRemaining = inOrderCount;
+                dataMap.initCursor(lateGapCursor);
+                for (long i = 0; i < inOrderCount; i++) {
+                    lateGapCursor.hasNext();
+                }
+                nextInOrder();
+                nextLateGap();
+            }
+
+            private void nextInOrder() {
+                hasInOrder = inOrderRemaining > 0 && cursor.hasNext();
+                if (hasInOrder) {
+                    inOrderRemaining--;
+                    inOrderRowId = record.getRowId();
+                    inOrderTimestamp = record.getTimestamp(timestampColumn);
+                }
+            }
+
+            private void nextLateGap() {
+                hasLateGap = lateGapCursor.hasNext();
+                if (hasLateGap) {
+                    lateGapRowId = lateGapRecord.getRowId();
+                    lateGapTimestamp = lateGapRecord.getTimestamp(timestampColumn);
+                }
+            }
+
+            private DataMapCursor of(long inOrderCount) {
+                this.inOrderCount = inOrderCount;
+                cursor = dataMap.getCursor();
+                record = cursor.getRecord();
+                toTop();
+                return this;
             }
         }
     }

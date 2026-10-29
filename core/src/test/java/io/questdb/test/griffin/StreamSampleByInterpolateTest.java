@@ -163,8 +163,7 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeyedCacheIgnoresSortLimit() throws Exception {
-        // The legacy plan keeps the aggregates in a map rather than a sort, so the sort limit does not bound the copy.
+    public void testKeyedIgnoresSortLimit() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 8 * 1024);
         run((engine, compiler, context) -> {
             createPrices(context);
@@ -176,7 +175,36 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeyedCacheLimitAndReuse() throws Exception {
+    public void testKeyedLateKeysKeepTimestampOrder() throws Exception {
+        run((engine, compiler, context) -> {
+            for (String type : new String[]{"SYMBOL", "VARCHAR"}) {
+                final String table = "late_" + type;
+                engine.execute("CREATE TABLE " + table + " (ts " + timestampType + ", sym " + type + ", price DOUBLE) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY", context);
+                engine.execute("INSERT INTO " + table + " VALUES ('2024-01-01T00:00', 'a', 1), ('2024-01-01T01:00', 'a', 3), "
+                        + "('2024-01-01T02:00', 'b', 10), ('2024-01-01T03:00', 'b', 14), ('2024-01-01T04:00', 'a', 9)", context);
+                final String sql = "SELECT ts, sym, avg(price) mean FROM " + table + " SAMPLE BY 1h FILL(LINEAR)";
+                query(context, sql + " ALIGN TO CALENDAR")
+                        .returns(precision("""
+                                ts\tsym\tmean
+                                2024-01-01T00:00:00.000000Z\ta\t1.0
+                                2024-01-01T00:00:00.000000Z\tb\t2.0
+                                2024-01-01T01:00:00.000000Z\ta\t3.0
+                                2024-01-01T01:00:00.000000Z\tb\t6.0
+                                2024-01-01T02:00:00.000000Z\tb\t10.0
+                                2024-01-01T02:00:00.000000Z\ta\t5.0
+                                2024-01-01T03:00:00.000000Z\tb\t14.0
+                                2024-01-01T03:00:00.000000Z\ta\t7.0
+                                2024-01-01T04:00:00.000000Z\ta\t9.0
+                                2024-01-01T04:00:00.000000Z\tb\t18.0
+                                """));
+                assertMatchesLegacy(context, sql, " ORDER BY ts, sym");
+            }
+        });
+    }
+
+    @Test
+    public void testKeyedMapLimitAndReuse() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, 0);
         run((engine, compiler, context) -> {
             createPrices(context);
@@ -195,10 +223,9 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
                         context.getBindVariableService().setDouble("max_price", 2049);
                         try (RecordCursor cursor = factory.getCursor(context)) {
                             cursor.hasNext();
-                            Assert.fail("expected interpolation cache limit breach");
+                            Assert.fail("expected map resize limit breach");
                         } catch (CairoException e) {
-                            TestUtils.assertContains(e.getFlyweightMessage(), "breached in VirtualMemory");
-                            TestUtils.assertContains(e.getFlyweightMessage(), "(raise cairo.sql.map.max.resizes)");
+                            TestUtils.assertContains(e.getFlyweightMessage(), "limit of 0 resizes exceeded in FastMap");
                         }
                         Assert.assertEquals(0, tracker.getUsed());
                         context.getBindVariableService().setDouble("max_price", 3);
