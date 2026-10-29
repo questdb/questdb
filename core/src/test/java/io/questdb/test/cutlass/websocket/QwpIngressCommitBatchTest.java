@@ -1786,13 +1786,27 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
         private final AtomicBoolean isReadOnly = new AtomicBoolean();
         private final DurableAckRegistry laggingRegistry = new DurableAckRegistry() {
             @Override
-            public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
+            public long getLocalDurableSeqTxn(CharSequence tableDirName) {
+                return -1L;
+            }
+
+            @Override
+            public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
                 return -1L;
             }
 
             @Override
             public boolean isEnabled() {
                 return true;
+            }
+
+            @Override
+            public boolean isTierSetAvailable(int tiers) {
+                return true;
+            }
+
+            @Override
+            public void onTableDropped(TableToken tableToken) {
             }
         };
         private Lock roleSwitchReadLock;
