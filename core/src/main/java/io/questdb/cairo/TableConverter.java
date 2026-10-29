@@ -88,6 +88,14 @@ public class TableConverter {
                                 .$(", walEnabled=").$(walEnabled)
                                 .I$();
 
+                        // Before the WAL replay below, so a skipped table keeps its WAL and save points.
+                        path.trimTo(rootLen).concat(dirNameSink);
+                        if (hasDeltaState(ff, path, path.size())) {
+                            LOG.error().$("skipping table type conversion, table has a delta-active partition or delta data [dirName=")
+                                    .$(dirNameSink).I$();
+                            continue;
+                        }
+
                         final String dirName = dirNameSink.toString();
                         TableToken existingToken = tableNameRegistry.getTableTokenByDirName(dirName);
                         if (!walEnabled
@@ -141,7 +149,7 @@ public class TableConverter {
                                     txWriter = new TxWriter(ff, configuration);
                                 }
                                 txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$());
-                                // Delta may have become active after SQL scheduled this conversion.
+                                // The WAL replay above may have made Delta active.
                                 if (txWriter.hasDeltaState()) {
                                     LOG.error().$("skipping table type conversion, table has a delta-active partition or delta data [dirName=")
                                             .$(dirNameSink).I$();
@@ -304,6 +312,20 @@ public class TableConverter {
         }
         engine.unlock(AllowAllSecurityContext.INSTANCE, token, null, false);
         return refusal;
+    }
+
+    // Whether the table's _txn names a delta-active partition or Delta data. A _txn that does not load reads as
+    // none, and the conversion fails on it later. The partition unit does not affect the attached-partition scan.
+    private static boolean hasDeltaState(FilesFacade ff, Path path, int tableRootLen) {
+        path.trimTo(tableRootLen).concat(TXN_FILE_NAME);
+        try (TxReader txReader = new TxReader(ff)) {
+            txReader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+            return txReader.unsafeLoadAll() && txReader.hasDeltaState();
+        } catch (CairoException e) {
+            return false;
+        } finally {
+            path.trimTo(tableRootLen);
+        }
     }
 
     // The seqTxn in the table's _txn file. Returns Long.MAX_VALUE when the file does not load, so that the
