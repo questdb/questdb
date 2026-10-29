@@ -1026,7 +1026,7 @@ public class ExpressionParser {
         assert prevBranch != BRANCH_BETWEEN_START;
         switch (prevBranch) {
             case BRANCH_OPERATOR, BRANCH_LEFT_PARENTHESIS, BRANCH_LEFT_BRACKET, BRANCH_COMMA, BRANCH_NONE,
-                 BRANCH_CASE_CONTROL, BRANCH_BETWEEN_END -> {
+                 BRANCH_CASE_START, BRANCH_CASE_CONTROL, BRANCH_BETWEEN_END -> {
                 // we have unary minus or unary complement, update op completely because it will change precedence
                 if (thisChar == '-') {
                     op = activeRegistry.unaryMinus;
