@@ -5079,6 +5079,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         path.trimTo(pathSize);
         other.trimTo(pathSize);
+        // Under SYNC the renamed directory, its linked index files and its entry in the table directory must be
+        // durable before the _txn that names it.
+        fsyncConvertedPartitionDir(logicalPartitionTimestamp);
 
         publishMergedLogicalPartition(
                 logicalPartitionTimestamp,
