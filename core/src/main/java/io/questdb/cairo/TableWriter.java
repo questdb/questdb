@@ -3343,6 +3343,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return tsIndex > -1 && metadata.isDedupKey(tsIndex);
     }
 
+    public boolean isDeltaWalApplyReady(long seqTxn) {
+        if (!walTxnRangeOverlapsDeltaActivePartition(seqTxn, seqTxn)) {
+            return true;
+        }
+        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+        return deltaWriter == null || deltaWriter.isWalApplyReady(this, seqTxn);
+    }
+
     public boolean isDistressed() {
         return distressed;
     }

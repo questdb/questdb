@@ -35,9 +35,11 @@ import io.questdb.cairo.TxnScoreboardPoolV2;
 import io.questdb.cairo.TxnScoreboardV2;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -185,6 +187,71 @@ public class TxnScoreboardTest extends AbstractCairoTest {
 
             }
             scoreboardPoolFactory.clear();
+        });
+    }
+
+    @Test
+    public void testCopyReaderSeqTxns() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long address = Unsafe.malloc(2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(4)) {
+                Assert.assertEquals(0, scoreboard.copyReaderSeqTxns(10, address, 2));
+
+                // Readers and the checkpoint slot are all copied.
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10, 100));
+                Assert.assertTrue(scoreboard.incrementTxn(TxnScoreboard.CHECKPOINT_ID, 10, 100));
+                Assert.assertTrue(scoreboard.acquireTxn(1, 12, 120));
+                Assert.assertEquals(3, scoreboard.copyReaderSeqTxns(12, address, 2));
+                final long first = Unsafe.getUnsafe().getLong(address);
+                final long second = Unsafe.getUnsafe().getLong(address + Long.BYTES);
+                Assert.assertTrue(first == 100 || first == 120);
+                Assert.assertTrue(second == 100 || second == 120);
+
+                // The copy fences later readers below the current table txn.
+                Assert.assertFalse(scoreboard.acquireTxn(2, 11, 110));
+
+                scoreboard.releaseTxn(TxnScoreboard.CHECKPOINT_ID, 10);
+                scoreboard.releaseTxn(0, 10);
+                Assert.assertEquals(1, scoreboard.copyReaderSeqTxns(12, address, 2));
+                Assert.assertEquals(120, Unsafe.getUnsafe().getLong(address));
+                scoreboard.releaseTxn(1, 12);
+                Assert.assertEquals(0, scoreboard.copyReaderSeqTxns(12, address, 2));
+            } finally {
+                Unsafe.free(address, 2 * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testCopyReaderSeqTxnsBehindTheMax() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long address = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(4)) {
+                // A caller behind the max still gets every seqTxn, and later readers stay fenced.
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10, 100));
+                Assert.assertEquals(1, scoreboard.copyReaderSeqTxns(5, address, 1));
+                Assert.assertEquals(100, Unsafe.getUnsafe().getLong(address));
+                Assert.assertFalse(scoreboard.acquireTxn(1, 4, 40));
+                scoreboard.releaseTxn(0, 10);
+            } finally {
+                Unsafe.free(address, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testCopyReaderSeqTxnsFencesAnEmptyScoreboard() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long address = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(4)) {
+                // With no earlier reader, the copy alone fences readers below its txn.
+                Assert.assertEquals(0, scoreboard.copyReaderSeqTxns(10, address, 1));
+                Assert.assertFalse(scoreboard.acquireTxn(0, 9, 90));
+                Assert.assertTrue(scoreboard.acquireTxn(0, 10, 100));
+                scoreboard.releaseTxn(0, 10);
+            } finally {
+                Unsafe.free(address, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
         });
     }
 

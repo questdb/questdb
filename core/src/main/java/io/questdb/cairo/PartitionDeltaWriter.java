@@ -69,6 +69,15 @@ public interface PartitionDeltaWriter extends QuietCloseable {
     void initialize(TableWriter writer, int partitionIndex);
 
     /**
+     * Returns whether WAL apply may start the next transaction that can write Delta state.
+     * Implementations may use this boundary to apply back-pressure before the transaction
+     * mutates the table writer.
+     */
+    default boolean isWalApplyReady(TableWriter writer, long seqTxn) {
+        return true;
+    }
+
+    /**
      * Releases the Delta state of a removed partition version before its directory is deleted.
      * Returns false to keep the directory for the next purge pass.
      */

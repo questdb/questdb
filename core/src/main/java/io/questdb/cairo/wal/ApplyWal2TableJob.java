@@ -102,6 +102,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     private final WalEventReader walEventReader;
     private final Telemetry<TelemetryWalTask> walTelemetry;
     private final WalTelemetryFacade walTelemetryFacade;
+    private boolean isLastApplyStoppedByDeltaPressure;
     // Set by processWalCommit for the live-view dedup-base signal: true if the just-processed
     // commit's applied state diverges from its raw WAL stream (dedup / skip / non-DATA op).
     // Read once by applyOutstandingWalTransactions right after processWalCommit returns.
@@ -563,6 +564,14 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
                                 assert walId == writer.getWalTnxDetails().getWalId(seqTxn);
                                 assert segmentId == writer.getWalTnxDetails().getSegmentId(seqTxn);
+
+                                final byte walTxnType = writer.getWalTnxDetails().getWalTxnType(seqTxn);
+                                if ((walTxnType == DATA || walTxnType == MAT_VIEW_DATA)
+                                        && !writer.isDeltaWalApplyReady(seqTxn)) {
+                                    isLastApplyStoppedByDeltaPressure = true;
+                                    finishedAll = false;
+                                    break WHILE_TRANSACTION_CURSOR;
+                                }
 
                                 final int txnCommitted = processWalCommit(
                                         writer,
@@ -1190,6 +1199,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
     ) {
         final Path tempPath = Path.PATH.get();
         SeqTxnTracker txnTracker = null;
+        this.isLastApplyStoppedByDeltaPressure = false;
         this.lastAttemptSeqTxn = -1;
         try {
             // security context is checked on writing to the WAL and can be ignored here
@@ -1261,7 +1271,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                     Misc.free(writer);
                 }
                 if (engine.getTableSequencerAPI().updateWriterTxns(tableToken, writerTxn, dirtyWriterTxn)) {
-                    engine.notifyWalTxnCommitted(tableToken);
+                    if (isLastApplyStoppedByDeltaPressure) {
+                        if (queueDriven) {
+                            engine.notifyWalTxnRepublisher(tableToken);
+                        }
+                    } else {
+                        engine.notifyWalTxnCommitted(tableToken);
+                    }
                 }
             }
         } catch (Throwable ex) {
