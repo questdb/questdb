@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.cairo.vm.api.MemoryW;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -39,12 +40,16 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 import static io.questdb.cairo.TableUtils.*;
 
 public class TxReader implements Closeable, Mutable {
+    // Counts stable-version loads that fell back from a torn selected area to the other A/B area.
+    @TestOnly
+    static volatile long bodyChecksumFallbackCount = 0;
     public static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
     public static final long PARTITION_FLAGS_MASK = 0x7FFFF00000000000L;
     // Flag in the high byte of the offset-3 partition-version word: a remote copy of the
@@ -63,6 +68,15 @@ public class TxReader implements Closeable, Mutable {
     public static final long PARTITION_VERSION_FLAGS_MASK = 0xFFL << 56;
     public static final long PARTITION_VERSION_VALUE_MASK = ~PARTITION_VERSION_FLAGS_MASK;
     protected static final int NONE_COL_STRUCTURE_VERSION = Integer.MIN_VALUE;
+    // COMPOSITE re-reads the offset-3 word's VALUE field (the 56 bits under PARTITION_VERSION_VALUE_MASK) as a pointer
+    // into the partition's own _geometry.<generation> file.
+    protected static final long PARTITION_COMPOSITE_FLAG = 1L << 61;
+    protected static final int PARTITION_GEOMETRY_GENERATION_BIT_OFFSET = 24;
+    protected static final long PARTITION_GEOMETRY_GENERATION_MASK = 0x0F000000L; // bits 24-27 (4 bits)
+    protected static final int PARTITION_GEOMETRY_MAX_GENERATION = 15;
+    protected static final long PARTITION_GEOMETRY_OFFSET_MASK = 0x00FFFFFFL; // bits 0-23 (24 bits, 8-byte units)
+    // Every packed offset is this many bits narrower than the byte offset it represents.
+    protected static final int PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT = 3;
     protected static final int PARTITION_MASKED_SIZE_OFFSET = 1;
     protected static final int PARTITION_MASK_PARQUET_FORMAT_BIT_OFFSET = 61;
     protected static final int PARTITION_MASK_PARQUET_GENERATED_BIT_OFFSET = 60;
@@ -105,6 +119,7 @@ public class TxReader implements Closeable, Mutable {
     protected long columnVersion;
     protected long dataVersion;
     protected long fixedRowCount;
+    protected int geometryVersion;
     protected long lagMaxTimestamp;
     protected long lagMinTimestamp;
     protected boolean lagOrdered;
@@ -122,6 +137,9 @@ public class TxReader implements Closeable, Mutable {
     protected long truncateVersion;
     protected long txn;
     private int baseOffset;
+    // Verify once per open mapping. Ordinary reloads rely on the transaction publication protocol.
+    // A failed initial load (including A/B fallback) must not consume this check.
+    private boolean isInitialChecksumVerificationRequired = true;
     private TimestampDriver.TimestampCeilMethod partitionCeilMethod;
     private TimestampDriver.TimestampFloorMethod partitionFloorMethod;
     private int partitionSegmentSize;
@@ -140,6 +158,7 @@ public class TxReader implements Closeable, Mutable {
 
     @Override
     public void clear() {
+        requireInitialChecksumVerification();
         clearData();
         Misc.free(roTxMemBase);
     }
@@ -173,10 +192,14 @@ public class TxReader implements Closeable, Mutable {
         mem.putLong(baseOffset + TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         mem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         mem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
+        mem.putInt(baseOffset + TX_OFFSET_GEOMETRY_VERSION_32, geometryVersion);
         mem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, lagRowCount);
         mem.putLong(baseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, lagMinTimestamp);
         mem.putLong(baseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, lagMaxTimestamp);
         mem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, lagOrdered ? lagTxnCount : -lagTxnCount);
+        // A dump has no base header for the merged geometry slot, so it keeps geometryVersion in the legacy
+        // body field and clears the overlapping checksum stamp. The first commit migrates both pieces.
+        mem.putInt(baseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32, 0);
         mem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
 
         int symbolMapCount = symbolCountSnapshot.size();
@@ -210,7 +233,11 @@ public class TxReader implements Closeable, Mutable {
                 // hold the file size and are valid without the bit; leave them. The cleared 0L/-1L
                 // sentinels scrub to the canonical 0L, a no-op in meaning.
                 final int partitionIndex = i / LONGS_PER_TX_ATTACHED_PARTITION;
+                // A COMPOSITE word legitimately lacks the VALID bit - it spends the value field on
+                // its geometry pointer, not on a stamp - and scrubbing it would strand the partition's
+                // _geometry record, losing its piece layout for good. Its seqTxn lives in that record.
                 if (!isPartitionParquet(partitionIndex)
+                        && !isPartitionCompositeByRawIndex(i - PARTITION_VERSION_OFFSET)
                         && (isPartitionOffset3Cleared(value) || (value & PARTITION_SEQ_TXN_VALID_BIT) == 0)) {
                     value = 0L;
                 }
@@ -335,6 +362,10 @@ public class TxReader implements Closeable, Mutable {
     public long getNativePartitionSeqTxn(int partitionIndex) {
         assert !isPartitionParquet(partitionIndex);
         final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        if (isPartitionCompositeByRawIndex(rawIndex)) {
+            // The value field is this partition's geometry pointer, not a stamp.
+            return -1L;
+        }
         // getPartitionOffset3 folds the cleared 0L/-1L sentinels to 0 before the bit test;
         // the legacy all-ones word has bit 62 set and must not read as a valid stamp.
         if ((getPartitionOffset3(rawIndex) & PARTITION_SEQ_TXN_VALID_BIT) == 0) {
@@ -457,6 +488,10 @@ public class TxReader implements Closeable, Mutable {
         return getPartitionSquashCountByRawIndex(i * LONGS_PER_TX_ATTACHED_PARTITION);
     }
 
+    public int getGeometryVersion() {
+        return geometryVersion;
+    }
+
     public long getPartitionTableVersion() {
         return partitionTableVersion;
     }
@@ -522,6 +557,25 @@ public class TxReader implements Closeable, Mutable {
         return version;
     }
 
+    public boolean hasCompositePartitions() {
+        for (int i = 0, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
+            if (isPartitionCompositeByRawIndex(i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    @TestOnly
+    public static long getBodyChecksumFallbackCount() {
+        return bodyChecksumFallbackCount;
+    }
+
+    @TestOnly
+    public static void resetBodyChecksumFallbackCount() {
+        bodyChecksumFallbackCount = 0;
+    }
+
     public boolean hasParquetPartitions() {
         for (int i = 0, n = attachedPartitions.size(); i < n; i += LONGS_PER_TX_ATTACHED_PARTITION) {
             if (isPartitionParquetByRawIndex(i)) {
@@ -545,11 +599,108 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public void initRO(MemoryMR txnFile) {
+        requireInitialChecksumVerification();
         this.roTxMemBase = txnFile;
     }
 
     public boolean isLagOrdered() {
         return lagOrdered;
+    }
+
+    /**
+     * The {@code _geometry.<generation>} file a slot-3 geometry pointer names.
+     */
+    public static int geometryGeneration(long geometryRef) {
+        return (int) ((geometryRef & PARTITION_GEOMETRY_GENERATION_MASK) >>> PARTITION_GEOMETRY_GENERATION_BIT_OFFSET);
+    }
+
+    public static long geometryOffset(long geometryRef) {
+        return (geometryRef & PARTITION_GEOMETRY_OFFSET_MASK) << PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT;
+    }
+
+    /**
+     * Whether the {@code _txn} image of {@code size} bytes at {@code addr} lists the partition version, in the area
+     * its version word selects. The partition table is sorted by timestamp, as {@link TxWriter} keeps it. An image
+     * too short for that area, or whose partition table is not a whole number of entries, counts as listing it.
+     */
+    public static boolean imageListsPartition(long addr, long size, long partitionTimestamp, long partitionNameTxn) {
+        if (size < TX_BASE_HEADER_SIZE) {
+            return true;
+        }
+        final boolean isA = (Unsafe.getUnsafe().getLong(addr + TX_BASE_OFFSET_VERSION_64) & 1) == 0;
+        final long baseOffset = Unsafe.getUnsafe().getInt(addr + (isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32));
+        final int symbolsSize = Unsafe.getUnsafe().getInt(addr + (isA ? TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 : TX_BASE_OFFSET_SYMBOLS_SIZE_B_32));
+        final int partitionsSize = Unsafe.getUnsafe().getInt(addr + (isA ? TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 : TX_BASE_OFFSET_PARTITIONS_SIZE_B_32));
+        final long lo = baseOffset + getPartitionTableSizeOffset(symbolsSize / Long.BYTES) + Integer.BYTES;
+        final int entryBytes = LONGS_PER_TX_ATTACHED_PARTITION * Long.BYTES;
+        if (baseOffset < 0 || symbolsSize < 0 || partitionsSize < 0 || partitionsSize % entryBytes != 0 || lo + partitionsSize > size) {
+            return true;
+        }
+        // Lower bound: the first entry whose timestamp is not below the one sought.
+        final long tableAddr = addr + lo;
+        int low = 0;
+        int high = partitionsSize / entryBytes;
+        while (low < high) {
+            final int mid = (low + high) >>> 1;
+            if (Unsafe.getUnsafe().getLong(tableAddr + (long) mid * entryBytes + PARTITION_TS_OFFSET * Long.BYTES) < partitionTimestamp) {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        for (long p = tableAddr + (long) low * entryBytes, hi = tableAddr + partitionsSize;
+             p < hi && Unsafe.getUnsafe().getLong(p + PARTITION_TS_OFFSET * Long.BYTES) == partitionTimestamp;
+             p += entryBytes) {
+            if (Unsafe.getUnsafe().getLong(p + PARTITION_NAME_TX_OFFSET * Long.BYTES) == partitionNameTxn) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Packs a slot-3 geometry pointer from its components.
+     *
+     * @param byteOffset must be 8-byte aligned, as every real geometry record start is
+     */
+    @TestOnly
+    public static long packGeometryRef(int generation, long byteOffset) {
+        assert generation >= 0 && generation <= PARTITION_GEOMETRY_MAX_GENERATION : "generation out of range";
+        assert (byteOffset & ((1L << PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT) - 1)) == 0 : "byteOffset must be 8-byte aligned";
+        final long packedOffset = byteOffset >>> PARTITION_GEOMETRY_OFFSET_UNIT_SHIFT;
+        assert (packedOffset & ~PARTITION_GEOMETRY_OFFSET_MASK) == 0 : "byteOffset out of range";
+        return PARTITION_COMPOSITE_FLAG
+                | ((long) generation << PARTITION_GEOMETRY_GENERATION_BIT_OFFSET)
+                | packedOffset;
+    }
+
+    public long getGeometryRef(int partitionIndex) {
+        final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        if (!isPartitionCompositeByRawIndex(rawIndex)) {
+            // -1 is the "no committed geometry record yet" sentinel that starts a chain at offset 0 of the first
+            // generation with no file in the directory - see PartitionGeometry#publish.
+            return -1L;
+        }
+        // Strip the flags that are not ours - REMOTE and SEQ_TXN_VALID share this word - so a ref only
+        // ever carries COMPOSITE, its generation and its offset.
+        return getPartitionOffset3(rawIndex)
+                & (PARTITION_COMPOSITE_FLAG | PARTITION_GEOMETRY_GENERATION_MASK | PARTITION_GEOMETRY_OFFSET_MASK);
+    }
+
+    /**
+     * Whether the partition is composite - has a {@code _geometry} record to resolve.
+     */
+    public boolean isPartitionComposite(int partitionIndex) {
+        return isPartitionCompositeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+    }
+
+    public boolean isPartitionCompositeByRawIndex(int indexRaw) {
+        if (isPartitionParquetByRawIndex(indexRaw) || isPartitionParquetGeneratedByRawIndex(indexRaw)) {
+            return false;
+        }
+        // getPartitionOffset3 folds the cleared 0L/-1L sentinels to 0, so a legacy all-ones word
+        // (which has bit 61 set) never reads as composite.
+        return (getPartitionOffset3(indexRaw) & PARTITION_COMPOSITE_FLAG) != 0;
     }
 
     public boolean isPartitionParquet(int i) {
@@ -634,6 +785,7 @@ public class TxReader implements Closeable, Mutable {
         this.structureVersion = srcReader.structureVersion;
         this.dataVersion = srcReader.dataVersion;
         this.partitionTableVersion = srcReader.partitionTableVersion;
+        this.geometryVersion = srcReader.geometryVersion;
         this.columnVersion = srcReader.columnVersion;
         this.truncateVersion = srcReader.truncateVersion;
         this.seqTxn = srcReader.seqTxn;
@@ -707,6 +859,7 @@ public class TxReader implements Closeable, Mutable {
         sink.put("', dataVersion: ").put(dataVersion);
         sink.put(", structureVersion: ").put(structureVersion);
         sink.put(", partitionTableVersion: ").put(partitionTableVersion);
+        sink.put(", geometryVersion: ").put(geometryVersion);
         sink.put(", columnVersion: ").put(columnVersion);
         sink.put(", truncateVersion: ").put(truncateVersion);
         sink.put(", seqTxn: ").put(seqTxn);
@@ -723,36 +876,43 @@ public class TxReader implements Closeable, Mutable {
     }
 
     public boolean unsafeLoadAll() {
-        if (unsafeLoadBaseOffset()) {
-            txn = version;
-            if (txn != getLong(TX_OFFSET_TXN_64)) {
-                return false;
+        if (unsafeReadLiveAreaGeometry()) {
+            final long selectedVersion = version;
+            final int liveBaseOffset = baseOffset;
+            final long liveSize = size;
+            if (isInitialChecksumVerificationRequired) {
+                // A prior row-count-only read or copied snapshot is not initial integrity validation.
+                partitionTableVersion = -1;
+                attachedPartitionsSize = -1;
             }
-
-            transientRowCount = getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
-            fixedRowCount = getLong(TX_OFFSET_FIXED_ROW_COUNT_64);
-            minTimestamp = getLong(TX_OFFSET_MIN_TIMESTAMP_64);
-            maxTimestamp = getLong(TX_OFFSET_MAX_TIMESTAMP_64);
-            dataVersion = getLong(TX_OFFSET_DATA_VERSION_64);
-            structureVersion = getLong(TX_OFFSET_STRUCT_VERSION_64);
-            final long prevPartitionTableVersion = partitionTableVersion;
-            partitionTableVersion = getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION_64);
-            final long prevColumnVersion = this.columnVersion;
-            columnVersion = unsafeReadColumnVersion();
-            truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
-            seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
-            symbolColumnCount = symbolsSize / Long.BYTES;
-            lagRowCount = getInt(TX_OFFSET_LAG_ROW_COUNT_32);
-            lagMinTimestamp = getLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64);
-            lagMaxTimestamp = getLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64);
-            int lagTxnCountRaw = getInt(TX_OFFSET_LAG_TXN_COUNT_32);
-            lagTxnCount = Math.abs(lagTxnCountRaw);
-            lagOrdered = lagTxnCountRaw > -1;
-            unsafeLoadSymbolCounts(symbolColumnCount);
-            unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
-            Unsafe.loadFence();
-            if (version == unsafeReadVersion()) {
-                return true;
+            if (unsafeMapArea(baseOffset, size)
+                    && unsafeLoadAreaFields()
+                    && (!isInitialChecksumVerificationRequired || unsafeVerifyBodyChecksum())) {
+                Unsafe.loadFence();
+                if (selectedVersion == unsafeReadVersion()) {
+                    isInitialChecksumVerificationRequired = false;
+                    return true;
+                }
+            } else {
+                Unsafe.loadFence();
+                if (selectedVersion == unsafeReadVersion()) {
+                    // Stable version with a torn selected area: try the settled previous A/B record.
+                    //noinspection NonAtomicOperationOnVolatileField
+                    bodyChecksumFallbackCount++;
+                    final boolean otherOk = unsafeLoadAndVerifyOtherArea(selectedVersion);
+                    Unsafe.loadFence();
+                    if (selectedVersion == unsafeReadVersion()) {
+                        if (otherOk) {
+                            return true;
+                        }
+                        clearData();
+                        throw CairoException.critical(0)
+                                .put("_txn body checksum mismatch in both A and B areas [baseOffset=").put(liveBaseOffset)
+                                .put(", size=").put(liveSize)
+                                .put(", version=").put(selectedVersion)
+                                .put(']');
+                    }
+                }
             }
         }
 
@@ -760,26 +920,178 @@ public class TxReader implements Closeable, Mutable {
         return false;
     }
 
-    public boolean unsafeLoadBaseOffset() {
-        version = unsafeReadVersion();
-        Unsafe.loadFence();
-
-        boolean isA = (version & 1) == 0;
-        baseOffset = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_B_32);
-        symbolsSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
-        partitionSegmentSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
-
-        // Before extending file, check that values read are not dirty
-        Unsafe.loadFence();
-        if (unsafeReadVersion() != version) {
+    /**
+     * Loads all fields, symbol counts and partitions for the area currently described by
+     * {@link #baseOffset}/{@link #symbolsSize}/{@link #partitionSegmentSize}/{@link #size}/{@link #version}
+     * into {@code this}. Returns {@code false} if the area fails its internal txn guard
+     * (stored txn != version), which indicates a torn/garbage area.
+     */
+    private boolean unsafeLoadAreaFields() {
+        txn = version;
+        if (txn != getLong(TX_OFFSET_TXN_64)) {
             return false;
         }
 
-        size = calculateTxRecordSize(symbolsSize, partitionSegmentSize);
-        if (size + baseOffset > roTxMemBase.size()) {
-            roTxMemBase.extend(size + baseOffset);
+        transientRowCount = getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
+        fixedRowCount = getLong(TX_OFFSET_FIXED_ROW_COUNT_64);
+        minTimestamp = getLong(TX_OFFSET_MIN_TIMESTAMP_64);
+        maxTimestamp = getLong(TX_OFFSET_MAX_TIMESTAMP_64);
+        dataVersion = getLong(TX_OFFSET_DATA_VERSION_64);
+        structureVersion = getLong(TX_OFFSET_STRUCT_VERSION_64);
+        final long prevPartitionTableVersion = partitionTableVersion;
+        partitionTableVersion = getLong(TableUtils.TX_OFFSET_PARTITION_TABLE_VERSION_64);
+        final long prevColumnVersion = this.columnVersion;
+        columnVersion = unsafeReadColumnVersion();
+        truncateVersion = getLong(TableUtils.TX_OFFSET_TRUNCATE_VERSION_64);
+        seqTxn = getLong(TX_OFFSET_SEQ_TXN_64);
+        geometryVersion = unsafeReadGeometryVersion();
+        if (geometryVersion < 0) {
+            return false;
         }
+        symbolColumnCount = symbolsSize / Long.BYTES;
+        lagRowCount = getInt(TX_OFFSET_LAG_ROW_COUNT_32);
+        lagMinTimestamp = getLong(TX_OFFSET_LAG_MIN_TIMESTAMP_64);
+        lagMaxTimestamp = getLong(TX_OFFSET_LAG_MAX_TIMESTAMP_64);
+        int lagTxnCountRaw = getInt(TX_OFFSET_LAG_TXN_COUNT_32);
+        lagTxnCount = Math.abs(lagTxnCountRaw);
+        lagOrdered = lagTxnCountRaw > -1;
+        unsafeLoadSymbolCounts(symbolColumnCount);
+        unsafeLoadPartitions(prevPartitionTableVersion, prevColumnVersion, partitionSegmentSize);
         return true;
+    }
+
+    /**
+     * Points the geometry at the other A/B area (the previous commit) and loads and verifies it: the fallback
+     * when the selected area is torn under a stable version. Forces a full partition reload, since the failed
+     * load may have left the partition list partial. Returns true only if the other area loads and its body
+     * checksum matches, or its stamp is absent or stale. Call it only after confirming the version is stable,
+     * so the other area is the settled previous commit, not one the writer is writing.
+     */
+    private boolean unsafeLoadAndVerifyOtherArea(long selectedVersion) {
+        // Recovering the previous area does not validate the live one. Keep checking until a stable,
+        // valid live record loads, even if the fallback itself succeeds.
+        requireInitialChecksumVerification();
+        // The selected area used slot (selectedVersion & 1); the prior commit lives in the opposite slot
+        // and carries selectedVersion - 1. Re-point geometry at it.
+        boolean otherIsA = (selectedVersion & 1) != 0;
+        long otherBaseOffset = otherIsA ? roTxMemBase.getInt(TX_BASE_OFFSET_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_B_32);
+        int otherSymbolsSize = otherIsA ? roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
+        int otherPartitionSegmentSize = otherIsA ? roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
+        long otherSize = calculateTxRecordSize(otherSymbolsSize, otherPartitionSegmentSize);
+        // The load mapped the file only up to the end of the live area. Once a table has enough partitions,
+        // the previous area lies past it, so map it too: skipping it would call an intact record torn.
+        if (!unsafeMapArea(otherBaseOffset, otherSize)) {
+            return false;
+        }
+
+        baseOffset = (int) otherBaseOffset;
+        symbolsSize = otherSymbolsSize;
+        partitionSegmentSize = otherPartitionSegmentSize;
+        size = otherSize;
+        // The prior commit's txn equals its version (selectedVersion - 1); unsafeLoadAreaFields uses `version`
+        // for its stored-txn guard.
+        version = selectedVersion - 1;
+        // Force a full partition reload: the failed primary load may have left attachedPartitions partial.
+        partitionTableVersion = -1;
+        attachedPartitionsSize = -1;
+
+        return unsafeLoadAreaFields() && unsafeVerifyBodyChecksum();
+    }
+
+    /**
+     * Verifies the complete commit-immutable body on first open and A/B fallback. Live reader reloads
+     * use the transaction publication protocol without continuous corruption detection.
+     * {@link #unsafeIsLiveAreaTorn()} also performs full verification for explicit diagnosis.
+     * <p>
+     * A missing or stale stamp leaves the record unverified. A matching stamp names both this record and
+     * its checksum coverage; a zero or mismatched checksum then means tearing, not legacy data.
+     * <p>
+     * Race-free with concurrent writers: every covered byte and the stamp changes only ahead of a version
+     * bump, and the caller re-checks the version after this returns.
+     */
+    private boolean unsafeVerifyBodyChecksum() {
+        // The stamp decides. If it does not name this record, no checksum was written for it (a released
+        // record), so the slot says nothing about it. If it does, a checksum was written, and a zero or wrong
+        // slot is a torn write.
+        if (!unsafeChecksumStampNamesThisRecord(baseOffset, roTxMemBase.getLong(baseOffset + TX_OFFSET_TXN_64))) {
+            return true;
+        }
+        return roTxMemBase.getLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64) == calculateTxnBodyChecksum(
+                roTxMemBase.addressOf(baseOffset),
+                size,
+                getPartitionTableSizeOffset(symbolColumnCount)
+        );
+    }
+
+    /**
+     * True when the checksum slot at {@code areaBaseOffset} was written for the record now occupying that
+     * area. A released record never wrote the slot, see {@link TableUtils#TX_BODY_CHECKSUM_STAMP_XOR}.
+     * <p>
+     * 0 remains the "no stamp" sentinel for legacy and freshly reset records. One txn in 2^32 therefore
+     * goes unverified, when its encoded stamp is zero.
+     */
+    private boolean unsafeChecksumStampNamesThisRecord(long areaBaseOffset, long areaTxn) {
+        final int stamp = roTxMemBase.getInt(areaBaseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32);
+        return stamp != 0 && (stamp == ((int) areaTxn ^ TX_BODY_CHECKSUM_STAMP_XOR)
+                || stamp == ((int) areaTxn ^ TX_BODY_CHECKSUM_LEGACY_STAMP_XOR));
+    }
+
+    /**
+     * Diagnosis for a reader that has already given up: is the version-selected (live) A/B area of {@code _txn}
+     * torn? True when that area fails its internal txn guard or its body checksum <i>under a version that does
+     * not move across the check</i>, the standard {@link #unsafeLoadAll()} uses to tell genuine tearing
+     * from a concurrent commit. A moving version means contention, and this returns false.
+     * <p>
+     * A torn live area is not a dead end for {@code unsafeLoadAll()}: it falls back to the intact previous area
+     * and returns that. But the previous area carries the previous txn, which a live scoreboard refuses, so the
+     * caller's retry loop cannot make progress and times out looking like contention. Callers use this on their
+     * deadline path to name the corruption instead.
+     * <p>
+     * Touches none of the load state, so a caller may use it on an in-use reader. Like a load, it may grow the
+     * mapping to reach the live area. The healthy path never calls it.
+     */
+    public boolean unsafeIsLiveAreaTorn() {
+        final long selectedVersion = unsafeReadVersion();
+        Unsafe.loadFence();
+
+        final boolean isA = (selectedVersion & 1) == 0;
+        final long areaBaseOffset = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_B_32);
+        final int areaSymbolsSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
+        final int areaPartitionSegmentSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
+        final long areaSize = calculateTxRecordSize(areaSymbolsSize, areaPartitionSegmentSize);
+
+        final boolean intact;
+        if (!unsafeMapArea(areaBaseOffset, areaSize)) {
+            // The header's own geometry does not fit the file: torn, and not something to read further. The
+            // file length decides, not this reader's mapping: a commit since the last load can move the live
+            // area past the mapping, and that area is not torn.
+            intact = false;
+        } else if (roTxMemBase.getLong(areaBaseOffset + TX_OFFSET_TXN_64) != selectedVersion) {
+            intact = false;
+        } else if (unsafeReadGeometryVersion(areaBaseOffset, selectedVersion) < 0) {
+            // The load path rejects a checksummed record whose geometry stamp names another txn; agree with it.
+            intact = false;
+        } else {
+            // Explicit diagnosis checks the full body even after initial verification has completed.
+            intact = !unsafeChecksumStampNamesThisRecord(areaBaseOffset, selectedVersion)
+                    || roTxMemBase.getLong(areaBaseOffset + TX_OFFSET_BODY_CHECKSUM_64) == calculateTxnBodyChecksum(
+                    roTxMemBase.addressOf(areaBaseOffset),
+                    areaSize,
+                    getPartitionTableSizeOffset(areaSymbolsSize / Long.BYTES)
+            );
+        }
+
+        Unsafe.loadFence();
+        // Only a mismatch under a stable version is tearing; if the version moved, a writer was mid-commit.
+        return !intact && selectedVersion == unsafeReadVersion();
+    }
+
+    /**
+     * Selects the version-selected area and maps it. Returns false when the version moves while its geometry
+     * is read, and also when that geometry points past the end of the file, which only a crash leaves behind.
+     */
+    public boolean unsafeLoadBaseOffset() {
+        return unsafeReadLiveAreaGeometry() && unsafeMapArea(baseOffset, size);
     }
 
     public long unsafeLoadRowCount() {
@@ -807,6 +1119,46 @@ public class TxReader implements Closeable, Mutable {
 
     public long unsafeReadColumnVersion() {
         return getLong(TX_OFFSET_COLUMN_VERSION_64);
+    }
+
+    private int unsafeReadGeometryVersion() {
+        return unsafeReadGeometryVersion(baseOffset, txn);
+    }
+
+    /**
+     * The geometry version of the record at {@code areaBaseOffset}, whose txn (equal to the version that
+     * selects it, so also its A/B slot parity) is {@code areaTxn}. Returns -1 for a record that carries a
+     * body-checksum stamp but whose base-header geometry slot does not name it: every publication of an
+     * area stamps both, so that is tearing. Every other record yields a value in [0, Integer.MAX_VALUE], so a
+     * negative result means tearing and nothing else. Touches no load state.
+     */
+    private int unsafeReadGeometryVersion(long areaBaseOffset, long areaTxn) {
+        final boolean isA = (areaTxn & 1) == 0;
+        final long geometryOffset = isA
+                ? TX_BASE_OFFSET_GEOMETRY_VERSION_A_32
+                : TX_BASE_OFFSET_GEOMETRY_VERSION_B_32;
+        final long stampOffset = isA
+                ? TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32
+                : TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32;
+        final int stamp = roTxMemBase.getInt(stampOffset);
+        if (stamp != 0 && stamp == ((int) areaTxn ^ TX_GEOMETRY_VERSION_STAMP_XOR)) {
+            return roTxMemBase.getInt(geometryOffset);
+        }
+        final int bodyStamp = roTxMemBase.getInt(areaBaseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32);
+        if (bodyStamp != 0 && bodyStamp == ((int) areaTxn ^ TX_BODY_CHECKSUM_STAMP_XOR)) {
+            // A merged-format record must have a matching base-header geometry slot. Treat its absence as tearing.
+            return -1;
+        }
+        // A pre-merge adaptive record has the legacy body-checksum stamp and no geometry field.
+        if (bodyStamp != 0 && bodyStamp == ((int) areaTxn ^ TX_BODY_CHECKSUM_LEGACY_STAMP_XOR)) {
+            return 0;
+        }
+        // A record without a stamp keeps geometryVersion in the legacy body slot, which only 10.1.0 writes. Older
+        // releases never write [116,128), so their records hold stale bytes of an older, overlapping record there
+        // (often -1, the low word of an unset lagMinTimestamp), and 10.1.0 copies whatever it loaded into every
+        // later record. The value only keys the composite geometry cache, and the first commit moves it into the
+        // stamped base-header slot, so fold a negative value to 0 instead of reading it as tearing.
+        return Math.max(0, roTxMemBase.getInt(areaBaseOffset + TX_OFFSET_GEOMETRY_VERSION_32));
     }
 
     public int unsafeReadSymbolColumnCount() {
@@ -933,6 +1285,51 @@ public class TxReader implements Closeable, Mutable {
         }
     }
 
+    /**
+     * Extends the mapping to cover the A/B area at {@code [areaOffset, areaOffset + areaSize)}. Returns false,
+     * mapping nothing, when the area overlaps the header or reaches a page that lies wholly past the end of
+     * the file. The geometry comes from the header page, which a crash can make durable before the file grows
+     * to hold the area, and a read-only mapping faults on the first touch of such a page. The tail of the last
+     * page reads as zeros, as it always has. Only a growing mapping asks the file system for the length.
+     */
+    private boolean unsafeMapArea(long areaOffset, long areaSize) {
+        if (areaOffset < TX_BASE_HEADER_SIZE || areaSize < TX_RECORD_HEADER_SIZE) {
+            return false;
+        }
+        final long areaEnd = areaOffset + areaSize;
+        if (areaEnd > roTxMemBase.size()) {
+            if (areaEnd > Files.ceilPageSize(ff.length(roTxMemBase.getFd()))) {
+                return false;
+            }
+            roTxMemBase.extend(areaEnd);
+        }
+        return true;
+    }
+
+    /**
+     * Reads the version word and the geometry of the area it selects into {@link #version}, {@link #baseOffset},
+     * {@link #symbolsSize}, {@link #partitionSegmentSize} and {@link #size}. Returns false when the version
+     * moved while the geometry was read. Maps nothing: see {@link #unsafeMapArea(long, long)}.
+     */
+    private boolean unsafeReadLiveAreaGeometry() {
+        version = unsafeReadVersion();
+        Unsafe.loadFence();
+
+        boolean isA = (version & 1) == 0;
+        baseOffset = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_B_32);
+        symbolsSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_SYMBOLS_SIZE_B_32);
+        partitionSegmentSize = isA ? roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32) : roTxMemBase.getInt(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32);
+
+        // Before mapping the area, check that values read are not dirty
+        Unsafe.loadFence();
+        if (unsafeReadVersion() != version) {
+            return false;
+        }
+
+        size = calculateTxRecordSize(symbolsSize, partitionSegmentSize);
+        return true;
+    }
+
     static int findPartitionRawIndex(LongList attachedPartitions, long partitionTimestamp) {
         return attachedPartitions.binarySearchBlock(LONGS_PER_TX_ATTACHED_PARTITION_MSB, partitionTimestamp, Vect.BIN_SEARCH_SCAN_UP);
     }
@@ -950,9 +1347,11 @@ public class TxReader implements Closeable, Mutable {
     }
 
     void clearData() {
+        // Clearing a raced snapshot does not reopen the mapping or require another integrity scan.
         baseOffset = 0;
         size = 0;
         partitionTableVersion = -1;
+        geometryVersion = -1;
         attachedPartitionsSize = -1;
         attachedPartitions.clear();
         version = -1;
@@ -1000,9 +1399,31 @@ public class TxReader implements Closeable, Mutable {
         attachedPartitions.setQuick(index + PARTITION_VERSION_OFFSET, 0L);
     }
 
+    /**
+     * True when the loaded record carries a checksum stamp that names it, so the load verified its body
+     * checksum rather than skipping it. A record without one loads unverified, as legacy records do.
+     */
+    protected boolean isLoadedRecordChecksumVerified() {
+        return unsafeChecksumStampNamesThisRecord(baseOffset, txn);
+    }
+
+    protected void requireInitialChecksumVerification() {
+        isInitialChecksumVerificationRequired = true;
+    }
+
     protected void switchRecord(int readBaseOffset, long readRecordSize) {
         baseOffset = readBaseOffset;
         size = readRecordSize;
+    }
+
+    /**
+     * Loads the record in the other A/B area, the one published just before the live record, in place of the
+     * live record, which may be intact. Returns false when that record fails to load or its checksum does not
+     * match; a record without a checksum stamp loads unverified, see {@link #isLoadedRecordChecksumVerified()}.
+     * For an exclusive owner of the file only: it does not bracket the load with version checks.
+     */
+    protected boolean unsafeLoadPreviousArea() {
+        return unsafeReadLiveAreaGeometry() && unsafeLoadAndVerifyOtherArea(version);
     }
 
     protected long unsafeReadFixedRowCount() {

@@ -31,11 +31,13 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
+import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
@@ -74,6 +76,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.WorkerPool;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
@@ -106,6 +109,8 @@ import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.engine.join.AsOfJoinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.griffin.CustomisableRunnable;
+import io.questdb.test.tools.CompositePartitionRandomiser;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -150,6 +155,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
+    protected static boolean isCompositePartitionRandomisationEnabled;
     protected static MessageBus messageBus;
     protected static QuestDBTestNode node1;
     protected static ObjList<QuestDBTestNode> nodes = new ObjList<>();
@@ -245,7 +251,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     public static void executeWithRewriteTimestamp(CharSequence sqlText, String timestampType) throws SqlException {
         sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType);
-        engine.execute(sqlText, sqlExecutionContext);
+        execute(sqlText, sqlExecutionContext);
     }
 
     //ignores:
@@ -435,6 +441,8 @@ public abstract class AbstractCairoTest extends AbstractTest {
         super.setUp();
         previousSuspensionMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
         SharedRandom.RANDOM.set(new Rnd());
+        isCompositePartitionRandomisationEnabled = false;
+        CompositePartitionRandomiser.clear();
         engine.getViewStateStore().clear();
         forEachNode(QuestDBTestNode::setUpCairo);
         engine.resetNameRegistryMemory();
@@ -455,6 +463,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sqlExecutionContext.setJitMode(classJitMode);
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
         sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
+        sqlExecutionContext.setParallelHashJoinGroupByEnabled(configuration.isSqlParallelHashJoinGroupByEnabled());
         sqlExecutionContext.setParallelTopKEnabled(configuration.isSqlParallelTopKEnabled());
         sqlExecutionContext.setParallelWindowJoinEnabled(configuration.isSqlParallelWindowJoinEnabled());
         sqlExecutionContext.setParallelHorizonJoinEnabled(configuration.isSqlParallelHorizonJoinEnabled());
@@ -700,8 +709,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static void assertMemoryLeak(@Nullable FilesFacade ff, TestUtils.LeakProneCode code) throws Exception {
         final FilesFacade ff2 = ff;
         final FilesFacade ffBefore = AbstractCairoTest.ff;
+        // The engine's pooled frame columns capture the FilesFacade they were built with and outlive the test, so a
+        // facade installed here must get a pool of its own, or a column built under an earlier test's facade flushes
+        // through that one: a crash model then never sees the flush and rolls the file back. The same the other way
+        // round once the facade is taken away, so no later test writes through this one.
+        final boolean swapsFilesFacade = ff2 != ffBefore;
         TestUtils.assertMemoryLeak(() -> {
             AbstractCairoTest.ff = ff2;
+            if (swapsFilesFacade) {
+                forEachNode(node -> node.getEngine().resetFrameFactory());
+            }
             Throwable th1 = null;
             try {
                 try {
@@ -731,6 +748,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
                     });
                     forEachNode(node -> node.getEngine().clear());
                     AbstractCairoTest.ff = ffBefore;
+                    if (swapsFilesFacade) {
+                        forEachNode(node -> node.getEngine().resetFrameFactory());
+                    }
                     if (!leakSink.isEmpty()) {
                         final AssertionError leakErr = new AssertionError(
                                 "test leaked unreleased resources " + leakSink
@@ -855,16 +875,56 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    /**
+     * Opts this test out of composite partition randomisation, for a test whose assertions the
+     * round-trip cannot be made compatible with - one that renames, drops or swaps the table it
+     * asserts on, say, where the transaction the round-trip commits cannot be subtracted back out
+     * by a single per-table offset. Call it from the test body.
+     */
+    protected static void disableCompositePartitionRandomisation() {
+        isCompositePartitionRandomisationEnabled = false;
+        // Put WAL back the way the test-harness default has it. The sweep is what drains the WAL
+        // queue, so leaving WAL tables on with the sweep off would hand the test tables whose rows
+        // are still sitting in the WAL.
+        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "false");
+    }
+
+    /**
+     * Gives every WAL table this test creates a genuine composite partition, with no change
+     * to the table's logical content - see {@link CompositePartitionRandomiser}. Also turns
+     * on the two settings the round-trip needs: WAL tables, because REPLACE RANGE only
+     * exists on that path, and merge-append, because that is what leaves a cut range as
+     * pieces rather than a whole-partition rewrite. Call it from {@code setUp()}, after
+     * {@code super.setUp()}.
+     */
+    protected static void enableCompositePartitionRandomisation() {
+        isCompositePartitionRandomisationEnabled = true;
+        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "true");
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+    }
+
+    /**
+     * Flips a 50% coin over {@link #enableCompositePartitionRandomisation()}.
+     */
+    protected static void enableCompositePartitionRandomisation(Rnd rnd) {
+        if (rnd.nextBoolean()) {
+            enableCompositePartitionRandomisation();
+        }
+    }
+
     protected static void execute(CharSequence sqlText) throws SqlException {
         engine.execute(sqlText, sqlExecutionContext);
+        randomiseCompositePartitions(sqlExecutionContext, sqlText);
     }
 
     protected static void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext) throws SqlException {
         engine.execute(sqlText, sqlExecutionContext);
+        randomiseCompositePartitions(sqlExecutionContext, sqlText);
     }
 
     protected static void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
         engine.execute(sqlText, sqlExecutionContext, eventSubSeq);
+        randomiseCompositePartitions(sqlExecutionContext, sqlText);
     }
 
     protected static void execute(SqlCompiler compiler, CharSequence ddl) throws SqlException {
@@ -873,12 +933,31 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void execute(SqlCompiler compiler, CharSequence sqlText, SqlExecutionContext sqlExecutionContext) throws SqlException {
         CairoEngine.execute(compiler, sqlText, sqlExecutionContext, null);
+        randomiseCompositePartitions(sqlExecutionContext, sqlText);
     }
 
     protected static void execute(CharSequence ddlSql, SqlExecutionContext sqlExecutionContext, boolean fullFatJoins) throws SqlException {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoins);
             execute(compiler, ddlSql, sqlExecutionContext);
+        }
+    }
+
+    /**
+     * Runs {@code runnable} on its own ad-hoc {@link CairoEngine} bound to {@code pool}, same as a
+     * plain {@link TestUtils#execute} call, except the shared engine's table-registry lock is
+     * released first so the ad-hoc engine can create WAL tables of its own (the registry lock is
+     * otherwise held for the whole class's lifetime, and a second engine without it can open and
+     * query existing tables fine but fails on CREATE TABLE with "table registry is not locked").
+     * Restores the shared engine's own view of the registry afterward, so later code in the same
+     * test - and {@code @After} teardown - see whatever the ad-hoc engine created.
+     */
+    protected static void executeWithPool(WorkerPool pool, CustomisableRunnable runnable) throws Exception {
+        engine.closeNameRegistry();
+        try {
+            TestUtils.execute(pool, runnable, configuration, LOG);
+        } finally {
+            engine.reloadTableNames();
         }
     }
 
@@ -967,6 +1046,21 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    /**
+     * Sweeps {@code engine}, whichever engine that is - {@link QueryAssertion} may carry its own.
+     */
+    protected static void randomiseCompositePartitions(CairoEngine engine, SqlExecutionContext executionContext) {
+        if (isCompositePartitionRandomisationEnabled) {
+            CompositePartitionRandomiser.sweep(engine, executionContext);
+        }
+    }
+
+    protected static void randomiseCompositePartitions(SqlExecutionContext executionContext, CharSequence sqlText) {
+        if (isCompositePartitionRandomisationEnabled) {
+            CompositePartitionRandomiser.sweepAfter(engine, executionContext, sqlText);
+        }
+    }
+
     protected static void releaseInactive(CairoEngine engine) {
         engine.releaseInactive();
         engine.releaseInactiveTableSequencers();
@@ -978,6 +1072,29 @@ public abstract class AbstractCairoTest extends AbstractTest {
         engine.getMemoryTrackerProvider().clear();
         Assert.assertEquals("busy writer count", 0, engine.getBusyWriterCount());
         Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
+    }
+
+    /**
+     * Lets partition housekeeping that deletes or shortens files (MAKE-PLAIN, a retired geometry generation's
+     * purge, a superseded directory's removal) run now, whatever commit mode the suite runs under. Under
+     * ADAPTIVE those steps wait until no save point names the files, a superseded directory until neither
+     * save-point generation lists it, so this takes two save points on the table and then drains the partition
+     * purge job, which is where an enrolled writer sends a directory it could not remove inline; under every
+     * other mode it does nothing, and the test asserts what master wrote it to assert. Call it before draining
+     * a purge job of your own or asserting that a compaction ran. A fold that only appends needs no save point.
+     */
+    protected static void releaseSavePointHolds(CharSequence tableName) {
+        if (engine.getResolvedCommitMode() != CommitMode.ADAPTIVE) {
+            return;
+        }
+        try (TableWriter writer = getWriter(tableName)) {
+            for (int i = 0; i < 2; i++) {
+                writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+            }
+        }
+        try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
+            purgeJob.drain(0);
+        }
     }
 
     protected static void replicate(String tableName, String wal, QuestDBTestNode srcNode, QuestDBTestNode dstNode) {

@@ -2601,6 +2601,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @Nullable WalWriter walWriter,
             @NotNull Throwable th
     ) {
+        // Do not turn a fatal flush failure into a view invalidation and a later fence refusal.
+        engine.handleDataSyncFailure(th);
         errorMsgSink.clear();
         if (th instanceof Sinkable) {
             ((Sinkable) th).toSink(errorMsgSink);

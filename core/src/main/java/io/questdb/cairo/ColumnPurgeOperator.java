@@ -47,6 +47,21 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class ColumnPurgeOperator implements Closeable {
+    /**
+     * {@link #readGeometryGenerationFirstWriterTxn} read the record at offset 0 of {@code _geometry.<generation>}
+     * and it does not verify: wrong magic, wrong piece count, or a checksum that does not match. A reader names a
+     * record by {@code (generation, offset)} out of a {@code _txn} that committed it, and a generation's first
+     * record goes to offset 0, so a record that does not verify at offset 0 is one no reader can resolve - the file
+     * is safe to remove.
+     */
+    private static final long GEOMETRY_GENERATION_DOES_NOT_VERIFY = Long.MIN_VALUE;
+    /**
+     * {@link #readGeometryGenerationFirstWriterTxn} could not read the record at offset 0 of
+     * {@code _geometry.<generation>} at all: the open or the read failed at the OS level. The purge may conclude
+     * NOTHING about the file from this - neither which incarnation of the generation is on disk nor who resolves it -
+     * so it leaves the file alone and retries the note later.
+     */
+    private static final long GEOMETRY_GENERATION_UNREADABLE = Long.MAX_VALUE;
     private static final Log LOG = LogFactory.getLog(ColumnPurgeOperator.class);
     private final LongList completedRowIds = new LongList();
     private final CairoEngine engine;
@@ -59,6 +74,7 @@ public class ColumnPurgeOperator implements Closeable {
     private final SealedPostingFileScanProbe sealedPostingFileScanProbe = new SealedPostingFileScanProbe();
     private final String updateCompleteColumnName;
     private final int updateCompleteColumnWriterIndex;
+    private boolean isLastPurgeHeldByEpoch;
     private long longBytes;
     private int pathTableLen;
     private long purgeLogPartitionFd = -1;
@@ -120,6 +136,14 @@ public class ColumnPurgeOperator implements Closeable {
         txnScoreboard = Misc.free(txnScoreboard);
     }
 
+    /**
+     * True when the last purge left a version or a geometry generation because a save point still names it
+     * ({@link #isVersionHeldByEpoch}, {@link #isGeometryGenerationHeldByEpoch}).
+     */
+    public boolean isLastPurgeHeldByEpoch() {
+        return isLastPurgeHeldByEpoch;
+    }
+
     public boolean purge(@NotNull ColumnPurgeTask task) {
         assert task.getTableToken() != null;
         assert scoreboardUseMode != ScoreboardUseMode.VACUUM_TABLE;
@@ -153,15 +177,83 @@ public class ColumnPurgeOperator implements Closeable {
         return false;
     }
 
+    /**
+     * True when the table's save point still lies inside the superseded range, so recovery would restore a
+     * {@code _txn}/{@code _cv} that names these column files. Separate from the reader check because it holds
+     * when no reader does, notably at startup, where there are no readers but the save point is what the
+     * next recovery restores.
+     */
+    private boolean isVersionHeldByEpoch(long columnVersion, ColumnPurgeTask task) {
+        return task.getTableToken().isWal()
+                && !engine.getTableSequencerAPI().getTxnTracker(task.getTableToken())
+                .isRangeAvailableToEpoch(columnVersion + 1, task.getUpdateTxn());
+    }
+
     private boolean checkScoreboardHasReadersBeforeUpdate(long columnVersion, ColumnPurgeTask task) {
         long updateTxn = task.getUpdateTxn();
         try {
-            return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn);
+            return !txnScoreboard.isRangeAvailable(columnVersion + 1, updateTxn)
+                    || isVersionHeldByEpoch(columnVersion, task);
         } catch (CairoException ex) {
             // Scoreboard can be over allocated, don't stall purge because of that, re-schedule another run instead
             LOG.error().$("cannot lock last txn in scoreboard, column purge will re-run [table=")
                     .$(task.getTableToken())
                     .$(", txn=").$(updateTxn)
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
+                    .$(", errno=").$(ex.getErrno())
+                    .I$();
+            return true;
+        }
+    }
+
+    /**
+     * The writer txn stamped on the record at offset 0 of {@code _geometry.<generation>} at {@code partitionDirLen} -
+     * the txn the generation became current at - or {@link #GEOMETRY_GENERATION_DOES_NOT_VERIFY} /
+     * {@link #GEOMETRY_GENERATION_UNREADABLE}.
+     * <p>
+     * The two failures are NOT the same thing and the caller must not treat them alike: "the record does not verify"
+     * is a statement about the file's contents that rules every reader out, while "could not read it" is the absence
+     * of any statement at all. {@link PartitionGeometryFile#read} separates them by errno: it raises a failed open or
+     * a failed read with the OS errno, and a magic, piece-count or checksum mismatch - or a file too short for the
+     * record, which holds no record for a reader to name either - with errno 0. An errno the purge cannot classify
+     * therefore lands on the side that keeps the file.
+     */
+    private long readGeometryGenerationFirstWriterTxn(int partitionDirLen, int generation) {
+        path.trimTo(partitionDirLen);
+        try (PartitionGeometryFile geometryFile = new PartitionGeometryFile(MemoryTag.NATIVE_TABLE_READER)) {
+            geometryFile.read(ff, path, generation, 0);
+            return geometryFile.getWriterTxn();
+        } catch (CairoException ex) {
+            if (ex.getErrno() != 0) {
+                LOG.error().$("could not read geometry generation, purge will re-run [path=").$(path.trimTo(partitionDirLen))
+                        .$(", generation=").$(generation)
+                        .$(", msg=").$safe(ex.getFlyweightMessage())
+                        .$(", errno=").$(ex.getErrno())
+                        .I$();
+                return GEOMETRY_GENERATION_UNREADABLE;
+            }
+            // No reader can resolve a record that does not verify, so nothing is holding this file.
+            LOG.info().$("geometry generation does not verify, purging [path=").$(path.trimTo(partitionDirLen))
+                    .$(", generation=").$(generation)
+                    .$(", msg=").$safe(ex.getFlyweightMessage())
+                    .I$();
+            return GEOMETRY_GENERATION_DOES_NOT_VERIFY;
+        }
+    }
+
+    /**
+     * Whether a reader can still resolve the retired generation whose record at offset 0 carries
+     * {@code firstWriterTxn} - the txn the generation became current at. The generation is live for readers in
+     * {@code [firstWriterTxn, updateTxn)}: below that a reader resolves an earlier generation; at {@code updateTxn}
+     * and above it resolves a later one.
+     */
+    private boolean hasReadersOnGeometryGeneration(long firstWriterTxn, long updateTxn) {
+        try {
+            return !txnScoreboard.isRangeAvailable(firstWriterTxn, updateTxn);
+        } catch (CairoException ex) {
+            // Same as checkScoreboardHasReadersBeforeUpdate: an over-allocated scoreboard must re-run the purge,
+            // not stall it.
+            LOG.error().$("cannot lock last txn in scoreboard, geometry purge will re-run [txn=").$(updateTxn)
                     .$(", msg=").$safe(ex.getFlyweightMessage())
                     .$(", errno=").$(ex.getErrno())
                     .I$();
@@ -257,6 +349,17 @@ public class ColumnPurgeOperator implements Closeable {
         return ff.exists(BitmapIndexUtils.valueFileName(path, columnName, columnVersion));
     }
 
+    /**
+     * True when a save point's _txn names the retired geometry generation: a tracker pin lies in
+     * [firstWriterTxn, updateTxn), the txns whose _txn points at it. Like {@link #isVersionHeldByEpoch}, checked in
+     * every mode: a recovery that falls back to that save point reads this file.
+     */
+    private boolean isGeometryGenerationHeldByEpoch(long firstWriterTxn, ColumnPurgeTask task) {
+        return task.getTableToken().isWal()
+                && !engine.getTableSequencerAPI().getTxnTracker(task.getTableToken())
+                .isRangeAvailableToEpoch(firstWriterTxn, task.getUpdateTxn());
+    }
+
     private boolean openScoreboardAndTxn(ColumnPurgeTask task) {
         switch (scoreboardUseMode) {
             case BAU_QUEUE_PROCESSING:
@@ -282,6 +385,17 @@ public class ColumnPurgeOperator implements Closeable {
                     LOG.info().$("cannot purge, purge request overlaps with truncate [path=").$(path.trimTo(pathTableLen)).I$();
                     return false;
                 }
+                // A logged update past the committed txn did not survive the stop: a power loss outside adaptive,
+                // or a recovery rewind to a save point before it, dropped it. The version the row names is the
+                // one the table uses now. A WAL replay of the update, if any, queues its own purge; without one,
+                // as on a non-WAL table, the version stays live.
+                if (scoreboardUseMode == ScoreboardUseMode.STARTUP_ONLY && task.getUpdateTxn() > txReader.getTxn()) {
+                    LOG.info().$("cannot purge, update is past the committed txn [path=").$(path.trimTo(pathTableLen))
+                            .$(", updateTxn=").$(task.getUpdateTxn())
+                            .$(", txn=").$(txReader.getTxn())
+                            .I$();
+                    return false;
+                }
                 return true;
             default:
                 return false;
@@ -289,6 +403,7 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private boolean purge0(ColumnPurgeTask task) {
+        isLastPurgeHeldByEpoch = false;
         try {
             setTablePath(task.getTableToken());
             final LongList updatedColumnInfo = task.getUpdatedColumnInfo();
@@ -303,6 +418,82 @@ public class ColumnPurgeOperator implements Closeable {
                     final long partitionTimestamp = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_TIMESTAMP);
                     final long partitionTxnName = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_PARTITION_NAME_TXN);
                     final long updateRowId = updatedColumnInfo.getQuick(i + ColumnPurgeTask.OFFSET_UPDATE_ROW_ID);
+                    if (task.getColumnType() == ColumnType.NULL) {
+                        // Not a column at all: a retired _geometry generation, whose file-name suffix rides in the
+                        // column-version slot. See COMPOSITE_PARTITIONS.md.
+                        setUpPartitionPath(task.getTimestampType(), task.getPartitionBy(), partitionTimestamp, partitionTxnName);
+                        int geometryDirLen = path.size();
+                        final boolean exists = ff.exists(PartitionGeometryFile.geometryFileName(path, (int) columnVersion));
+                        path.trimTo(geometryDirLen);
+                        if (!exists) {
+                            completedRowIds.add(updateRowId);
+                            continue;
+                        }
+                        if (setupScoreboard) {
+                            if (!openScoreboardAndTxn(task)) {
+                                completedRowIds.add(updateRowId);
+                                continue;
+                            }
+                            setupScoreboard = false;
+                            // openScoreboardAndTxn mutated the path to read _txn.
+                            setUpPartitionPath(task.getTimestampType(), task.getPartitionBy(), partitionTimestamp, partitionTxnName);
+                            geometryDirLen = path.size();
+                        }
+                        // A generation number is reused: after MAKE-PLAIN retires a partition's geometry and the
+                        // purge below removes the file, a later composite commit restarts the chain at generation 0
+                        // - the first generation with no file - and re-creates this very file in the same directory,
+                        // under the same nameTxn (see PartitionGeometry.publish and
+                        // GEOMETRY_PURGE.md). The note carries the retiring commit's txn as updateTxn; the record at
+                        // offset 0 of the file now on disk carries the txn the on-disk generation became current at.
+                        // A generation whose first writer txn is at or past updateTxn is a NEWER incarnation than the
+                        // one this note retired - deleting it would destroy a live file and lose the partition's piece
+                        // layout. Read that txn and compare on EVERY mode, including STARTUP_ONLY, whose reader check
+                        // the scoreboard branch below skips.
+                        final long firstWriterTxn = readGeometryGenerationFirstWriterTxn(geometryDirLen, (int) columnVersion);
+                        if (firstWriterTxn == GEOMETRY_GENERATION_UNREADABLE) {
+                            // Neither check below can be answered, and both of them stand between this note and an
+                            // unlink. readGeometryGenerationFirstWriterTxn has logged why; come back to the note.
+                            allDone = false;
+                            continue;
+                        }
+                        if (firstWriterTxn != GEOMETRY_GENERATION_DOES_NOT_VERIFY && firstWriterTxn >= task.getUpdateTxn()) {
+                            LOG.info().$("retired geometry generation was re-created by a later commit, dropping stale purge note [path=")
+                                    .$(path.trimTo(geometryDirLen))
+                                    .$(", generation=").$(columnVersion)
+                                    .$(", firstWriterTxn=").$(firstWriterTxn)
+                                    .$(", updateTxn=").$(task.getUpdateTxn())
+                                    .I$();
+                            completedRowIds.add(updateRowId);
+                            continue;
+                        }
+                        // When a backup checkpoint is in progress its copied _txn may still name this generation.
+                        // The save point is checked in every mode, STARTUP_ONLY included, as in the column branch:
+                        // it is not a reader, and a recovery that falls back to it restores a _txn naming this file.
+                        final boolean isCheckpointInProgress = engine.getCheckpointStatus().isInProgress();
+                        final boolean isFirstRecordVerified = firstWriterTxn != GEOMETRY_GENERATION_DOES_NOT_VERIFY;
+                        final boolean isHeldByEpoch = !isCheckpointInProgress && isFirstRecordVerified
+                                && isGeometryGenerationHeldByEpoch(firstWriterTxn, task);
+                        if (isCheckpointInProgress
+                                || isHeldByEpoch
+                                || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY
+                                && isFirstRecordVerified
+                                && hasReadersOnGeometryGeneration(firstWriterTxn, task.getUpdateTxn()))) {
+                            allDone = false;
+                            isLastPurgeHeldByEpoch |= isHeldByEpoch;
+                            LOG.debug().$("cannot purge, geometry generation is in use [path=").$(path).I$();
+                            continue;
+                        }
+                        path.trimTo(geometryDirLen);
+                        LOG.info().$("purging retired geometry generation [path=").$(path)
+                                .$(", generation=").$(columnVersion).I$();
+                        if (couldNotRemove(ff, PartitionGeometryFile.geometryFileName(path, (int) columnVersion))) {
+                            allDone = false;
+                            continue;
+                        }
+                        completedRowIds.add(updateRowId);
+                        continue;
+                    }
+
                     int columnTypeRaw = task.getColumnType();
                     int columnType = Math.abs(columnTypeRaw);
                     // We don't know the type of the column, the files are found on the disk, but column
@@ -390,10 +581,20 @@ public class ColumnPurgeOperator implements Closeable {
                     if (columnVersion < minUnlockedTxnRangeStarts) {
                         // When a backup checkpoint is in progress, defer column purge — the
                         // checkpoint may reference these column versions via snapshotted metadata.
-                        if (engine.getCheckpointStatus().isInProgress()
+                        //
+                        // The save point is checked in every mode, STARTUP_ONLY included. That mode skips the
+                        // reader check because no readers exist at startup, but the save point is not a reader:
+                        // it is what the next recovery restores. Purging a version it names would leave
+                        // recovery restoring a _txn/_cv whose column files are gone, and the writer reopen would
+                        // fail ("SymbolMap does not exist") and suspend the table.
+                        final boolean checkpointInProgress = engine.getCheckpointStatus().isInProgress();
+                        final boolean heldByEpoch = !checkpointInProgress && isVersionHeldByEpoch(columnVersion, task);
+                        if (checkpointInProgress
+                                || heldByEpoch
                                 || (scoreboardUseMode != ScoreboardUseMode.STARTUP_ONLY && checkScoreboardHasReadersBeforeUpdate(columnVersion, task))) {
                             // Reader lock still exists
                             allDone = false;
+                            isLastPurgeHeldByEpoch |= heldByEpoch;
                             LOG.debug().$("cannot purge, version is in use [path=").$(path).I$();
                             continue;
                         } else {

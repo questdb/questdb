@@ -73,6 +73,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
+    // Retries that must pass with no version change before a torn live area counts as terminal rather
+    // than contention. A power of 2. Far longer than any commit's publish window, yet still a short wait.
+    private static final int TORN_DIAGNOSIS_WINDOW = 1 << 16;
     private final BitSet activeColumns = new BitSet();
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
@@ -105,6 +108,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<MemoryCMR> parquetMetadataPartitions;
     private ObjList<MemoryCMR> parquetPartitions;
     private int partitionCount;
+    private PartitionGeometry partitionGeometry;
     private long rowCount;
     // Per-checkout scan profile -- controls kernel page-cache hints and
     // post-checkout partition retention. Reset to DEFAULT by goPassive() on
@@ -265,6 +269,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.free(txnScoreboard);
             Misc.free(path);
             Misc.free(columnVersionReader);
+            partitionGeometry = Misc.free(partitionGeometry);
             LOG.debug().$("closed [table=").$(tableToken).I$();
         }
     }
@@ -571,6 +576,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txFile.getPartitionSize(partitionIndex);
     }
 
+    /**
+     * Name txn of a partition, that is, which version of the directory this reader sees.
+     */
+    @TestOnly
+    public long getPartitionNameTxnByIndex(int partitionIndex) {
+        return txFile.getPartitionNameTxn(partitionIndex);
+    }
+
     public long getPartitionTimestampByIndex(int partitionIndex) {
         return txFile.getPartitionTimestampByIndex(partitionIndex);
     }
@@ -603,6 +616,28 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long getTransientRowCount() {
         return txFile.getTransientRowCount();
+    }
+
+    public PartitionGeometry getGeometry() {
+        if (partitionGeometry == null) {
+            // The root is built afresh rather than trimmed out of `path`.
+            try (Path root = new Path()) {
+                root.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                partitionGeometry = new PartitionGeometry().of(ff, txFile, root.toString(), timestampType, partitionBy, MemoryTag.NATIVE_TABLE_READER);
+            }
+        }
+        return partitionGeometry;
+    }
+
+    /**
+     * The number of file rows a partition's column files span - {@code E}, the furthest row it has ever held, live or
+     * dead.
+     */
+    public long getPartitionPhysicalRowCount(int partitionIndex) {
+        if (!txFile.isPartitionComposite(partitionIndex)) {
+            return txFile.getPartitionSize(partitionIndex);
+        }
+        return getGeometry().getE(partitionIndex);
     }
 
     public TxReader getTxFile() {
@@ -1008,6 +1043,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
     }
 
+    /**
+     * Closes the partition's files when the transaction rewrote them, and otherwise returns how many file rows a
+     * re-opened column of it must map - the partition's live file extent, the same number every other open path
+     * uses (see {@link #mappedRowCount}). The live row count would leave every piece a merge parked at the tail off
+     * the end of the mapping.
+     *
+     * @return the mapped row count, or -1 when the caller must re-open the partition from scratch
+     */
     private long closeRewrittenPartitionFiles(int partitionIndex, int oldBase) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         long partitionTs = openPartitionInfo.getQuick(offset);
@@ -1033,7 +1076,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         long nameTxn = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_NAME_TXN);
         //noinspection resource
         pathGenNativePartition(partitionIndex, nameTxn);
-        return newSize;
+        // Resolve the geometry by TIMESTAMP: a metadata transition runs before reconcileOpenPartitions, so the
+        // reader's partition index need not yet line up with the transaction's, which is why every lookup above
+        // goes by timestamp too.
+        return mappedRowCount(txFile.getPartitionIndex(partitionTs), newSize);
     }
 
     private void copyColumns(
@@ -1374,6 +1420,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                     pathGenNativePartition(partitionIndex, nameTxn);
                     hasNewColumns = true;
                 }
+                // A column that only now became active can't skip the same E-vs-live-count sizing openPartition0 and
+                // reloadColumnFiles already apply - mapping it to partitionSize (the live count) leaves it short
                 reloadColumnAt(
                         partitionIndex,
                         path,
@@ -1382,7 +1430,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         indexes,
                         columnBase,
                         i,
-                        partitionSize
+                        mappedRowCount(partitionIndex, partitionSize)
                 );
             }
         } catch (Throwable th) {
@@ -1457,6 +1505,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+
     private long openPartition0(int partitionIndex) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         if (txFile.getPartitionCount() < 2 && txFile.getTransientRowCount() == 0) {
@@ -1487,7 +1536,15 @@ public class TableReader implements Closeable, SymbolTableSource {
                         final long parquetFileSize = openParquetMetadata(partitionIndex);
                         path.trimTo(rootLen);
                         pathGenParquetPartition(partitionIndex, partitionNameTxn);
-                        if (ff.exists(path.$())) {
+                        final long parquetActualLength = ff.length(path.$());
+                        if (parquetActualLength >= 0) {
+                            // A remote partition may legitimately have no local data file. For a
+                            // present file, reject a torn extent before mapping the size from _pm.
+                            if (parquetFileSize > parquetActualLength) {
+                                throw CairoException.critical(0)
+                                        .put("parquet partition file too short [expected=").put(parquetFileSize)
+                                        .put(", actual=").put(parquetActualLength).put(", path=").put(path).put(']');
+                            }
                             MemoryCMR parquetMem = parquetPartitions.getQuick(partitionIndex);
                             try {
                                 if (parquetMem != null && parquetMem != NullMemoryCMR.INSTANCE) {
@@ -1555,7 +1612,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
-                        openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
+                        // MAP as far as the highest live piece reaches, not the live row count - see mappedRowCount.
+                        openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), mappedRowCount(partitionIndex, partitionSize));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 1);
                         openPartitionCount++;
@@ -1639,6 +1697,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void readTxnSlow(long deadline) {
         int count = 0;
+        long tornWindowVersion = txFile.unsafeReadVersion();
 
         while (true) {
             if (txFile.unsafeLoadAll()) {
@@ -1663,16 +1722,39 @@ public class TableReader implements Closeable, SymbolTableSource {
             // This is unlucky, sequences have changed while we were reading transaction data
             // We must discard and try again
             count++;
+            // A torn live area is terminal, but one sample cannot tell it from contention, so it counts as
+            // torn only once a whole window of retries passes with the version unchanged. No clock needed.
+            if ((count & (TORN_DIAGNOSIS_WINDOW - 1)) == 0) {
+                final long versionNow = txFile.unsafeReadVersion();
+                if (versionNow == tornWindowVersion && txFile.unsafeIsLiveAreaTorn()) {
+                    throw tornLiveAreaException();
+                }
+                tornWindowVersion = versionNow;
+            }
             if (clock.getTicks() > deadline) {
+                // A reader that cannot advance is normally contention, but not when the live _txn area is
+                // torn: TxReader's fallback carries a txn a live scoreboard refuses, so this loop spins out.
+                // Report the torn _txn by name rather than a timeout.
+                if (txFile.unsafeIsLiveAreaTorn()) {
+                    throw tornLiveAreaException();
+                }
                 throw CairoException.critical(0).put("Transaction read timeout [src=reader, table=").put(tableToken).put(", timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
             }
             Os.pause();
         }
     }
 
+    private CairoException tornLiveAreaException() {
+        return CairoException.txnLiveAreaTorn()
+                .put("_txn live area is torn, reader cannot advance past the previous transaction [src=reader, table=")
+                .put(tableToken).put(", txn=").put(txFile.getTxn()).put(']');
+    }
+
     private void reconcileOpenPartitions(long prevPartitionVersion, long prevColumnVersion, long prevTruncateVersion) {
         // Reconcile partition full or partial will only update row count of last partition and append new partitions
         boolean truncateHappened = txFile.getTruncateVersion() != prevTruncateVersion;
+        // Every write that installs, changes or clears a partition's geometry ref goes through
+        // TxWriter#setPartitionGeometryRef, which bumps partitionTableVersion in the same transaction.
         if (txFile.getPartitionTableVersion() == prevPartitionVersion && txFile.getColumnVersion() == prevColumnVersion && !truncateHappened) {
             int partitionIndex = Math.max(0, partitionCount - 1);
             final int txPartitionCount = txFile.getPartitionCount();
@@ -1693,7 +1775,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                             final byte format = getPartitionFormat(partitionIndex);
                             assert format != -1;
                             if (format == PartitionFormat.NATIVE) {
-                                if (reloadColumnFiles(partitionIndex, txPartitionSize)) {
+                                // Size the mapping by the file extent and RECORD the live row count -
+                                // the same split openPartition0 makes. Re-mapping to the live count
+                                // shrinks a composite partition below the pieces that sit above it.
+                                if (reloadColumnFiles(partitionIndex, mappedRowCount(partitionIndex, txPartitionSize), false)) {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionInfo.getQuick(offset)).I$();
                                 } else {
@@ -1718,10 +1803,10 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             return;
         }
-        reconcileOpenPartitions0(truncateHappened);
+        reconcileOpenPartitions0(truncateHappened, txFile.getColumnVersion() != prevColumnVersion);
     }
 
-    private void reconcileOpenPartitions0(boolean forceTruncate) {
+    private void reconcileOpenPartitions0(boolean forceTruncate, boolean isColumnVersionChanged) {
         int partitionIndex = 0;
         int txPartitionCount = txFile.getPartitionCount();
         int txPartitionIndex = partitionIndex;
@@ -1761,7 +1846,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                             final byte format = getPartitionFormat(partitionIndex);
                             assert format != -1;
                             if (format == PartitionFormat.NATIVE) {
-                                if (reloadColumnFiles(partitionIndex, txPartitionSize)) {
+                                // Size the mapping by the file extent and RECORD the live row count -
+                                // the same split openPartition0 makes. Re-mapping to the live count
+                                // shrinks a composite partition below the pieces that sit above it.
+                                if (reloadColumnFiles(partitionIndex, mappedRowCount(txPartitionIndex, txPartitionSize), isColumnVersionChanged)) {
                                     openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, txPartitionSize);
                                     LOG.debug().$("updated partition size [partition=").$(openPartitionTimestamp).I$();
                                 } else {
@@ -1967,18 +2055,47 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Updates boundaries of all columns in partition.
-     *
-     * @param partitionIndex index of partition
-     * @param rowCount       number of rows in partition
+     * How many file rows a mapping of {@code partitionIndex} must cover: as far as the partition's highest live piece
+     * reaches, NOT {@code E}. Nothing here resolves a row outside a piece, so the dead space above the last one is
+     * bytes this reader can never ask for - and mapping them would make TRIM-FILES, which cuts exactly those bytes,
+     * wait for every reader of the partition's current shape to go.
      */
-    private boolean reloadColumnFiles(int partitionIndex, long rowCount) {
-        int columnBase = getColumnBase(partitionIndex);
+    private long mappedRowCount(int partitionIndex, long liveRowCount) {
+        if (partitionIndex < 0 || !txFile.isPartitionComposite(partitionIndex)) {
+            return liveRowCount;
+        }
+        return getGeometry().getLiveFileExtent(partitionIndex);
+    }
+
+    /**
+     * Updates boundaries of all columns in partition.
+     * <p>
+     * The name txn and the partition's max column name txn the callers compare say nothing about column TOPS: a
+     * {@code _cv} commit can move one in place (MAKE-PLAIN's clamp, a split's trim), and the file then starts at
+     * the new top. So when {@code _cv} moved, each column's cached top is refreshed from its record before the
+     * mapping is sized - one record lookup per column, on the rare commit that changes column versions.
+     *
+     * @param partitionIndex         index of partition
+     * @param rowCount               number of rows in partition
+     * @param isColumnVersionChanged whether {@code _cv} changed since this partition was last reconciled
+     */
+    private boolean reloadColumnFiles(int partitionIndex, long rowCount, boolean isColumnVersionChanged) {
+        final int columnBase = getColumnBase(partitionIndex);
+        final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
         for (int i = 0; i < columnCount; i++) {
             final int index = getPrimaryColumnIndex(columnBase, i);
             MemoryCMR mem1 = columns.getQuick(index);
             if (mem1 == null) {
                 continue; // column was never opened — nothing to grow
+            }
+
+            if (isColumnVersionChanged) {
+                // _cv records are keyed by the WRITER index; a column without a record keeps the top it was
+                // opened with, which reloadColumnAt derived from the column's add time alone.
+                final int recordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, metadata.getWriterIndex(i));
+                if (recordIndex > -1) {
+                    columnTops.setQuick(columnBase / 2 + i, columnVersionReader.getColumnTopByIndex(recordIndex));
+                }
             }
 
             long columnFilesRowCount = rowCount - getColumnTop(columnBase, i);
@@ -1996,12 +2113,26 @@ public class TableReader implements Closeable, SymbolTableSource {
         return true;
     }
 
-    private boolean reloadColumnVersion(long columnVersion) {
-        if (columnVersionReader.getVersion() != columnVersion) {
-            // A duration, unlike the absolute deadline readTxnSlow() and reloadMetadata() take.
-            columnVersionReader.readSafe(clock, configuration.getSpinLockTimeout());
+    private boolean reloadColumnVersion(long columnVersion, long deadline) {
+        if (columnVersionReader.getVersion() == columnVersion) {
+            return true;
         }
-        return columnVersionReader.getVersion() == columnVersion;
+        // Unlike the absolute deadline readTxnSlow()/reloadMetadata() take: a consistent _cv behind the
+        // version _txn names is terminal, and the reader throws it by name without waiting on any clock.
+        columnVersionReader.readSafe(clock, configuration.getSpinLockTimeout(), columnVersion);
+        if (columnVersionReader.getVersion() == columnVersion) {
+            return true;
+        }
+        // _cv is ahead of the _txn record we loaded: a commit in flight has published _cv but not yet _txn.
+        // That one is worth waiting for, on this reload's deadline, then _txn is re-read.
+        if (clock.getTicks() > deadline) {
+            throw CairoException.critical(0).put("Column Version read timeout [src=reader, table=").put(tableToken)
+                    .put(", txnColumnVersion=").put(columnVersion)
+                    .put(", cvVersion=").put(columnVersionReader.getVersion())
+                    .put(", timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
+        }
+        Os.pause();
+        return false;
     }
 
     private boolean reloadMetadata(int txnMetadataVersion, long deadline, boolean reshuffleColumns) {
@@ -2054,7 +2185,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // Reload _meta if the structure version updated, reload _cv if column version updated
         } while (
             // Reload column versions, column version used in metadata reload column shuffle
-                !reloadColumnVersion(txFile.getColumnVersion())
+                !reloadColumnVersion(txFile.getColumnVersion(), deadline)
                         // Start again if _meta with the matching structure version cannot be loaded
                         || !reloadMetadata(txFile.getMetadataVersion(), deadline, reshuffle)
         );

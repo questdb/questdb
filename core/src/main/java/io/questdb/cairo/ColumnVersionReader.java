@@ -41,10 +41,16 @@ import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
 public class ColumnVersionReader implements Closeable, Mutable {
+    // Counts reads that found the selected area torn under a stable version and fell back to the other A/B
+    // area. A healthy table keeps it at 0: a commit rewrites the whole _cv area and never changes a published
+    // one in place. Tests read it; production logic does not.
+    @TestOnly
+    static volatile long bodyChecksumFallbackCount = 0;
     public static final int BLOCK_SIZE = 4;
     public static final int BLOCK_SIZE_BYTES = BLOCK_SIZE * Long.BYTES;
     public static final int BLOCK_SIZE_MSB = Numbers.msb(BLOCK_SIZE);
@@ -63,8 +69,13 @@ public class ColumnVersionReader implements Closeable, Mutable {
     static final int TIMESTAMP_ADDED_PARTITION_OFFSET = COLUMN_TOP_OFFSET;
     private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
     protected final LongList cachedColumnVersionList = new LongList();
+    private boolean isInitialChecksumVerificationRequired = true;
     private MemoryCMR mem;
     private boolean ownMem;
+    // The file version whose live area was torn on the last consistent read, the version this reader fell
+    // back from; -1 after a clean read. It lets a caller that needs exactly that version name the corruption
+    // (see readSafe(MillisecondClock, long, long)) and limits the fallback error to one line per torn version.
+    private long tornLiveVersion = -1;
     private long version;
 
     @Override
@@ -73,6 +84,8 @@ public class ColumnVersionReader implements Closeable, Mutable {
             mem.close();
         }
         cachedColumnVersionList.clear();
+        isInitialChecksumVerificationRequired = true;
+        tornLiveVersion = -1;
         version = -1;
     }
 
@@ -101,6 +114,11 @@ public class ColumnVersionReader implements Closeable, Mutable {
             i += BLOCK_SIZE;
             p += BLOCK_SIZE_BYTES;
         }
+
+        // Checkpoint copies use the same 16-byte trailer as regular commits.
+        long areaAddr = mem.appendAddressFor(offset, size + TableUtils.CV_CHECKSUM_TRAILER_SIZE);
+        mem.putLong(offset + size, TableUtils.CV_CHECKSUM_MAGIC);
+        mem.putLong(offset + size + Long.BYTES, TableUtils.calculateCvAreaChecksum(areaAddr, size));
     }
 
     public LongList getCachedColumnVersionList() {
@@ -236,12 +254,54 @@ public class ColumnVersionReader implements Closeable, Mutable {
         return index > -1 ? getColumnNameTxnByIndex(index) : getDefaultColumnNameTxn(columnIndex);
     }
 
+    @TestOnly
+    public static long getBodyChecksumFallbackCount() {
+        return bodyChecksumFallbackCount;
+    }
+
+    @TestOnly
+    public static void resetBodyChecksumFallbackCount() {
+        bodyChecksumFallbackCount = 0;
+    }
+
     public long getVersion() {
         return version;
     }
 
+    /**
+     * Whether the last {@link #readSafe()} found the live area torn and fell back to the previous one, so that
+     * {@link #getVersion()} is one behind the version the file names.
+     */
+    public boolean hasTornLiveArea() {
+        return tornLiveVersion != -1;
+    }
+
+    /**
+     * Whether the area holding column version {@code areaVersion}, the live one or its predecessor in the
+     * other slot, can be loaded: it lies within the file, and its trailer checksum matches when it has a
+     * trailer. An area without a trailer passes unverified, as on every load path.
+     * Version 0 is the empty state of a file that has never committed. Reads the file only: the loaded column
+     * versions stay as they are.
+     */
+    public boolean isAreaIntact(long areaVersion) {
+        if (areaVersion < 1) {
+            return true;
+        }
+        final long liveVersion = unsafeGetVersion();
+        if (areaVersion != liveVersion && areaVersion != liveVersion - 1) {
+            return false;
+        }
+        final boolean areaA = (areaVersion & 1L) == 0L;
+        final long offset = mem.getLong(areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+        final long size = mem.getLong(areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
+        final long fileLength = mem.getFilesFacade().length(mem.getFd());
+        return isAreaWithinFile(offset, size, fileLength) && unsafeVerifyAreaChecksum(offset, size, fileLength);
+    }
+
     public ColumnVersionReader ofRO(FilesFacade ff, LPSZ fileName) {
+        isInitialChecksumVerificationRequired = true;
         version = -1;
+        tornLiveVersion = -1;
         if (this.mem == null || !ownMem) {
             this.mem = Vm.getCMRInstance();
         }
@@ -256,7 +316,24 @@ public class ColumnVersionReader implements Closeable, Mutable {
         }
         this.mem = mem;
         ownMem = false;
+        isInitialChecksumVerificationRequired = true;
         version = -1;
+        tornLiveVersion = -1;
+    }
+
+    /**
+     * Loads the area holding column version {@code areaVersion}, the live one or its predecessor in the other
+     * slot, into {@code target}, which then reads as that version. This reader's column versions and the file
+     * stay as they are. Call it only for an area that {@link #isAreaIntact(long)} accepts.
+     */
+    public void readAreaTo(long areaVersion, ColumnVersionReader target) {
+        final boolean areaA = (areaVersion & 1L) == 0L;
+        final long offset = mem.getLong(areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+        final long size = mem.getLong(areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
+        mem.resize(offset + size);
+        readUnsafe(offset, size, target.cachedColumnVersionList, mem);
+        target.version = areaVersion;
+        target.tornLiveVersion = -1;
     }
 
     /**
@@ -264,6 +341,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
      */
     public void readFrom(ColumnVersionReader columnVersionReader) {
         this.version = columnVersionReader.version;
+        tornLiveVersion = -1;
         cachedColumnVersionList.clear();
         cachedColumnVersionList.addAll(columnVersionReader.cachedColumnVersionList);
     }
@@ -290,9 +368,29 @@ public class ColumnVersionReader implements Closeable, Mutable {
         }
     }
 
+    /**
+     * {@link #readSafe(MillisecondClock, long)}, then fails fast if the consistent read landed below
+     * {@code expectedVersion}, the column version a stable {@code _txn} record names.
+     * <p>
+     * The writer publishes {@code _cv} before the {@code _txn} record that references it, so a reader that
+     * loaded {@code _txn} first never legitimately finds {@code _cv} older. Either the live area is torn and
+     * {@link #readSafe()} fell back to the previous commit, or the file lags the transaction. Waiting repairs
+     * neither, and a caller that loops until the versions agree would spin for good, so the ordering
+     * invariant, not a deadline, decides.
+     * <p>
+     * A newer version is the ordinary race with a commit in flight (published in {@code _cv}, not yet in
+     * {@code _txn}) and is returned as is, for the caller to re-read {@code _txn}.
+     */
+    public void readSafe(MillisecondClock microsecondClock, long spinLockTimeout, long expectedVersion) {
+        readSafe(microsecondClock, spinLockTimeout);
+        if (version < expectedVersion) {
+            throw columnVersionBehindException(expectedVersion);
+        }
+    }
+
     public boolean readSafe() {
         long version = unsafeGetVersion();
-        if (version == this.version) {
+        if (version == this.version && !isInitialChecksumVerificationRequired) {
             return true;
         }
         Unsafe.loadFence();
@@ -311,28 +409,73 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
         Unsafe.loadFence();
         if (version == unsafeGetVersion()) {
-            mem.resize(offset + size);
-            readUnsafe(offset, size, cachedColumnVersionList, mem);
+            // Verify persisted bytes once per mapping. Live refreshes rely on the publication protocol;
+            // copied state, failed reads and fallback must not consume the initial verification.
+            final long fileLength = isInitialChecksumVerificationRequired ? mem.getFilesFacade().length(mem.getFd()) : Long.MAX_VALUE;
+            final boolean isIntact;
+            if (isAreaWithinFile(offset, size, fileLength)) {
+                mem.resize(offset + size);
+                readUnsafe(offset, size, cachedColumnVersionList, mem);
+                isIntact = !isInitialChecksumVerificationRequired || unsafeVerifyAreaChecksum(offset, size, fileLength);
+            } else {
+                isIntact = false;
+            }
 
-            Unsafe.loadFence();
-            if (version == unsafeGetVersion()) {
-                this.version = version;
-                LOG.debug().$("read clean version ").$(version).$(", offset ").$(offset).$(", size ").$(size).$();
-                return true;
+            if (isIntact) {
+                Unsafe.loadFence();
+                if (version == unsafeGetVersion()) {
+                    this.version = version;
+                    isInitialChecksumVerificationRequired = false;
+                    tornLiveVersion = -1;
+                    LOG.debug().$("read clean version ").$(version).$(", offset ").$(offset).$(", size ").$(size).$();
+                    return true;
+                }
+                // The version moved: a concurrent commit. Retry (return false below).
+            } else {
+                // The selected area's checksum did not match. If the version is unchanged, the area is torn (a
+                // partial or reordered msync left a bumped version word over an incomplete area), and the read
+                // falls back to the other A/B area; otherwise a concurrent write raced the read, and it retries.
+                Unsafe.loadFence();
+                if (version == unsafeGetVersion()) {
+                    isInitialChecksumVerificationRequired = true;
+                    //noinspection NonAtomicOperationOnVolatileField
+                    bodyChecksumFallbackCount++;
+                    boolean otherOk = unsafeLoadAndVerifyOtherArea(version);
+                    Unsafe.loadFence();
+                    if (version == unsafeGetVersion()) {
+                        // The header and both areas stayed stable across the fallback.
+                        if (otherOk) {
+                            // Adopt the previous committed area (published at version - 1), as the _txn
+                            // fallback does.
+                            this.version = version - 1;
+                            if (tornLiveVersion != version) {
+                                tornLiveVersion = version;
+                                LOG.error().$("read fell back to other _cv area after checksum mismatch [version=").$(version)
+                                        .$(", offset=").$(offset).$(", size=").$(size).$(']').$();
+                            }
+                            return true;
+                        }
+                        // Neither area verifies: fail the read rather than return a wrong column-version map.
+                        // Reset the cached state without clear(), which closes mem and which the
+                        // ColumnVersionWriter subclass overrides to throw.
+                        cachedColumnVersionList.clear();
+                        this.version = -1;
+                        throw CairoException.cvTorn()
+                                .put("_cv checksum mismatch in both A and B areas [version=").put(version)
+                                .put(", offset=").put(offset)
+                                .put(", size=").put(size)
+                                .put(']');
+                    }
+                    // Version changed during the fallback: concurrent write, retry.
+                }
+                // Version changed: concurrent write, retry.
             }
         }
         return false;
     }
 
     public long readUnsafe() {
-        long version = mem.getLong(OFFSET_VERSION_64);
-
-        boolean areaA = (version & 1L) == 0L;
-        long offset = areaA ? mem.getLong(OFFSET_OFFSET_A_64) : mem.getLong(OFFSET_OFFSET_B_64);
-        long size = areaA ? mem.getLong(OFFSET_SIZE_A_64) : mem.getLong(OFFSET_SIZE_B_64);
-        mem.resize(offset + size);
-        readUnsafe(offset, size, cachedColumnVersionList, mem);
-        return version;
+        return unsafeReadLiveArea(false);
     }
 
     @Override
@@ -367,6 +510,124 @@ public class ColumnVersionReader implements Closeable, Mutable {
         }
         sink.putAscii("\n]}");
         return sink.toString();
+    }
+
+    /**
+     * Loads the version-selected area without the version checks and the A/B fallback of {@link #readSafe()}: a
+     * single-threaded self-read, such as the table writer's open-time load and {@code rollback()}'s readback. It
+     * neither throws on a checksum mismatch nor falls back, and only logs one; the table writer checks the area
+     * it opens with through {@link #isAreaIntact(long)}. A geometry the file does not hold is never mapped: a
+     * read-only mapping faults on it, and a writer's read-write mapping would grow the file with zeros that then
+     * read as the area. It fails the read, or, with {@code isAreaOutsideFileTolerated}, loads no column versions.
+     */
+    protected long unsafeReadLiveArea(boolean isAreaOutsideFileTolerated) {
+        long version = mem.getLong(OFFSET_VERSION_64);
+
+        boolean areaA = (version & 1L) == 0L;
+        long offset = areaA ? mem.getLong(OFFSET_OFFSET_A_64) : mem.getLong(OFFSET_OFFSET_B_64);
+        long size = areaA ? mem.getLong(OFFSET_SIZE_A_64) : mem.getLong(OFFSET_SIZE_B_64);
+        final long fileLength = mem.getFilesFacade().length(mem.getFd());
+        if (!isAreaWithinFile(offset, size, fileLength)) {
+            cachedColumnVersionList.clear();
+            if (!isAreaOutsideFileTolerated) {
+                throw CairoException.cvTorn().put("_cv area lies outside the file [version=").put(version)
+                        .put(", offset=").put(offset)
+                        .put(", size=").put(size)
+                        .put(", fileLength=").put(fileLength)
+                        .put(']');
+            }
+            LOG.error().$("_cv area lies outside the file on self-read [version=").$(version)
+                    .$(", offset=").$(offset).$(", size=").$(size).$(", fileLength=").$(fileLength).$(']').$();
+            return version;
+        }
+        mem.resize(offset + size);
+        readUnsafe(offset, size, cachedColumnVersionList, mem);
+        if (!unsafeVerifyAreaChecksum(offset, size, fileLength)) {
+            LOG.error().$("_cv body checksum mismatch on self-read [version=").$(version)
+                    .$(", offset=").$(offset).$(", size=").$(size).$(']').$();
+        }
+        return version;
+    }
+
+    /**
+     * The error for a consistent read that could not reach {@code expectedVersion}. Two shapes, told apart
+     * by whether this reader fell back from exactly that version: a torn live area (the file names
+     * {@code expectedVersion}, its area does not verify, the previous commit was adopted) or a file that is
+     * simply behind the transaction that references it.
+     */
+    private CairoException columnVersionBehindException(long expectedVersion) {
+        if (tornLiveVersion == expectedVersion) {
+            return CairoException.cvTorn()
+                    .put("_cv live area is torn, reader cannot advance past the previous column version [version=").put(version)
+                    .put(", expected=").put(expectedVersion)
+                    .put(']');
+        }
+        return CairoException.cvTorn()
+                .put("_cv is behind the column version _txn references [version=").put(version)
+                .put(", expected=").put(expectedVersion)
+                .put(']');
+    }
+
+    /**
+     * Points at the other A/B area (the previous commit, opposite parity, published at
+     * {@code selectedVersion - 1}), loads it into {@code cachedColumnVersionList} and verifies its checksum:
+     * the fallback when the selected area is torn under a stable version. Call it only after confirming the
+     * version is stable, so the other area is the settled previous commit, not one the writer is writing.
+     * Returns false when the file is too short for the area and its trailer, and true when the checksum
+     * verifies or the trailer carries no magic. Only a selected area whose trailer checksum mismatched
+     * reaches this fallback; an area without a trailer loads unverified.
+     */
+    private boolean unsafeLoadAndVerifyOtherArea(long selectedVersion) {
+        // The selected area used slot (selectedVersion & 1); the prior commit lives in the opposite slot.
+        boolean otherIsA = (selectedVersion & 1L) != 0L;
+        long otherOffset = otherIsA ? mem.getLong(OFFSET_OFFSET_A_64) : mem.getLong(OFFSET_OFFSET_B_64);
+        long otherSize = otherIsA ? mem.getLong(OFFSET_SIZE_A_64) : mem.getLong(OFFSET_SIZE_B_64);
+
+        // The other area must sit past the header and be a whole number of blocks; a bad header means there
+        // is no usable fallback.
+        if (otherOffset < HEADER_SIZE || otherSize < 0 || (otherSize % BLOCK_SIZE_BYTES) != 0) {
+            return false;
+        }
+        final long realLen = mem.getFilesFacade().length(mem.getFd());
+        if (realLen < otherOffset + otherSize + TableUtils.CV_CHECKSUM_TRAILER_SIZE) {
+            // The file is too short for the other area and its trailer, so it cannot be verified: no fallback.
+            return false;
+        }
+
+        mem.resize(otherOffset + otherSize);
+        readUnsafe(otherOffset, otherSize, cachedColumnVersionList, mem);
+        return unsafeVerifyAreaChecksum(otherOffset, otherSize, realLen);
+    }
+
+    /**
+     * Verifies the 16-byte trailer {@code [CV_CHECKSUM_MAGIC][checksum]} after the area. Without the magic
+     * there is no trailer, and the area is unverified. The caller brackets this check with stable version
+     * reads and passes the real file length; the trailer is mapped only when the file covers it.
+     */
+    private boolean unsafeVerifyAreaChecksum(long offset, long size, long realLen) {
+        if (realLen < offset + size + TableUtils.CV_CHECKSUM_TRAILER_SIZE) {
+            // The file is too short to hold a trailer (an older format or a new file): unverified. Nothing is
+            // mapped at offset + size, so no mapping reaches past the end of the file.
+            return true;
+        }
+        // The real file covers the 16-byte trailer, so it is safe to map.
+        mem.resize(offset + size + TableUtils.CV_CHECKSUM_TRAILER_SIZE);
+        return ChecksumTrailer.classify(
+                mem.getLong(offset + size),
+                mem.getLong(offset + size + Long.BYTES),
+                mem.addressOf(offset),
+                size,
+                TableUtils.CV_CHECKSUM_MAGIC
+        ) != ChecksumTrailer.MISMATCH;
+    }
+
+    // Whether the header's geometry for an area describes whole blocks that the file holds. An empty area reads
+    // no block: a file that never committed names one at offset 0. Written so that garbage cannot overflow it.
+    private static boolean isAreaWithinFile(long offset, long size, long fileLength) {
+        if (size == 0) {
+            return offset >= 0;
+        }
+        return offset >= HEADER_SIZE && size > 0 && (size % BLOCK_SIZE_BYTES) == 0 && offset <= fileLength - size;
     }
 
     private static void readUnsafe(long offset, long areaSize, LongList cachedList, MemoryR mem) {
