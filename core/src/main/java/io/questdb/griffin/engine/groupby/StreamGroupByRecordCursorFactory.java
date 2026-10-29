@@ -128,6 +128,11 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
     }
 
     @Override
+    public boolean isRewindRecomputing() {
+        return true;
+    }
+
+    @Override
     public boolean isStableWithinExecution() {
         for (int i = 0, n = keyFunctions.size(); i < n; i++) {
             if (!keyFunctions.getQuick(i).isStableWithinExecution()) {

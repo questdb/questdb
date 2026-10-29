@@ -2368,7 +2368,7 @@ public class ViewQueryTest extends AbstractViewTest {
                     VIEW1 + " v11 join " + VIEW1 + " v12 on v_max where v12.v_max < 7",
                     null,
                     false,
-                    true,
+                    false,
                     """
                             QUERY PLAN
                             SelectedRecord

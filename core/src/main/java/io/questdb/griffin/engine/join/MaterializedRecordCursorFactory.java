@@ -118,6 +118,11 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     @Override
+    public boolean isRewindRecomputing() {
+        return false;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }

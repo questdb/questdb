@@ -60,6 +60,7 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
     private static final String CROSS_JOIN = "SELECT m.x, s.* FROM m CROSS JOIN ($sub) s ORDER BY x, $keys";
     private static final String FULL_JOIN = "SELECT m.x, s.* FROM m FULL JOIN ($sub) s ON s.s < m.x * 30 ORDER BY x, $keys";
     private static final String LEFT_JOIN = "SELECT m.x, s.* FROM m LEFT JOIN ($sub) s ON s.s < m.x * 30 ORDER BY x, $keys";
+    private static final String NEGATIVE_LIMIT = "SELECT * FROM (SELECT * FROM ($sub) LIMIT -10) ORDER BY $keys, c";
     private static final String RIGHT_JOIN = "SELECT m.x, s.* FROM ($sub) s RIGHT JOIN m ON s.s < m.x * 30 ORDER BY x, $keys";
     // The stream subquery, the same aggregation over the table without a designated timestamp, and the keys.
     private static final String[][] SUBQUERIES = {
@@ -148,6 +149,56 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
         run((engine, compiler, context) -> {
             createTables(engine, context);
             assertMaterialized(engine, context, FULL_JOIN, null, true, false);
+        });
+    }
+
+    @Test
+    public void testHashJoinSizeDoesNotRewindStreamMaster() throws Exception {
+        run((engine, compiler, context) -> {
+            createTables(engine, context);
+            final String sql = "SELECT a.ts, a.sym, a.c, b.s FROM (" + SUBQUERIES[1][0] + ") a JOIN (" + SUBQUERIES[0][0] + ") b ON (ts)";
+            assertQuery(sql).withEngine(engine).withContext(context).noLeakCheck().assertsPlanContaining("Hash Join\n");
+            try (
+                    RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory();
+                    RecordCursor cursor = factory.getCursor(context)
+            ) {
+                while (cursor.hasNext()) {
+                    // drain the cursor
+                }
+                final int topCount = TestMatchFunctionFactory.getTopCounter();
+                Assert.assertEquals(-1, cursor.size());
+                Assert.assertEquals(topCount, TestMatchFunctionFactory.getTopCounter());
+            }
+        });
+    }
+
+    @Test
+    public void testInputsHiddenFromBaseFactory() throws Exception {
+        run((engine, compiler, context) -> {
+            createTables(engine, context);
+            final String stream = SUBQUERIES[1][0];
+            final String half = "SELECT * FROM (SELECT ts, sym, count() c, sum(v) s FROM t WHERE test_match() AND ts %s '2024-01-01T12' SAMPLE BY 1h)";
+            final String halves = half.formatted("<") + " UNION ALL " + half.formatted(">=");
+            final String window = "SELECT a.*, count() n FROM (" + stream + ") a WINDOW JOIN t b %s RANGE BETWEEN 1 hour PRECEDING AND CURRENT ROW";
+            final String[][] inputs = {
+                    {"Union All", halves},
+                    {"Except", "SELECT * FROM (" + stream + ") EXCEPT SELECT * FROM (" + stream + ") WHERE c < 0"},
+                    {"Hash Join", "SELECT a.* FROM (" + stream + ") a JOIN (SELECT DISTINCT sym FROM t) b ON (sym)"},
+                    {"Window Fast Join", window.formatted("ON (sym)")},
+                    {"Window Join", window.formatted("")},
+                    {"Unnest", "SELECT a.ts, a.sym, a.c, a.s, u.e FROM (SELECT *, ARRAY[1.0] arr FROM (" + stream + ")) a, UNNEST(a.arr) u(e)"}
+            };
+            for (String[] input : inputs) {
+                for (String query : new String[]{CROSS_JOIN, LEFT_JOIN, RIGHT_JOIN, FULL_JOIN, NEGATIVE_LIMIT}) {
+                    assertStreamReadOnce(engine, compiler, context, query, input[1], input[0]);
+                }
+            }
+            assertStreamReadOnce(engine, compiler, context, NEGATIVE_LIMIT, "SELECT * FROM (" + halves + ") ORDER BY ts", "Union All Merge");
+
+            final String hashed = "SELECT * FROM (" + SUBQUERIES[1][1] + ") EXCEPT SELECT * FROM (" + stream + ")";
+            final String sql = CROSS_JOIN.replace("$sub", hashed).replace("$keys", SUBQUERIES[1][2]);
+            assertQuery(sql).withEngine(engine).withContext(context).noLeakCheck().assertsPlanNotContaining("Materialize");
+            Assert.assertEquals(countRewinds(compiler, context, hashed), countRewinds(compiler, context, sql));
         });
     }
 
@@ -294,6 +345,35 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
         for (String[] subquery : SUBQUERIES) {
             // The parent rewinds the copy, so the stream GROUP BY under it runs once per cursor.
             Assert.assertEquals(query, 0, assertMaterialized(engine, context, query, subquery, timestamp, supportsRandomAccess, isSizeKnown));
+        }
+    }
+
+    private void assertStreamReadOnce(
+            CairoEngine engine,
+            SqlCompiler compiler,
+            SqlExecutionContext context,
+            String query,
+            String input,
+            String operator
+    ) throws Exception {
+        final String keys = SUBQUERIES[1][2];
+        final boolean isLimit = NEGATIVE_LIMIT.equals(query);
+        final String[] subquery = {input, "SELECT * FROM (" + input + ") ORDER BY " + keys, keys};
+        assertMaterialized(engine, context, query, subquery, isLimit ? "ts" : null, true, isLimit);
+        final String sql = query.replace("$sub", input).replace("$keys", keys);
+        assertQuery(sql).withEngine(engine).withContext(context).noLeakCheck().assertsPlanContaining(operator);
+        Assert.assertEquals(sql, countRewinds(compiler, context, input), countRewinds(compiler, context, sql));
+    }
+
+    private static int countRewinds(SqlCompiler compiler, SqlExecutionContext context, String sql) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+            final int topCount = TestMatchFunctionFactory.getTopCounter();
+            try (RecordCursor cursor = factory.getCursor(context)) {
+                while (cursor.hasNext()) {
+                    // drain the cursor
+                }
+            }
+            return TestMatchFunctionFactory.getTopCounter() - topCount;
         }
     }
 

@@ -336,6 +336,19 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns true if {@code toTop()} on this factory's cursor reruns a stream GROUP BY. A factory
+     * with random access serves rows it already holds. A factory with an input that
+     * {@link #getBaseFactory()} does not expose must combine its inputs explicitly.
+     */
+    default boolean isRewindRecomputing() {
+        if (recordCursorSupportsRandomAccess()) {
+            return false;
+        }
+        final RecordCursorFactory base = getBaseFactory();
+        return base != null && base.isRewindRecomputing();
+    }
+
+    /**
      * Returns true if this factory is guaranteed to produce the same result for every cursor
      * open within a single query execution (same {@code SqlExecutionContext}). This is a weaker
      * property than {@code !isNonDeterministic()}: a factory projecting {@code now()} or a bind

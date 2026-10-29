@@ -77,10 +77,8 @@ import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.groupby.SparklineGroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.TwapGroupByFunction;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
-import io.questdb.griffin.engine.join.MaterializedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.AsyncStreamGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
@@ -744,21 +742,6 @@ public class GroupByUtils {
             }
         }
         return true;
-    }
-
-    /**
-     * Returns true when the factory streams the rows of a stream GROUP BY through factories without random
-     * access. Such a factory reruns the aggregation on every rewind of its cursor, unless a copy of its rows
-     * already sits in between.
-     */
-    public static boolean isStreamGroupBy(RecordCursorFactory factory) {
-        while (factory != null && !factory.recordCursorSupportsRandomAccess() && !(factory instanceof MaterializedRecordCursorFactory)) {
-            if (factory instanceof StreamGroupByRecordCursorFactory || factory instanceof AsyncStreamGroupByRecordCursorFactory) {
-                return true;
-            }
-            factory = factory.getBaseFactory();
-        }
-        return false;
     }
 
     public static void setAllocator(ObjList<GroupByFunction> functions, GroupByAllocator allocator) {

@@ -7113,12 +7113,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 joinFilter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 // The nested loop rewinds its inner side, the master of a right join, per outer row.
                                 if (joinType == IQueryModel.JOIN_CROSS_RIGHT) {
-                                    if (GroupByUtils.isStreamGroupBy(master)) {
+                                    if (master.isRewindRecomputing()) {
                                         final RecordCursorFactory masterToMaterialize = master;
                                         master = null;
                                         master = materialize(masterToMaterialize, false);
                                     }
-                                } else if (GroupByUtils.isStreamGroupBy(slaveToFree)) {
+                                } else if (slaveToFree.isRewindRecomputing()) {
                                     final RecordCursorFactory slaveToMaterialize = slaveToFree;
                                     slaveToFree = null;
                                     // The full join tracks matched slave rows by their row ids, which only the copy keeps stable.
@@ -7187,7 +7187,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     );
                                 } else {
                                     // Fall back to standard CrossJoinRecordCursorFactory, which rewinds its slave per master row
-                                    if (GroupByUtils.isStreamGroupBy(slaveToFree)) {
+                                    if (slaveToFree.isRewindRecomputing()) {
                                         final RecordCursorFactory slaveToMaterialize = slaveToFree;
                                         slaveToFree = null;
                                         slaveToFree = materialize(slaveToMaterialize, false);
@@ -8722,7 +8722,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             hiFunc = getHiFunction(model, executionContext);
             // A negative bound makes the limit count the base rows and then rewind the base, which reruns
             // a stream GROUP BY.
-            if (GroupByUtils.isStreamGroupBy(factory)
+            if (factory.isRewindRecomputing()
                     && (mayBeNegativeLimit(loFunc, executionContext) || (hiFunc != null && mayBeNegativeLimit(hiFunc, executionContext)))) {
                 final RecordCursorFactory base = factory;
                 factory = null;

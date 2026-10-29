@@ -7292,7 +7292,6 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
                 "UNION select min(value) as val, timestamp from t2 sample by 1m ) " +
                 "select (base.val - sub.val) as delta, base.timestamp from base join sub on timestamp;")
                 .noRandomAccess()
-                .expectSize()
                 .noLeakCheck()
                 .returns("""
                         delta\ttimestamp

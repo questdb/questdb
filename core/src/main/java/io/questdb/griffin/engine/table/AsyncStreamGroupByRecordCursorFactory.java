@@ -149,6 +149,11 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
     }
 
     @Override
+    public boolean isRewindRecomputing() {
+        return true;
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
