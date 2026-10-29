@@ -451,13 +451,10 @@ public class FuzzRunner {
     }
 
     /**
-     * Applies the transactions to a WAL table with one IO failure planted in the WAL apply: the
-     * {@code failAfterCalls}-th file system call the apply makes fails. Unlike
-     * {@link #applyNonWal}, which plants failures only into the non-WAL oracle, this faults the
-     * table under test, for example a parquet O3 merge or replace commit. A failure suspends the
-     * table, or a retry absorbs it. Either way the method then resumes WAL and finishes the
-     * apply without failures, and asserts that the table is not suspended. The engine must run
-     * on {@link #getFileFacade()}. Pass {@code Integer.MAX_VALUE} to apply without a failure.
+     * Applies the transactions to a WAL table, failing its {@code failAfterCalls}-th file system
+     * call. Unlike {@link #applyNonWal}, this faults the table under test, not the oracle. Then
+     * resumes WAL, finishes the apply and asserts the table is not suspended. The engine must run
+     * on {@link #getFileFacade()}. {@code Integer.MAX_VALUE} applies without a failure.
      *
      * @return the number of file system calls the armed apply made, to size the next failure
      */
@@ -638,10 +635,9 @@ public class FuzzRunner {
     }
 
     /**
-     * Generates a transaction list for the table with timestamps in [start, end].
-     * {@code start} and {@code end} are microseconds, whatever the table's timestamp type:
-     * the list's timestamps, windows and cutoffs are in the table's unit, so a TIMESTAMP_NS
-     * table receives the same instants as a TIMESTAMP one.
+     * Generates a transaction list for the table with timestamps in [start, end], given in
+     * microseconds whatever the table's timestamp type. The list itself uses the table's unit,
+     * so a TIMESTAMP_NS table receives the same instants as a TIMESTAMP one.
      */
     public ObjList<FuzzTransaction> generateTransactions(String tableName, Rnd rnd, long start, long end) {
         TableToken tableToken = engine.verifyTableName(tableName);
@@ -1690,25 +1686,16 @@ public class FuzzRunner {
     }
 
     /**
-     * Removes from a non-WAL table the rows it already holds that a replace commit in
-     * {@code transactions} deletes on a WAL table.
+     * Removes from a non-WAL oracle table the pre-existing rows that a replace commit in
+     * {@code transactions} deletes on the WAL table: every row with lo &lt;= ts &lt; hi of the
+     * commitWithParams range. Rows the list itself writes before the replace are handled by
+     * {@link #calculateReplaceRanges}, which never inserts them.
      * <p>
-     * A WAL replace commit with range [lo, hi), the bounds passed to commitWithParams, deletes
-     * every existing row with lo &lt;= ts &lt; hi, in every partition the range spans, and then
-     * inserts its own rows. Non-WAL tables have no such commit, so the oracle models it in two
-     * parts. Rows the same list writes before the replace are never inserted:
-     * {@link #calculateReplaceRanges} gives each transaction the ranges that later transactions
-     * replace. The rows the table already held before the list started are removed here. They
-     * are either the initial rows or rows written by a list applied in an earlier round. Removing
-     * them before the list runs, rather than at the replace transaction, leaves the same final
-     * table, because nothing in the list can bring those rows back. That assumes the round has no
-     * TTL: pre-deleting the newest rows lowers the max timestamp, which can change what a TTL
-     * commit earlier in the list evicts. The current multi-list callers run with TTL off.
-     * <p>
-     * The removal copies the surviving rows to a side table, truncates the table and inserts
-     * them back. It runs only when a range holds an existing row. A table built by
-     * {@link #createInitialTableNonWal(String, ObjList)} over the same list holds none, so a
-     * single-list caller pays one count query and its table is not touched.
+     * Removing the rows up front, rather than at the replace, gives the same final table since
+     * nothing in the list can bring them back. That assumes no TTL: pre-deleting the newest rows
+     * lowers the max timestamp, which changes what an earlier TTL commit evicts. The multi-list
+     * callers run with TTL off. The removal rewrites the table through a side table only when a
+     * range holds an existing row, so a single-list caller pays one count query.
      */
     private void removeRowsReplacedByTransactions(ObjList<FuzzTransaction> transactions, String tableName) {
         final LongList ranges = new LongList();
@@ -2151,10 +2138,9 @@ public class FuzzRunner {
     }
 
     /**
-     * A second transaction list for {@link #runFuzz(String, Rnd, FollowUpList)}, applied to the
-     * non-WAL, WAL and parallel-WAL tables after the first list has been applied and verified.
-     * {@code prepare} may change the three tables first, identically, for example to convert
-     * partitions the second list is meant to hit.
+     * A second transaction list for {@link #runFuzz(String, Rnd, FollowUpList)}, applied to all
+     * three tables after the first one is verified. {@code prepare} may first change the tables
+     * identically, e.g. convert the partitions the second list targets.
      */
     @FunctionalInterface
     public interface FollowUpList {

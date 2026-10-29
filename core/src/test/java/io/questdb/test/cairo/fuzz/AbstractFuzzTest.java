@@ -518,12 +518,9 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     /**
-     * Draws the parquet O3 rewrite gate (dead-bytes ratio and absolute max) for the run, one of:
-     * the shipped defaults; low thresholds (ratio 0.1-0.5, max 4-64 KiB) that send most merges
-     * to rewrite mode; or no dead-bytes rewrite at all, so every merge that can update in place
-     * does, and only a single row group, a schema change or a boundary tie forces a rewrite.
-     * Without the third mode a fuzz test whose commits re-encode a large share of a partition
-     * crosses the projected-dead-bytes gate on nearly every commit and never runs in place.
+     * Draws the parquet O3 dead-bytes rewrite gate for the run: the defaults, low thresholds
+     * (ratio 0.1-0.5, max 4-64 KiB) that send most merges to rewrite, or no gate at all. Without
+     * the last, commits that re-encode much of a partition cross the gate and never run in place.
      */
     protected void setRndParquetRewriteGate(Rnd rnd) {
         switch (rnd.nextInt(3)) {
@@ -544,11 +541,9 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     /**
-     * A parquet row group size small enough that the partitions of a fuzz run with a few
-     * thousand rows each hold several row groups, plus a random rewrite gate. A partition
-     * with one row group always rewrites, so at the default row group size (100_000) none of
-     * the in-place machinery runs: no in-place DROP, no filter-only MERGE in update mode, no
-     * index versioning under a new column name txn.
+     * Sets a parquet row group size small enough for fuzz partitions to hold several row groups,
+     * plus a random rewrite gate. A single-row-group partition always rewrites, so the default
+     * size (100_000) would leave the in-place paths untested.
      */
     protected void setRndParquetO3Properties(Rnd rnd, int minRowGroupSize, int maxRowGroupSize) {
         final int rowGroupSize = minRowGroupSize + rnd.nextInt(maxRowGroupSize - minRowGroupSize + 1);

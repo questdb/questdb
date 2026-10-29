@@ -20792,10 +20792,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Points _cv at the index files an in-place parquet O3 update rebuilt under the current txn.
-     * The _cv change commits in the same _txn as the new parquet file size, so readers pinned
-     * at an older txn keep the old files, and a rollback leaves _cv naming them. Queues each
-     * superseded version for {@link #purgeSupersededParquetIndexes()}, except one that this
-     * uncommitted txn wrote itself.
+     * The change commits with the new parquet size in the same _txn, so pinned readers keep the
+     * old files and a rollback leaves _cv on them. Queues each superseded version, except one this
+     * uncommitted txn wrote, for {@link #purgeSupersededParquetIndexes()}.
      */
     private void versionRebuiltParquetIndexes(long partitionTimestamp, long partitionNameTxn) {
         final long newColumnNameTxn = txWriter.txn;

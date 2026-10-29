@@ -99,8 +99,7 @@ public class FrameAlgebra {
     }
 
     /**
-     * Checks that a dedup merge leaves one column unchanged, comparing each O3 row the merge
-     * index takes with the existing row it replaces, NULLs included. Same check as
+     * Checks that a dedup merge leaves one column unchanged. Same check as
      * {@code TableWriter.checkDedupCommitIdenticalToPartition}, minus column tops.
      *
      * @param columnType     column type; the buffers use its native layout
@@ -110,7 +109,7 @@ public class FrameAlgebra {
      * @param o3AuxAddr      O3 aux vector (var-size columns only, else 0)
      * @param o3DataAddr     O3 data vector, indexed by the merge index's O3 row ids
      * @param mergeIndexAddr merge index, {@code rowCount} (timestamp, row id) entries
-     * @return true if every O3 row the merge index takes equals the existing row it replaces
+     * @return true if every O3 row the merge index takes equals the row it replaces, NULLs included
      */
     public static boolean isColumnMergeIdentical(
             int columnType,

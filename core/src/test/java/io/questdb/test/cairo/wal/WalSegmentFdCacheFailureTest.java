@@ -43,11 +43,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 /**
- * The table writer caches the file descriptors of a WAL segment between two transactions
- * it applies from that segment, and maps the next transaction's columns from the cached
- * fds. A failure part-way through that mapping must close every cached fd: the ones the
- * column memories took close with them, and the rest (the failing column's data fd and
- * the fds of the columns after it) belong to nobody else.
+ * The table writer maps a WAL transaction's columns from segment fds it cached for the
+ * previous transaction. A failure part-way through that mapping must close every cached fd,
+ * including those no column memory has taken yet.
  */
 public class WalSegmentFdCacheFailureTest extends AbstractCairoTest {
 

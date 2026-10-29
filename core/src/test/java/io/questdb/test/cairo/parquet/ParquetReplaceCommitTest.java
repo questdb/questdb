@@ -1262,10 +1262,9 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
     }
 
     /**
-     * The first data.parquet map of the partition decoder larger than
-     * {@code failMapAbove} fails while it is non-negative, then disarms. Only the
-     * O3 job maps data.parquet past its committed size, and only after end() has
-     * appended the new parquet and _pm footers.
+     * Fails the first partition decoder map larger than a non-negative {@code failMapAbove},
+     * then disarms. Only the O3 job maps data.parquet past its committed size, after end()
+     * appended the new footers.
      */
     private static FilesFacade failGrownParquetMapOnce(AtomicLong failMapAbove, AtomicInteger faults) {
         return new TestFilesFacadeImpl() {
@@ -1349,11 +1348,9 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
     }
 
     /**
-     * The first data.parquet opened read-write while armed is handed a read-only fd
-     * instead, so the O3 job's first write to it fails. The fd bypasses the fd cache:
-     * the job detaches it for the Rust writer, and a cached fd cannot be detached, which
-     * would fail the open instead of the write. The fault fires once and disarms, so the
-     * rollback's own openRW of data.parquet still succeeds.
+     * Hands the first read-write open of data.parquet while armed an uncached read-only fd, so
+     * the O3 job's first write fails (a cached fd cannot be detached for the Rust writer, which
+     * would fail the open instead). Fires once, so the rollback's own openRW succeeds.
      */
     private static FilesFacade readOnlyParquetOnce(AtomicBoolean armed, AtomicInteger faults) {
         return new TestFilesFacadeImpl() {
@@ -1447,11 +1444,9 @@ public class ParquetReplaceCommitTest extends AbstractCairoTest {
     }
 
     /**
-     * Runs 60 random replace commits against the twins: each picks a day, a range of
-     * 1 to 12 hours within it and 0 to 3 rows on minute boundaries inside the range,
-     * with an occasional in-order append after it. The twins must match after every
-     * commit. The seed comes from {@link TestUtils#generateRandom}, so a failure
-     * reproduces from the seeds it logs.
+     * Runs 60 random replace commits against the twins, each over 1 to 12 hours of a day with 0
+     * to 3 rows on minute boundaries and an occasional in-order append after it. The twins must
+     * match after every commit.
      */
     private void assertRandomReplaceCommits(boolean isFormatParquet) throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);

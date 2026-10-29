@@ -801,9 +801,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     /**
      * Re-inserts copies of random intervals of the table's rows, which a dedup table must
-     * absorb without touching any partition. Returns how many of the inserts start in a
-     * parquet partition: the first row of each insert is in it, so that partition takes
-     * an identical dedup commit.
+     * absorb without touching any partition. Returns how many inserts start in a parquet
+     * partition, each of which takes an identical dedup commit.
      */
     private int reinsertSameData(Rnd rnd, String tableNameDedup, String timestampColumnName) throws SqlException {
         execute("ALTER TABLE \"" + tableNameDedup + "\" SQUASH PARTITIONS", sqlExecutionContext);

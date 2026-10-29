@@ -466,11 +466,9 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
-     * An in-place O3 update writes the rebuilt index under a new column name txn beside the committed files, and
-     * a reader pinned below the commit defers the superseded version's purge to {@code ColumnPurgeJob}, which
-     * targets the directory the version was superseded in. A sweep that rewrites the partition in the meantime
-     * must carry only the version {@code _cv} names: a superseded copy linked into the new directory is out of
-     * that purge's reach and stays on disk for good.
+     * A pinned reader defers the purge of an index version an in-place O3 update superseded to
+     * {@code ColumnPurgeJob}, which targets the old directory. A sweep that rewrites the partition
+     * meanwhile must carry only the version {@code _cv} names, or the superseded copy leaks.
      */
     @Test
     public void testIdleSweepCarriesOnlyTheLiveIndexVersionBitmap() throws Exception {

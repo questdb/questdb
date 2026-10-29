@@ -238,9 +238,8 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
     }
 
     /**
-     * Gives the table a covering POSTING index, unless a column already has one. The first list
-     * adds covering indexes at random (addCoveringIndexProb), so a run can end without any.
-     * Returns the key column's name.
+     * Gives the tables a covering POSTING index unless one exists, since the first list adds them
+     * only at random. Returns the key column's name.
      */
     private static String ensureCoveringPostingIndex(Rnd rnd, ObjList<String> tableNames, String tableNameWal) throws Exception {
         int keyIndex = -1;
@@ -319,18 +318,11 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
     }
 
     /**
-     * The follow-up list is where replace reaches Parquet partitions with posting indexes. The
-     * first list does not get there. It is capped at 5 transactions
-     * (1_500_000 / fuzzRowCount), only about a third of its iterations write data, the SET TTL
-     * it usually generates stops replace for every later data block, and a replace lands on
-     * Parquet only when a conversion of that partition precedes it.
-     * <p>
-     * So once the first list is verified, the three tables get the same preparation: TTL off,
-     * a covering POSTING index if the first list left none, every partition but the active one
-     * converted to Parquet on the WAL tables. Then a replace-heavy list is generated over the
-     * day of one of those Parquet partitions. The spill budget from {@link #forcePostingSpill}
-     * still applies, so each replace rewrites Parquet row groups and re-seals the posting index
-     * (O3PartitionJob.updateParquetIndexes, deferParquetPostingSealPurges) under spill pressure.
+     * Builds the follow-up list that brings replace commits to Parquet partitions with posting
+     * indexes, which the short, TTL-prone first list rarely does. Turns TTL off, ensures a
+     * covering POSTING index, converts every WAL partition but the active one to Parquet, then
+     * generates a replace-heavy list over one Parquet day. The {@link #forcePostingSpill} budget
+     * still applies, so each replace re-seals the posting index under spill pressure.
      */
     private ObjList<FuzzTransaction> prepareReplaceOnParquetList(
             Rnd rnd,

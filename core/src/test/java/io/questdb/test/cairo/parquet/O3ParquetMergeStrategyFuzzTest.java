@@ -450,10 +450,9 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
     }
 
     /**
-     * Converts the partition at partitionTs to Parquet when it exists and is native. A
-     * replace that covers every row of the Parquet partition removes it, and a later commit
-     * re-creates it as a native partition: without the conversion the rest of the run
-     * would merge into native partitions only. Returns true when it converted.
+     * Converts the partition at partitionTs to Parquet when it exists and is native, e.g. after
+     * a full-cover replace removed it and a later commit re-created it as native. Returns true
+     * when it converted.
      */
     private boolean convertToParquetIfNative(String tableName, long partitionTs) throws Exception {
         final StringSink partName = new StringSink();
@@ -491,12 +490,10 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
     }
 
     /**
-     * The four multi-round tests: a WAL table whose 2022-02-24 partition is Parquet, and
-     * a non-WAL oracle, receive the same random rounds of O3 and replace commits inside
-     * that day. With hasSentinel, two rows on 2022-02-26 keep 2022-02-24 from being the
-     * last partition. With hasWalIoFailures, the engine runs on the fuzz failure facade and
-     * the WAL apply of every round after the first fails at a random file system call, then
-     * resumes; the oracle is never faulted.
+     * Applies the same random rounds of O3 and replace commits on 2022-02-24 to a WAL table,
+     * where that day is Parquet, and to a non-WAL oracle. With hasSentinel, rows on 2022-02-26
+     * keep 2022-02-24 from being the last partition. With hasWalIoFailures, the WAL apply of
+     * every round after the first fails at a random file system call, then resumes.
      */
     private void runMultiRoundFuzz(Rnd rnd, boolean hasSentinel, boolean hasWalIoFailures) throws Exception {
         // Randomize the row group size so the test is likely to produce

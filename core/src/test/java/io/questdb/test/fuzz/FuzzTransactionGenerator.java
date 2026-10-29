@@ -828,18 +828,14 @@ public class FuzzTransactionGenerator {
      * Picks the range of a replace commit, in table timestamp units, one of:
      * <ul>
      * <li>a wide window, padded by about 7.4 hours on each side of the commit's rows;</li>
-     * <li>edges on, or one unit next to, the committed rows nearest the commit's rows:
-     * {@code lo} on a row, {@code hi - 1} on a row (the row is replaced) or {@code hi} on a
-     * row (it is not);</li>
+     * <li>edges on, or one unit next to, the nearest committed rows: {@code lo} on a row,
+     * {@code hi - 1} on a row (replaced) or {@code hi} on a row (kept);</li>
      * <li>a narrow window around the commit's rows;</li>
      * <li>whole days, with or without the commit's rows;</li>
-     * <li>no rows: a pure delete around the commit's rows, or a narrow window on, or next
-     * to, one committed row.</li>
+     * <li>no rows: a pure delete, or a narrow window on or next to one committed row.</li>
      * </ul>
-     * The wide window alone puts no edge on an existing row, never covers whole partitions,
-     * and brings rows nearly always, so the other shapes reach the inclusive and exclusive
-     * edge cases, partition removal and the no-op path. Every window holds the rows the
-     * commit brings, as the WAL requires.
+     * The non-wide shapes reach the edge cases, partition removal and the no-op path. Every
+     * window holds the rows the commit brings, as the WAL requires.
      */
     static final class ReplaceWindowPicker {
         private static final int MAX_TIMESTAMPS = 100_000;

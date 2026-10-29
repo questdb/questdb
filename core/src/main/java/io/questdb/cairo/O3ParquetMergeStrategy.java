@@ -166,10 +166,9 @@ public class O3ParquetMergeStrategy {
     /**
      * Same as
      * {@link #computeMergeActions(LongList, long, long, long, int, int, ObjList, LongList, LongList, boolean)},
-     * plus an optional replace-commit range. A row group that receives O3 rows becomes a
-     * MERGE, which also drops its existing rows inside the range. A row group that the range
-     * intersects without O3 rows becomes a DROP when the range covers it fully, and otherwise
-     * a MERGE with an empty O3 slice that only drops the covered rows.
+     * plus an optional replace-commit range. A row group with O3 rows becomes a MERGE that also
+     * drops its existing rows inside the range. A row group the range intersects without O3 rows
+     * becomes a DROP when fully covered, else a MERGE with an empty O3 slice.
      *
      * @param replaceLo inclusive range start, or Long.MAX_VALUE when not a replace commit
      * @param replaceHi inclusive range end, or Long.MIN_VALUE when not a replace commit;

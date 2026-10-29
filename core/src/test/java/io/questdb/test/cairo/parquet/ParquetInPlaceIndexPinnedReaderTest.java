@@ -637,15 +637,11 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
     }
 
     /**
-     * A commit spans both parquet days. The partition task that runs first updates its
-     * partition in place (parquet footer appended, _pm header patched, indexes rebuilt under
-     * the new column name txn) or, for a replace, removes it. Which day runs first depends on
-     * the commit: the writer runs a partition task inline when it cannot queue it. Then a file
-     * of the other day fails (faultFile): data.parquet opens read-only, so its parquet update
-     * fails, and an index file fails to open, so its index rebuild fails after its parquet
-     * update. Nothing of either partition may be published: the committed name txns, parquet
-     * sizes, column name txns and index files stay, and the index answers from the committed
-     * snapshot. After RESUME WAL both converge to nat.
+     * A commit spans both parquet days. The first partition task updates its day in place or,
+     * for a replace, removes it; then faultFile fails on the other day, either its parquet update
+     * (read-only data.parquet) or its index rebuild. Neither partition may be published: name
+     * txns, parquet sizes, column name txns and index files stay as committed, and the index
+     * answers from the committed snapshot. After RESUME WAL both converge to nat.
      *
      * @param inPlaceBeforeFault in-place partition writes done when the fault fires
      * @param removalBeforeFault replace removals done when the fault fires
@@ -859,11 +855,9 @@ public class ParquetInPlaceIndexPinnedReaderTest extends AbstractCairoTest {
     }
 
     /**
-     * The in-place rebuild of 2024-01-01 fails after sym's index was written under the new
-     * column name txn. RESUME WAL FROM TXN skips the failed transaction, so nothing ever
-     * names those files: they stay in the live partition directory as orphans. Once the
-     * table txn has moved past the failed one, VACUUM TABLE must purge them and keep every
-     * committed index file.
+     * The in-place rebuild of 2024-01-01 fails after writing sym's index under the new column
+     * name txn, and RESUME WAL FROM TXN skips the transaction, orphaning those files. Once the
+     * table txn moves past it, VACUUM TABLE must purge them and keep every committed index file.
      */
     private void assertSkippedFailedRebuildOrphansPurgedByVacuum(String indexClause, String faultFile) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);

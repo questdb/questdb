@@ -59,43 +59,29 @@ import java.util.Arrays;
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 /**
- * Measures how long {@code ApplyWal2TableJob} takes to apply a replace-range WAL commit
- * ({@code WAL_DEDUP_MODE_REPLACE_RANGE}) to a Parquet partition, and the same commit to a native
- * partition. Materialized-view refresh and range-replace ingestion issue such commits.
+ * Times the WAL apply of a replace-range commit ({@code WAL_DEDUP_MODE_REPLACE_RANGE}), as
+ * materialized-view refresh issues, on a Parquet partition and on its native twin.
  * <p>
- * Each run creates a fresh database with one WAL table of {@link #DAYS} daily partitions of
- * {@link #ROWS_PER_DAY} evenly spaced rows: two SYMBOL columns, two DOUBLE, one LONG, one VARCHAR
- * and the designated timestamp. The Parquet variant converts every partition but the last with
- * {@code CONVERT PARTITION TO PARQUET} for the {@code HISTORICAL} placement, and creates the table
- * {@code FORMAT PARQUET} for the {@code LAST} placement, so that the last partition is Parquet too.
- * Row groups hold {@link #ROW_GROUP_SIZE} rows, the server default, so a day has 10 of them.
+ * Each run creates a WAL table of {@link #DAYS} daily partitions of {@link #ROWS_PER_DAY} rows in
+ * row groups of {@link #ROW_GROUP_SIZE}. The {@code HISTORICAL} placement converts every day but
+ * the last to Parquet; {@code LAST} creates the table {@code FORMAT PARQUET}. Each iteration commits
+ * the same window to the target day: a replace brings new values at the timestamps it covers, so
+ * the partition keeps its shape; a delete brings no rows, and an untimed commit restores them.
  * <p>
- * Every scenario commits the same replace window to the target day on each iteration. A replace
- * brings one row for each row it covers, at the same timestamps, with new values, so the partition
- * keeps its shape across iterations, as when a materialized view refreshes the same buckets again.
- * A delete brings no rows; an untimed replace commit restores the deleted rows after each timed one.
- * Only the WAL apply of the measured commit is timed, not the WAL write.
- * <p>
- * The Parquet path updates the file in place while the dead bytes it would leave stay below the
- * rewrite thresholds (ratio 0.5, 1 GiB), and rewrites the partition otherwise. A run therefore
- * mixes cheap in-place commits with periodic full rewrites, and the average includes the rewrites
- * amortized over the run. {@code avg_x} and {@code p50_x} give the Parquet time as a multiple of the
- * native time for the same scenario and worker count. The {@code in_place}, {@code rewrite}, {@code drop_rg} and {@code noop}
- * columns count the Parquet paths that the measured commits took, from {@link O3ParquetCounters}.
- * {@code day_mb} is the target day's on-disk size before and after the run, which shows the dead
- * bytes that in-place updates leave behind.
- * <p>
- * {@code workers = 0} runs all O3 work on the applying thread. {@code workers > 0} adds a shared
- * write pool with the writer jobs, as the server has: the native O3 path then copies columns in
- * parallel, while the Parquet path processes a partition in one task.
+ * The Parquet path updates in place until projected dead bytes cross the rewrite thresholds (ratio
+ * 0.5, 1 GiB), so averages include amortized rewrites. {@code avg_x} and {@code p50_x} give the
+ * Parquet time as a multiple of the native one. {@code in_place}, {@code rewrite}, {@code drop_rg}
+ * and {@code noop} count the paths taken, from {@link O3ParquetCounters}, and {@code day_mb} shows
+ * the target day's size before and after the run. {@code workers > 0} adds a shared write pool, in
+ * which native O3 copies columns in parallel while Parquet O3 runs a partition in one task.
  * <p>
  * Manual timing (not JMH). Run with:
  * <pre>
  * java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED \
  *      -cp benchmarks/target/benchmarks.jar org.questdb.ParquetReplaceCommitBenchmark [scenario,...]
  * </pre>
- * The optional argument limits the run to a comma-separated list of scenario names. Logging goes
- * to stdout at ERROR level unless {@code -Dout=<log.conf>} says otherwise.
+ * The optional argument is a comma-separated list of scenario names to run. Logging goes to stdout
+ * at ERROR level unless {@code -Dout=<log.conf>} is set.
  */
 public class ParquetReplaceCommitBenchmark {
     private static final int COL_AMOUNT = 3;
