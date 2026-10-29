@@ -1728,6 +1728,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
 
+            completeDurableEpoch("t_pq_leak");
             // Drain any queued posting-seal purges; the leaked intermediate is
             // never queued, so this would not reclaim it.
             try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
@@ -1739,7 +1740,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             // (2000 + 2 O3 rows in the converted partition + 10 in the next).
             assertQuery("SELECT count() FROM t_pq_leak WHERE sym = 'A'")
                     .noLeakCheck()
-                    .returnsOnce("count\n2012\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2012\n");
 
             final TableToken token = engine.getTableTokenIfExists("t_pq_leak");
             Assert.assertNotNull("table must exist", token);
@@ -2601,6 +2604,7 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
 
+            completeDurableEpoch("t_pq_inplace");
             try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
                 runPostingSealPurgeJob(purgeJob);
             }
@@ -2608,7 +2612,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
 
             assertQuery("SELECT count() FROM t_pq_inplace WHERE sym = 'A'")
                     .noLeakCheck()
-                    .returnsOnce("count\n2012\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n2012\n");
 
             final TableToken token = engine.getTableTokenIfExists("t_pq_inplace");
             Assert.assertNotNull("table must exist", token);
@@ -5833,13 +5839,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             Assert.assertNull("concurrent reader threw: " + bgError.get(), bgError.get());
             assertQuery("SELECT count() FROM xq WHERE sym = 'A'")
                     .noLeakCheck()
-                    .returnsOnce("count\n" + expectedA + "\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n" + expectedA + "\n");
 
             // The reclaim must also have kept the partition free of leaked
             // intermediates across every rewrite: exactly one value file remains.
-            // The rewrite purges are deferred and scoreboard-gated, so with the
-            // readers stopped and writers released (nothing pinned) a purge-job
-            // pass reclaims every superseded .pv.
+            // Readers and both adaptive save points must leave the superseded versions before the purge.
+            completeDurableEpoch("xq");
             engine.releaseAllWriters();
             try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
                 runPostingSealPurgeJob(purgeJob);
@@ -6103,6 +6110,43 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                             c\tmn\tmx
                             20000\t1\t29999
                             """);
+        });
+    }
+
+    @Test
+    public void testPostingValueFileTooShortReader() throws Exception {
+        // The posting writer publishes a value size only after its value memory has grown to cover it, so a .pv
+        // shorter than the head entry's size is torn, and a reader refuses it instead of mapping past its end.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "short_value_file_reader";
+                writePostingIndexWithShortHeadValueFile(path, plen, name);
+                try (PostingIndexFwdReader ignore = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
+                    Assert.fail("a reader must refuse a .pv shorter than the published value size");
+                } catch (CairoException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(), "posting index value file too short");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPostingValueFileTooShortWriterReopen() throws Exception {
+        // As for the reader: a writer reopening a .pv shorter than the head entry's value size refuses it.
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int plen = path.size();
+                final String name = "short_value_file_writer";
+                writePostingIndexWithShortHeadValueFile(path, plen, name);
+                try (PostingIndexWriter reopen = new PostingIndexWriter(configuration)) {
+                    reopen.of(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0L, 0L);
+                    Assert.fail("a writer must refuse a .pv shorter than the published value size");
+                } catch (CairoException expected) {
+                    TestUtils.assertContains(expected.getFlyweightMessage(), "posting index value file too short");
+                }
+            }
         });
     }
 
@@ -12695,6 +12739,13 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         }
     }
 
+    private static void completeDurableEpoch(String tableName) {
+        // Advancing just once leaves the older recovery generation pinned to the superseded posting files.
+        try (TableWriter writer = getWriter(tableName)) {
+            writer.completeDurableEpochAfter("test posting seal cleanup");
+        }
+    }
+
     private static long drainRowCursor(RowCursor cursor) {
         long count = 0;
         while (cursor.hasNext()) {
@@ -13598,6 +13649,38 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             } finally {
                 mem.close(true, Vm.TRUNCATE_TO_POINTER);
             }
+        }
+    }
+
+    // Builds a two-key posting index, then cuts its head .pv one byte short of the head entry's value size.
+    private void writePostingIndexWithShortHeadValueFile(Path path, int plen, CharSequence name) {
+        try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+            writer.add(0, 0);
+            writer.add(1, 1);
+            writer.setMaxValue(1);
+            writer.commit();
+        }
+        final FilesFacade ff = configuration.getFilesFacade();
+        final PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
+        final LPSZ keyFile = PostingIndexUtils.keyFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE);
+        try (MemoryCMARWImpl pk = new MemoryCMARWImpl(ff, keyFile, ff.getPageSize(), ff.length(keyFile), MemoryTag.MMAP_DEFAULT, 0)) {
+            final PostingIndexChainWriter chain = new PostingIndexChainWriter();
+            chain.openExisting(pk);
+            Assert.assertTrue(chain.hasHead());
+            chain.loadHeadEntry(pk, head);
+        }
+        Assert.assertTrue(head.valueMemSize > 0);
+        final long fd = ff.openRW(
+                PostingIndexUtils.valueFileName(path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, head.sealTxn),
+                configuration.getWriterFileOpenOpts()
+        );
+        Assert.assertTrue(fd > -1);
+        try {
+            Assert.assertTrue(ff.length(fd) >= head.valueMemSize);
+            Assert.assertTrue(ff.truncate(fd, head.valueMemSize - 1));
+        } finally {
+            ff.close(fd);
+            path.trimTo(plen);
         }
     }
 

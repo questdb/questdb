@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -35,6 +36,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -42,8 +44,24 @@ import static io.questdb.cairo.TableUtils.*;
 
 public final class TxWriter extends TxReader implements Closeable, Mutable, SymbolValueCountCollector {
     private final CairoConfiguration configuration;
+    // The partition-table part of the body checksum (TableUtils.combineTxnBodyChecksum), one entry per A/B
+    // slot, hashed from the bytes that slot's area holds. The fast path rewrites only header words of the
+    // area it republishes, so its checksum needs the header hash plus this entry -- O(1) instead of a pass
+    // over every partition. An entry stays exact for the bytes in place: commitFullRecord() keeps the target
+    // slot's entry only when the record keeps its geometry, and then folds in each partition-table int it
+    // changes as it stores it; truncate() drops the entry before writing a body; the two in-place writers
+    // that could overrun into a partition table drop it too. Entries are keyed by area geometry, so one never
+    // applies to an area it did not hash, and a miss hashes the bytes afresh. With assertions enabled,
+    // invalidatePartitionTableHashes() checks every entry it drops against a full recomputation.
+    private final PartitionTableHash partitionTableHashA = new PartitionTableHash();
+    private final PartitionTableHash partitionTableHashB = new PartitionTableHash();
     private long baseVersion;
+    // Adaptive partition-metadata obligations; TableWriter also covers CV changes and active appends.
+    // Null outside a consuming writer's lifecycle. Same-size and flag changes still need marking.
+    private LongHashSet dirtyPartitions;
     private TableWriter.ExtensionListener extensionListener;
+    // Set only for the duration of the load in ofRW(path, true).
+    private boolean isTornLiveAreaTolerated;
     private int lastRecordBaseOffset = -1;
     private long lastRecordStructureVersion = -1;
     private long lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
@@ -57,6 +75,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private int readBaseOffset;
     private long readRecordSize;
     private long recordStructureVersion = 0;
+    // The commit mode this writer flushes _txn under. Seeded from the instance-global cairo.commit.mode
+    // and overridden by TableWriter via setCommitMode() while a table is not yet enrolled in adaptive.
+    private int commitMode;
+    // The version word of a torn live area that ofRW(path, true) loaded the previous record in place of, or -1
+    // when the loaded record is the live one. See rollbackTornLiveArea().
+    private long tornLiveVersion = -1;
     private MemoryCMARW txMemBase;
     private int txPartitionCount;
     private int writeAreaSize;
@@ -65,6 +89,26 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public TxWriter(FilesFacade ff, CairoConfiguration configuration) {
         super(ff);
         this.configuration = configuration;
+        this.commitMode = configuration.getCommitMode();
+    }
+
+    /**
+     * Overrides the mode this writer flushes {@code _txn} under. TableWriter uses it to hold a table at
+     * SYNC grade until its first save point exists, then to hand it ADAPTIVE.
+     */
+    public void setCommitMode(int commitMode) {
+        this.commitMode = commitMode;
+    }
+
+    /**
+     * The commit mode for the per-commit {@code _txn} flush. {@link CommitMode#appliesColumnSync} is true
+     * only for SYNC and ASYNC. Under ADAPTIVE, {@code _txn} is flushed lazily like the columns: the table
+     * files are a rebuildable cache of the durable WAL, and {@link RecoveryCoordinator} restores {@code _txn}
+     * and {@code _cv} from the save point ({@code _epoch.manifest.0/1}) and replays the WAL past it. A save
+     * point flushes {@code _txn} through {@link #fsync()} whatever the mode.
+     */
+    private int resolveCommitMode() {
+        return commitMode;
     }
 
     public void append() {
@@ -150,18 +194,24 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     @Override
     public void clear() {
+        dirtyPartitions = null;
         clearData();
-        if (txMemBase != null) {
-            // Never trim _txn file to size. Size of the file can only grow up.
-            txMemBase.close(false);
+        try {
+            invalidatePartitionTableHashes();
+        } finally {
+            tornLiveVersion = -1;
+            if (txMemBase != null) {
+                // Never trim _txn file to size. Size of the file can only grow up.
+                txMemBase.close(false);
+            }
+            recordStructureVersion = 0L;
+            lastRecordStructureVersion = -1L;
+            prevRecordStructureVersion = -2L;
+            lastRecordBaseOffset = -1;
+            prevRecordBaseOffset = -2;
+            lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
+            prevLastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
         }
-        recordStructureVersion = 0L;
-        lastRecordStructureVersion = -1L;
-        prevRecordStructureVersion = -2L;
-        lastRecordBaseOffset = -1;
-        prevRecordBaseOffset = -2;
-        lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
-        prevLastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
     }
 
     @Override
@@ -180,7 +230,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void commit(ObjList<? extends SymbolCountProvider> symbolCountProviders) {
-        commit(configuration.getCommitMode(), symbolCountProviders);
+        commit(resolveCommitMode(), symbolCountProviders);
     }
 
     public void commit(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
@@ -194,8 +244,28 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             putLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
             putLagValues();
 
+            final PartitionTableHash partitionTableHash = partitionTableHashOfNextSlot();
+            if (symbolCountProviders.size() > symbolColumnCount) {
+                // storeSymbolCounts() runs past the symbol region into the partition table.
+                partitionTableHash.invalidate();
+            }
             // Store symbol counts. Unfortunately we cannot skip it in here
             storeSymbolCounts(symbolCountProviders);
+
+            // The area's base-header geometry slot still names the txn it was last published under. A reader
+            // treats a record whose checksum stamp names it but whose geometry stamp does not as torn, falls
+            // back to the previous area and can never acquire this txn, so restamp it for the new txn.
+            storeGeometryVersion(writeBaseOffset);
+
+            // The fast path keeps the previous record's structure, so the committed size is readRecordSize
+            // and the partition table starts at getPartitionTableSizeOffset(symbolColumnCount), the range the
+            // reader derives. The checksum goes after the body and before the fence and version bump. Nothing
+            // above wrote a partition-table byte unless the slot's cached partition-table hash was dropped, so
+            // a valid entry still describes this area.
+            storeBodyChecksum(
+                    writeBaseOffset,
+                    calculateBodyChecksum(writeBaseOffset, readRecordSize, getPartitionTableSizeOffset(symbolColumnCount), partitionTableHash)
+            );
 
             Unsafe.storeFence();
             txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);
@@ -210,13 +280,38 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             prevRecordBaseOffset = lastRecordBaseOffset;
             lastRecordBaseOffset = writeBaseOffset;
             prevPartitionTableVersion = partitionTableVersion;
-            if (commitMode != CommitMode.NOSYNC) {
+            if (CommitMode.appliesColumnSync(commitMode)) {
                 txMemBase.sync(commitMode == CommitMode.ASYNC);
             }
         } else {
             // Slow path, record structure changed
             commitFullRecord(commitMode, symbolCountProviders);
         }
+    }
+
+    /**
+     * Makes the {@code _txn} file durable whatever the commit mode: msync(MS_SYNC) of the mapping, then an
+     * fsync of the fd. A save point ({@link TableWriter#fsyncMaterializedState()}) calls it after the column
+     * data and {@code _cv} are durable, so the pointer never lands before the data. Under NOSYNC and ADAPTIVE
+     * the last {@link #commit(io.questdb.std.ObjList)} did not sync, so both calls are needed.
+     */
+    public void fsync() {
+        txMemBase.sync(false);
+        ff.fsync(txMemBase.getFd());
+    }
+
+    public long getCommittedSeqTxn() {
+        return getLong(TX_OFFSET_SEQ_TXN_64);
+    }
+
+    /**
+     * The fd of the backing {@code _txn} file, or {@code -1} if it is not mapped. The file lives in the table
+     * directory and stays mapped for the writer's lifetime, so a save point
+     * ({@code TableWriter.fsyncMaterializedState()}) uses this fd for its filesystem-wide {@code syncfs},
+     * which must not be skipped when every column fd is closed.
+     */
+    public long getFd() {
+        return txMemBase != null ? txMemBase.getFd() : -1;
     }
 
     public void finishPartitionSizeUpdate(long minTimestamp, long maxTimestamp) {
@@ -242,6 +337,23 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public long getLastTxSize() {
         return txPartitionCount == 1 ? transientRowCount - prevTransientRowCount : transientRowCount;
+    }
+
+    /**
+     * The version word of the torn live area that {@link #ofRW(LPSZ, boolean)} loaded the previous record in
+     * place of, or -1 when the loaded record is the live one.
+     */
+    public long getTornLiveVersion() {
+        return tornLiveVersion;
+    }
+
+    /**
+     * True while this writer holds the previous record in place of a torn live area. Only
+     * {@link #rollbackTornLiveArea()} or closing the writer may follow: a commit would publish over a header
+     * that still selects the torn area.
+     */
+    public boolean hasTornLiveArea() {
+        return tornLiveVersion != -1;
     }
 
     public boolean inTransaction() {
@@ -287,17 +399,56 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return false;
     }
 
+    /**
+     * Loads the previous record in place of the live one, as {@link #ofRW(LPSZ, boolean)} does for a torn live
+     * area, and reports the live version through {@link #getTornLiveVersion()}. For a live record that is
+     * intact but names a column version {@code _cv} cannot serve: a crash made that commit's {@code _txn} write
+     * durable and lost part of the rest, so the commit is not durable as a whole. The same contract then
+     * applies: only {@link #rollbackTornLiveArea()} or closing the writer may follow. Returns false, with the
+     * live record loaded again, when the previous record does not verify against a checksum stamp that names it.
+     */
+    public boolean loadPreviousRecord() {
+        assert tornLiveVersion == -1;
+        final long liveVersion = getVersion();
+        invalidatePartitionTableHashes();
+        if (unsafeLoadPreviousArea() && isLoadedRecordChecksumVerified() && getVersion() == liveVersion - 1) {
+            tornLiveVersion = liveVersion;
+            return onRecordLoaded();
+        }
+        if (!unsafeLoadAll() || getVersion() != liveVersion) {
+            throw CairoException.critical(0)
+                    .put("_txn did not load the live transaction again [txn=").put(liveVersion).put(']');
+        }
+        return false;
+    }
+
     @Override
     public TxWriter ofRO(@Transient LPSZ path, int timestampType, int partitionBy) {
         throw new IllegalStateException();
     }
 
     public TxWriter ofRW(@Transient LPSZ path) {
+        return ofRW(path, false);
+    }
+
+    /**
+     * Opens {@code _txn} for writing. By default a torn live A/B area fails the open. With
+     * {@code isTornLiveAreaTolerated} the open loads the previous record instead, provided it verifies against
+     * a checksum stamp that names it, and reports the torn version through {@link #getTornLiveVersion()}. The
+     * caller must then check the table's other files against that record and either publish it with
+     * {@link #rollbackTornLiveArea()} or close the writer; nothing may commit in between.
+     */
+    public TxWriter ofRW(@Transient LPSZ path, boolean isTornLiveAreaTolerated) {
         clear();
         openTxnFile(ff, path);
         try {
             super.initRO(txMemBase);
-            unsafeLoadAll();
+            this.isTornLiveAreaTolerated = isTornLiveAreaTolerated;
+            try {
+                unsafeLoadAll();
+            } finally {
+                this.isTornLiveAreaTolerated = false;
+            }
         } catch (Throwable e) {
             if (txMemBase != null) {
                 // Do not truncate in case the file cannot be read
@@ -372,7 +523,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putInt(readBaseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
         txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MIN_TIMESTAMP_64, Long.MAX_VALUE);
         txMemBase.putLong(readBaseOffset + TX_OFFSET_LAG_MAX_TIMESTAMP_64, Long.MIN_VALUE);
-        txMemBase.putLong(readBaseOffset + TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0));
+        txMemBase.putInt(readBaseOffset + TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0));
+        // The fields above lie in [80,116), outside the body checksum, so this in-place write keeps it valid.
     }
 
     public void resetLagValuesUnsafe() {
@@ -383,6 +535,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void resetStructureVersionUnsafe() {
         txMemBase.putLong(readBaseOffset + TX_OFFSET_STRUCT_VERSION_64, 0);
+        // The body checksum leaves the structure version out, so this in-place reset keeps it valid.
     }
 
     public void resetTimestamp() {
@@ -395,10 +548,83 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         minTimestamp = prevMinTimestamp;
     }
 
+    /**
+     * Makes the {@code _txn} this writer reads durable, also when a failed writeback left its pages clean in the
+     * page cache with content the device never got: a sync skips clean pages, so the bytes are written over
+     * themselves first. They are written from a copy: on macOS a write whose source is a mapping of the file it
+     * writes never returns.
+     */
+    public void rewriteAndFsync() {
+        final long fd = txMemBase.getFd();
+        final long size = txMemBase.size();
+        final long copy = Unsafe.malloc(size, MemoryTag.NATIVE_TABLE_WRITER);
+        try {
+            Vect.memcpy(copy, txMemBase.addressOf(0), size);
+            if (ff.write(fd, copy, size, 0) != size) {
+                throw CairoException.critical(ff.errno()).put("could not rewrite _txn [fd=").put(fd).put(", size=").put(size).put(']');
+            }
+        } finally {
+            Unsafe.free(copy, size, MemoryTag.NATIVE_TABLE_WRITER);
+        }
+        ff.fsync(fd);
+    }
+
+    /**
+     * Publishes the previous record that {@link #ofRW(LPSZ, boolean)} loaded in place of a torn live area, and
+     * makes it durable whatever the commit mode.
+     * <p>
+     * A commit writes only its own A/B slot and that slot's geometry before it bumps the version word, so the
+     * torn commit left the previous record's slot and geometry as their own commit wrote them, and the load
+     * verified both. Moving the version word back one therefore selects that record again: the file reads
+     * exactly as it does after a crash that loses every {@code _txn} write of the torn commit, the ordinary
+     * outcome of a power loss under NOSYNC. The next commit takes the torn slot, as it would have then.
+     * <p>
+     * Only the 8-byte version word changes, and the previous record's slot stays untouched until the next
+     * commit. A crash before the word is durable finds the same torn area and intact previous record, so the
+     * rollback simply repeats.
+     */
+    public void rollbackTornLiveArea() {
+        final long previousVersion = getVersion();
+        assert tornLiveVersion == previousVersion + 1;
+        txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, previousVersion);
+        fsync();
+        // Reload through the ordinary path, which must select and verify the record just published.
+        if (!unsafeLoadAll() || getVersion() != previousVersion) {
+            throw CairoException.critical(0)
+                    .put("_txn did not load the previous transaction after rolling back to it [txn=")
+                    .put(previousVersion).put(']');
+        }
+    }
+
     public void setColumnVersion(long newVersion) {
         if (columnVersion != newVersion) {
             recordStructureVersion++;
             columnVersion = newVersion;
+        }
+    }
+
+    /**
+     * Partition metadata changed since the last successful epoch, or null when tracking is disabled.
+     */
+    public @Nullable LongHashSet getDirtyPartitions() {
+        return dirtyPartitions;
+    }
+
+    /**
+     * Drops the accumulated write set. A save point calls this only after its flush succeeded, so a failed
+     * save point retries with the same set.
+     */
+    public void clearDirtyPartitions() {
+        if (dirtyPartitions != null) {
+            dirtyPartitions.clear();
+        }
+    }
+
+    public void setDirtyPartitionTracking(boolean isEnabled) {
+        if (!isEnabled) {
+            dirtyPartitions = null;
+        } else if (dirtyPartitions == null) {
+            dirtyPartitions = new LongHashSet();
         }
     }
 
@@ -499,7 +725,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             if ((geometryRef & PARTITION_COMPOSITE_FLAG) != 0
                     && ((oldOffset3 & PARTITION_COMPOSITE_FLAG) == 0
                     || TxReader.geometryGeneration(oldOffset3) != TxReader.geometryGeneration(geometryRef))) {
-                geometryVersion++;
+                // Wrap within [0, Integer.MAX_VALUE] instead of overflowing: a reader takes a negative geometry
+                // version for a torn record, and a version loaded from a released record can start anywhere in
+                // that range. The value must still change, or PartitionGeometry keeps a superseded resolution.
+                geometryVersion = (geometryVersion + 1) & Integer.MAX_VALUE;
             }
             attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, flags | geometryRef);
             recordStructureVersion++;
@@ -520,6 +749,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionParquetFileSizeByRawIndex(int indexRaw, long size) {
+        markPartitionDirtyByRawIndex(indexRaw);
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
@@ -537,6 +767,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionParquetGeneratedByRawIndex(int indexRaw, boolean parquetGenerated) {
+        markPartitionDirtyByRawIndex(indexRaw);
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
@@ -557,6 +788,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionReadOnlyByRawIndex(int indexRaw, boolean isReadOnly) {
+        markPartitionDirtyByRawIndex(indexRaw);
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
@@ -574,6 +806,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void setPartitionRemoteByRawIndex(int indexRaw, boolean isRemote) {
+        markPartitionDirtyByRawIndex(indexRaw);
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
@@ -610,6 +843,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
      * a recorded version (setting UPLOADED, say) can tell instead of committing over a word with none
      */
     public boolean setPartitionSeqTxnByRawIndex(int indexRaw, long seqTxn) {
+        markPartitionDirtyByRawIndex(indexRaw);
         if (isPartitionCompositeByRawIndex(indexRaw)) {
             // A composite partition spends the offset-3 value field on its geometry pointer, so there is nowhere here
             // to put a stamp; its seqTxn goes into the _geometry record instead.
@@ -658,6 +892,8 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         writeAreaSize = calculateWriteSize();
         writeBaseOffset = calculateWriteOffset(writeAreaSize);
+        // The slot's cached partition-table hash stops describing its area as soon as the body write starts.
+        partitionTableHashOfNextSlot().invalidate();
         resetTxn(
                 txMemBase,
                 writeBaseOffset,
@@ -677,21 +913,31 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public boolean unsafeLoadAll() {
-        super.unsafeLoadAll();
-        this.baseVersion = getVersion();
-        this.prevPartitionTableVersion = partitionTableVersion;
-        this.txPartitionCount = 1;
-        this.lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
-        this.prevLastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
-        if (baseVersion >= 0) {
-            this.readBaseOffset = getBaseOffset();
-            this.readRecordSize = getRecordSize();
-            this.prevTransientRowCount = this.transientRowCount;
-            this.prevMaxTimestamp = maxTimestamp;
-            this.prevMinTimestamp = minTimestamp;
-            return true;
+        // Writer reopen/rollback must validate the persisted record, even on an already-open mapping.
+        requireInitialChecksumVerification();
+        invalidatePartitionTableHashes();
+        if (!super.unsafeLoadAll()) {
+            return false;
         }
-        return false;
+        final long selectedVersion = unsafeReadVersion();
+        if (getVersion() != selectedVersion) {
+            // TxWriter has exclusive ownership: a prior A/B area is not a concurrent-reader retry.
+            // Publishing from it discards the latest commit, potentially against newer metadata and column
+            // versions, so only ofRW(path, true), whose caller checks the table's other files first, may take
+            // it. The record must also be verified: an unstamped one loads without its checksum, and a rollback
+            // publishes what it loads. For an adaptive table, recovery restores the save point instead.
+            final long fallbackVersion = getVersion();
+            if (!isTornLiveAreaTolerated || !isLoadedRecordChecksumVerified()) {
+                clearData();
+                throw CairoException.critical(0)
+                        .put("_txn live area is torn; refusing to write from the previous transaction [txn=")
+                        .put(selectedVersion).put(", previousTxn=").put(fallbackVersion).put(']');
+            }
+            tornLiveVersion = selectedVersion;
+        } else {
+            tornLiveVersion = -1;
+        }
+        return onRecordLoaded();
     }
 
     public void updateAttachedPartitionSizeByRawIndex(int partitionIndex, long partitionTimestampLo, long partitionSize, long partitionNameTxn) {
@@ -716,6 +962,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                     .put(']');
         }
         recordStructureVersion++;
+        markPartitionDirtyByRawIndex(index);
         updatePartitionSizeByRawIndex(index, partitionSize);
         // New partition version is written, reset the squash counter.
         setPartitionSquashCounterByRawIndex(index, (short) 0);
@@ -757,6 +1004,24 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         return updatePartitionFlagAt(maskedSize, isReadOnly, PARTITION_MASK_READ_ONLY_BIT_OFFSET);
     }
 
+    // Body checksum of the record at areaOffset, which is being written into the slot that owns
+    // partitionTableHash. Hashes the header words every time and the partition table only when the slot's
+    // cached hash is not for this exact area geometry, then assembles the value calculateTxnBodyChecksum()
+    // returns over the same bytes.
+    private long calculateBodyChecksum(int areaOffset, long recordSize, long partitionTableStart, PartitionTableHash partitionTableHash) {
+        final long areaAddr = txMemBase.addressOf(areaOffset);
+        if (!partitionTableHash.isFor(areaOffset, recordSize, partitionTableStart)) {
+            partitionTableHash.of(
+                    areaOffset,
+                    recordSize,
+                    partitionTableStart,
+                    hashTxnBodyPartitionTable(areaAddr, recordSize, partitionTableStart),
+                    txnBodyPartitionTablePower(recordSize, partitionTableStart)
+            );
+        }
+        return combineTxnBodyChecksum(hashTxnBodyHeader(areaAddr), partitionTableHash.power, partitionTableHash.hash);
+    }
+
     private int calculateWriteOffset(int areaSize) {
         boolean currentIsA = (baseVersion & 1L) == 0L;
         int currentOffset = currentIsA ? txMemBase.getInt(TX_BASE_OFFSET_A_32) : txMemBase.getInt(TX_BASE_OFFSET_B_32);
@@ -784,6 +1049,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         writeAreaSize = calculateWriteSize();
         writeBaseOffset = calculateWriteOffset(writeAreaSize);
+        final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
+        final PartitionTableHash partitionTableHash = partitionTableHashOfNextSlot();
+        if (!partitionTableHash.isFor(writeBaseOffset, writeAreaSize, partitionTableOffset)) {
+            // The entry describes another area or layout, which the body write is about to overwrite.
+            partitionTableHash.invalidate();
+        }
         putLong(TX_OFFSET_TXN_64, ++txn);
         putLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64, transientRowCount);
         putLong(TX_OFFSET_FIXED_ROW_COUNT_64, fixedRowCount);
@@ -795,7 +1066,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         putLong(TX_OFFSET_COLUMN_VERSION_64, columnVersion);
         putLong(TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         putLong(TX_OFFSET_SEQ_TXN_64, seqTxn);
-        putInt(TX_OFFSET_GEOMETRY_VERSION_32, geometryVersion);
         putLagValues();
         putInt(TX_OFFSET_MAP_WRITER_COUNT_32, symbolColumnCount);
         putInt(TX_OFFSET_CHECKSUM_32, calculateTxnLagChecksum(txn, seqTxn, lagRowCount, lagMinTimestamp, lagMaxTimestamp, lagTxnCount));
@@ -805,7 +1075,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         // store attached partitions
         txPartitionCount = 1;
-        saveAttachedPartitionsToTx(symbolColumnCount);
+        saveAttachedPartitionsToTx(partitionTableOffset, partitionTableHash);
         finishABHeader(writeBaseOffset, symbolColumnCount * Long.BYTES, attachedPartitions.size() * Long.BYTES, commitMode);
 
         prevTransientRowCount = transientRowCount;
@@ -832,18 +1102,39 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putInt(offsetOffset, areaOffset);
         txMemBase.putInt(symbolSizeOffset, bytesSymbols);
         txMemBase.putInt(partitionsSizeOffset, bytesPartitions);
+        storeGeometryVersion(areaOffset);
+
+        // The size comes from calculateTxRecordSize and the partition-table start from TX_RECORD_HEADER_SIZE +
+        // bytesSymbols (== getPartitionTableSizeOffset(symbolCount)), as the reader derives them. The checksum
+        // goes before the fence and version bump, so a torn body never hides behind a valid version word. The
+        // slot's cached hash is still valid only if the body write kept it exact; otherwise the partition table
+        // is hashed afresh, which also refills the entry for the fast-path commits that republish this area.
+        long recordSize = calculateTxRecordSize(bytesSymbols, bytesPartitions);
+        storeBodyChecksum(
+                areaOffset,
+                calculateBodyChecksum(areaOffset, recordSize, TX_RECORD_HEADER_SIZE + bytesSymbols, partitionTableHashOfNextSlot())
+        );
 
         Unsafe.storeFence();
         txMemBase.putLong(TX_BASE_OFFSET_VERSION_64, ++baseVersion);
 
-        readRecordSize = calculateTxRecordSize(bytesSymbols, bytesPartitions);
+        readRecordSize = recordSize;
         readBaseOffset = areaOffset;
 
         assert readBaseOffset + readRecordSize <= txMemBase.size();
         super.switchRecord(readBaseOffset, readRecordSize);
 
-        if (commitMode != CommitMode.NOSYNC) {
+        // SYNC and ASYNC only: under ADAPTIVE, _txn is durable lazily like the columns it exposes, and the save
+        // point (fsync()) and recovery make it crash-safe. See resolveCommitMode().
+        if (CommitMode.appliesColumnSync(commitMode)) {
             txMemBase.sync(commitMode == CommitMode.ASYNC);
+        }
+    }
+
+    // Folds one changed int of the partition table, at tableOffset from its start, into the slot's cached hash.
+    private void foldPartitionTableInt(PartitionTableHash partitionTableHash, int longCount, long tableOffset, int oldValue, int newValue) {
+        if (newValue != oldValue) {
+            partitionTableHash.hash += txnBodyPartitionTableIntDelta(longCount, tableOffset, oldValue, newValue);
         }
     }
 
@@ -863,7 +1154,52 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             extensionListener.onTableExtended(partitionTimestamp);
         }
         recordStructureVersion++;
+        if (dirtyPartitions != null) {
+            dirtyPartitions.add(partitionTimestamp);
+        }
         initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn);
+    }
+
+    // Drops both cached entries. This happens on close, reopen, rollback and reload, which already cost a pass
+    // over the partitions, so with assertions enabled each entry is first checked against the bytes it hashed:
+    // a stale one means a partition-table write that did not keep its slot's entry exact.
+    private void invalidatePartitionTableHashes() {
+        try {
+            assert isPartitionTableHashExact(partitionTableHashA)
+                    : "stale _txn partition-table hash [slot=A, areaOffset=" + partitionTableHashA.areaOffset + ']';
+            assert isPartitionTableHashExact(partitionTableHashB)
+                    : "stale _txn partition-table hash [slot=B, areaOffset=" + partitionTableHashB.areaOffset + ']';
+        } finally {
+            partitionTableHashA.invalidate();
+            partitionTableHashB.invalidate();
+        }
+    }
+
+    // An entry exists only for an area this writer mapped, and the mapping never shrinks while it is open.
+    private boolean isPartitionTableHashExact(PartitionTableHash partitionTableHash) {
+        if (!partitionTableHash.isValid()) {
+            return true;
+        }
+        final long areaAddr = txMemBase.addressOf(partitionTableHash.areaOffset);
+        return partitionTableHash.hash == hashTxnBodyPartitionTable(areaAddr, partitionTableHash.recordSize, partitionTableHash.partitionTableStart);
+    }
+
+    // Resets the commit bookkeeping to the record just loaded. False when the file has never committed.
+    private boolean onRecordLoaded() {
+        this.baseVersion = getVersion();
+        this.prevPartitionTableVersion = partitionTableVersion;
+        this.txPartitionCount = 1;
+        this.lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
+        this.prevLastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
+        if (baseVersion >= 0) {
+            this.readBaseOffset = getBaseOffset();
+            this.readRecordSize = getRecordSize();
+            this.prevTransientRowCount = this.transientRowCount;
+            this.prevMaxTimestamp = maxTimestamp;
+            this.prevMinTimestamp = minTimestamp;
+            return true;
+        }
+        return false;
     }
 
     private void openTxnFile(FilesFacade ff, LPSZ path) {
@@ -876,6 +1212,11 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             return;
         }
         throw CairoException.critical(ff.errno()).put("Cannot append. File does not exist: ").put(path);
+    }
+
+    // The slot the next commit writes, full or fast path: the one the next version's parity selects.
+    private PartitionTableHash partitionTableHashOfNextSlot() {
+        return ((baseVersion + 1) & 1) == 0 ? partitionTableHashA : partitionTableHashB;
     }
 
     private void putInt(long offset, int value) {
@@ -896,9 +1237,30 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         txMemBase.putLong(writeBaseOffset + offset, value);
     }
 
-    private void saveAttachedPartitionsToTx(int symbolColumnCount) {
+    // Writes the partition table. A valid partitionTableHash describes the bytes in place, which have this
+    // record's geometry; each int that changes is folded into it right after its store, so it stays exact for
+    // the bytes in place even if the write stops midway, and costs what changed instead of a second pass.
+    private void saveAttachedPartitionsToTx(long partitionTableOffset, PartitionTableHash partitionTableHash) {
         final int size = attachedPartitions.size();
-        final long partitionTableOffset = getPartitionTableSizeOffset(symbolColumnCount);
+        if (partitionTableHash.isValid()) {
+            final int oldSize = txMemBase.getInt(writeBaseOffset + partitionTableOffset);
+            putInt(partitionTableOffset, size * Long.BYTES);
+            foldPartitionTableInt(partitionTableHash, size, 0, oldSize, size * Long.BYTES);
+            if (maxTimestamp != Long.MIN_VALUE) {
+                for (int i = 0; i < size; i++) {
+                    final long offset = getPartitionTableIndexOffset(partitionTableOffset, i);
+                    final long oldValue = txMemBase.getLong(writeBaseOffset + offset);
+                    final long value = attachedPartitions.getQuick(i);
+                    putLong(offset, value);
+                    if (value != oldValue) {
+                        final long tableOffset = offset - partitionTableOffset;
+                        foldPartitionTableInt(partitionTableHash, size, tableOffset, (int) oldValue, (int) value);
+                        foldPartitionTableInt(partitionTableHash, size, tableOffset + Integer.BYTES, (int) (oldValue >>> 32), (int) (value >>> 32));
+                    }
+                }
+            }
+            return;
+        }
         putInt(partitionTableOffset, size * Long.BYTES);
         // change partition count only when we have something to save to the partition table
         if (maxTimestamp != Long.MIN_VALUE) {
@@ -910,6 +1272,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     private void setPartitionFormat(long timestamp, boolean isParquetFormat, long version) {
         int indexRaw = findAttachedPartitionRawIndex(timestamp);
+        markPartitionDirtyByRawIndex(indexRaw);
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
@@ -931,6 +1294,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     private void setPartitionSquashCounterByRawIndex(int partitionRawIndex, short partitionSquashCounter) {
+        markPartitionDirtyByRawIndex(partitionRawIndex);
         int rawIndex = partitionRawIndex + PARTITION_MASKED_SIZE_OFFSET;
         long partitionSizeMasked = attachedPartitions.getQuick(rawIndex);
         // Clear the existing squash counter bits
@@ -938,6 +1302,39 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         // Set the new squash counter value
         partitionSizeMasked |= ((long) (partitionSquashCounter & PARTITION_SQUASH_COUNTER_MAX) << PARTITION_SQUASH_COUNTER_BIT_OFFSET);
         attachedPartitions.setQuick(rawIndex, partitionSizeMasked);
+    }
+
+    // Stores the body checksum and its stamp. Compute the checksum after the covered fields are written and
+    // store it before the storeFence() and version bump, so a reader can detect a torn body under a valid
+    // version word. Its recordSize must be the committed size (calculateTxRecordSize) and its
+    // partitionTableStart getPartitionTableSizeOffset(symbolCount), as the reader derives them, or every
+    // verify fails.
+    private void storeBodyChecksum(int baseOffset, long checksum) {
+        txMemBase.putLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64, checksum);
+        // Stamp the checksum with the record it belongs to. Read from the record rather than the `txn` field
+        // so the two cannot disagree: this is the value a reader compares against.
+        txMemBase.putInt(
+                baseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32,
+                (int) txMemBase.getLong(baseOffset + TX_OFFSET_TXN_64) ^ TX_BODY_CHECKSUM_STAMP_XOR
+        );
+    }
+
+    // Stores geometryVersion and its stamp in the base-header slot of the area about to go live (the slot
+    // opposite the current version's parity), before the storeFence() and version bump. The stamp names the
+    // record at areaOffset, read from the record itself like the body-checksum stamp; a reader rejects a
+    // checksummed record whose geometry stamp names another txn, so every publication of an area must
+    // restamp it, the fast path included.
+    private void storeGeometryVersion(int areaOffset) {
+        boolean currentIsA = (baseVersion & 1) == 0;
+        long geometryVersionOffset = currentIsA ? TX_BASE_OFFSET_GEOMETRY_VERSION_B_32 : TX_BASE_OFFSET_GEOMETRY_VERSION_A_32;
+        long geometryVersionStampOffset = currentIsA
+                ? TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32
+                : TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32;
+        txMemBase.putInt(geometryVersionOffset, geometryVersion);
+        txMemBase.putInt(
+                geometryVersionStampOffset,
+                (int) txMemBase.getLong(areaOffset + TX_OFFSET_TXN_64) ^ TX_GEOMETRY_VERSION_STAMP_XOR
+        );
     }
 
     private void storeSymbolCounts(ObjList<? extends SymbolCountProvider> symbolCountProviders) {
@@ -955,7 +1352,17 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         updateAttachedPartitionSizeByRawIndex(findAttachedPartitionRawIndexByLoTimestamp(partitionTimestampLo), partitionTimestampLo, partitionSize, partitionNameTxn);
     }
 
+    // Records a partition whose on-disk bytes this writer changed. Marks whether or not a value differs: an
+    // over-broad set costs one extra fsync, an under-broad one leaves data non-durable behind a save point
+    // that references it.
+    private void markPartitionDirtyByRawIndex(int indexRaw) {
+        if (dirtyPartitions != null && indexRaw > -1) {
+            dirtyPartitions.add(attachedPartitions.getQuick(indexRaw + PARTITION_TS_OFFSET));
+        }
+    }
+
     private void updatePartitionSizeByRawIndex(int index, long partitionSize) {
+        markPartitionDirtyByRawIndex(index);
         int offset = index + PARTITION_MASKED_SIZE_OFFSET;
         long maskedSize = attachedPartitions.getQuick(offset);
         if ((maskedSize & PARTITION_SIZE_MASK) != partitionSize) {
@@ -968,6 +1375,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         // This updates into current record
         long recordOffset = getSymbolWriterTransientIndexOffset(symbolIndex);
         assert recordOffset + Integer.BYTES <= readRecordSize;
+        if (symbolIndex >= symbolColumnCount) {
+            // Past the symbol region, into the partition table of the live area.
+            ((baseVersion & 1) == 0 ? partitionTableHashA : partitionTableHashB).invalidate();
+        }
         txMemBase.putInt(readBaseOffset + recordOffset, symCount);
     }
 
@@ -1020,5 +1431,34 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     long unsafeCommittedTransientRowCount() {
         return getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
+    }
+
+    // The partition-table part of one A/B slot's body checksum, valid for exactly one area geometry.
+    private static final class PartitionTableHash {
+        private int areaOffset = -1;
+        private long hash;
+        private long partitionTableStart;
+        private long power;
+        private long recordSize;
+
+        private void invalidate() {
+            areaOffset = -1;
+        }
+
+        private boolean isFor(int areaOffset, long recordSize, long partitionTableStart) {
+            return this.areaOffset == areaOffset && this.recordSize == recordSize && this.partitionTableStart == partitionTableStart;
+        }
+
+        private boolean isValid() {
+            return areaOffset != -1;
+        }
+
+        private void of(int areaOffset, long recordSize, long partitionTableStart, long hash, long power) {
+            this.areaOffset = areaOffset;
+            this.recordSize = recordSize;
+            this.partitionTableStart = partitionTableStart;
+            this.hash = hash;
+            this.power = power;
+        }
     }
 }

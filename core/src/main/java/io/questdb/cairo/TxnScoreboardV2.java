@@ -37,7 +37,18 @@ import org.jetbrains.annotations.TestOnly;
 public class TxnScoreboardV2 implements TxnScoreboard {
     private static final long RELEASING = -2;
     private static final long UNLOCKED = -1;
-    private static final int VIRTUAL_ID_COUNT = 1;
+    // Number of virtual pin ids that sit ahead of the reader slots in the entries array. Each virtual id
+    // (CHECKPOINT_ID=-1, EPOCH_ID_A=-2, EPOCH_ID_B=-3) has its own slot, so the checkpoint and the two save
+    // point pins can hold overlapping txns without clobbering one another. toInternalId(id)=id+VIRTUAL_ID_COUNT maps:
+    //   EPOCH_ID_B(-3)    -> internal slot 0
+    //   EPOCH_ID_A(-2)    -> internal slot 1
+    //   CHECKPOINT_ID(-1) -> internal slot 2
+    //   reader id k>=0    -> internal slot k + VIRTUAL_ID_COUNT
+    private static final int VIRTUAL_ID_COUNT = 3;
+    // Derived from the map above, so adding or reordering a virtual id moves them too, and scanRangeHolders
+    // still classifies the right two slots as save point pins.
+    private static final int EPOCH_A_INTERNAL_ID = TxnScoreboard.EPOCH_ID_A + VIRTUAL_ID_COUNT;
+    private static final int EPOCH_B_INTERNAL_ID = TxnScoreboard.EPOCH_ID_B + VIRTUAL_ID_COUNT;
     private final int bitmapCount;
     private final int entryScanCount;
     private final int memSize;
@@ -48,10 +59,12 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     // Record structure
     // 8 bytes - active reader count
     // 8 bytes - max txn
-    // ceil[(N + 1) / 64] * 8 bytes - bitmap index
-    // 8 bytes - slot for CHECKPOINT txn
-    // N * 8 bytes - slots for every TableReader table txn
-    // N * 8 bytes - slots for every TableReader seqTxn
+    // ceil[(N + VIRTUAL_ID_COUNT) / 64] * 8 bytes - bitmap index
+    // 8 bytes - slot for EPOCH_B txn     (internal id 0, EPOCH_ID_B=-3)
+    // 8 bytes - slot for EPOCH_A txn     (internal id 1, EPOCH_ID_A=-2)
+    // 8 bytes - slot for CHECKPOINT txn  (internal id 2, CHECKPOINT_ID=-1)
+    // N * 8 bytes - slots for every TableReader table txn (internal ids VIRTUAL_ID_COUNT..)
+    // (N + VIRTUAL_ID_COUNT) * 8 bytes - seqTxn slots, one per internal id
     private long mem;
     private long seqTxnEntriesMem;
 
@@ -199,7 +212,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
                 if (seqTxn == UNKNOWN_SEQ_TXN) {
                     return UNKNOWN_SEQ_TXN;
                 }
-                if (seqTxn != Long.MAX_VALUE) {
+                if (seqTxn != NO_SEQ_TXN_FLOOR) {
                     min = Math.min(min, seqTxn);
                 }
                 bitmap ^= lowestBit;
@@ -267,34 +280,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
 
     @Override
     public boolean isRangeAvailable(long fromTxn, long toTxn) {
-        // Push max txn to the latest, to avoid races with acquireTxn()
-        // but don't stop checking if it's not the max.
-        updateMax(toTxn);
-
-        if (getActiveReaderCount() == 0) {
-            return true;
-        }
-
-        for (int i = 0; i < bitmapCount; i++) {
-            long bitmap = Unsafe.getLongVolatile(bitmapMem + (long) i * Long.BYTES);
-            if (bitmap == 0) {
-                continue;
-            }
-
-            int base = i * Long.SIZE;
-            while (bitmap != 0) {
-                final long lowestBit = Long.lowestOneBit(bitmap);
-                final int bit = Long.numberOfTrailingZeros(lowestBit);
-                int internalId = base + bit;
-                long lockedTxn = Unsafe.getLongVolatile(entriesMem + (long) internalId * Long.BYTES);
-                if (lockedTxn > UNLOCKED && lockedTxn >= fromTxn && lockedTxn < toTxn) {
-                    return false;
-                }
-
-                bitmap ^= lowestBit;
-            }
-        }
-        return true;
+        return scanRangeHolders(fromTxn, toTxn, true) == RANGE_FREE;
     }
 
     @Override
@@ -353,10 +339,17 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         return 0;
     }
 
+    @Override
+    public int scanRangeHolders(long fromTxn, long toTxn) {
+        return scanRangeHolders(fromTxn, toTxn, false);
+    }
+
     public void setTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
     }
 
+    // Maps a public id to its slot in the entries array (the map is at VIRTUAL_ID_COUNT). Distinct ids land in
+    // distinct slots, so a save point pin and a checkpoint pin on the same txn never overwrite each other.
     private static int toInternalId(int id) {
         return id + VIRTUAL_ID_COUNT;
     }
@@ -387,9 +380,48 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         final long bitmapAddress = bitmapMem + (internalId >>> 6) * Long.BYTES;
         final long mask = 1L << (internalId & 0x3F);
         if ((Unsafe.getLongVolatile(bitmapAddress) & mask) == 0) {
-            return Long.MAX_VALUE;
+            return NO_SEQ_TXN_FLOOR;
         }
         return Unsafe.getLongVolatile(seqTxnEntriesMem + internalId * Long.BYTES);
+    }
+
+    private int scanRangeHolders(long fromTxn, long toTxn, boolean stopAfterFirstHolder) {
+        // Push max txn to the latest, to avoid races with acquireTxn()
+        // but don't stop checking if it's not the max.
+        updateMax(toTxn);
+
+        if (getActiveReaderCount() == 0) {
+            return RANGE_FREE;
+        }
+
+        int holders = RANGE_FREE;
+
+        for (int i = 0; i < bitmapCount; i++) {
+            long bitmap = Unsafe.getLongVolatile(bitmapMem + (long) i * Long.BYTES);
+            if (bitmap == 0) {
+                continue;
+            }
+
+            int base = i * Long.SIZE;
+            while (bitmap != 0) {
+                final long lowestBit = Long.lowestOneBit(bitmap);
+                final int bit = Long.numberOfTrailingZeros(lowestBit);
+                int internalId = base + bit;
+                long lockedTxn = Unsafe.getLongVolatile(entriesMem + (long) internalId * Long.BYTES);
+                if (lockedTxn > UNLOCKED && lockedTxn >= fromTxn && lockedTxn < toTxn) {
+                    holders |= (internalId == EPOCH_A_INTERNAL_ID || internalId == EPOCH_B_INTERNAL_ID)
+                            ? RANGE_HELD_BY_EPOCH
+                            : RANGE_HELD_BY_OTHER;
+                    if (stopAfterFirstHolder || holders == (RANGE_HELD_BY_EPOCH | RANGE_HELD_BY_OTHER)) {
+                        // Nothing a further slot could add.
+                        return holders;
+                    }
+                }
+
+                bitmap ^= lowestBit;
+            }
+        }
+        return holders;
     }
 
     private void setBitmapBit(long internalId) {
