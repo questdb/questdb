@@ -440,14 +440,14 @@ final class QwpIngressWireHarness {
      * access points with the test doubles.
      */
     static class TestableContext extends HttpConnectionContext {
-        private final RecordingRawSocket rawSocket;
+        private final HttpRawSocket rawSocket;
         private final long testRecvBuffer;
         private final int testRecvBufferSize;
 
         TestableContext(
                 HttpServerConfiguration config,
                 PhasedNetworkFacade nf,
-                RecordingRawSocket rawSocket,
+                HttpRawSocket rawSocket,
                 long recvBuffer,
                 int recvBufferSize
         ) {

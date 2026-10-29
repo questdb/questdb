@@ -190,7 +190,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     \r
                     """).getBytes(StandardCharsets.US_ASCII);
     // Dependencies for ILP processing (safe as instance fields — config only)
-    // Same clock QwpIngressProcessorState stamps lastDataFrameMicros with.
+    // Same clock QwpIngressProcessorState stamps lastDataPassEndMicros with.
     private final MicrosecondClock clock;
     // Effective ingest payload cap in bytes: the recv buffer minus the
     // worst-case WebSocket frame header, floored at the QWP protocol ceiling.
@@ -2073,7 +2073,9 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         // while is the cue to return its idle WAL writers to the pool, so a quiet
         // but open connection does not pin them (and block WAL purge) until it
         // closes. Runs first because flushPendingAck below can throw.
-        if (idleWriterReleaseMicros > 0 && clock.getTicks() - state.getLastDataFrameMicros() >= idleWriterReleaseMicros) {
+        if (idleWriterReleaseMicros > 0
+                && !state.hasProcessedDataInRecvPass()
+                && clock.getTicks() - state.getLastDataPassEndMicros() >= idleWriterReleaseMicros) {
             state.releaseIdleWriters();
         }
 
@@ -2632,6 +2634,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                 LOG.debug().$("WebSocket frames discarded awaiting close echo [fd=").$(context.getFd())
                         .$(", frames=").$(closeEchoDiscardedFrames).I$();
             }
+            state.onRecvPassComplete(idleWriterReleaseMicros > 0);
         }
 
     }
