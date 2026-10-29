@@ -36,29 +36,37 @@ import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * A function of a HORIZON JOIN that the owner thread evaluates, and its per-worker clones, which are null when the
- * function is thread-safe and every worker evaluates it. Owns both: initializes the clones over clones of the symbol
- * tables, and rewinds, notifies and frees them together with the function.
+ * A function of a parallel operator that the owner thread evaluates, and its per-worker clones, one per worker slot,
+ * which are null when the function is thread-safe and every worker evaluates it; the function is null where the
+ * operator has none. Owns both, and acts on the function before its clones: initializes the clones over clones of
+ * the symbol tables, with the state the function offers them, and rewinds, notifies and frees them with the function.
  */
-final class ClonedFunction implements QuietCloseable {
+public final class ClonedFunction implements QuietCloseable {
     private @Nullable Function function;
     private @Nullable ObjList<Function> perWorkerFunctions;
 
     @Override
     public void close() {
+        CairoException.rethrowCleanupFailure(close(null));
+    }
+
+    /**
+     * Frees the function and its clones, folding each failure into {@code cleanupFailure}, which it returns.
+     */
+    public Throwable close(@Nullable Throwable cleanupFailure) {
         final Function function = this.function;
         this.function = null;
         final ObjList<Function> perWorkerFunctions = this.perWorkerFunctions;
         this.perWorkerFunctions = null;
-        final Throwable cleanupFailure = Misc.freeBestEffort(null, function);
-        CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(cleanupFailure, perWorkerFunctions));
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, function);
+        return Misc.freeObjListBestEffort(cleanupFailure, perWorkerFunctions);
     }
 
     /**
      * Notifies the function and its clones that the cursor has closed, folding each failure into
      * {@code cleanupFailure}, which it returns.
      */
-    Throwable cursorClosed(@Nullable Throwable cleanupFailure) {
+    public Throwable cursorClosed(@Nullable Throwable cleanupFailure) {
         cleanupFailure = Function.cursorClosed(cleanupFailure, function);
         return Function.cursorClosed(cleanupFailure, perWorkerFunctions);
     }
@@ -67,14 +75,14 @@ final class ClonedFunction implements QuietCloseable {
      * The function the worker in {@code slotId} evaluates: its clone, or the function itself for the owner thread, slot
      * -1, and when the function has no clones.
      */
-    @Nullable Function get(int slotId) {
+    public @Nullable Function get(int slotId) {
         return slotId == -1 || perWorkerFunctions == null ? function : perWorkerFunctions.getQuick(slotId);
     }
 
     /**
      * The function the owner thread evaluates.
      */
-    @Nullable Function getFunction() {
+    public @Nullable Function getFunction() {
         return function;
     }
 
@@ -82,7 +90,7 @@ final class ClonedFunction implements QuietCloseable {
      * Initializes the function over {@code symbolTableSource}, and its clones over clones of its symbol tables. The
      * caller notifies them through {@link #cursorClosed}.
      */
-    void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         if (function != null) {
             function.init(symbolTableSource, executionContext);
         }
@@ -97,18 +105,18 @@ final class ClonedFunction implements QuietCloseable {
         }
     }
 
-    void setFunction(@Nullable Function function) {
+    public void setFunction(@Nullable Function function) {
         this.function = function;
     }
 
-    void setPerWorkerFunctions(@Nullable ObjList<Function> perWorkerFunctions) {
+    public void setPerWorkerFunctions(@Nullable ObjList<Function> perWorkerFunctions) {
         this.perWorkerFunctions = perWorkerFunctions;
     }
 
     /**
      * Rewinds the function and its clones.
      */
-    void toTop() {
+    public void toTop() {
         if (function != null) {
             function.toTop();
         }

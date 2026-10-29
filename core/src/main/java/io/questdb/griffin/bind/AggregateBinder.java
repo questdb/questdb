@@ -1482,6 +1482,9 @@ final class AggregateBinder implements Mutable {
                 && !(input instanceof HorizonJoinPlan) && ctx.hasAggregation(model, source);
         aggregate.setExplicitGrouping(groupBy.size() > 0);
         aggregate.setSampleByBucket(sampleByBucket != null);
+        if (sampleByBucket != null) {
+            ((AggregatePlan) aggregate).setSampleByTimezone(scope.sampleByTimezone);
+        }
         aggregate.setDirectTableInput(hasDirectTableInput(source));
         aggregate.setKeySpellingKept(input instanceof HorizonJoinPlan ? hasHorizonOuterProjection(model) : groupBy.size() > 0);
         scope.referenceScope.clear();

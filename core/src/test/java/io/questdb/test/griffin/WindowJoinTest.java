@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
+import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinAtom;
 import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
@@ -3614,6 +3615,50 @@ public class WindowJoinTest extends AbstractCairoTest {
                             """);
         });
 
+    }
+
+    @Test
+    public void testMasterFilterRewindsOnToTop() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        TestMatchFunctionFactory.clear();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO master VALUES
+                    (1, '2023-01-01T09:00:00.000000Z'),
+                    (2, '2023-01-01T09:01:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO slave VALUES
+                    (1.0, '2023-01-01T08:59:00.000000Z'),
+                    (2.0, '2023-01-01T09:00:00.000000Z'),
+                    (3.0, '2023-01-01T09:01:00.000000Z')
+                    """);
+            final String sql = """
+                    SELECT m.ts, m.v, sum(s.val) agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 1 minute PRECEDING AND CURRENT ROW
+                    EXCLUDE PREVAILING
+                    WHERE test_match()
+                    """;
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("master filter: test_match()");
+            TestMatchFunctionFactory.clear();
+            try (RecordCursorFactory factory = select(sql)) {
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
+                                ts\tv\tagg
+                                2023-01-01T09:00:00.000000Z\t1\t3.0
+                                2023-01-01T09:01:00.000000Z\t2\t5.0
+                                """);
+            }
+            Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
+        });
     }
 
     @Test

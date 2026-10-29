@@ -37,6 +37,7 @@ public final class AggregatePlan extends GroupingPlan {
     private Algorithm algorithm;
     private HashJoinAggregation hashJoin;
     private int readerCount;
+    private BoundExpression sampleByTimezone;
     private int sharedConsumerCount;
     private LogicalPlan sharedHead;
     private SetOperationPlan sharedOperation;
@@ -51,6 +52,7 @@ public final class AggregatePlan extends GroupingPlan {
         algorithm = null;
         hashJoin = null;
         readerCount = 0;
+        sampleByTimezone = null;
         sharedConsumerCount = 0;
         sharedHead = null;
         sharedOperation = null;
@@ -87,6 +89,15 @@ public final class AggregatePlan extends GroupingPlan {
      */
     public int getReaderCount() {
         return readerCount;
+    }
+
+    /**
+     * The TIME ZONE of the SAMPLE BY that lowered to this grouping, see {@link #hasSampleByBucket()}, as the binder
+     * bound and validated it; null without one. The bucket's own time zone argument is NULL where the bucket floors in
+     * UTC: for a UTC zone, and for a sub-day stride with FROM, whose origin the binder converts to UTC instead.
+     */
+    public BoundExpression getSampleByTimezone() {
+        return sampleByTimezone;
     }
 
     /**
@@ -168,6 +179,10 @@ public final class AggregatePlan extends GroupingPlan {
     public void setHashJoin(HashJoinAggregation hashJoin) {
         algorithm = Algorithm.HASH_JOIN;
         this.hashJoin = hashJoin;
+    }
+
+    public void setSampleByTimezone(BoundExpression sampleByTimezone) {
+        this.sampleByTimezone = sampleByTimezone;
     }
 
     public void setSharedConsumerCount(int sharedConsumerCount) {

@@ -152,17 +152,24 @@ public final class JoinEquality implements Mutable {
     }
 
     /**
+     * The equality between the column of {@code a} on the side of {@code aSource} and the column of {@code b} on the
+     * side of {@code bSource}, which transitivity derives from the two equalities, owned by the inputs that own either.
+     */
+    public JoinEquality ofDerived(JoinEquality a, int aSource, JoinEquality b, int bSource) {
+        of(aSource, a.getColumnId(aSource), a.getName(aSource), a.getPosition(aSource),
+                bSource, b.getColumnId(bSource), b.getName(bSource), b.getPosition(bSource));
+        addOwners(a.owners);
+        addOwners(b.owners);
+        return this;
+    }
+
+    /**
      * The equality between the columns {@code stepKey} and {@code masterKey}, two keys of the later INNER input
      * {@code slave} on one of its columns, read on the outer input and on the input before it, see
      * {@link #getReplacedKey}.
      */
     public JoinEquality ofImplied(JoinEquality stepKey, JoinEquality masterKey, int slave) {
-        final int step = stepKey.getOtherSource(slave);
-        final int master = masterKey.getOtherSource(slave);
-        of(master, masterKey.getColumnId(master), masterKey.getName(master), masterKey.getPosition(master),
-                step, stepKey.getColumnId(step), stepKey.getName(step), stepKey.getPosition(step));
-        addOwners(stepKey.owners);
-        addOwners(masterKey.owners);
+        ofDerived(masterKey, masterKey.getOtherSource(slave), stepKey, stepKey.getOtherSource(slave));
         replacedKey = masterKey;
         return this;
     }

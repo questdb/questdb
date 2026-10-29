@@ -596,6 +596,15 @@ public final class LogicalPlans {
     }
 
     /**
+     * Whether a join can key the column {@code masterColumnId} of {@code master} on the column {@code slaveColumnId} of
+     * {@code slave}, see {@link #isJoinKeyTypeCompatible}.
+     */
+    public static boolean isJoinKeyable(OutputSchema master, int masterColumnId, OutputSchema slave, int slaveColumnId) {
+        return isJoinKeyTypeCompatible(master.getColumnType(master.getColumnIndexById(masterColumnId)),
+                slave.getColumnType(slave.getColumnIndexById(slaveColumnId)));
+    }
+
+    /**
      * Whether a join can key a master column of one type on a slave column of the other.
      */
     public static boolean isJoinKeyTypeCompatible(int masterType, int slaveType) {

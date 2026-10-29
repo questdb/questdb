@@ -37,10 +37,10 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -48,6 +48,7 @@ import org.jetbrains.annotations.Nullable;
  * Same as SortedLightRecordCursorFactory but using LimitedSizeLongTreeChain instead.
  */
 public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
+    private final LimitRecordCursorFactory.Bounds bounds = new LimitRecordCursorFactory.Bounds();
     private final RecordComparator comparator;
     private final CairoConfiguration configuration;
     private final ObjList<DirectIntList> rankMaps;
@@ -59,11 +60,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     // initialization delayed to getCursor() because lo/hi need to be evaluated
     private DelegatingRecordCursor cursor; // LimitedSizeSortedLightRecordCursor or LimitedSizePartiallySortedLightRecordCursor
     private Function hiFunction;
-    private boolean isFirstN;
-    private long limit;
     private Function loFunction;
-    private long skipFirst;
-    private long skipLast;
 
     public LimitedSizeSortedLightRecordCursorFactory(
             CairoConfiguration configuration,
@@ -166,13 +163,12 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
                 false
         );
 
-        if (timestampIndex == -1 || !isFirstN) {
+        if (timestampIndex == -1 || !bounds.isFirstN()) {
             this.cursor = new LimitedSizeSortedLightRecordCursor(chain, comparator, rankMaps);
         } else {
             this.cursor = new LimitedSizePartiallySortedLightRecordCursor(chain, comparator, timestampIndex, rankMaps);
         }
-        chain.updateLimits(isFirstN, limit);
-        ((DynamicLimitCursor) cursor).updateLimits(isFirstN, limit, skipFirst, skipLast);
+        updateLimits();
     }
 
     @Override
@@ -210,58 +206,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             hiFunction.init(baseCursor, executionContext);
         }
 
-        this.skipFirst = 0;
-        this.skipLast = 0;
-        this.limit = 0;
-        this.isFirstN = false;
-
-        long lo = loFunction.getLong(null);
-        if (lo < 0 && hiFunction == null) {
-            // last N rows
-            // lo is negative, -5 for example
-            // if we have 12 records we need to skip 12-5 = 7
-            // if we have 4 records = return all of them
-            // set limit to return remaining rows
-            this.limit = -lo;
-        } else if (lo > -1 && hiFunction == null) {
-            // first N rows
-            this.isFirstN = true;
-            this.limit = lo;
-        } else {
-            // at this stage we also have 'hi'
-            long hi = hiFunction.getLong(null);
-            // NULL lo with a non-NULL hi means "from the start"; NULL,NULL stays raw so lo == hi yields empty.
-            if (lo == Numbers.LONG_NULL && hi != Numbers.LONG_NULL) {
-                lo = 0;
-            }
-            if (lo < 0) {
-                // right, here we are looking for something like -10,-5 five rows away from tail
-                if (lo == hi) {
-                    // this is invalid bottom range, for example -3, -10
-                    this.limit = 0;//produce empty result
-                } else {
-                    this.limit = -Math.min(hi, lo);
-                    this.skipLast = Math.max(-Math.max(hi, lo), 0);
-                }
-            } else { // lo >= 0
-                if (hi < 0) {
-                    // A NULL hi yields the empty result (limit stays 0); checking it here
-                    // also keeps skipLast = -hi from overflowing to Long.MIN_VALUE.
-                    if (hi != Numbers.LONG_NULL) {
-                        // if lo>=0 but hi<0 then we fall back to standard algorithm because we can't estimate result size
-                        // (it's from lo up to end-hi so probably whole result anyway )
-                        this.limit = -1;
-                        this.skipFirst = lo;
-                        this.skipLast = -hi;
-                    }
-                } else { // both lo and hi are positive
-                    this.isFirstN = true;
-                    this.limit = Math.max(hi, lo);
-                    // but we've to skip to lo
-                    this.skipFirst = Math.min(hi, lo);
-                }
-            }
-        }
+        bounds.of(loFunction, hiFunction);
     }
 
     private void initialize(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
@@ -270,8 +215,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
                 computeLimits(baseCursor, executionContext);
                 // The cursor implementation was picked once, off the first execution's isFirstN;
                 // it has to re-gate any first-N-only behaviour on the value we just re-derived.
-                chain.updateLimits(isFirstN, limit);
-                ((DynamicLimitCursor) cursor).updateLimits(isFirstN, limit, skipFirst, skipLast);
+                updateLimits();
             }
             return;
         }
@@ -281,6 +225,11 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
 
     private boolean isInitialized() {
         return cursor != null;
+    }
+
+    private void updateLimits() {
+        chain.updateLimits(bounds.isFirstN(), bounds.getLimit());
+        ((DynamicLimitCursor) cursor).updateLimits(bounds.isFirstN(), bounds.getLimit(), bounds.getSkipFirst(), bounds.getSkipLast());
     }
 
     @Override

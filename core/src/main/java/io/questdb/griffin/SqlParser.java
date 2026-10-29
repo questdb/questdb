@@ -3692,16 +3692,6 @@ public class SqlParser {
             }
             validateMatViewQuery(queryModel, baseTableNameStr);
 
-            final QueryModel nestedModel = queryModel.getNestedModel();
-            if (nestedModel != null) {
-                if (nestedModel.getSampleByTimezoneName() != null) {
-                    mvOpBuilder.setTimeZone(unquote(nestedModel.getSampleByTimezoneName().token).toString());
-                }
-                if (nestedModel.getSampleByOffset() != null) {
-                    mvOpBuilder.setTimeZoneOffset(unquote(nestedModel.getSampleByOffset().token).toString());
-                }
-            }
-
             final String matViewSql = Chars.toString(lexer.getContent(), startOfQuery, endOfQuery);
             tableOpBuilder.setSelectText(matViewSql, startOfQuery);
             tableOpBuilder.setSelectModel(queryModel); // transient model, for toSink() purposes only

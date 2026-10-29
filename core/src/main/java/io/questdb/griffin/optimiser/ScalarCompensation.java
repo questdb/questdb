@@ -30,6 +30,7 @@ import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -72,10 +73,8 @@ import static io.questdb.griffin.optimiser.DecorrelationContext.pairIndex;
  */
 final class ScalarCompensation implements Mutable {
     private static final String CARRIER_PREFIX = "__qdb_count_carrier__";
-    private static final String CHECKED_BOUND = "__lateral_limit";
     private static final String NEGATIVE_LIMIT_OVER_NON_CONSTANT = "negative LIMIT with a non-constant upper bound is not supported in a correlated lateral sub-query";
     private static final String NEGATIVE_POSITIVE_LIMIT = "LIMIT <negative>, <positive> is not allowed";
-    private static final String UNCHECKED_BOUND = "coalesce";
     private final IntList compensatedIds = new IntList();
     private final ObjList<CharSequence> compensatedNames = new ObjList<>();
     private final ObjList<ProjectPlan> compensatedScalars = new ObjList<>();
@@ -222,17 +221,6 @@ final class ScalarCompensation implements Mutable {
         return false;
     }
 
-    /**
-     * Whether two constant LIMIT bounds are non-negative, not NULL, and the first exceeds the second.
-     */
-    private static boolean isDescendingConstantPair(BoundExpression lo, BoundExpression hi) {
-        if (!(lo instanceof ConstantExpression first) || !(hi instanceof ConstantExpression second)) {
-            return false;
-        }
-        final long upper = LogicalPlans.limitValue(second);
-        return upper >= 0 && LogicalPlans.limitValue(first) > upper;
-    }
-
     private static boolean isIntegerConstant(BoundExpression expression) {
         if (!(expression instanceof ConstantExpression constant)) {
             return false;
@@ -327,7 +315,7 @@ final class ScalarCompensation implements Mutable {
             return;
         }
         final int position = bound.getPosition();
-        final BoundExpression check = limitComparison(">=", CHECKED_BOUND, ctx.masterExpression(bound), 0, planNodes.constants.next().ofInt(0, position),
+        final BoundExpression check = limitComparison(">=", BoundReading.CHECKED, ctx.masterExpression(bound), 0, planNodes.constants.next().ofInt(0, position),
                 ctx.master().getOutput());
         boundChecks = boundChecks == null ? check : context.getRewriter().combineConjunction(boundChecks, check, position);
     }
@@ -431,17 +419,17 @@ final class ScalarCompensation implements Mutable {
         return true;
     }
 
-    private BoundExpression limitBound(CharSequence boundFunction, BoundExpression limit, long nullLimit, OutputSchema input) throws SqlException {
+    private BoundExpression limitBound(BoundReading reading, BoundExpression limit, long nullLimit, OutputSchema input) throws SqlException {
         final int position = limit.getPosition();
         context.getCallArguments().clear();
         context.getCallArguments().add(limit);
         context.getCallArguments().add(planNodes.constants.next().ofLong(nullLimit, position));
-        return context.bindCall(boundFunction, position, input);
+        return context.bindCall(reading.function, position, input);
     }
 
-    private BoundExpression limitComparison(CharSequence operator, CharSequence boundFunction, BoundExpression limit, long nullLimit, BoundExpression rank,
+    private BoundExpression limitComparison(CharSequence operator, BoundReading reading, BoundExpression limit, long nullLimit, BoundExpression rank,
                                             OutputSchema input) throws SqlException {
-        return context.bindCall(operator, limit.getPosition(), limitBound(boundFunction, limit, nullLimit, input), rank, input);
+        return context.bindCall(operator, limit.getPosition(), limitBound(reading, limit, nullLimit, input), rank, input);
     }
 
     /**
@@ -451,28 +439,29 @@ final class ScalarCompensation implements Mutable {
      * it knows both, and execution through {@code least} and {@code greatest}, which skip a NULL second bound,
      * otherwise. A negative constant bound counts from the end of the rows, and so does the second bound after a
      * negative first one, which must then be a constant of at most 0; two negative bounds apply in ascending order.
-     * Reads {@code size} only when {@link #isTailLimit} holds; {@code boundFunction} reads any other bound with its
+     * Reads {@code size} only when {@link #isTailLimit} holds; {@code reading} reads any other bound with its
      * NULL substitute.
      */
-    private BoundExpression limitPredicate(BoundExpression lo, BoundExpression hi, BoundExpression rank, BoundExpression size, CharSequence boundFunction,
+    private BoundExpression limitPredicate(BoundExpression lo, BoundExpression hi, BoundExpression rank, BoundExpression size, BoundReading reading,
                                            OutputSchema input) throws SqlException {
         final int position = lo.getPosition();
         if (!isNegativeConstant(lo)) {
             if (hi == null) {
-                return limitComparison(">=", boundFunction, lo, Long.MAX_VALUE, rank, input);
+                return limitComparison(">=", reading, lo, Long.MAX_VALUE, rank, input);
             }
             if (!isNegativeConstant(hi) && isOrderedAtExecution(lo, hi)) {
-                final BoundExpression first = limitBound(boundFunction, lo, 0, input);
-                final BoundExpression second = Chars.equals(boundFunction, CHECKED_BOUND) ? limitBound(boundFunction, hi, Numbers.LONG_NULL, input) : hi;
+                final BoundExpression first = limitBound(reading, lo, 0, input);
+                final BoundExpression second = reading == BoundReading.CHECKED ? limitBound(reading, hi, Numbers.LONG_NULL, input) : hi;
                 final BoundExpression lower = context.bindCall("<", position, context.bindCall("least", position, first, second, input), rank, input);
                 final BoundExpression greatest = context.bindCall("greatest", position, context.getRewriter().copy(first), context.getRewriter().copy(second), input);
                 final BoundExpression upper = context.bindCall(">=", position, greatest, rank, input);
                 return context.getRewriter().combineConjunction(lower, upper, position);
             }
-            final boolean isDescending = isDescendingConstantPair(lo, hi);
+            final boolean isDescending = lo instanceof ConstantExpression first && hi instanceof ConstantExpression second
+                    && LimitRecordCursorFactory.isDescending(LogicalPlans.limitValue(first), LogicalPlans.limitValue(second));
             final BoundExpression upper = isNegativeConstant(hi) ? tailComparison(">=", hi, rank, size, input)
-                    : limitComparison(">=", boundFunction, isDescending ? lo : hi, 0, rank, input);
-            return context.getRewriter().combineConjunction(limitComparison("<", boundFunction, isDescending ? hi : lo, 0, rank, input), upper, position);
+                    : limitComparison(">=", reading, isDescending ? lo : hi, 0, rank, input);
+            return context.getRewriter().combineConjunction(limitComparison("<", reading, isDescending ? hi : lo, 0, rank, input), upper, position);
         }
         final long first = LogicalPlans.limitValue((ConstantExpression) lo);
         long second = 0;
@@ -487,11 +476,13 @@ final class ScalarCompensation implements Mutable {
                 throw SqlException.$(position, NEGATIVE_POSITIVE_LIMIT);
             }
         }
-        final BoundExpression lower = tailComparison("<", planNodes.constants.next().ofLong(Math.min(first, second), position), rank, size, input);
-        if (Math.max(first, second) == 0) {
+        final boolean isDescending = LimitRecordCursorFactory.isDescending(first, second);
+        final long upperLimit = isDescending ? first : second;
+        final BoundExpression lower = tailComparison("<", planNodes.constants.next().ofLong(isDescending ? second : first, position), rank, size, input);
+        if (upperLimit == 0) {
             return lower;
         }
-        final BoundExpression upper = tailComparison(">=", planNodes.constants.next().ofLong(Math.max(first, second), position), rank, size, input);
+        final BoundExpression upper = tailComparison(">=", planNodes.constants.next().ofLong(upperLimit, position), rank, size, input);
         return context.getRewriter().combineConjunction(lower, upper, position);
     }
 
@@ -1080,7 +1071,7 @@ final class ScalarCompensation implements Mutable {
     BoundExpression limitGuard(BoundExpression lo, BoundExpression hi, OutputSchema input) throws SqlException {
         final int position = lo.getPosition();
         return limitPredicate(lo, hi, planNodes.constants.next().ofInt(1, position), planNodes.constants.next().ofInt(1, position),
-                CHECKED_BOUND, input);
+                BoundReading.CHECKED, input);
     }
 
     /**
@@ -1096,7 +1087,7 @@ final class ScalarCompensation implements Mutable {
      */
     BoundExpression rankPredicate(BoundExpression lo, BoundExpression hi, BoundExpression rank, BoundExpression size, OutputSchema input)
             throws SqlException {
-        return limitPredicate(lo, hi, rank, size, UNCHECKED_BOUND, input);
+        return limitPredicate(lo, hi, rank, size, BoundReading.UNCHECKED, input);
     }
 
     AggregatePlan scalarAggregateBelow(ProjectPlan project) {
@@ -1183,5 +1174,26 @@ final class ScalarCompensation implements Mutable {
             node = node.inputAt(0);
         }
         return null;
+    }
+
+    /**
+     * How {@link #limitPredicate} reads a LIMIT bound: through {@link #function}, which reads the bound, or its NULL
+     * substitute where the bound is NULL.
+     */
+    private enum BoundReading {
+        /**
+         * Fails a negative bound at execution, see {@link io.questdb.griffin.engine.functions.math.LateralLimitFunctionFactory}.
+         */
+        CHECKED("__lateral_limit"),
+        /**
+         * Reads a negative bound as it is.
+         */
+        UNCHECKED("coalesce");
+
+        private final String function;
+
+        BoundReading(String function) {
+            this.function = function;
+        }
     }
 }

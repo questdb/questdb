@@ -73,6 +73,15 @@ public enum JoinKind {
     }
 
     /**
+     * True when a key of the step on a master column that another key of the step already keys filters the step's
+     * input on the equality of the two keys' slave columns instead, see {@link JoinInput#getKeyFilter}: LEFT, ASOF and
+     * LT, which drop the input rows the filter drops. A RIGHT or FULL step keeps them.
+     */
+    public boolean isRepeatedKeyFiltered() {
+        return this == LEFT_OUTER || this == ASOF || this == LT;
+    }
+
+    /**
      * True when the step matches rows by its ON condition alone: CROSS, INNER and the outer joins.
      */
     public boolean isRelational() {

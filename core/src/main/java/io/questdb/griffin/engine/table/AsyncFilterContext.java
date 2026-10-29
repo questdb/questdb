@@ -55,11 +55,11 @@ public class AsyncFilterContext implements Closeable {
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledFilter;
+    private final ClonedFunction filter = new ClonedFunction();
     private final IntHashSet filterUsedColumnIndexes;
     private final ObjList<PageFrameFilteredMemoryRecord> frameFilteredMemoryRecords;
     private final DirectLongList ownerAuxAddresses;
     private final DirectLongList ownerDataAddresses;
-    private final Function ownerFilter;
     private final DirectLongList ownerFilteredRows;
     private final PageFrameMemoryPool ownerMemoryPool;
     private final PageFrameFilteredMemoryRecord ownerPageFrameFilteredMemoryRecord;
@@ -67,7 +67,6 @@ public class AsyncFilterContext implements Closeable {
     private final ObjList<DirectLongList> perWorkerAuxAddresses;
     private final ObjList<DirectLongList> perWorkerDataAddresses;
     private final ObjList<DirectLongList> perWorkerFilteredRows;
-    private final ObjList<Function> perWorkerFilters;
     private final ObjList<PageFrameMemoryPool> perWorkerMemoryPools;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
 
@@ -114,9 +113,9 @@ public class AsyncFilterContext implements Closeable {
         this.compiledFilter = compiledFilter;
         this.bindVarMemory = bindVarMemory;
         this.bindVarFunctions = bindVarFunctions;
-        this.ownerFilter = ownerFilter;
+        filter.setFunction(ownerFilter);
+        filter.setPerWorkerFunctions(perWorkerFilters);
         this.filterUsedColumnIndexes = filterUsedColumnIndexes;
-        this.perWorkerFilters = perWorkerFilters;
 
         try {
             ownerMemoryPool = new PageFrameMemoryPool(configuration, ownerMemoryPoolMaxBytes);
@@ -161,8 +160,7 @@ public class AsyncFilterContext implements Closeable {
     }
 
     public void clear() {
-        Throwable failure = Function.cursorClosed(null, ownerFilter);
-        failure = Function.cursorClosed(failure, perWorkerFilters);
+        Throwable failure = filter.cursorClosed(null);
         failure = Function.cursorClosed(failure, bindVarFunctions);
         Misc.free(ownerMemoryPool);
         Misc.freeObjListAndKeepObjects(perWorkerMemoryPools);
@@ -189,8 +187,7 @@ public class AsyncFilterContext implements Closeable {
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, compiledFilter);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, bindVarMemory);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, bindVarFunctions);
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerFilter);
-        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerFilters);
+        cleanupFailure = filter.close(cleanupFailure);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerMemoryPool);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerMemoryPools);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerFilteredRows);
@@ -231,10 +228,7 @@ public class AsyncFilterContext implements Closeable {
     }
 
     public Function getFilter(int slotId) {
-        if (slotId == -1 || perWorkerFilters == null) {
-            return ownerFilter;
-        }
-        return perWorkerFilters.getQuick(slotId);
+        return filter.get(slotId);
     }
 
     public @Nullable IntHashSet getFilterUsedColumnIndexes() {
@@ -278,18 +272,7 @@ public class AsyncFilterContext implements Closeable {
     }
 
     public void initFilters(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        if (ownerFilter != null) {
-            ownerFilter.init(symbolTableSource, executionContext);
-        }
-        if (perWorkerFilters != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                Function.init(perWorkerFilters, symbolTableSource, executionContext, ownerFilter);
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
+        filter.init(symbolTableSource, executionContext);
         if (bindVarFunctions != null) {
             Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
             AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
@@ -321,7 +304,7 @@ public class AsyncFilterContext implements Closeable {
     }
 
     public void toPlan(PlanSink sink) {
-        sink.val(ownerFilter);
+        sink.val(filter.getFunction());
     }
 
     private static void resetCapacity(@Nullable DirectLongList list) {

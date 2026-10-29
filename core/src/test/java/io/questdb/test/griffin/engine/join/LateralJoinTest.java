@@ -3112,6 +3112,31 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLateralLimitNullFirstBoundMatchesOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            createLimitOracleTables();
+            final String firstThree = """
+                    k\tv
+                    null\t7
+                    null\t8
+                    1\t10
+                    1\t11
+                    1\t13
+                    2\t20
+                    2\t21
+                    3\t30
+                    """;
+            bindVariableService.setLong("lo", Numbers.LONG_NULL);
+            bindVariableService.setLong("hi", 3);
+            for (String limit : new String[]{"LIMIT NULL::LONG, 3", "LIMIT :lo, :hi"}) {
+                final String body = "SELECT v FROM t2 WHERE t2.k = t1.k " + limit;
+                assertQuery(lateralBodyQuery(body)).noLeakCheck().expectSize().returns(firstThree);
+                assertQuery(lateralBodyOracle(body)).noLeakCheck().sizeMayVary().returns(firstThree);
+            }
+        });
+    }
+
+    @Test
     public void testLateralLimitOuterColumnCheckedPerOuterRow() throws Exception {
         assertMemoryLeak(() -> {
             createT1("(1), (2), (3), (NULL), (4)");

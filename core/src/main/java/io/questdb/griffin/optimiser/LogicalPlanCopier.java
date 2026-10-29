@@ -154,6 +154,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         final AggregatePlan clone = planNodes.aggregates.next().of(aggregate.getChild(), aggregate.getPosition());
         cloneGrouping(aggregate, clone);
         clone.setAlgorithm(aggregate.getAlgorithm());
+        clone.setSampleByTimezone(aggregate.getSampleByTimezone());
         clone.setSharedConsumerCount(aggregate.getSharedConsumerCount());
         clone.getSharedInputIds().addAll(aggregate.getSharedInputIds());
         clone.getSharedSourceIds().addAll(aggregate.getSharedSourceIds());

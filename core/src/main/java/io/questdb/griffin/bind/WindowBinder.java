@@ -316,7 +316,7 @@ final class WindowBinder {
             } else if (ast.type == ExpressionNode.LITERAL) {
                 addWindowInnerColumn(project, output, ctx.bindColumnIndex(ast, output, source));
             } else if (isPureComputedColumn(ast)) {
-                final BoundExpression bound = ctx.functionBinder.bindValue(ast, ctx.windowBindingScope(output), sourceAlias(source), executionContext);
+                final BoundExpression bound = ctx.functionBinder.bindValue(ast, windowInputScope(), sourceAlias(source), executionContext);
                 final int id = ctx.planNodes.nextColumnId();
                 project.getExpressions().add(bound);
                 project.getOutput().add(id, ctx.createOutputName(columns.getQuick(i).getName()), bound.getDataType(), false);

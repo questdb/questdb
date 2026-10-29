@@ -172,11 +172,9 @@ public final class TimestampSamplerFactory {
      * @throws SqlException when input string is invalid
      */
     public static TimestampSampler getInstance(TimestampDriver driver, CharSequence cs, int position) throws SqlException {
-        int k = findPositiveIntervalEndIndex(cs, position, "sample");
-        assert cs.length() > k;
-
-        long n = parsePositiveInterval(cs, k, position, "sample", Numbers.INT_NULL, '?');
-        return getSampleByInstance(driver, n, cs.charAt(k), position + k);
+        final long stride = parsePeriodStride(cs, position);
+        final int unitIndex = cs.length() - 1;
+        return getSampleByInstance(driver, stride, cs.charAt(unitIndex), position + unitIndex);
     }
 
     /**
@@ -223,6 +221,18 @@ public final class TimestampSamplerFactory {
         } catch (NumericException e) {
             throw SqlException.$(position, "invalid interval value [value=").put(cs).put(']');
         }
+    }
+
+    /**
+     * The stride of the SAMPLE BY period literal {@code cs}, such as 15 for {@code 15m} or 1 for {@code m}: an optional
+     * positive INT followed by the one-letter unit that ends the literal, at index {@code cs.length() - 1}. The stride
+     * must also fit the timestamp range in that unit, which {@link #getSampleByInstance} checks.
+     *
+     * @param position position of the literal in SQL text to report error against
+     */
+    public static long parsePeriodStride(CharSequence cs, int position) throws SqlException {
+        final int unitIndex = findPositiveIntervalEndIndex(cs, position, "sample");
+        return parsePositiveInterval(cs, unitIndex, position, "sample", Numbers.INT_NULL, '?');
     }
 
     /**

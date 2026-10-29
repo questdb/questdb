@@ -623,6 +623,19 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewFailPeriodIntervalCombinedWithNestedOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select * from (select ts, avg(v) from " + TABLE1 + " sample by 30m align to calendar with offset '00:10')";
+            assertQuery("create materialized view test refresh period(sample by interval) as (" + query + ") partition by day")
+                    .noLeakCheck()
+                    .fails(55, "PERIOD (SAMPLE BY INTERVAL) can't be used with WITH OFFSET");
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewFailPeriodIntervalCombinedWithOffset() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -1290,6 +1303,42 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewSampleByBindVariableTimeZone() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "Europe/Berlin");
+            final String query = "select ts, avg(v) from (select ts, v from " + TABLE1 + " where v > 0) sample by 1h align to calendar time zone $1";
+            assertQuery("create materialized view test as (" + query + ")")
+                    .noLeakCheck()
+                    .fails(137, "SAMPLE BY in a materialized view requires a constant offset and time zone");
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleByConstantTimeZoneAndOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String folded = "select ts, avg(v) from " + TABLE1 + " where ts in '2024' sample by 1d align to calendar " +
+                    "time zone concat('Europe/', 'Berlin') with offset concat('00:', '45')";
+            execute("create materialized view test1 as (" + folded + ") partition by day");
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test1", folded, TABLE1, 1, 'd', "Europe/Berlin", "00:45");
+            assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test1", folded, TABLE1, 1, 'd', "Europe/Berlin", "00:45");
+
+            final String nulls = "select ts, avg(v) from (select ts, v from " + TABLE1 + " where v > 0) sample by 1d align to calendar " +
+                    "time zone null with offset null";
+            execute("create materialized view test2 as (" + nulls + ") partition by day");
+            final MatViewDefinition definition = getMatViewDefinition("test2");
+            assertNotNull(definition);
+            assertNull(definition.getTimeZone());
+            assertEquals("00:00", definition.getTimeZoneOffset());
+        });
+    }
+
+    @Test
     public void testCreateMatViewSampleByFill() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -1364,6 +1413,34 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery("create materialized view test as (" + to + ") partition by day")
                     .noLeakCheck()
                     .fails(91, "FROM-TO on base table is not supported for materialized views: " + TABLE2);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleByNestedTimeZoneWithOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String bucket = "select * from (select ts, avg(v) from " + TABLE1 + " where ts in '2024' " +
+                    "sample by 1h align to calendar time zone 'Europe/Berlin' with offset '00:15')";
+            execute("create materialized view test1 as (" + bucket + ") partition by day");
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test1", bucket, TABLE1, 1, 'h', "Europe/Berlin", "00:15");
+            assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test1", bucket, TABLE1, 1, 'h', "Europe/Berlin", "00:15");
+
+            final String cursor = "select * from (select ts, avg(v) from (select ts, v from " + TABLE1 + " where v > 0) " +
+                    "sample by 1h align to calendar time zone 'Europe/Berlin' with offset '00:30')";
+            execute("create materialized view test2 as (" + cursor + ") partition by day");
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test2", cursor, TABLE1, 1, 'h', "Europe/Berlin", "00:30");
+            assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test2", cursor, TABLE1, 1, 'h', "Europe/Berlin", "00:30");
+
+            final String period = "select * from (select ts, avg(v) from " + TABLE1 + " sample by 1h align to calendar time zone 'Europe/Berlin')";
+            execute("create materialized view test3 refresh period(sample by interval) as (" + period + ") partition by day");
+            final MatViewDefinition definition = getMatViewDefinition("test3");
+            assertNotNull(definition);
+            assertEquals("Europe/Berlin", definition.getTimeZone());
+            assertEquals("Europe/Berlin", definition.getTimerTimeZone());
+            assertEquals(1, definition.getPeriodLength());
+            assertEquals('h', definition.getPeriodLengthUnit());
         });
     }
 

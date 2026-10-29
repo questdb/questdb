@@ -63,7 +63,7 @@ final class JoinOrderSolver implements Mutable {
     private final IntList inCounts;
     private final ObjList<JoinKind> joinTypes;
     /**
-     * For each input, a bit set of the inputs that a path of ordering constraints orders after it.
+     * The inputs that paths of ordering constraints order after each input, see {@link JoinGraph#setReachableInputs}.
      */
     private final LongList laterInputs;
     private final IntHashSet markedIndexes;
@@ -244,18 +244,19 @@ final class JoinOrderSolver implements Mutable {
     }
 
     /**
-     * Keys the input on the master and the slave column. A LEFT input that a key already keys on the master column
-     * filters its input on the equality of the two slave columns instead, see {@link OptimiserContext#addKeyFilter}:
-     * binding merges such keys only for an input it joins without crossing an outer or temporal step, see
-     * {@code JoinGraphBuilder}, and a RIGHT or FULL input keeps the input rows the filter would drop. An ASOF or LT
-     * input does so where {@link LogicalPlans#filteredKeyIndex} decides.
+     * Keys the input on the master and the slave column, unless the input filters a repeated master key instead, see
+     * {@link JoinKind#isRepeatedKeyFiltered} and {@link OptimiserContext#addKeyFilter}. A LEFT input does so when a key
+     * already keys it on the master column: binding merges such keys only for an input it joins without crossing an
+     * outer or temporal step, see {@code JoinGraphBuilder}. An ASOF or LT input does so where
+     * {@link LogicalPlans#filteredKeyIndex} decides.
      */
     private void addKey(JoinInput input, int masterId, int slaveId, CharSequence masterName, CharSequence slaveName, int position) throws SqlException {
-        final int keyIndex = switch (input.getJoinType()) {
-            case LEFT_OUTER -> input.indexOfMasterKey(masterId);
-            case ASOF, LT -> LogicalPlans.filteredKeyIndex(input.getKeys(), masterId, slaveId, input.getSourceOutput());
-            default -> -1;
-        };
+        final JoinKind type = input.getJoinType();
+        int keyIndex = -1;
+        if (type.isRepeatedKeyFiltered()) {
+            keyIndex = type == JoinKind.LEFT_OUTER ? input.indexOfMasterKey(masterId)
+                    : LogicalPlans.filteredKeyIndex(input.getKeys(), masterId, slaveId, input.getSourceOutput());
+        }
         if (keyIndex > -1) {
             context.addKeyFilter(input, keyIndex, slaveId, input.getSourceOutput(), position);
         } else {
@@ -374,27 +375,13 @@ final class JoinOrderSolver implements Mutable {
 
     /**
      * Indexes the ordering constraints of the graph into {@link #laterInputs}: links them into the child sets, which
-     * {@link #linkDependencies} relinks, and sorts the inputs by them, see {@link JoinGraph#sortTopologically}, then adds
-     * to each input, from the last one back, its children and the inputs they order after them.
+     * {@link #linkDependencies} relinks, sorts the inputs by them, see {@link JoinGraph#sortTopologically}, and sets the
+     * inputs they order after each input, see {@link JoinGraph#setReachableInputs}.
      */
     private void indexOrderingConstraints() {
         final int count = dependencies.size();
-        final int words = (count + 63) >>> 6;
-        laterInputs.setAll(count * words, 0);
         JoinGraph.sortTopologically(graph.getOrderingConstraints(), count, children, inCounts, ready, candidateOrder);
-        for (int i = candidateOrder.size() - 1; i >= 0; i--) {
-            final int source = candidateOrder.getQuick(i);
-            final IntHashSet sourceChildren = children.getQuick(source);
-            final int row = source * words;
-            for (int k = 0, n = sourceChildren.size(); k < n; k++) {
-                final int child = sourceChildren.get(k);
-                final int childRow = child * words;
-                laterInputs.setQuick(row + (child >>> 6), laterInputs.getQuick(row + (child >>> 6)) | 1L << child);
-                for (int w = 0; w < words; w++) {
-                    laterInputs.setQuick(row + w, laterInputs.getQuick(row + w) | laterInputs.getQuick(childRow + w));
-                }
-            }
-        }
+        JoinGraph.setReachableInputs(candidateOrder, children, count, laterInputs);
     }
 
     /**
@@ -420,8 +407,9 @@ final class JoinOrderSolver implements Mutable {
      * True when a path of ordering constraints orders {@code parent} before {@code child}, see {@link #laterInputs}.
      */
     private boolean isConstrainedBefore(int parent, int child) {
-        final int words = (dependencies.size() + 63) >>> 6;
-        return (laterInputs.getQuick(parent * words + (child >>> 6)) & 1L << child) != 0;
+        final int count = dependencies.size();
+        final int words = (count + 63) >>> 6;
+        return (laterInputs.getQuick((count + parent) * words + (child >>> 6)) & 1L << child) != 0;
     }
 
     /**

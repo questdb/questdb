@@ -2633,6 +2633,24 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullFirstBoundReadsZero() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullFirstBoundTable();
+            assertNullFirstBoundReadsZero("SELECT id FROM t", "5\n3\n1\n", "Limit left: nullL right: 3");
+            assertNullFirstBoundReadsZero("SELECT id FROM t ORDER BY id", "1\n2\n3\n", "Encode sort light lo: nullL hi: 3");
+        });
+    }
+
+    @Test
+    public void testNullFirstBoundReadsZeroUnencodedSort() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            createNullFirstBoundTable();
+            assertNullFirstBoundReadsZero("SELECT id FROM t ORDER BY id", "1\n2\n3\n", "Sort light lo: nullL hi: 3");
+        });
+    }
+
+    @Test
     public void testOrderByTimestampDescWithWhereAndLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (id LONG, price DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
@@ -3525,6 +3543,15 @@ public class LimitTest extends AbstractCairoTest {
         });
     }
 
+    private void assertNullFirstBoundReadsZero(String select, String expectedIds, String plan) throws Exception {
+        final String expected = "id\n" + expectedIds;
+        assertQuery(select + " LIMIT NULL::LONG, 3").noLeakCheck().expectSize().withPlanContaining(plan).returns(expected);
+        bindVariableService.clear();
+        bindVariableService.setLong(0, Numbers.LONG_NULL);
+        bindVariableService.setLong(1, 3);
+        assertQuery(select + " LIMIT $1, $2").noLeakCheck().expectSize().returns(expected);
+    }
+
     private void createJoinLimitTables() throws SqlException {
         execute("CREATE TABLE t AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x % 5 l, x::INT i FROM long_sequence(20)) TIMESTAMP(ts) PARTITION BY DAY");
         execute("CREATE TABLE sp (ts TIMESTAMP, l LONG, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
@@ -3535,6 +3562,11 @@ public class LimitTest extends AbstractCairoTest {
                     ('1970-01-01T00:00:02.500000Z', 1, 102),
                     ('1970-01-01T00:00:03.500000Z', 2, 103)
                 """);
+    }
+
+    private void createNullFirstBoundTable() throws SqlException {
+        execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO t VALUES (5, 0), (3, 1), (1, 2), (4, 3), (2, 4)");
     }
 
     private void assertRowCount(String query, long expected) throws SqlException {

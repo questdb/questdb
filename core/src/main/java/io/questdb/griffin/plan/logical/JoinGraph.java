@@ -27,6 +27,7 @@ package io.questdb.griffin.plan.logical;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.IntSortedList;
+import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
@@ -66,6 +67,42 @@ public final class JoinGraph implements Mutable {
             final ObjList<BoundExpression> expressions = inputs.getQuick(step).getUnnest().getExpressions();
             for (int i = 0, n = expressions.size(); i < n; i++) {
                 addUnnestEdges(inputs, expressions.getQuick(i), step, edges);
+            }
+        }
+    }
+
+    /**
+     * Sets in {@code reachable} two bit sets of {@code (count + 63) >>> 6} longs per input of the {@code count}: first,
+     * per input, the inputs that a path of two or more links of the {@code children} sets orders after it, then, from
+     * bit set {@code count} on, per input, every input a path orders after it. {@code order} is the order
+     * {@link #sortTopologically} appended over the same child sets; an input it misses keeps empty bit sets.
+     */
+    public static void setReachableInputs(IntList order, ObjList<IntHashSet> children, int count, LongList reachable) {
+        final int words = (count + 63) >>> 6;
+        final int descendantsBase = count * words;
+        reachable.setAll(2 * descendantsBase, 0);
+        for (int i = order.size() - 1; i >= 0; i--) {
+            final int source = order.getQuick(i);
+            final IntHashSet sourceChildren = children.getQuick(source);
+            final int indirect = source * words;
+            final int descendants = descendantsBase + indirect;
+            for (int k = 0, n = sourceChildren.size(); k < n; k++) {
+                final int child = sourceChildren.get(k);
+                // A child that another child orders after it adds no input that child did not.
+                if ((reachable.getQuick(indirect + (child >>> 6)) & 1L << child) == 0) {
+                    final int childDescendants = descendantsBase + child * words;
+                    for (int w = 0; w < words; w++) {
+                        reachable.setQuick(indirect + w, reachable.getQuick(indirect + w) | reachable.getQuick(childDescendants + w));
+                    }
+                }
+            }
+            for (int w = 0; w < words; w++) {
+                reachable.setQuick(descendants + w, reachable.getQuick(indirect + w));
+            }
+            for (int k = 0, n = sourceChildren.size(); k < n; k++) {
+                final int child = sourceChildren.get(k);
+                final int word = descendants + (child >>> 6);
+                reachable.setQuick(word, reachable.getQuick(word) | 1L << child);
             }
         }
     }

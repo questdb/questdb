@@ -949,7 +949,6 @@ final class JoinBinder implements Mutable {
     private ExpressionNode collectJoinConditions(
             ExpressionNode expression, JoinPlan join, int origin, boolean hasBarriers, boolean hasNonEquiNullingJoin
     ) throws SqlException {
-        final BindScope scope = ctx.scope();
         if (expression == null) {
             return null;
         }
@@ -973,12 +972,7 @@ final class JoinBinder implements Mutable {
                 return null;
             }
         }
-        if (origin >= 0 && join.getInputs().getQuick(origin).getJoinType().isBarrier()) {
-            return expression;
-        }
-        scope.joinResidualNodes.add(expression);
-        scope.joinResidualOrigins.add(origin);
-        return null;
+        return routeJoinResidual(expression, join, origin);
     }
 
     private void collectJoinDependencies(ExpressionNode expression, JoinPlan join, int origin, boolean isDeferred) {
@@ -1222,9 +1216,10 @@ final class JoinBinder implements Mutable {
      * Turns each key whose columns cannot key its input, see {@link JoinGraphBuilder#isKeyable}, and that shares a
      * column with a key whose columns can, into a predicate the input evaluates instead, and keys the input on the
      * other key. An INNER or CROSS input filters on the equality of the two columns the keys do not share, the earlier
-     * key's first; a LEFT, ASOF or LT input whose keys share the master column filters its own rows on the equality
-     * of the two slave columns, see {@link JoinInput#getKeyFilter}; any other LEFT, RIGHT or FULL input evaluates the
-     * key as a conjunct of its ON residual. Other such keys stay, and {@link #validateJoinKeys} rejects them.
+     * key's first; an input that filters a repeated master key, see {@link JoinKind#isRepeatedKeyFiltered}, and whose
+     * keys share the master column filters its own rows on the equality of the two slave columns; any other LEFT,
+     * RIGHT or FULL input evaluates the key as a conjunct of its ON residual, see {@link #routeJoinResidual}. Other such
+     * keys stay, and {@link #validateJoinKeys} rejects them.
      */
     private void demoteUnkeyableKeys(JoinPlan join, JoinGraph graph, QueryModel source, SqlExecutionContext executionContext) throws SqlException {
         final BindScope scope = ctx.scope();
@@ -1247,7 +1242,7 @@ final class JoinBinder implements Mutable {
                 final int master = key.getOtherSource(s);
                 final JoinEquality masterKey = keyableKey(join, keys, key, key.getColumnId(master));
                 final JoinEquality keyable = masterKey != null ? masterKey : keyableKey(join, keys, key, key.getColumnId(s));
-                final boolean isSlaveFiltered = masterKey != null && (type == JoinKind.LEFT_OUTER || type == JoinKind.ASOF || type == JoinKind.LT);
+                final boolean isSlaveFiltered = masterKey != null && type.isRepeatedKeyFiltered();
                 if (keyable == null || !isSlaveFiltered && !type.isRelational()) {
                     i++;
                     continue;
@@ -1255,28 +1250,18 @@ final class JoinBinder implements Mutable {
                 if (type == JoinKind.INNER || type == JoinKind.CROSS) {
                     final int keyableSide = keyable == masterKey ? s : keyable.getOtherSource(s);
                     final int side = keyable == masterKey ? s : master;
-                    final boolean isKeyableFirst = keys.indexOf(keyable) < i;
-                    final JoinEquality first = isKeyableFirst ? keyable : key;
-                    final JoinEquality second = isKeyableFirst ? key : keyable;
-                    final int firstSide = isKeyableFirst ? keyableSide : side;
-                    final int secondSide = isKeyableFirst ? side : keyableSide;
-                    final JoinEquality equality = ctx.planNodes.joinEqualities.next().of(
-                            firstSide, first.getColumnId(firstSide), first.getName(firstSide), first.getPosition(firstSide),
-                            secondSide, second.getColumnId(secondSide), second.getName(secondSide), second.getPosition(secondSide)
-                    );
-                    equality.addOwners(first.getOwners());
-                    equality.addOwners(second.getOwners());
-                    scope.joinDerivedEqualities.add(equality);
+                    final JoinEquality equality = ctx.planNodes.joinEqualities.next();
+                    scope.joinDerivedEqualities.add(keys.indexOf(keyable) < i
+                            ? equality.ofDerived(keyable, keyableSide, key, side)
+                            : equality.ofDerived(key, side, keyable, keyableSide));
                 } else if (isSlaveFiltered) {
                     keyFilter = ctx.combinePredicates(keyFilter, comparison(key.getName(s), key.getPosition(s), masterKey.getName(s), masterKey.getPosition(s)));
                 } else {
                     final int origin = statedOrigin(key.getOwners());
-                    final ExpressionNode comparison = comparison(key.getLeftName(), key.getLeftPosition(), key.getRightName(), key.getRightPosition());
-                    if (origin >= 0 && inputs.getQuick(origin).getJoinType().isBarrier()) {
-                        scope.joinOnNodes.setQuick(origin, ctx.combinePredicates(scope.joinOnNodes.getQuick(origin), comparison));
-                    } else {
-                        scope.joinResidualNodes.add(comparison);
-                        scope.joinResidualOrigins.add(origin);
+                    final ExpressionNode onConjunct = routeJoinResidual(
+                            comparison(key.getLeftName(), key.getLeftPosition(), key.getRightName(), key.getRightPosition()), join, origin);
+                    if (onConjunct != null) {
+                        scope.joinOnNodes.setQuick(origin, ctx.combinePredicates(scope.joinOnNodes.getQuick(origin), onConjunct));
                     }
                 }
                 keys.remove(i);
@@ -1513,6 +1498,21 @@ final class JoinBinder implements Mutable {
             hints |= JoinInput.HINT_MARKOUT_HORIZON;
         }
         return hints;
+    }
+
+    /**
+     * Routes a conjunct that no key of the join implements: returns a conjunct of the ON clause of the barrier input
+     * {@code origin}, which that input evaluates as its ON residual, and adds any other conjunct to the residuals the
+     * optimiser places, stated by {@code origin}, -1 for WHERE, returning null.
+     */
+    private ExpressionNode routeJoinResidual(ExpressionNode conjunct, JoinPlan join, int origin) {
+        if (origin >= 0 && join.getInputs().getQuick(origin).getJoinType().isBarrier()) {
+            return conjunct;
+        }
+        final BindScope scope = ctx.scope();
+        scope.joinResidualNodes.add(conjunct);
+        scope.joinResidualOrigins.add(origin);
+        return null;
     }
 
     /**

@@ -233,13 +233,11 @@ public final class JoinGraphBuilder implements Mutable {
 
     /**
      * Whether the columns of the equality between two inputs of the join can key it, see
-     * {@link LogicalPlans#isJoinKeyTypeCompatible}.
+     * {@link LogicalPlans#isJoinKeyable}.
      */
     static boolean isKeyable(JoinPlan join, JoinEquality key) {
-        final OutputSchema left = join.getInputs().getQuick(key.getLeftSource()).getSourceOutput();
-        final OutputSchema right = join.getInputs().getQuick(key.getRightSource()).getSourceOutput();
-        return LogicalPlans.isJoinKeyTypeCompatible(left.getColumnType(left.getColumnIndexById(key.getLeftColumnId())),
-                right.getColumnType(right.getColumnIndexById(key.getRightColumnId())));
+        return LogicalPlans.isJoinKeyable(join.getInputs().getQuick(key.getLeftSource()).getSourceOutput(), key.getLeftColumnId(),
+                join.getInputs().getQuick(key.getRightSource()).getSourceOutput(), key.getRightColumnId());
     }
 
     private static JoinEquality findKey(JoinDependency dependency, JoinEquality key) {
@@ -262,9 +260,9 @@ public final class JoinGraphBuilder implements Mutable {
 
     /**
      * Keys each outer input on the equalities a later INNER input implies for it, see {@link #stageImpliedKey}, unless
-     * its ON clause states an equality the join can key, see {@link LogicalPlans#isJoinKeyTypeCompatible}, or the
-     * join semantics order the input the equality reads after the outer input. The input then joins after the input
-     * the equality reads. Of the equalities on one column of that input, the first keys the outer input.
+     * its ON clause states an equality the join can key, see {@link #isKeyable}, or the join semantics order the input
+     * the equality reads after the outer input. The input then joins after the input the equality reads. Of the
+     * equalities on one column of that input, the first keys the outer input.
      */
     private void addImpliedKeys() {
         for (int i = 0, n = impliedKeys.size(); i < n; i++) {
@@ -353,27 +351,18 @@ public final class JoinGraphBuilder implements Mutable {
         return false;
     }
 
-    private void emit(JoinEquality a, boolean isLeftA, JoinEquality b, boolean isLeftB, int deletedIndex) {
+    private void emit(JoinEquality a, int aSource, JoinEquality b, int bSource, int deletedIndex) {
         markedIndexes.add(deletedIndex);
-        final int leftSource = isLeftA ? a.getLeftSource() : a.getRightSource();
-        final int leftId = isLeftA ? a.getLeftColumnId() : a.getRightColumnId();
-        final int rightSource = isLeftB ? b.getLeftSource() : b.getRightSource();
-        final int rightId = isLeftB ? b.getLeftColumnId() : b.getRightColumnId();
-        if (leftSource == rightSource && leftId == rightId) {
+        if (aSource == bSource && a.getColumnId(aSource) == b.getColumnId(bSource)) {
             b.addOwners(a.getOwners());
             return;
         }
-        final JoinEquality equality = equalityPool.next().of(
-                leftSource, leftId, isLeftA ? a.getLeftName() : a.getRightName(), isLeftA ? a.getLeftPosition() : a.getRightPosition(),
-                rightSource, rightId, isLeftB ? b.getLeftName() : b.getRightName(), isLeftB ? b.getLeftPosition() : b.getRightPosition()
-        );
-        equality.addOwners(a.getOwners());
-        equality.addOwners(b.getOwners());
-        if (leftSource == rightSource) {
+        final JoinEquality equality = equalityPool.next().ofDerived(a, aSource, b, bSource);
+        if (aSource == bSource) {
             sourceFilters.add(equality);
         } else {
-            final JoinDependency dependency = dependencyPool.next().of(Math.max(leftSource, rightSource));
-            dependency.getParents().add(Math.min(leftSource, rightSource));
+            final JoinDependency dependency = dependencyPool.next().of(Math.max(aSource, bSource));
+            dependency.getParents().add(Math.min(aSource, bSource));
             dependency.getKeys().add(equality);
             stagedDependencies.add(dependency);
         }
@@ -391,13 +380,10 @@ public final class JoinGraphBuilder implements Mutable {
     }
 
     private boolean hasKeyableStatedKey(JoinDependency dependency) {
-        final int step = dependency.getSlave();
         final ObjList<JoinEquality> keys = dependency.getKeys();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final JoinEquality key = keys.getQuick(i);
-            final int master = key.getOtherSource(step);
-            if (key.getReplacedKey() == null && LogicalPlans.isJoinKeyTypeCompatible(
-                    sourceColumnType(master, key.getColumnId(master)), sourceColumnType(step, key.getColumnId(step)))) {
+            if (key.getReplacedKey() == null && isKeyable(join, key)) {
                 return true;
             }
         }
@@ -445,16 +431,16 @@ public final class JoinGraphBuilder implements Mutable {
                     continue;
                 }
                 if (previous.getLeftColumnId() == next.getLeftColumnId()) {
-                    emit(previous, false, next, false, k);
+                    emit(previous, previous.getRightSource(), next, next.getRightSource(), k);
                     break;
                 } else if (previous.getRightColumnId() == next.getLeftColumnId()) {
-                    emit(previous, true, next, false, k);
+                    emit(previous, previous.getLeftSource(), next, next.getRightSource(), k);
                     break;
                 } else if (previous.getLeftColumnId() == next.getRightColumnId()) {
-                    emit(previous, false, next, true, k);
+                    emit(previous, previous.getRightSource(), next, next.getLeftSource(), k);
                     break;
                 } else if (previous.getRightColumnId() == next.getRightColumnId()) {
-                    emit(previous, true, next, true, k);
+                    emit(previous, previous.getLeftSource(), next, next.getLeftSource(), k);
                     break;
                 }
             }
@@ -487,36 +473,9 @@ public final class JoinGraphBuilder implements Mutable {
         final IntList constraints = graph.getOrderingConstraints();
         final int count = dependencies.size();
         final int words = (count + 63) >>> 6;
-        // A bit set per input of the inputs ordered after one of its children, then one of those ordered after it.
         final int descendantsBase = count * words;
-        final IntList order = semanticEdges;
-        JoinGraph.sortTopologically(constraints, count, children, inCounts, ready, order);
-        reachableInputs.setAll(2 * descendantsBase, 0);
-        for (int i = order.size() - 1; i >= 0; i--) {
-            final int source = order.getQuick(i);
-            final IntHashSet sourceChildren = children.getQuick(source);
-            final int indirect = source * words;
-            final int descendants = descendantsBase + indirect;
-            for (int k = 0, n = sourceChildren.size(); k < n; k++) {
-                final int child = sourceChildren.get(k);
-                // A child that another child orders after it adds no input that child did not.
-                if ((reachableInputs.getQuick(indirect + (child >>> 6)) & 1L << child) == 0) {
-                    final int childDescendants = descendantsBase + child * words;
-                    for (int w = 0; w < words; w++) {
-                        reachableInputs.setQuick(indirect + w,
-                                reachableInputs.getQuick(indirect + w) | reachableInputs.getQuick(childDescendants + w));
-                    }
-                }
-            }
-            for (int w = 0; w < words; w++) {
-                reachableInputs.setQuick(descendants + w, reachableInputs.getQuick(indirect + w));
-            }
-            for (int k = 0, n = sourceChildren.size(); k < n; k++) {
-                final int child = sourceChildren.get(k);
-                final int word = descendants + (child >>> 6);
-                reachableInputs.setQuick(word, reachableInputs.getQuick(word) | 1L << child);
-            }
-        }
+        JoinGraph.sortTopologically(constraints, count, children, inCounts, ready, semanticEdges);
+        JoinGraph.setReachableInputs(semanticEdges, children, count, reachableInputs);
         int kept = 0;
         for (int i = 0, n = constraints.size(); i < n; i += 2) {
             final int parent = constraints.getQuick(i);

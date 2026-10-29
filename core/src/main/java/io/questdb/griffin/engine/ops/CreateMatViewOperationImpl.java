@@ -81,7 +81,6 @@ import io.questdb.std.Transient;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -101,10 +100,10 @@ import org.jetbrains.annotations.Nullable;
  * queries.
  */
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
+    private static final String ZERO_OFFSET = "00:00";
     private final String baseTableName;
     private final int baseTableNamePosition;
     private final CairoConfiguration configuration;
-    private final StringSink constantSink = new StringSink();
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
     private final boolean deferred;
     private final int periodDelay;
@@ -116,14 +115,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final MatViewDefinition viewDefinition = new MatViewDefinition();
     private int baseTableTimestampType;
     private CreateTableOperationImpl createTableOperation;
-    private LogicalPlan floorInput;
+    private int nonConstantAlignmentPosition = -1;
     private int periodLength;
     private char periodLengthUnit;
     private long samplingInterval;
     private char samplingIntervalUnit;
     private int scanColumnId;
     private String timeZone;
-    private String timeZoneOffset;
+    private String timeZoneOffset = ZERO_OFFSET;
     private long timerStartUs;
     private String timerTimeZone;
 
@@ -135,8 +134,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             boolean deferred,
             @NotNull String baseTableName,
             int baseTableNamePosition,
-            @Nullable String timeZone,
-            @Nullable String timeZoneOffset,
             int timerInterval,
             char timerUnit,
             long timerStartUs,
@@ -153,8 +150,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         this.deferred = deferred;
         this.baseTableName = baseTableName;
         this.baseTableNamePosition = baseTableNamePosition;
-        this.timeZone = timeZone;
-        this.timeZoneOffset = timeZoneOffset;
         this.timerInterval = timerInterval;
         this.timerUnit = timerUnit;
         this.timerStartUs = timerStartUs;
@@ -393,12 +388,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         if (sampleBy instanceof SampleByPlan cursor) {
             intervalExpr = cursor.getPeriodToken();
             intervalPos = cursor.getPeriodPosition();
+            readSampleByAlignment(cursor.getTimezone(), cursor.getOffset(), selectTextPosition);
         } else if (sampleBy != null) {
             final AggregatePlan aggregate = (AggregatePlan) sampleBy;
             final FunctionExpression bucket = sampleByBucket(aggregate);
             final ConstantExpression period = (ConstantExpression) bucket.argumentAt(0);
             intervalExpr = constantText(period);
             intervalPos = period.getPosition();
+            readSampleByAlignment(aggregate.getSampleByTimezone(), bucket.argumentAt(3), selectTextPosition);
             if (timestamp == null) {
                 final int bucketId = aggregate.getOutput().getColumnId(aggregate.getGroupingExpressions().indexOf(bucket));
                 final int bucketIndex = copyingColumnIndex(root, aggregate, bucketId);
@@ -421,13 +418,18 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         // GROUP BY timestamp_floor(ts) (optimized SAMPLE BY).
         if (intervalExpr == null) {
             FunctionExpression floor = null;
+            LogicalPlan floorInput = null;
             for (LogicalPlan level = root; level != null && floor == null; level = nextLevel(level)) {
                 if (!(level instanceof ProjectPlan project)) {
                     continue;
                 }
                 for (int i = 0, n = project.getExpressions().size(); i < n && floor == null; i++) {
                     floor = timestampFloorCall(project, i);
-                    if (floor != null && timestamp == null) {
+                    if (floor == null) {
+                        continue;
+                    }
+                    floorInput = floor == project.getExpressions().getQuick(i) ? project.getChild() : groupingBelow(project).getChild();
+                    if (timestamp == null) {
                         // The persisted designated-timestamp name is resolved verbatim against factory metadata
                         // downstream, and the model map is keyed by the same output names.
                         final String tsName = Chars.toString(project.getOutput().getColumnName(i));
@@ -442,7 +444,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 }
             }
             if (floor != null) {
-                readTimestampFloorAlignment(sqlExecutionContext, floor, baseTableToken, selectTextPosition);
+                readTimestampFloorAlignment(sqlExecutionContext, floor, floorInput, baseTableToken, selectTextPosition);
                 final ConstantExpression interval = (ConstantExpression) floor.argumentAt(0);
                 intervalExpr = constantText(interval);
                 intervalPos = interval.getPosition();
@@ -465,11 +467,8 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         // Parse sampling interval expression.
         final CharSequence interval = GenericLexer.unquote(intervalExpr);
-        final int samplingIntervalEnd = TimestampSamplerFactory.findPositiveIntervalEndIndex(interval, intervalPos, "sample");
-        assert samplingIntervalEnd < interval.length();
-        samplingInterval = TimestampSamplerFactory.parsePositiveInterval(interval, samplingIntervalEnd, intervalPos, "sample", Numbers.INT_NULL, ' ');
-        assert samplingInterval > 0;
-        samplingIntervalUnit = interval.charAt(samplingIntervalEnd);
+        samplingInterval = TimestampSamplerFactory.parsePeriodStride(interval, intervalPos);
+        samplingIntervalUnit = interval.charAt(interval.length() - 1);
 
         CairoEngine engine = sqlExecutionContext.getCairoEngine();
         try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseTableToken)) {
@@ -530,6 +529,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             @NotNull TableReaderMetadata baseTableMetadata,
             int scanDirection
     ) throws SqlException {
+        if (nonConstantAlignmentPosition > -1) {
+            throw SqlException.position(nonConstantAlignmentPosition)
+                    .put("SAMPLE BY in a materialized view requires a constant offset and time zone");
+        }
         final int selectTextPosition = createTableOperation.getSelectTextPosition();
         // SELECT validation
         if (createTableOperation.getTimestampColumnName() == null
@@ -540,6 +543,14 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         createTableOperation.validateAndUpdateMetadataFromSelect(selectMetadata, scanDirection);
         updateMatViewTablePartitionBy(createTableOperation.getTimestampType());
         this.baseTableTimestampType = baseTableMetadata.getTimestampType();
+    }
+
+    /**
+     * The text of a STRING, VARCHAR or CHAR constant; null for a NULL value.
+     */
+    private static String constantText(ConstantExpression constant) {
+        return ColumnType.tagOf(constant.getDataType()) == ColumnType.CHAR
+                ? String.valueOf((char) constant.getLongValue()) : Chars.toString(constant.getText());
     }
 
     /**
@@ -609,6 +620,17 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 }
             }
         }
+    }
+
+    /**
+     * The grouping beneath {@code project}, under the sorts, limits and fills between them; null when there is none.
+     */
+    private static GroupingPlan groupingBelow(ProjectPlan project) {
+        LogicalPlan input = project.getChild();
+        while (input instanceof SortPlan || input instanceof LimitPlan || input instanceof FillPlan) {
+            input = input.inputAt(0);
+        }
+        return input instanceof GroupingPlan grouping ? grouping : null;
     }
 
     /**
@@ -755,6 +777,42 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     /**
+     * The text of the constant offset or time zone argument {@code index} of a timestamp_floor call; null for NULL.
+     */
+    private static String timestampFloorArgument(FunctionExpression floor, int index, int selectTextPosition) throws SqlException {
+        if (!(floor.argumentAt(index) instanceof ConstantExpression constant)) {
+            throw SqlException.position(selectTextPosition + floor.argumentAt(index).getPosition()).put(floor.getName())
+                    .put("() in a materialized view requires a constant offset and time zone");
+        }
+        return constantText(constant);
+    }
+
+    /**
+     * The timestamp_floor call that defines visible column {@code index} of {@code project}: its expression, whose
+     * arguments read the projection's input, or the key of the {@link #groupingBelow grouping beneath it} that the
+     * column reads as spelled, whose arguments read the grouping's input; null for any other column.
+     */
+    private static FunctionExpression timestampFloorCall(ProjectPlan project, int index) {
+        if (!project.getOutput().isVisible(index)) {
+            return null;
+        }
+        final BoundExpression expression = project.getExpressions().getQuick(index);
+        if (isTimestampFloor(expression)) {
+            return (FunctionExpression) expression;
+        }
+        if (!(expression instanceof ColumnExpression column) || column.isCast()) {
+            return null;
+        }
+        final GroupingPlan grouping = groupingBelow(project);
+        if (grouping == null) {
+            return null;
+        }
+        final int keyIndex = grouping.getOutput().getColumnIndexById(column.getColumnId());
+        return keyIndex >= 0 && keyIndex < grouping.getGroupingExpressions().size() && isTimestampFloor(grouping.getGroupingExpressions().getQuick(keyIndex))
+                ? (FunctionExpression) grouping.getGroupingExpressions().getQuick(keyIndex) : null;
+    }
+
+    /**
      * The scan whose column, left in {@link #scanColumnId}, column {@code id} of {@code plan} reads as a plain
      * column: through projections and grouping keys that copy it, the SAMPLE BY bucket that reads the timestamp a
      * select column spells, joins and set operations (the right branch first); null when a computation defines
@@ -820,18 +878,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         }
     }
 
-    /**
-     * The text of a STRING, VARCHAR or CHAR constant; null for a NULL value.
-     */
-    private CharSequence constantText(ConstantExpression constant) {
-        if (ColumnType.tagOf(constant.getDataType()) == ColumnType.CHAR) {
-            constantSink.clear();
-            constantSink.put((char) constant.getLongValue());
-            return constantSink;
-        }
-        return constant.getText();
-    }
-
     private void copyBaseTableSymbolColumnCapacity(
             @NotNull LogicalPlan root,
             int columnId,
@@ -867,15 +913,27 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     /**
-     * Reads the bucket grid of the timestamp_floor call into the view's time zone and offset, the way SAMPLE BY
-     * carries TIME ZONE and WITH OFFSET. Raises for a grid the definition cannot carry: a floored expression other
-     * than the base table's designated timestamp read as itself or, at a grid no finer than a millisecond, as a
-     * DATE; a from origin other than the epoch; an offset or time zone that is not a constant; or a time zone other
-     * than UTC on timestamp_floor, which floors to local time.
+     * Reads the TIME ZONE and WITH OFFSET of the SAMPLE BY the view samples by into the view's time zone and offset.
+     */
+    private void readSampleByAlignment(BoundExpression timezone, BoundExpression offset, int selectTextPosition) {
+        final String offsetText = sampleByAlignmentText(offset, selectTextPosition);
+        if (offsetText != null) {
+            timeZoneOffset = offsetText;
+        }
+        timeZone = sampleByAlignmentText(timezone, selectTextPosition);
+    }
+
+    /**
+     * Reads the bucket grid of the timestamp_floor call, whose arguments read {@code floorInput}, into the view's time
+     * zone and offset, the way SAMPLE BY carries TIME ZONE and WITH OFFSET. Raises for a grid the definition cannot
+     * carry: a floored expression other than the base table's designated timestamp read as itself or, at a grid no
+     * finer than a millisecond, as a DATE; a from origin other than the epoch; an offset or time zone that is not a
+     * constant; or a time zone other than UTC on timestamp_floor, which floors to local time.
      */
     private void readTimestampFloorAlignment(
             SqlExecutionContext sqlExecutionContext,
             FunctionExpression floor,
+            LogicalPlan floorInput,
             TableToken baseTableToken,
             int selectTextPosition
     ) throws SqlException {
@@ -913,46 +971,18 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     /**
-     * The text of the constant offset or time zone argument {@code index} of a timestamp_floor call; null for NULL.
+     * The text of the constant TIME ZONE or WITH OFFSET {@code value} of a SAMPLE BY; null for none or NULL. A value
+     * that is not a constant leaves its position in {@link #nonConstantAlignmentPosition}, which
+     * {@link #validateAndUpdateMetadataFromSelect} rejects once the compiler has rejected a non-deterministic one.
      */
-    private String timestampFloorArgument(FunctionExpression floor, int index, int selectTextPosition) throws SqlException {
-        if (!(floor.argumentAt(index) instanceof ConstantExpression constant)) {
-            throw SqlException.position(selectTextPosition + floor.argumentAt(index).getPosition()).put(floor.getName())
-                    .put("() in a materialized view requires a constant offset and time zone");
+    private String sampleByAlignmentText(BoundExpression value, int selectTextPosition) {
+        if (value instanceof ConstantExpression constant) {
+            return constantText(constant);
         }
-        return Chars.toString(constantText(constant));
-    }
-
-    /**
-     * The timestamp_floor call that defines visible column {@code index} of {@code project}: its expression, or the
-     * key of the grouping beneath it that the column reads as spelled, with the plan its arguments read left in
-     * {@link #floorInput}; null for any other column.
-     */
-    private FunctionExpression timestampFloorCall(ProjectPlan project, int index) {
-        if (!project.getOutput().isVisible(index)) {
-            return null;
+        if (value != null && nonConstantAlignmentPosition < 0) {
+            nonConstantAlignmentPosition = selectTextPosition + value.getPosition();
         }
-        final BoundExpression expression = project.getExpressions().getQuick(index);
-        if (isTimestampFloor(expression)) {
-            floorInput = project.getChild();
-            return (FunctionExpression) expression;
-        }
-        if (!(expression instanceof ColumnExpression column) || column.isCast()) {
-            return null;
-        }
-        LogicalPlan input = project.getChild();
-        while (input instanceof SortPlan || input instanceof LimitPlan || input instanceof FillPlan) {
-            input = input.inputAt(0);
-        }
-        if (!(input instanceof GroupingPlan grouping)) {
-            return null;
-        }
-        final int keyIndex = grouping.getOutput().getColumnIndexById(column.getColumnId());
-        if (keyIndex < 0 || keyIndex >= grouping.getGroupingExpressions().size() || !isTimestampFloor(grouping.getGroupingExpressions().getQuick(keyIndex))) {
-            return null;
-        }
-        floorInput = grouping.getChild();
-        return (FunctionExpression) grouping.getGroupingExpressions().getQuick(keyIndex);
+        return null;
     }
 
     private void updateMatViewTablePartitionBy(int timestampType) throws SqlException {

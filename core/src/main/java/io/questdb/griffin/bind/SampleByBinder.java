@@ -142,18 +142,6 @@ final class SampleByBinder {
         return false;
     }
 
-    /**
-     * The stride of the SAMPLE BY period literal {@code period}, such as 15 for {@code 15m} or 1 for {@code m}: an
-     * optional positive INT followed by the one-letter unit that ends the literal. The stride must fit the timestamp
-     * range in that unit, see {@link TimestampSamplerFactory#getSampleByInstance}.
-     */
-    private static long periodStride(TimestampDriver driver, ExpressionNode period) throws SqlException {
-        final int unitIndex = TimestampSamplerFactory.findPositiveIntervalEndIndex(period.token, period.position, "sample");
-        final long stride = TimestampSamplerFactory.parsePositiveInterval(period.token, unitIndex, period.position, "sample", Numbers.INT_NULL, '?');
-        TimestampSamplerFactory.getSampleByInstance(driver, stride, period.token.charAt(unitIndex), period.position + unitIndex);
-        return stride;
-    }
-
     private static boolean requiresSampleByCursorAlignment(QueryModel source) {
         final ExpressionNode from = source.getSampleByFrom();
         if (source.getSampleByOffset() == null || source.getSampleByUnit() != null
@@ -679,7 +667,7 @@ final class SampleByBinder {
             plan.setPeriod(sampleBy.getStride(), sampleBy.getPeriodUnit(), sampleBy.getPeriodUnitPosition());
         } else {
             final int unitIndex = period.token.length() - 1;
-            plan.setPeriod(periodStride(ColumnType.getTimestampDriver(timestampType), period), period.token.charAt(unitIndex), period.position + unitIndex);
+            plan.setPeriod(TimestampSamplerFactory.parsePeriodStride(period.token, period.position), period.token.charAt(unitIndex), period.position + unitIndex);
         }
         final ExpressionNode timezone = sampleByTimezone(source);
         final boolean isSubDay = CommonUtils.isSubDayUnit(plan.getPeriodUnit());
@@ -802,8 +790,10 @@ final class SampleByBinder {
         final ExpressionNode unit = source.getSampleByUnit();
         final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         if (unit == null) {
+            final long stride = TimestampSamplerFactory.parsePeriodStride(sampleBy.token, sampleBy.position);
             final int unitIndex = sampleBy.token.length() - 1;
-            plan.setPeriod(sampleBy.token, periodStride(driver, sampleBy), sampleBy.position, sampleBy.token.charAt(unitIndex), sampleBy.position + unitIndex);
+            TimestampSamplerFactory.getSampleByInstance(driver, stride, sampleBy.token.charAt(unitIndex), sampleBy.position + unitIndex);
+            plan.setPeriod(sampleBy.token, stride, sampleBy.position, sampleBy.token.charAt(unitIndex), sampleBy.position + unitIndex);
         } else {
             final BoundExpression bound = ctx.functionBinder.bind(sampleBy, ctx.emptySchema, null, executionContext);
             if (!(bound instanceof ConstantExpression period)
@@ -820,7 +810,8 @@ final class SampleByBinder {
     BoundExpression bindSampleByBucket(
             QueryModel model, QueryModel source, LogicalPlan sourcePlan, SqlExecutionContext executionContext
     ) throws SqlException {
-        ctx.scope().sampleByTimestampColumnId = bucketTimestampColumnId(sourcePlan);
+        final BindScope scope = ctx.scope();
+        scope.sampleByTimestampColumnId = bucketTimestampColumnId(sourcePlan);
         final OutputSchema input = sourcePlan.getOutput();
         final ExpressionNode sampleBy = source.getSampleBy();
         validateSampleByQuery(model, source, input, true);
@@ -829,11 +820,10 @@ final class SampleByBinder {
         markTimestampSubqueries(source, timestampType);
         bindSampleByBound(from, timestampType, FROM_BOUND_ERROR, executionContext);
         bindSampleByBound(source.getSampleByTo(), timestampType, TO_BOUND_ERROR, executionContext);
+        final ExpressionNode timezoneName = source.getSampleByTimezoneName();
+        scope.sampleByTimezone = timezoneName != null ? ctx.functionBinder.bindStandalone(timezoneName, executionContext) : null;
+        validateRuntimeConstant(scope.sampleByTimezone, ColumnType.STRING, "timezone must be a constant expression of STRING or CHAR type");
         final ExpressionNode timezone = sampleByTimezone(source);
-        if (timezone != null) {
-            validateRuntimeConstant(ctx.functionBinder.bindStandalone(timezone, executionContext), ColumnType.STRING,
-                    "timezone must be a constant expression of STRING or CHAR type");
-        }
         final ExpressionNode offset = sampleByOffset(source);
         final boolean isSubDay = !sampleBy.token.isEmpty() && CommonUtils.isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
         final ExpressionNode floor = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "timestamp_floor_utc", 0, sampleBy.position);

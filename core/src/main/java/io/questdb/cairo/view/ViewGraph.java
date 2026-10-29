@@ -82,19 +82,11 @@ public class ViewGraph implements Mutable {
      * view as of its own CREATE VIEW or ALTER VIEW, which a later ALTER VIEW of the other view does not update, so the
      * dependencies of the views it reads count as they are now. A recorded {@code *} stands for every column: it
      * lands in the sink as {@code *} and ends the walk.
-     *
-     * @param visitedViews scratch set of the directory names of the views the walk reached, which the caller owns,
-     *                     because threads share the graph
      */
-    public void collectReadColumns(
-            CairoEngine engine,
-            ViewDefinition view,
-            CharSequence tableName,
-            LowerCaseCharSequenceHashSet sink,
-            LowerCaseCharSequenceHashSet visitedViews
-    ) {
+    public void collectReadColumns(CairoEngine engine, ViewDefinition view, CharSequence tableName, LowerCaseCharSequenceHashSet sink) {
+        final LowerCaseCharSequenceHashSet visitedViews = tlVisitedViews.get();
         visitedViews.clear();
-        collectReadColumns0(engine, view, tableName, sink, visitedViews);
+        collectReadColumns(engine, view, tableName, sink, visitedViews);
     }
 
     public void getDependentViews(TableToken tableToken, ObjList<TableToken> sink) {
@@ -206,7 +198,7 @@ public class ViewGraph implements Mutable {
     /**
      * Returns true once the sink holds {@code *}.
      */
-    private boolean collectReadColumns0(
+    private boolean collectReadColumns(
             CairoEngine engine,
             ViewDefinition view,
             CharSequence tableName,
@@ -233,7 +225,7 @@ public class ViewGraph implements Mutable {
         final ObjList<CharSequence> names = dependencies.keys();
         for (int i = 0, n = names.size(); i < n; i++) {
             final ViewDefinition innerView = innerView(engine, names.getQuick(i));
-            if (innerView != null && collectReadColumns0(engine, innerView, tableName, sink, visitedViews)) {
+            if (innerView != null && collectReadColumns(engine, innerView, tableName, sink, visitedViews)) {
                 return true;
             }
         }
@@ -251,6 +243,9 @@ public class ViewGraph implements Mutable {
     }
 
     private boolean readsTable(CairoEngine engine, ViewDefinition view, CharSequence tableName, LowerCaseCharSequenceHashSet visitedViews) {
+        if (!visitedViews.add(view.getViewToken().getDirName())) {
+            return false;
+        }
         final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = view.getDependencies();
         if (dependencies.get(tableName) != null) {
             return true;
@@ -258,8 +253,7 @@ public class ViewGraph implements Mutable {
         final ObjList<CharSequence> names = dependencies.keys();
         for (int i = 0, n = names.size(); i < n; i++) {
             final ViewDefinition innerView = innerView(engine, names.getQuick(i));
-            if (innerView != null && visitedViews.add(innerView.getViewToken().getDirName())
-                    && readsTable(engine, innerView, tableName, visitedViews)) {
+            if (innerView != null && readsTable(engine, innerView, tableName, visitedViews)) {
                 return true;
             }
         }

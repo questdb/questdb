@@ -163,6 +163,7 @@ final class BindScope implements Mutable {
     ObjList<? extends BoundExpression> replacementColumns;
     ObjList<ExpressionNode> replacementNodes;
     int sampleByTimestampColumnId = -1;
+    BoundExpression sampleByTimezone;
     QueryModel timestampFromSubquery;
     int timestampSubqueryType;
     QueryModel timestampToSubquery;
@@ -263,6 +264,7 @@ final class BindScope implements Mutable {
         replacementColumns = null;
         replacementNodes = null;
         sampleByTimestampColumnId = -1;
+        sampleByTimezone = null;
         timestampFromSubquery = null;
         timestampSubqueryType = 0;
         timestampToSubquery = null;

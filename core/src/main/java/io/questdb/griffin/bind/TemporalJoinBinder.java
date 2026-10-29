@@ -146,14 +146,14 @@ final class TemporalJoinBinder {
 
     /**
      * Whether a key of a HORIZON JOIN step after the one at {@code index} of {@code keys} shares its master or its
-     * slave column and cannot key the step, see {@link #isHorizonKeyable}.
+     * slave column and cannot key the step, see {@link LogicalPlans#isJoinKeyable}.
      */
     private static boolean hasLaterUnkeyableHorizonKey(ObjList<JoinKey> keys, int index, OutputSchema master, OutputSchema slave) {
         final JoinKey key = keys.getQuick(index);
         for (int i = index + 1, n = keys.size(); i < n; i++) {
             final JoinKey later = keys.getQuick(i);
             if ((later.getMasterColumnId() == key.getMasterColumnId() || later.getSlaveColumnId() == key.getSlaveColumnId())
-                    && !isHorizonKeyable(later, master, slave)) {
+                    && !LogicalPlans.isJoinKeyable(master, later.getMasterColumnId(), slave, later.getSlaveColumnId())) {
                 return true;
             }
         }
@@ -208,14 +208,6 @@ final class TemporalJoinBinder {
     private static boolean isHorizonGroupByMatch(ExpressionNode key, QueryColumn column) {
         return isSameIgnoringQualifier(key, column.getAst())
                 || FunctionBinder.qualifierEnd(key, null) < 0 && isNameSpelling(column.getAlias(), key.token);
-    }
-
-    /**
-     * Whether the columns of the key of a HORIZON JOIN step can key it, see {@link LogicalPlans#isJoinKeyTypeCompatible}.
-     */
-    private static boolean isHorizonKeyable(JoinKey key, OutputSchema master, OutputSchema slave) {
-        return LogicalPlans.isJoinKeyTypeCompatible(master.getColumnType(master.getColumnIndexById(key.getMasterColumnId())),
-                slave.getColumnType(slave.getColumnIndexById(key.getSlaveColumnId())));
     }
 
     private static boolean isHorizonOffsetModel(QueryModel model) {
@@ -282,12 +274,12 @@ final class TemporalJoinBinder {
 
     /**
      * The index of the first of the keys of a HORIZON JOIN step on the master column whose columns can key the step,
-     * see {@link #isHorizonKeyable}, or -1 when none can.
+     * see {@link LogicalPlans#isJoinKeyable}, or -1 when none can.
      */
     private static int keyableHorizonKeyIndex(ObjList<JoinKey> keys, int masterColumnId, OutputSchema master, OutputSchema slave) {
         for (int i = 0, n = keys.size(); i < n; i++) {
             final JoinKey key = keys.getQuick(i);
-            if (key.getMasterColumnId() == masterColumnId && isHorizonKeyable(key, master, slave)) {
+            if (key.getMasterColumnId() == masterColumnId && LogicalPlans.isJoinKeyable(master, masterColumnId, slave, key.getSlaveColumnId())) {
                 return i;
             }
         }
@@ -407,10 +399,7 @@ final class TemporalJoinBinder {
                 final int slaveId = slave.getColumnId(slaveIndex);
                 final int keyIndex = LogicalPlans.filteredKeyIndex(step.getKeys(), masterId, slaveId, slave);
                 if (keyIndex > -1) {
-                    final JoinKey key = step.getKeys().getQuick(keyIndex);
-                    final CharSequence keyName = slave.getColumnName(slave.getColumnIndexById(key.getSlaveColumnId()));
-                    final ExpressionNode keyNode = ctx.bindingExpressions.next().of(ExpressionNode.LITERAL,
-                            ctx.qualifiedJoinName(slaveAlias, keyName), 0, key.getPosition());
+                    final ExpressionNode keyNode = slaveKeyColumn(step.getKeys().getQuick(keyIndex), slave, slaveAlias);
                     return ctx.combinePredicates(slaveFilter, ctx.binaryNode(ExpressionNode.OPERATION, "=", 0, keyNode, slaveNode,
                             criteria.position));
                 }
@@ -458,25 +447,24 @@ final class TemporalJoinBinder {
     }
 
     /**
-     * Turns each key of the step whose columns cannot key it, see {@link #isHorizonKeyable}, while those of a key on
-     * the same master column can, into a filter of the slave on the equality of the two slave columns, and returns the
-     * conjunction of {@code slaveFilter} and those equalities. Other such keys stay, and binding rejects them.
+     * Turns each key of the step whose columns cannot key it, see {@link LogicalPlans#isJoinKeyable}, while those of a
+     * key on the same master column can, into a filter of the slave on the equality of the two slave columns, and
+     * returns the conjunction of {@code slaveFilter} and those equalities. Other such keys stay, and binding rejects
+     * them.
      */
     private ExpressionNode filterUnkeyableHorizonKeys(HorizonJoinSlave step, ExpressionNode slaveFilter, OutputSchema master,
                                                       OutputSchema slave, CharSequence slaveAlias) {
         final ObjList<JoinKey> keys = step.getKeys();
         for (int i = 0; i < keys.size(); ) {
             final JoinKey key = keys.getQuick(i);
-            final int keyIndex = isHorizonKeyable(key, master, slave) ? -1 : keyableHorizonKeyIndex(keys, key.getMasterColumnId(), master, slave);
+            final int keyIndex = LogicalPlans.isJoinKeyable(master, key.getMasterColumnId(), slave, key.getSlaveColumnId())
+                    ? -1 : keyableHorizonKeyIndex(keys, key.getMasterColumnId(), master, slave);
             if (keyIndex < 0) {
                 i++;
                 continue;
             }
-            final JoinKey keyable = keys.getQuick(keyIndex);
-            final ExpressionNode keyableNode = ctx.bindingExpressions.next().of(ExpressionNode.LITERAL,
-                    ctx.qualifiedJoinName(slaveAlias, slave.getColumnName(slave.getColumnIndexById(keyable.getSlaveColumnId()))), 0, keyable.getPosition());
-            final ExpressionNode keyNode = ctx.bindingExpressions.next().of(ExpressionNode.LITERAL,
-                    ctx.qualifiedJoinName(slaveAlias, slave.getColumnName(slave.getColumnIndexById(key.getSlaveColumnId()))), 0, key.getPosition());
+            final ExpressionNode keyableNode = slaveKeyColumn(keys.getQuick(keyIndex), slave, slaveAlias);
+            final ExpressionNode keyNode = slaveKeyColumn(key, slave, slaveAlias);
             slaveFilter = ctx.combinePredicates(slaveFilter, ctx.binaryNode(ExpressionNode.OPERATION, "=", 0, keyableNode, keyNode, key.getPosition()));
             keys.remove(i);
         }
@@ -547,6 +535,15 @@ final class TemporalJoinBinder {
                 throw SqlException.$(position, message);
             }
         }
+    }
+
+    /**
+     * The reference to the slave column of the key of a HORIZON JOIN step, qualified by the slave's alias, at the
+     * key's position.
+     */
+    private ExpressionNode slaveKeyColumn(JoinKey key, OutputSchema slave, CharSequence slaveAlias) {
+        return ctx.bindingExpressions.next().of(ExpressionNode.LITERAL,
+                ctx.qualifiedJoinName(slaveAlias, slave.getColumnName(slave.getColumnIndexById(key.getSlaveColumnId()))), 0, key.getPosition());
     }
 
     private void validateHorizonGroupBy(ObjList<QueryColumn> selected, ObjList<ExpressionNode> groupBy) throws SqlException {
@@ -893,8 +890,10 @@ final class TemporalJoinBinder {
             final OutputSchema slaveOutput = step.getInput().getOutput();
             final ObjList<JoinKey> keys = step.getKeys();
             for (int i = 0, n = keys.size(); i < n; i++) {
-                if (!isHorizonKeyable(keys.getQuick(i), masterOutput, slaveOutput) && !hasLaterUnkeyableHorizonKey(keys, i, masterOutput, slaveOutput)) {
-                    throw SqlException.$(keys.getQuick(i).getPosition(), "join column type mismatch");
+                final JoinKey key = keys.getQuick(i);
+                if (!LogicalPlans.isJoinKeyable(masterOutput, key.getMasterColumnId(), slaveOutput, key.getSlaveColumnId())
+                        && !hasLaterUnkeyableHorizonKey(keys, i, masterOutput, slaveOutput)) {
+                    throw SqlException.$(key.getPosition(), "join column type mismatch");
                 }
             }
         }

@@ -70,6 +70,14 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     /**
+     * Whether {@link LimitRecordCursor#of} applies the bounds of {@code LIMIT lo, hi} as {@code LIMIT hi, lo}: the
+     * {@link #rowCount} is a constant and {@code lo} exceeds {@code hi}.
+     */
+    public static boolean isDescending(long lo, long hi) {
+        return lo > hi && rowCount(lo, hi) > -1;
+    }
+
+    /**
      * The most rows {@code LIMIT lo, hi} returns, as {@link LimitRecordCursor#of} resolves the bounds, which reads
      * {@code LIMIT n} as {@code LIMIT n, 0}: the distance between the bounds where both are non-negative or both
      * negative, or where {@code lo} is negative and {@code hi} is zero. -1 where the count is not a constant: a
@@ -203,10 +211,85 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     /**
+     * The bounds of a LIMIT as execution applies them, which every LIMIT cursor resolves through {@link #of}, and the
+     * rows a sort under the LIMIT keeps for them.
+     */
+    public static final class Bounds {
+        private long hi;
+        private long lo;
+
+        public long getHi() {
+            return hi;
+        }
+
+        /**
+         * The rows of its order a sort keeps: the first ones where {@link #isFirstN} holds, the last ones otherwise,
+         * none where 0, and every row where negative.
+         */
+        public long getLimit() {
+            if (lo < 0) {
+                return lo == hi ? 0 : -lo;
+            }
+            if (hi < 0) {
+                return hi == Numbers.LONG_NULL ? 0 : -1;
+            }
+            return hi;
+        }
+
+        public long getLo() {
+            return lo;
+        }
+
+        /**
+         * The rows a sort skips at the start of the rows it keeps.
+         */
+        public long getSkipFirst() {
+            return lo >= 0 && hi != Numbers.LONG_NULL ? lo : 0;
+        }
+
+        /**
+         * The rows a sort skips at the end of the rows it keeps.
+         */
+        public long getSkipLast() {
+            if (lo < 0) {
+                return lo == hi ? 0 : Math.max(-hi, 0);
+            }
+            return hi < 0 && hi != Numbers.LONG_NULL ? -hi : 0;
+        }
+
+        /**
+         * Whether a sort keeps the first rows of its order: both bounds are non-negative.
+         */
+        public boolean isFirstN() {
+            return lo >= 0 && hi >= 0;
+        }
+
+        /**
+         * Reads {@code LIMIT lo, hi}, or {@code LIMIT lo} as {@code LIMIT lo, 0} where {@code hiFunction} is null. A NULL
+         * {@code lo} of a pair reads 0 where {@code hi} is not NULL, and the bounds apply as {@code LIMIT hi, lo} where
+         * {@link #isDescending} holds.
+         */
+        public void of(Function loFunction, @Nullable Function hiFunction) {
+            long lo = loFunction.getLong(null);
+            long hi = 0;
+            if (hiFunction != null) {
+                hi = hiFunction.getLong(null);
+                if (lo == Numbers.LONG_NULL && hi != Numbers.LONG_NULL) {
+                    lo = 0;
+                }
+            }
+            final boolean isDescending = isDescending(lo, hi);
+            this.lo = isDescending ? hi : lo;
+            this.hi = isDescending ? lo : hi;
+        }
+    }
+
+    /**
      * Applies a LIMIT over a base cursor; a negative LIMIT counts the base rows first, then skips to the last ones.
      */
     public static class LimitRecordCursor implements RecordCursor {
         private final int argPos;
+        private final Bounds bounds = new Bounds();
         private final RecordCursor.Counter counter = new Counter();
         private final Function leftFunction;
         private final MasterSuffixLimitFunction masterSuffixLimit;
@@ -564,15 +647,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             if (rightFunction != null) {
                 rightFunction.init(base, executionContext);
             }
-            lo = leftFunction.getLong(null);
-            hi = rightFunction == null ? 0 : rightFunction.getLong(null);
+            bounds.of(leftFunction, rightFunction);
+            lo = bounds.getLo();
+            hi = bounds.getHi();
             if (lo < 0 && hi > 0) {
                 throw SqlException.$(argPos, "LIMIT <negative>, <positive> is not allowed");
-            }
-            final long count = rowCount(lo, hi);
-            if (count > -1) {
-                lo = Math.min(lo, hi);
-                hi = lo + count;
             }
 
             baseSize = -1;

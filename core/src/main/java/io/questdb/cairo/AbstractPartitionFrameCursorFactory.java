@@ -53,7 +53,6 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     private final String viewName;
     private final int viewPosition;
     private final LowerCaseCharSequenceHashSet viewReadColumns;
-    private final LowerCaseCharSequenceHashSet visitedViews;
     private long maxRowCount = Long.MAX_VALUE;
     private long minRowCount;
     private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
@@ -74,7 +73,6 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
         this.viewPosition = viewPosition;
         this.updateQuery = updateQuery;
         this.viewReadColumns = viewName != null ? new LowerCaseCharSequenceHashSet() : null;
-        this.visitedViews = viewName != null ? new LowerCaseCharSequenceHashSet() : null;
     }
 
     @Override
@@ -168,7 +166,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
             columnNames.clear();
             if (columnIndexes.size() > 0) {
                 viewReadColumns.clear();
-                engine.getViewGraph().collectReadColumns(engine, viewDefinition, tableToken.getTableName(), viewReadColumns, visitedViews);
+                engine.getViewGraph().collectReadColumns(engine, viewDefinition, tableToken.getTableName(), viewReadColumns);
                 if (viewReadColumns.excludes("*")) {
                     for (int i = 0, n = columnIndexes.size(); i < n; i++) {
                         final String columnName = table.getColumnName(columnIndexes.getQuick(i));
