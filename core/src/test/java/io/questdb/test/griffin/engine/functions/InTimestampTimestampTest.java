@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
@@ -295,12 +296,23 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 .expectSize()
                 .withPlanContaining("Interval forward scan")
                 .returns(expected);
-        // the OR keeps the IN in the row filter
-        assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN '" + tickExpr + "' OR ts = 0")
-                .noLeakCheck()
-                .noRandomAccess()
-                .expectSize()
-                .withPlanContaining("filter: ")
-                .returns(expected);
+        // WhereClauseParser folds an OR of IN and = on the designated timestamp into the interval scan,
+        // but not an OR with a range, so this IN stays in the row filter and the scan reads every row.
+        // The JIT serializes the filter on its own, so check with the JIT on and off.
+        final String filterQuery = "SELECT count(), min(ts), max(ts) FROM t WHERE ts IN '" + tickExpr + "' OR ts > '2030-01-01'";
+        final int jitMode = sqlExecutionContext.getJitMode();
+        try {
+            for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                sqlExecutionContext.setJitMode(mode);
+                assertQuery(filterQuery)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("filter: (ts in [", "Frame forward scan")
+                        .returns(expected);
+            }
+        } finally {
+            sqlExecutionContext.setJitMode(jitMode);
+        }
     }
 }
