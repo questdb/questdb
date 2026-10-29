@@ -73,6 +73,9 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
+    // Retries that must pass with no version change before a torn live area counts as terminal rather
+    // than contention. A power of 2. Far longer than any commit's publish window, yet still a short wait.
+    private static final int TORN_DIAGNOSIS_WINDOW = 1 << 16;
     private final BitSet activeColumns = new BitSet();
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
@@ -571,6 +574,14 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public long getPartitionRowCountFromMetadata(int partitionIndex) {
         return txFile.getPartitionSize(partitionIndex);
+    }
+
+    /**
+     * Name txn of a partition, that is, which version of the directory this reader sees.
+     */
+    @TestOnly
+    public long getPartitionNameTxnByIndex(int partitionIndex) {
+        return txFile.getPartitionNameTxn(partitionIndex);
     }
 
     public long getPartitionTimestampByIndex(int partitionIndex) {
@@ -1503,6 +1514,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+
     private long openPartition0(int partitionIndex) {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         if (txFile.getPartitionCount() < 2 && txFile.getTransientRowCount() == 0) {
@@ -1533,7 +1545,15 @@ public class TableReader implements Closeable, SymbolTableSource {
                         final long parquetFileSize = openParquetMetadata(partitionIndex);
                         path.trimTo(rootLen);
                         pathGenParquetPartition(partitionIndex, partitionNameTxn);
-                        if (ff.exists(path.$())) {
+                        final long parquetActualLength = ff.length(path.$());
+                        if (parquetActualLength >= 0) {
+                            // A remote partition may legitimately have no local data file. For a
+                            // present file, reject a torn extent before mapping the size from _pm.
+                            if (parquetFileSize > parquetActualLength) {
+                                throw CairoException.critical(0)
+                                        .put("parquet partition file too short [expected=").put(parquetFileSize)
+                                        .put(", actual=").put(parquetActualLength).put(", path=").put(path).put(']');
+                            }
                             MemoryCMR parquetMem = parquetPartitions.getQuick(partitionIndex);
                             try {
                                 if (parquetMem != null && parquetMem != NullMemoryCMR.INSTANCE) {
@@ -1686,6 +1706,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void readTxnSlow(long deadline) {
         int count = 0;
+        long tornWindowVersion = txFile.unsafeReadVersion();
 
         while (true) {
             if (txFile.unsafeLoadAll()) {
@@ -1710,11 +1731,32 @@ public class TableReader implements Closeable, SymbolTableSource {
             // This is unlucky, sequences have changed while we were reading transaction data
             // We must discard and try again
             count++;
+            // A torn live area is terminal, but one sample cannot tell it from contention, so it counts as
+            // torn only once a whole window of retries passes with the version unchanged. No clock needed.
+            if ((count & (TORN_DIAGNOSIS_WINDOW - 1)) == 0) {
+                final long versionNow = txFile.unsafeReadVersion();
+                if (versionNow == tornWindowVersion && txFile.unsafeIsLiveAreaTorn()) {
+                    throw tornLiveAreaException();
+                }
+                tornWindowVersion = versionNow;
+            }
             if (clock.getTicks() > deadline) {
+                // A reader that cannot advance is normally contention, but not when the live _txn area is
+                // torn: TxReader's fallback carries a txn a live scoreboard refuses, so this loop spins out.
+                // Report the torn _txn by name rather than a timeout.
+                if (txFile.unsafeIsLiveAreaTorn()) {
+                    throw tornLiveAreaException();
+                }
                 throw CairoException.critical(0).put("Transaction read timeout [src=reader, table=").put(tableToken).put(", timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
             }
             Os.pause();
         }
+    }
+
+    private CairoException tornLiveAreaException() {
+        return CairoException.txnLiveAreaTorn()
+                .put("_txn live area is torn, reader cannot advance past the previous transaction [src=reader, table=")
+                .put(tableToken).put(", txn=").put(txFile.getTxn()).put(']');
     }
 
     private void reconcileOpenPartitions(long prevPartitionVersion, long prevColumnVersion, long prevTruncateVersion) {
@@ -2080,12 +2122,26 @@ public class TableReader implements Closeable, SymbolTableSource {
         return true;
     }
 
-    private boolean reloadColumnVersion(long columnVersion) {
-        if (columnVersionReader.getVersion() != columnVersion) {
-            // A duration, unlike the absolute deadline readTxnSlow() and reloadMetadata() take.
-            columnVersionReader.readSafe(clock, configuration.getSpinLockTimeout());
+    private boolean reloadColumnVersion(long columnVersion, long deadline) {
+        if (columnVersionReader.getVersion() == columnVersion) {
+            return true;
         }
-        return columnVersionReader.getVersion() == columnVersion;
+        // Unlike the absolute deadline readTxnSlow()/reloadMetadata() take: a consistent _cv behind the
+        // version _txn names is terminal, and the reader throws it by name without waiting on any clock.
+        columnVersionReader.readSafe(clock, configuration.getSpinLockTimeout(), columnVersion);
+        if (columnVersionReader.getVersion() == columnVersion) {
+            return true;
+        }
+        // _cv is ahead of the _txn record we loaded: a commit in flight has published _cv but not yet _txn.
+        // That one is worth waiting for, on this reload's deadline, then _txn is re-read.
+        if (clock.getTicks() > deadline) {
+            throw CairoException.critical(0).put("Column Version read timeout [src=reader, table=").put(tableToken)
+                    .put(", txnColumnVersion=").put(columnVersion)
+                    .put(", cvVersion=").put(columnVersionReader.getVersion())
+                    .put(", timeout=").put(configuration.getSpinLockTimeout()).put("ms]");
+        }
+        Os.pause();
+        return false;
     }
 
     private boolean reloadMetadata(int txnMetadataVersion, long deadline, boolean reshuffleColumns) {
@@ -2138,7 +2194,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // Reload _meta if the structure version updated, reload _cv if column version updated
         } while (
             // Reload column versions, column version used in metadata reload column shuffle
-                !reloadColumnVersion(txFile.getColumnVersion())
+                !reloadColumnVersion(txFile.getColumnVersion(), deadline)
                         // Start again if _meta with the matching structure version cannot be loaded
                         || !reloadMetadata(txFile.getMetadataVersion(), deadline, reshuffle)
         );
