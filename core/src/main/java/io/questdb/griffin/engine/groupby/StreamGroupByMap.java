@@ -283,6 +283,10 @@ public final class StreamGroupByMap implements QuietCloseable {
         }
     }
 
+    public void merge(StreamGroupByMap source, GroupByFunctionsUpdater updater) {
+        map.merge(source.map, updater);
+    }
+
     public StreamGroupByMap newInstance(CairoConfiguration configuration) {
         return new StreamGroupByMap(configuration, this);
     }

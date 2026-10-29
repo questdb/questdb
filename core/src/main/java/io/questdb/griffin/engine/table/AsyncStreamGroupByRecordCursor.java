@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordChain;
-import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -228,13 +227,15 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
             spanSlots.setQuick(0, destSlot);
             for (int i = n - 1; i > 0; i--) {
                 final StreamGroupByMap map = spanMaps.getQuick(i);
-                mergeInto(dest, map, updater);
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                dest.merge(map, updater);
                 atom.releaseSpanMap(spanSlots.getQuick(i), map);
                 spanMaps.setPos(i);
                 spanSlots.setPos(i);
             }
             if (isOpenCollected) {
-                mergeInto(dest, segmentMap, updater);
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                dest.merge(segmentMap, updater);
             }
             emitMap = dest;
         }
@@ -293,15 +294,6 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
                     closeOpenSegment();
                 }
             }
-        }
-    }
-
-    private void mergeInto(StreamGroupByMap dest, StreamGroupByMap map, GroupByFunctionsUpdater updater) {
-        final MapRecordCursor mapCursor = map.getCursor();
-        final MapRecord mapRecord = mapCursor.getRecord();
-        while (mapCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-            dest.merge(mapRecord, updater);
         }
     }
 
