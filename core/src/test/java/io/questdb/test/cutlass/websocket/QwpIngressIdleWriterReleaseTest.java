@@ -263,6 +263,30 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPingReleasesAllIdleTableWriters() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int i = 1; i < 4; i++) {
+                execute("CREATE TABLE tab" + i + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            }
+            byte[] data = concat(
+                    clientEncodedFrame(1, "tab"),
+                    clientEncodedFrame(1, "tab1"),
+                    clientEncodedFrame(1, "tab2"),
+                    clientEncodedFrame(1, "tab3")
+            );
+            try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, concat(data, PING))) {
+                f.drive(data.length);
+                Assert.assertEquals(4, f.tudCache.size());
+                Assert.assertEquals(4, f.walWriterPool.getBusyCount());
+                f.clock.nowMicros += 30_000_000;
+                f.drive(PING.length);
+                Assert.assertEquals("one idle PING must release every cached table", 0, f.tudCache.size());
+                Assert.assertEquals(0, f.walWriterPool.getBusyCount());
+            }
+        });
+    }
+
+    @Test
     public void testRejectedDataDoesNotPostponeRelease() throws Exception {
         assertMemoryLeak(() -> {
             byte[] data = clientEncodedFrame(1, "tab");
