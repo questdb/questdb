@@ -28,6 +28,7 @@ import io.questdb.cairo.MemorySerializer;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
@@ -74,7 +75,7 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
 
                 path.of(root).concat("v1");
                 ff.mkdir(path.$(), configuration.getMkDirMode());
-                TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration);
+                TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON, () -> new long[]{0, -1});
                 v1.create(path.of(root).concat("v1"), 65897);
                 v1.open(path);
 
@@ -137,7 +138,7 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
 
             if (txnId == 0) {
                 assertEquals(sv, cursor.getStructureVersion());
-                assertEquals(i, cursor.getWalId());
+                assertEquals(i + 1, cursor.getWalId());
                 assertEquals(i + 1, cursor.getSegmentId());
                 assertEquals(i + 2, cursor.getSegmentTxn());
                 assertEquals(i + 123, cursor.getCommitTimestamp());
@@ -174,7 +175,8 @@ public class TableTransactionLogFuzzTest extends AbstractCairoTest {
 
     private void writeTxn(int txnId, int structureVersion, TableTransactionLogFile txnLogFile, int i) {
         if (txnId == 0) {
-            txnLogFile.addEntry(structureVersion, i, i + 1, i + 2, i + 123, 0, 0, 0);
+            // WAL ids start at 1: a V1 open reads a data record with WAL id 0 as a slot never written.
+            txnLogFile.addEntry(structureVersion, i + 1, i + 1, i + 2, i + 123, 0, 0, 0);
         } else {
             txnLogFile.beginMetadataChangeEntry(structureVersion, voidSerializer, null, i + 125);
             txnLogFile.endMetadataChangeEntry();
