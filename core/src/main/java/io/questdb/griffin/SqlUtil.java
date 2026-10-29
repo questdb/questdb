@@ -378,11 +378,12 @@ public class SqlUtil {
      * This also adds {@code *} for the tables in {@code wildcardSources} whose wildcard the optimised
      * model keeps whole: the optimiser keeps every column of the sub-query the wildcard sits in, so the
      * view reads every column of the table, including one the table gains after the view is created.
-     * For that, the scans of the table under the wildcard have to read every column the optimiser
-     * enumerated for them, not every column the table has by the time this runs: a column an ALTER TABLE
-     * adds while the view compiles is not in the plan built before it, and the {@code *} covers it once
-     * the plan is built again. A scan of the table elsewhere in the plan can have enumerated the columns
-     * after the ALTER TABLE, so the check leaves it out.
+     * For that, the scan the wildcard selects has to read every column the optimiser enumerated for it,
+     * not every column the table has by the time this runs: a column an ALTER TABLE adds while the view
+     * compiles is not in the plan built before it, and the {@code *} covers it once the plan is built
+     * again. Another scan of the table, elsewhere in the plan or under the same sub-query, such as the
+     * other side of a self-join, can have enumerated the columns after the ALTER TABLE, so the check
+     * leaves it out.
      *
      * @param engine          the engine, which resolves the table names
      * @param model           the SELECT of the view, after optimisation
@@ -2236,12 +2237,13 @@ public class SqlUtil {
             if (columns == null || columns.contains("*")) {
                 continue;
             }
-            // The scan of a table whose wildcard the plan keeps whole reads every column of it. One that
-            // does not has met a rewrite this does not recognise, and the map keeps only its columns. Every
-            // column is every one the optimiser enumerated for the scans under the holder: one that an ALTER
+            // The scan the wildcard selects reads every column of the table when the plan keeps the wildcard
+            // whole. One that does not has met a rewrite this does not recognise, and the map keeps only its
+            // columns. Every column is every one the optimiser enumerated for that scan: one that an ALTER
             // TABLE adds while the view compiles is in the metadata of the table, but not in the plan built
-            // before it, and a scan of the table elsewhere in the plan may already list it.
-            if (wildcardSources.isEveryScannedColumnRead(sourceModel, tableToken.getTableName(), columns)) {
+            // before it, and another scan of the table may already list it, whether it is elsewhere in the
+            // plan or under the same holder, such as the other side of a self-join.
+            if (wildcardSources.isEveryScannedColumnRead(sourceModel, wildcardSources.sources.getQuick(i), columns)) {
                 columns.add("*");
             }
         }
@@ -2433,7 +2435,7 @@ public class SqlUtil {
             columns.add(Chars.toString(topDownColumns.getQuick(i).getName()));
         }
         if (wildcardSources != null) {
-            wildcardSources.addScan(tableToken.getTableName(), model);
+            wildcardSources.addScan(model);
         }
         if (!isTimestampRequired && !SqlCodeGenerator.joinsRequiringTimestamp[model.getJoinType()]) {
             return;
@@ -2481,9 +2483,10 @@ public class SqlUtil {
     // from it, and the PIVOT reads only the columns it groups and aggregates.
     // A wildcard under a SELECT list that names its columns may still read every column it selects, as
     // the optimiser keeps every column of a sub-query whose columns the query above it names none of. Such
-    // a wildcard adds its tables to wildcardSources instead, see collectKeptWildcardReferences(), under
-    // the holders of the sub-queries that keep every column of the wildcard once the optimiser keeps every
-    // column of any of them: the ones from holderLo up on the holder stack.
+    // a wildcard adds its tables to wildcardSources instead, see collectKeptWildcardReferences(), with the
+    // sources it selects them from, under the holders of the sub-queries that keep every column of the
+    // wildcard once the optimiser keeps every column of any of them: the ones from holderLo up on the
+    // holder stack.
     private static void collectWildcardReferences(
             @NotNull CairoEngine engine,
             @NotNull IQueryModel model,
@@ -2540,7 +2543,7 @@ public class SqlUtil {
                         if (isEveryColumnRead) {
                             addDependency(depMap, tableName, "*");
                         } else if (wildcardSources != null) {
-                            wildcardSources.add(holderLo, tableName);
+                            wildcardSources.add(holderLo, tableName, source);
                         }
                     }
                 }
@@ -2738,72 +2741,75 @@ public class SqlUtil {
     /**
      * The tables a wildcard of a view's SELECT selects through sub-queries, CTEs or views whose SELECT
      * lists name the columns they keep, each with a holder: a model of the parsed FROM clause that holds
-     * one of those sub-queries. The view reads every column of the table when the optimiser keeps every
-     * column of the sub-query a holder holds.
+     * one of those sub-queries, and with the source of the FROM clause the wildcard selects the table
+     * from. The view reads every column of the table when the optimiser keeps every column of the
+     * sub-query a holder holds.
      * {@link #collectTableAndColumnReferences(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources)}
      * fills this from the parsed SELECT, and
      * {@link #collectTableColumnReads(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources)}
-     * reads it once optimisation has rewritten the SELECT, which keeps the holders, and records the
-     * scans of the optimised SELECT in it, which tell the columns of each table the plan is built on.
+     * reads it once optimisation has rewritten the SELECT, which keeps the holders and the models of the
+     * sources, and records the scans of the optimised SELECT in it, which tell the columns of each table
+     * the plan is built on.
      */
     public static final class ViewWildcardSources implements Mutable {
         // the holders of the sub-queries the walk of the parsed SELECT is in, outermost first
         private final ObjList<IQueryModel> holderStack = new ObjList<>();
         private final ObjList<IQueryModel> holders = new ObjList<>();
-        // the tables the models in scans scan, at the same index
-        private final ObjList<String> scanTableNames = new ObjList<>();
         // the models of the optimised SELECT that scan a table
         private final ObjList<IQueryModel> scans = new ObjList<>();
+        // the sources of the parsed FROM clauses the wildcards select the tables from, at the same index
+        private final ObjList<IQueryModel> sources = new ObjList<>();
         private final ObjList<String> tableNames = new ObjList<>();
 
         @Override
         public void clear() {
             holderStack.clear();
             holders.clear();
-            scanTableNames.clear();
             scans.clear();
+            sources.clear();
             tableNames.clear();
         }
 
         // Adds the table under every holder from holderLo up the holder stack: the optimiser keeping every
-        // column of the sub-query any of them holds keeps every column the wildcard selects from it.
-        private void add(int holderLo, CharSequence tableName) {
+        // column of the sub-query any of them holds keeps every column the wildcard selects from the source.
+        private void add(int holderLo, CharSequence tableName, IQueryModel source) {
             final String name = Chars.toString(tableName);
             for (int i = holderLo, n = holderStack.size(); i < n; i++) {
                 holders.add(holderStack.getQuick(i));
+                sources.add(source);
                 tableNames.add(name);
             }
         }
 
-        private void addScan(String tableName, IQueryModel scan) {
-            scanTableNames.add(tableName);
+        private void addScan(IQueryModel scan) {
             scans.add(scan);
         }
 
-        // Whether the plan scans the table under sourceModel, and the plan reads every column the optimiser
-        // enumerated for those scans from the metadata of the table, the columns the wildcard sourceModel
-        // keeps expands to. The optimiser enumerates the columns of each scan of the table separately, so a
-        // scan elsewhere in the plan can list a column that an ALTER TABLE added after the optimiser
-        // enumerated the scans under sourceModel, and that the plan built on them does not read.
+        // Whether the plan scans the source under sourceModel, and the plan reads every column the optimiser
+        // enumerated for that scan from the metadata of the table, the columns the wildcard sourceModel keeps
+        // expands to. The optimiser enumerates the columns of each scan of the table separately, so another
+        // scan of it can list a column that an ALTER TABLE added after the optimiser enumerated the source,
+        // and that the plan built on the source does not read: a scan elsewhere in the plan, or one under
+        // the same holder that the wildcard does not select, such as the other side of a self-join. A source
+        // the optimised SELECT no longer scans, as when a rewrite replaced its model, records no "*".
         private boolean isEveryScannedColumnRead(
                 IQueryModel sourceModel,
-                String tableName,
+                IQueryModel source,
                 LowerCaseCharSequenceHashSet readColumns
         ) {
-            boolean isScanned = false;
             for (int i = 0, n = scans.size(); i < n; i++) {
                 final IQueryModel scan = scans.getQuick(i);
-                if (Chars.equalsIgnoreCase(scanTableNames.getQuick(i), tableName) && isReachable(sourceModel, scan)) {
+                if (scan == source && isReachable(sourceModel, scan)) {
                     final ObjList<CharSequence> columnNames = scan.getWildcardColumnNames();
                     for (int j = 0, m = columnNames.size(); j < m; j++) {
                         if (readColumns.excludes(columnNames.getQuick(j))) {
                             return false;
                         }
                     }
-                    isScanned = true;
+                    return true;
                 }
             }
-            return isScanned;
+            return false;
         }
     }
 

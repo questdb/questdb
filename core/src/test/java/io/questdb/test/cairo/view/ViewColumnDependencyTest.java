@@ -516,6 +516,24 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testUnnarrowedNestedWildcardOfSelfJoinedTableAlteredBetweenItsScans() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The sub-query scans x twice, and its wildcard selects the first scan only. x gains a column after
+            // the optimiser has read the columns of that scan and before it reads those of x2, which then lists
+            // the column the plan built before the ALTER TABLE does not read. Only the scan the wildcard
+            // selects decides its "*".
+            assertWildcardKeptWhileTableAltered(
+                    "SELECT count() FROM (SELECT x.* FROM x CROSS JOIN y CROSS JOIN x x2)",
+                    """
+                            count
+                            8
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testUnnarrowedNestedWildcardOfTableAlteredBetweenItsScans() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
