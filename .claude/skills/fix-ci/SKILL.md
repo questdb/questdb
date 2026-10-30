@@ -3,6 +3,7 @@ name: fix-ci
 description: Check CI status, analyze test failures, auto-fix obvious issues or discuss with user
 argument-hint: "[PR number or URL]"
 allowed-tools: Bash, Read, Edit, Grep, Glob, Agent, AskUserQuestion
+disable-model-invocation: true
 ---
 
 Analyze CI failures for PR `$ARGUMENTS` (or the current branch's PR if no argument given).

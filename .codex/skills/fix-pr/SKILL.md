@@ -604,7 +604,10 @@ After every queued item has reached a terminal state (`PASSED`,
 
 1. Review the combined current diff for interactions among fixes, using
    targeted commands with large outputs routed to files.
-2. **Exit review — run the `review-pr` skill over the fix diff.** Invoke it with
+2. **Exit review — apply the `review-pr` procedure to the fix diff.** The
+   `review-pr` skill is not implicitly invocable, so do not rely on it being
+   listed; instead read `.codex/skills/review-pr/SKILL.md` and follow its
+   procedure inline. Apply it to
    `--range=<baseline>..` where `<baseline>` is the Step 0 baseline commit, so
    the review sees exactly what this run changed, including uncommitted work.
    Pick the level from the highest tier that landed: Tier 1 only → level 0; any

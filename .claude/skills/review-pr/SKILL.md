@@ -3,6 +3,7 @@ name: review-pr
 description: Review a GitHub pull request or local Git range against QuestDB coding standards
 argument-hint: "[PR number or URL | --range=<base>..<head>] [--level=0..3]"
 allowed-tools: Bash, Read, Grep, Glob, Agent
+disable-model-invocation: true
 ---
 
 # Review a QuestDB pull request
