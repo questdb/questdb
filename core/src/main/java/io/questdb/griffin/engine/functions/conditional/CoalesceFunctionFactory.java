@@ -101,7 +101,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         }
 
         for (int i = 0; i < argsSize; i++) {
-            args.setQuick(i, CaseCommon.getCastFunction(args.getQuick(i), argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
+            args.setQuick(i, CaseCommon.getCastToCommonTypeFunction(args.getQuick(i), argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
         }
 
         return switch (tagOf(returnType)) {
