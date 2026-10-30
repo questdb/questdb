@@ -1848,6 +1848,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
 
     @Test
     public void testParallelGroupByWithCursorPredicate() throws Exception {
+        pinJavaComparison();
         runWithPool((compiler, ctx) -> {
             execute(
                     compiler,
@@ -2022,6 +2023,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
 
     @Test
     public void testPlanAsyncFilterThreadSafe() throws Exception {
+        pinJavaComparison();
         assertMemoryLeak(() -> {
             execute("create table t as (select x::double price from long_sequence(10))");
             assertQuery("select price from t where price > (select avg(price) from t)")
@@ -2045,6 +2047,7 @@ public class DoubleCursorFunctionFactoryTest extends AbstractCursorFunctionFacto
 
     @Test
     public void testParallelAsyncFilterAndKeyedSumLessThan() throws Exception {
+        pinJavaComparison();
         runWithPool((compiler, ctx) -> {
             execute(
                     compiler,
