@@ -217,6 +217,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                     frame.rowGroupIndex = -1;
                     frame.rowGroupLo = -1;
                     frame.rowGroupHi = -1;
+                    frame.partitionFrameRowLo = -1;
+                    frame.partitionFrameRowHi = -1;
                     final ParquetPartitionDecoder partitionDecoder = partitionFrame.getParquetMetaDecoder();
                     frame.parquetMetaDecoder = frame.format == PartitionFormat.PARQUET ? partitionDecoder : null;
                     frame.partitionFrameState = 0;
@@ -367,9 +369,12 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
                 frame.partitionHi = partitionHi;
                 frame.partitionIndex = reenterPartitionIndex;
                 frame.partitionLo = adjustedLo;
-                frame.rowGroupHi = Math.toIntExact(partitionHi - windowStartRow);
                 frame.rowGroupIndex = window;
-                frame.rowGroupLo = Math.toIntExact(adjustedLo - windowStartRow);
+                setFrameRowBounds(
+                        adjustedLo - windowStartRow,
+                        partitionHi - windowStartRow,
+                        requiresMaterialization
+                );
                 return frame;
             }
             baseStartRow = Math.addExact(baseStartRow, baseRows);
@@ -487,6 +492,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         frame.rowGroupIndex = -1;
         frame.rowGroupLo = -1;
         frame.rowGroupHi = -1;
+        frame.partitionFrameRowLo = -1;
+        frame.partitionFrameRowHi = -1;
         frame.partitionIndex = reenterPartitionIndex;
         return frame;
     }
@@ -519,6 +526,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         frame.rowGroupIndex = -1;
         frame.rowGroupLo = -1;
         frame.rowGroupHi = -1;
+        frame.partitionFrameRowLo = -1;
+        frame.partitionFrameRowHi = -1;
         frame.partitionIndex = reenterPartitionIndex;
         return frame;
     }
@@ -655,8 +664,11 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             setFramePartitionFrameState(requiresMaterialization);
             frame.parquetMetaDecoder = reenterParquetDecoder;
             frame.rowGroupIndex = targetGroup;
-            frame.rowGroupLo = (int) (adjustedLo - targetGroupStart);
-            frame.rowGroupHi = (int) (partitionHi - targetGroupStart);
+            setFrameRowBounds(
+                    adjustedLo - targetGroupStart,
+                    partitionHi - targetGroupStart,
+                    requiresMaterialization
+            );
             frame.partitionIndex = reenterPartitionIndex;
             // Update cache to avoid re-scanning skipped row groups on next call
             cachedRowGroupIndex = targetGroup;
@@ -808,6 +820,18 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         frame.partitionFrameState = requiresMaterialization ? reenterPartitionFrameState : 0;
     }
 
+    private void setFrameRowBounds(long logicalLo, long logicalHi, boolean requiresMaterialization) {
+        frame.partitionFrameRowLo = logicalLo;
+        frame.partitionFrameRowHi = logicalHi;
+        if (requiresMaterialization) {
+            frame.rowGroupLo = 0;
+            frame.rowGroupHi = Math.toIntExact(logicalHi - logicalLo);
+        } else {
+            frame.rowGroupLo = Math.toIntExact(logicalLo);
+            frame.rowGroupHi = Math.toIntExact(logicalHi);
+        }
+    }
+
     private void setReenterPartitionFrameState(PartitionFrame partitionFrame) {
         reenterPartitionFrameState = partitionFrame.getPartitionFrameState();
     }
@@ -815,6 +839,8 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private class TableReaderPageFrame implements PageFrame {
         private byte format;
         private ParquetPartitionDecoder parquetMetaDecoder;
+        private long partitionFrameRowHi;
+        private long partitionFrameRowLo;
         private long partitionFrameState;
         private long partitionHi;
         private int partitionIndex;
@@ -899,6 +925,16 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         @Override
         public int getParquetRowGroupLo() {
             return rowGroupLo;
+        }
+
+        @Override
+        public long getPartitionFrameRowHi() {
+            return partitionFrameRowHi;
+        }
+
+        @Override
+        public long getPartitionFrameRowLo() {
+            return partitionFrameRowLo;
         }
 
         @Override

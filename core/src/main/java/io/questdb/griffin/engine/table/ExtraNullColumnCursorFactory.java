@@ -465,6 +465,16 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public long getPartitionFrameRowHi() {
+            return baseFrame.getPartitionFrameRowHi();
+        }
+
+        @Override
+        public long getPartitionFrameRowLo() {
+            return baseFrame.getPartitionFrameRowLo();
+        }
+
+        @Override
         public long getPartitionFrameState() {
             return baseFrame.getPartitionFrameState();
         }

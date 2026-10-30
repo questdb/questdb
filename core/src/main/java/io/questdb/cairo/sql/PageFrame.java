@@ -225,6 +225,24 @@ public interface PageFrame {
     int getParquetRowGroupLo();
 
     /**
+     * Returns the exclusive logical row high bound within this frame's custom
+     * partition window. Unlike Parquet row-group offsets, this value can span
+     * the complete table row domain.
+     */
+    default long getPartitionFrameRowHi() {
+        return getParquetRowGroupHi();
+    }
+
+    /**
+     * Returns the inclusive logical row low bound within this frame's custom
+     * partition window. Unlike Parquet row-group offsets, this value can span
+     * the complete table row domain.
+     */
+    default long getPartitionFrameRowLo() {
+        return getParquetRowGroupLo();
+    }
+
+    /**
      * Opaque Rust logical-frame state; zero when this frame is base-only.
      */
     default long getPartitionFrameState() {
