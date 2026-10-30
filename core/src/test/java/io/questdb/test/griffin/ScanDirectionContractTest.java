@@ -382,6 +382,7 @@ public class ScanDirectionContractTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .withPlan("""
                         SortedSymbolIndex
+                          keyMajor: true
                             Index forward scan on: sym
                               symbolOrder: asc
                             Interval forward scan on: u
