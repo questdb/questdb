@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnTaskJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3CopyJob;
@@ -1892,9 +1893,6 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testConvertToNativeTxnFailureWalApply() throws Exception {
-        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
-        // directory a conversion replaced, until it moves on
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // WAL table, s, bt and st added after 5 of 8 rows of parquet partition 2024-01-01. The _cv commit
         // of CONVERT TO NATIVE lands, the _txn commit fails: the table suspends with the committed state
         // of before the CONVERT, and RESUME WAL applies it.
@@ -1907,6 +1905,10 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 execute(CONVERT_FAILURE_PARTITIONS_INSERT.replace("{t}", table));
             }
             drainWalQueue();
+            // under ADAPTIVE the native directory that CONVERT TO PARQUET replaced stays until no save point
+            // lists it
+            engine.releaseInactive();
+            releaseSavePointHolds("pt");
             final long columnVersionBefore = readColumnVersionFileVersion("pt");
             final long seqTxnBefore;
             try (TableReader reader = getReader("pt")) {
@@ -1938,9 +1940,6 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testConcurrentReaderDuringInPlaceIndexUpdate() throws Exception {
-        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
-        // directory a conversion replaced, until it moves on
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // a reader thread opens its index cursor, the main thread commits, then the reader iterates
         setInPlaceParquetO3Properties();
         assertMemoryLeak(() -> {
@@ -1987,6 +1986,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     Assert.assertNull(readerError.get());
 
                     engine.releaseInactive();
+                    releaseSavePointHolds("pt");
                     setCurrentMicros(currentMicros + 1_000_000);
                     purgeJob.run();
                 }
@@ -2012,12 +2012,10 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testFormatParquetLateRowVersionsOnce() throws Exception {
-        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
-        // directory a conversion replaced, until it moves on
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // A late row into the last partition of a FORMAT PARQUET table moves each indexed column to one
         // new index version. With a reader pinned the old version goes through one purge task per column,
-        // without one the commit removes it.
+        // without one the commit removes it. Under ADAPTIVE the save points still name the old version, so
+        // the commit leaves it to one purge task per column without a reader too.
         setInPlaceParquetO3Properties();
         final IndexFileOpenCounter ff = new IndexFileOpenCounter();
         assertMemoryLeak(ff, () -> {
@@ -2060,7 +2058,18 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             // indexer of the append-blocked last partition, without truncating it
             Assert.assertEquals(2, ff.getOpenCount("s.k." + txn));
             Assert.assertEquals(2, ff.getOpenCount("k.k." + txn));
-            Assert.assertEquals(purgeTasksBefore, engine.getMessageBus().getColumnPurgePubSeq().current());
+            if (engine.getResolvedCommitMode() == CommitMode.ADAPTIVE) {
+                Assert.assertEquals(purgeTasksBefore + 2, engine.getMessageBus().getColumnPurgePubSeq().current());
+                Assert.assertTrue(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, sNameTxn2));
+                Assert.assertTrue(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, "k", sNameTxn2));
+                engine.releaseInactive();
+                releaseSavePointHolds("pt");
+                try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                    purgeJob.run();
+                }
+            } else {
+                Assert.assertEquals(purgeTasksBefore, engine.getMessageBus().getColumnPurgePubSeq().current());
+            }
             Assert.assertFalse(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, sNameTxn2));
             Assert.assertFalse(isIndexValueFilePresent("pt", 0, IndexType.BITMAP, sNameTxn2));
             Assert.assertTrue(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, txn));
@@ -2252,9 +2261,6 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testInPlaceIndexVersionTxnCommitFailureWal() throws Exception {
-        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
-        // directory a conversion replaced, until it moves on
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // WAL: the _cv commit lands, the _txn commit fails and suspends the table. The writer reopen
         // restores _cv to the committed _txn, and the retry at the same txn builds the new index
         // version again over the files the failed attempt left.
@@ -2292,6 +2298,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     "SELECT s, v, ts FROM pt WHERE s = 'a'"
             );
             engine.releaseInactive();
+            releaseSavePointHolds("pt");
             try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
                 purgeJob.run();
             }
@@ -2659,9 +2666,6 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testRepeatedInPlaceMergesKeepEachCursorSnapshot() throws Exception {
-        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
-        // directory a conversion replaced, until it moves on
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // Two merges while one cursor stays open and a second one opens between them. Each cursor
         // returns its snapshot, and the purges remove exactly the replaced versions of both columns.
         setInPlaceParquetO3Properties();
@@ -2705,6 +2709,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 }
             }
             engine.releaseInactive();
+            releaseSavePointHolds("pt");
             try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
                 purgeJob.run();
             }
@@ -2738,9 +2743,6 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testInPlaceIndexVersionAcrossRestartAndSchemaChanges() throws Exception {
-        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
-        // directory a conversion replaced, until it moves on
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // The new index version survives a writer and reader restart, a purge job restart, and the
         // operations that follow the column version: RENAME COLUMN, CONVERT TO NATIVE, DROP INDEX.
         setInPlaceParquetO3Properties();
@@ -2760,6 +2762,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             engine.releaseAllReaders();
             engine.releaseAllWriters();
             Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
+            // under ADAPTIVE the save points still name the old version, and the replay keeps such a task
+            releaseSavePointHolds("pt");
             // a new purge job picks the task up from its log
             try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
                 setCurrentMicros(currentMicros + 1_000_000);
@@ -2793,9 +2797,6 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testInPlaceIndexVersionPurgeDuringCheckpoint() throws Exception {
-        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
-        // directory a conversion replaced, until it moves on
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // With a checkpoint in progress the merge leaves the old index version to the async purge, even
         // with no reader, and the purge removes it once the checkpoint is released. The table is created
         // after the checkpoint starts, so the checkpoint pins no txn of it.
@@ -2821,6 +2822,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 execute("CHECKPOINT RELEASE");
             }
             engine.releaseInactive();
+            releaseSavePointHolds("pt");
             try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
                 purgeJob.run();
             }
@@ -3469,9 +3471,6 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testInPlaceIndexVersionDropIndex() throws Exception {
-        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
-        // directory a conversion replaced, until it moves on
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // DROP INDEX after a merge removes both index versions once the purge runs
         setInPlaceParquetO3Properties();
         assertMemoryLeak(() -> {
@@ -3485,6 +3484,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
             drainWalQueue();
             engine.releaseInactive();
+            releaseSavePointHolds("pt");
             try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
                 purgeJob.run();
                 setCurrentMicros(currentMicros + 1_000_000);
@@ -3661,42 +3661,27 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testStaleIndexCursorKeysAcrossInPlaceO3Bitmap() throws Exception {
-        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
-        // directory a conversion replaced, until it moves on
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertStaleIndexCursorsAcrossInPlaceO3("INDEX");
     }
 
     @Test
     public void testStaleIndexCursorKeysAcrossInPlaceO3BitmapCapacity2() throws Exception {
-        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
-        // directory a conversion replaced, until it moves on
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // two values per block: every key spans several value blocks, and case B appends across a block boundary
         assertStaleIndexCursorsAcrossInPlaceO3("INDEX CAPACITY 2");
     }
 
     @Test
     public void testStaleIndexCursorKeysAcrossInPlaceO3Posting() throws Exception {
-        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
-        // directory a conversion replaced, until it moves on
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertStaleIndexCursorsAcrossInPlaceO3("INDEX TYPE POSTING");
     }
 
     @Test
     public void testStaleIndexCursorKeysAcrossInPlaceO3PostingCovering() throws Exception {
-        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
-        // directory a conversion replaced, until it moves on
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertStaleIndexCursorsAcrossInPlaceO3("INDEX TYPE POSTING INCLUDE (v)");
     }
 
     @Test
     public void testAttachedForeignIndexVersionBelowTxnO3Middle() throws Exception {
-        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
-        // directory a conversion replaced, until it moves on
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // foreign version 2 below the merge's txn 3: the merge names the new version 3, as for a partition the table built
         assertAttachedForeignIndexVersionO3Merge(2, 3);
     }
@@ -4018,9 +4003,6 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     @Test
     public void testAttachedForeignIndexVersionConvertToNative() throws Exception {
-        // Covers the purge of replaced versions, not durability: under adaptive a save point holds them, and the
-        // directory a conversion replaced, until it moves on
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // CONVERT TO NATIVE after a merge into the attached partition writes s and its index under the
         // _cv name 32 into the native directory and purges the parquet one. Native O3 commits into the
         // middle and after the end then maintain that index.
@@ -4054,6 +4036,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                 );
                 assertAttachedRows(context + ", native", SYM_MERGE_ROWS);
                 engine.releaseInactive();
+                // under ADAPTIVE the parquet directory goes once no save point names it
+                releaseSavePointHolds("pt");
                 try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
                     purgeJob.run();
                 }
@@ -5104,8 +5088,10 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                         );
                     }
 
-                    // with the cursors closed, the purge removes the version the merge replaced
+                    // with the cursors closed, and under ADAPTIVE with the save points past the merge, the purge
+                    // removes the version the merge replaced
                     engine.releaseInactive();
+                    releaseSavePointHolds("pt");
                     try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
                         purgeJob.run();
                     }
@@ -5168,8 +5154,10 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     Assert.assertEquals(context, expectedNameTxn, getColumnNameTxn("pt", 0, "s"));
                     assertAttachedRows(context, SYM_MERGE_ROWS);
 
-                    // with the cursors closed, the purge removes the foreign version the merge replaced
+                    // with the cursors closed, and under ADAPTIVE with the save points past the merge, the purge
+                    // removes the foreign version the merge replaced
                     engine.releaseInactive();
+                    releaseSavePointHolds("pt");
                     try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
                         purgeJob.run();
                     }

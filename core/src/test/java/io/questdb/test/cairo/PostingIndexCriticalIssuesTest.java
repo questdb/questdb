@@ -2614,6 +2614,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             try (PostingSealPurgeJob purgeJob = new PostingSealPurgeJob(engine)) {
                 runPostingSealPurgeJob(purgeJob);
             }
+            // The O3 moves the index to a new column version. With no reader the writer removes the old one
+            // itself, but under ADAPTIVE a save point named it at the commit, so the column purge removes it.
+            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                purgeJob.run();
+            }
             engine.releaseAllWriters();
 
             assertQuery("SELECT count() FROM t_pq_inplace WHERE sym = 'A'")

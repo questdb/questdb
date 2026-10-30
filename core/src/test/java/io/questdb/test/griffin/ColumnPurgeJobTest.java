@@ -1030,14 +1030,11 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeCompletedBeforeTruncateIsNotReportedAsRefused() throws Exception {
-        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
-        // and the directory of a dropped partition, until it moves on
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // The purge of the first UPDATE completes before DROP PARTITION, and the purge of the second UPDATE
         // waits for a reader until after it. The purge log holds the rows of both with the truncate version
         // from before DROP PARTITION and marks them all completed, but the job refuses only the second
         // purge: it reports the instance that the second UPDATE replaced, in the partitions that DROP
-        // PARTITION keeps.
+        // PARTITION keeps. Under ADAPTIVE the purge of the first UPDATE also waits for the save points.
         assertMemoryLeak(() -> {
             listenToTruncateRefusals();
             for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
@@ -1045,6 +1042,13 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                     createTruncateTable(walMode, "INDEX");
                     updateTruncateTableWithReader(purgeJob, walMode);
+                    if (isAdaptiveWal(walMode)) {
+                        // the save points still name the instance that UPDATE replaced
+                        runPurgeJob(purgeJob);
+                        Assert.assertEquals(walMode, 3, purgeJob.getOutstandingPurgeTasks());
+                        assertPurgeLogRows(purgeJob, 9, 0);
+                        releaseSavePointHolds("t");
+                    }
                     runPurgeJob(purgeJob);
                     Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
                     assertPurgeLogRows(purgeJob, 9, 9);
@@ -1082,9 +1086,6 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRefusedByTruncateAfterPartialRemoval() throws Exception {
-        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
-        // and the directory of a dropped partition, until it moves on
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // The job removes sym.d of instance NONE of sym in 1970-01-01, fails to remove its sym.k and
         // purges the other partitions. DROP PARTITION follows, and the job refuses the retry: it reports
         // the entry of 1970-01-01 only, whose sym.k and sym.v stay. The entry of 1970-01-03 has no files
@@ -1101,6 +1102,8 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                     createTruncateTable(walMode, "INDEX");
                     updateTruncateTableWithReader(purgeJob, walMode);
+                    // under ADAPTIVE the save points still name the instance that UPDATE replaced
+                    releaseSavePointHolds("t");
                     final String firstDir = partitionDir("t", 0);
                     final String lastDir = partitionDir("t", 2);
                     final String expected = truncateRefusalKeyOfT("sym", "1970-01-01", 0, TableUtils.COLUMN_NAME_TXN_NONE);
@@ -1131,9 +1134,6 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRefusedByTruncateAfterPartialRemovalOfPostingIndex() throws Exception {
-        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
-        // and the directory of a dropped partition, until it moves on
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // The job fails to remove a sealed .pv file of instance NONE of sym in each partition, and
         // removes sym.d and sym.pk. DROP PARTITION follows, and the job refuses the retry: the scan for
         // sealed files finds the .pv files, so it reports the entries of 1970-01-01 and 1970-01-03, whose
@@ -1171,6 +1171,8 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                             truncateRefusalKeyOfT("sym", "1970-01-01", 0, TableUtils.COLUMN_NAME_TXN_NONE),
                             truncateRefusalKeyOfT("sym", "1970-01-03", 2, TableUtils.COLUMN_NAME_TXN_NONE)
                     );
+                    // under ADAPTIVE the save points still name the instance that UPDATE replaced
+                    releaseSavePointHolds("t");
                     engine.releaseInactive();
                     setCurrentMicros(currentMicros + 100_000_000L);
                     isValueFileFailureArmed.set(true);
@@ -1259,9 +1261,6 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRefusedByTruncateReportsEachEntryWithFiles() throws Exception {
-        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
-        // and the directory of a dropped partition, until it moves on
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // Two UPDATEs run while a reader holds the table, and DROP PARTITION follows. The job refuses the
         // purges of both and reports each entry of instance NONE and of the instance of the first UPDATE
         // in the partitions that DROP PARTITION keeps. The entries of the dropped partition have no files
@@ -1313,9 +1312,6 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRefusedByTruncateReportsSymbolRootFiles() throws Exception {
-        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
-        // and the directory of a dropped partition, until it moves on
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // RENAME COLUMN of sym runs while a reader holds the table, and DROP PARTITION follows. The job
         // refuses the purge of the old name and reports its entries: the symbol table files in the table
         // root and the column files in the partitions that DROP PARTITION keeps. All of them stay.
@@ -1550,9 +1546,6 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRetryAfterMetaSwapReplayedOnRestart() throws Exception {
-        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
-        // and the directory of a dropped partition, until it moves on
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertPurgeRetriesEntryDuringMetaSwap(true);
     }
 
@@ -2065,9 +2058,6 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRemovesPostingCoverFilesOfNameTxnZero() throws Exception {
-        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
-        // and the directory of a dropped partition, until it moves on
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // s is the first column added to the empty table t_z, so its column name txn is 0, and its .pc
         // files carry the token 0 that txn NONE also writes: s.pc<N>.0[.<covered txn>].<seal>. An
         // earlier version left a superseded seal of s on disk, planted here by name. Each change moves
@@ -2103,6 +2093,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                 execute(sql.replace("{t}", "t_twin"));
                                 drainWalQueue();
                             }
+                            // under ADAPTIVE the save points still name the version the change moved away from
+                            releaseSavePointHolds("t_z");
+                            releaseSavePointHolds("t_twin");
                             runPurgeJob(purgeJob);
                             Assert.assertEquals(context, 0, purgeJob.getOutstandingPurgeTasks());
                             Assert.assertEquals(context, "[]", txnZeroIndexFilesOfS(partitionDir("t_z", 0)).toString());
@@ -2180,9 +2173,6 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRetriesPostingCoverInfoFile() throws Exception {
-        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
-        // and the directory of a dropped partition, until it moves on
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // UPDATE with a reader open leaves the old instance of sym in the last three of five partitions.
         // The purge job cannot remove the .pci file of the old instance in the middle one of them, once
         // or three times in a row: each failed run keeps the task, and the next run removes the file
@@ -2209,9 +2199,11 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 try (ColumnPurgeJob purgeJob = createPurgeJob()) {
                     createCoverInfoTable(testCase[0], testCase[2]);
                     if (isUpdatedBefore) {
-                        // no reader: the writer purges the instance NONE itself
+                        // no reader: the writer purges the instance NONE itself, or under ADAPTIVE, whose save
+                        // points still name it, leaves it to the purge job
                         update("UPDATE t_pci SET sym = 'B' WHERE ts >= '1970-01-03'");
                         drainWalQueue();
+                        releaseSavePointHolds("t_pci");
                         runPurgeJob(purgeJob);
                         Assert.assertEquals(context, 0, purgeJob.getOutstandingPurgeTasks());
                     }
@@ -2235,6 +2227,8 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         Assert.assertEquals(context, 1, purgeJob.getOutstandingPurgeTasks());
                     }
                     final String[] liveFiles = liveFilesOfPartitions2To4(context, oldInstanceFiles);
+                    // under ADAPTIVE the save points still name the instance that UPDATE replaced
+                    releaseSavePointHolds("t_pci");
 
                     final String middleDir = partitionDir("t_pci", 3);
                     failingFileSuffix.set(Files.SEPARATOR + new File(middleDir).getName() + Files.SEPARATOR + coverInfoFiles[1]);
@@ -2268,12 +2262,11 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRetriesPostingCoverInfoFileAfterUpdateWithoutReader() throws Exception {
-        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
-        // and the directory of a dropped partition, until it moves on
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // No reader holds the old instance of sym, so the writer purges it during UPDATE. It cannot
         // remove the .pci file in the middle one of the three updated partitions and hands the purge to
-        // the purge job, whose first run removes the file.
+        // the purge job, whose first run removes the file. Under ADAPTIVE the save points still name the
+        // old instance, so the writer hands the whole purge to the purge job, whose first run after the
+        // save points fails on the .pci file the same way.
         final AtomicReference<String> failingFileSuffix = new AtomicReference<>();
         final AtomicInteger remainingFailures = new AtomicInteger();
         final AtomicInteger failedRemoveCount = new AtomicInteger();
@@ -2290,6 +2283,20 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
                     update("UPDATE t_pci SET sym = 'Z' WHERE ts >= '1970-01-03'");
                     drainWalQueue();
+                    if (isAdaptiveWal(walMode)) {
+                        Assert.assertEquals(walMode, 0, failedRemoveCount.get());
+                        for (int i = 0; i < 3; i++) {
+                            final String listing = listFiles(partitionDir("t_pci", i + 2));
+                            Assert.assertTrue(
+                                    walMode + ", " + listing,
+                                    new TreeSet<>(Arrays.asList(listing.split(" "))).containsAll(Arrays.asList(oldInstanceFiles[i].split(" ")))
+                            );
+                        }
+                        releaseSavePointHolds("t_pci");
+                        // the first run takes the task off the queue, the second one purges
+                        runPurgeJob(purgeJob);
+                        Assert.assertEquals(walMode, 1, purgeJob.getOutstandingPurgeTasks());
+                    }
                     Assert.assertEquals(walMode, 1, failedRemoveCount.get());
                     final String[] liveFiles = new String[3];
                     for (int i = 0; i < 3; i++) {
@@ -2402,9 +2409,6 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testPurgeRetriesPostingCoverInfoFileOfNameTxnZero() throws Exception {
-        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
-        // and the directory of a dropped partition, until it moves on
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // DROP INDEX with a reader open leaves instance 0 of s in both partitions. The purge job cannot
         // remove s.pci.0 in the first partition the first time and removes it on the retry.
         final AtomicReference<String> failingFileSuffix = new AtomicReference<>();
@@ -2424,6 +2428,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                         execute("ALTER TABLE t_z ALTER COLUMN s DROP INDEX");
                         execute("ALTER TABLE t_twin ALTER COLUMN s DROP INDEX");
                         drainWalQueue();
+                        // under ADAPTIVE the save points still name instance 0; only the reader holds it then
+                        releaseSavePointHolds("t_z");
+                        releaseSavePointHolds("t_twin");
                         runPurgeJob(purgeJob);
                         Assert.assertEquals(walMode, 1, purgeJob.getOutstandingPurgeTasks());
                     }
@@ -2466,9 +2473,6 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testReplayedPurgeRefusedByTruncateReportsEntries() throws Exception {
-        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
-        // and the directory of a dropped partition, until it moves on
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         // The purge job closes with the purge of UPDATE incomplete in its log, and DROP PARTITION follows.
         // A new purge job replays the purge, refuses it, reports each entry in the partitions that DROP
         // PARTITION keeps, leaves the files there and truncates the log.
@@ -3070,6 +3074,9 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                     Assert.assertEquals(walMode, 1, purgeJob.getOutstandingPurgeTasks());
                     assertPurgeLogRows(purgeJob, 3, 0);
                     listings = listRetryTablePartitions(oldFiles);
+                    // under ADAPTIVE the save points still name the instance that DROP INDEX replaced, and the
+                    // replay at start keeps such a task
+                    releaseSavePointHolds("t");
                     if (isRestarted) {
                         purgeJob = Misc.free(purgeJob);
                         purgeJob = createPurgeJob();
@@ -3119,15 +3126,25 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
-    // DROP PARTITION of 1970-01-02 of t moves the truncate version of t from 0 to 1
+    /**
+     * DROP PARTITION of 1970-01-02 of t moves the truncate version of t from 0 to 1. With no reader open, the
+     * writer removes the dropped partition at once, but under ADAPTIVE the save points of a WAL table still
+     * list it, and it stays until both are past the DROP. This takes them, so that the purge job finds the
+     * dropped partition gone in every mode.
+     */
     private void dropMiddlePartitionOfTruncateTable(String walMode) throws SqlException {
         engine.releaseInactive();
+        final File droppedDir = new File(partitionDir("t", 1));
         execute("ALTER TABLE t DROP PARTITION LIST '1970-01-02'");
         drainWalQueue();
         try (TableReader reader = getReader("t")) {
             Assert.assertEquals(walMode, 1, reader.getTxFile().getTruncateVersion());
             Assert.assertEquals(walMode, 2, reader.getTxFile().getPartitionCount());
         }
+        Assert.assertEquals(walMode, isAdaptiveWal(walMode), droppedDir.exists());
+        engine.releaseInactive();
+        releaseSavePointHolds("t");
+        Assert.assertFalse(walMode, droppedDir.exists());
     }
 
     private void dropTruncateTable() throws SqlException {
@@ -3139,6 +3156,11 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         try (TableReader reader = getReader(tableName)) {
             return reader.getTxFile().getPartitionNameTxn(partitionIndex);
         }
+    }
+
+    // Whether the table of walMode runs under ADAPTIVE, whose save points hold the versions a change supersedes
+    private static boolean isAdaptiveWal(String walMode) {
+        return "WAL".equals(walMode) && engine.getResolvedCommitMode() == CommitMode.ADAPTIVE;
     }
 
     // records the entries that the purge job reports as refused because the truncate version changed
@@ -3623,9 +3645,6 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testReplayedPurgeRemovesPostingFilesOfDroppedIndexOfEveryTableKind() throws Exception {
-        // Covers purge mechanics, not durability: under adaptive a save point holds the superseded versions,
-        // and the directory of a dropped partition, until it moves on
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             final String[] dropIndex = {"sym", "ALTER TABLE t_replay ALTER COLUMN sym DROP INDEX"};
             assertReplayedPurgeOfChangedIndex("PARTITION BY DAY WAL", "POSTING INCLUDE (x)", dropIndex);
@@ -3972,6 +3991,8 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
         if (beforeReplay != null) {
             beforeReplay.run();
         }
+        // under ADAPTIVE the save points still name the old instance, and the replay keeps such a task
+        releaseSavePointHolds("t_replay");
         try (ColumnPurgeJob purgeJob = createPurgeJob()) {
             Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
             assertPurgeLogRows(purgeJob, 0, 0);
