@@ -7516,6 +7516,10 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .fails("REINDEX TABLE xxx PARTITION '1234' twice".length(), "LOCK EXCLUSIVE expected");
 
+            assertQuery("REINDEX TABLE xxx PARTITION '1234''")
+                    .noLeakCheck()
+                    .fails("REINDEX TABLE xxx PARTITION '1234''".length(), "LOCK EXCLUSIVE expected");
+
             assertQuery("REINDEX xxx PARTITION '1234''")
                     .noLeakCheck()
                     .fails("REINDEX ".length(), "TABLE expected");
@@ -7527,6 +7531,41 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
             assertQuery("REINDEX TABLE xxx COLUMN \"sym1\" lock exclusive twice")
                     .noLeakCheck()
                     .fails("REINDEX TABLE xxx COLUMN \"sym1\" lock exclusive twice".length(), "EOF expecte");
+        });
+    }
+
+    @Test
+    public void testReindexSyntaxErrorMissingOperand() throws Exception {
+        assertMemoryLeak(() -> {
+            // partitioned table with a parquet partition: a truncated statement must not fall through to the
+            // online whole-table reindex
+            execute("create table xxx as (" +
+                    "select " +
+                    "rnd_symbol('A', 'B', 'C') as sym1," +
+                    "timestamp_sequence('2024-01-01', 3_600_000_000) ts " +
+                    "from long_sequence(72)" +
+                    "), index(sym1) timestamp(ts) partition by DAY");
+            execute("alter table xxx convert partition to parquet list '2024-01-01'");
+
+            assertQuery("REINDEX TABLE xxx PARTITION")
+                    .noLeakCheck()
+                    .fails("REINDEX TABLE xxx PARTITION".length(), "partition name expected");
+
+            assertQuery("REINDEX TABLE xxx PARTITION;")
+                    .noLeakCheck()
+                    .fails("REINDEX TABLE xxx PARTITION;".length(), "partition name expected");
+
+            assertQuery("REINDEX TABLE xxx COLUMN")
+                    .noLeakCheck()
+                    .fails("REINDEX TABLE xxx COLUMN".length(), "column name expected");
+
+            assertQuery("REINDEX TABLE xxx COLUMN;")
+                    .noLeakCheck()
+                    .fails("REINDEX TABLE xxx COLUMN;".length(), "column name expected");
+
+            assertQuery("REINDEX TABLE xxx COLUMN sym1 PARTITION")
+                    .noLeakCheck()
+                    .fails("REINDEX TABLE xxx COLUMN sym1 PARTITION".length(), "partition name expected");
         });
     }
 

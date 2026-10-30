@@ -4126,10 +4126,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         if (tok != null && isColumnKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
+            if (tok == null || isSemicolon(tok)) {
+                throw SqlException.$(lexer.getPosition(), "column name expected");
+            }
             if (Chars.isQuoted(tok)) {
                 tok = unquote(tok);
             }
-            if (tok == null || TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
+            if (TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
                 columnName = GenericLexer.immutableOf(tok);
                 tok = SqlUtil.fetchNext(lexer);
             }
@@ -4138,7 +4141,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CharSequence partition = null;
         if (tok != null && isPartitionKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
-
+            if (tok == null || isSemicolon(tok)) {
+                throw SqlException.$(lexer.getPosition(), "partition name expected");
+            }
             if (Chars.isQuoted(tok)) {
                 tok = unquote(tok);
             }
