@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.SecurityContext;
@@ -999,6 +1000,8 @@ public class MatViewTest extends AbstractCairoTest {
         // directory, neither of which survives the extra transaction and WAL writer the composite
         // randomiser commits against that table.
         disableCompositePartitionRandomisation();
+        // Keep the adaptive WAL purge floor moving despite the frozen test clock.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -1077,6 +1080,7 @@ public class MatViewTest extends AbstractCairoTest {
                     Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
                 }
 
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -2639,6 +2643,10 @@ public class MatViewTest extends AbstractCairoTest {
                             gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
                             """));
 
+            // A full refresh reads base_price but does not write it, so close the writer and flush an
+            // adaptive save point over its applied tail before checking that the consumed WAL is reclaimed.
+            engine.releaseInactive();
+            takeSavePointIfAdaptive(baseTableToken);
             engine.releaseInactiveTableSequencers();
             drainPurgeJob();
 
@@ -2725,6 +2733,10 @@ public class MatViewTest extends AbstractCairoTest {
                             gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
                             """));
 
+            // A full refresh reads base_price but does not write it, so close the writer and flush an
+            // adaptive save point over its applied tail before checking that the consumed WAL is reclaimed.
+            engine.releaseInactive();
+            takeSavePointIfAdaptive(baseTableToken);
             engine.releaseInactiveTableSequencers();
             drainPurgeJob();
 
@@ -2788,6 +2800,9 @@ public class MatViewTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
+                // With the frozen test clock, close the writer before the save point so its applied tail is covered.
+                engine.releaseInactive();
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -3957,6 +3972,222 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIncrementalRefreshMonthAndYearStrideWithPositiveOffset() throws Exception {
+        // Regression test for #7769 and #7772. A positive offset moves bucket starts past the start of their
+        // month or year. The refresh interval iterator used to round the lower bound of the new rows up to the
+        // bucket start in their month, skipping rows that come before it, so the incremental refresh missed them.
+        // Such a refresh could also find no intervals to query, leaking the view's query factory and leaving the
+        // view 'refreshing'. Each insert below lands right before a bucket start of one of the views.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            final String[] strides = {"1M", "3M", "1y"};
+            for (String stride : strides) {
+                execute(
+                        "create materialized view price_" + stride + " as (" +
+                                "select ts, count() c, sum(price) s from base_price sample by " + stride +
+                                " align to calendar with offset '10:00'" +
+                                ") partition by year"
+                );
+            }
+            execute("insert into base_price(price, ts) values (1.0, '2024-01-15T08:00')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (2.0, '2024-02-01T06:00')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (4.0, '2024-04-01T06:00')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (8.0, '2025-01-01T06:00')");
+            drainQueues();
+
+            final String[] expected = {
+                    """
+                            ts\tc\ts
+                            2024-01-01T10:00:00.000000Z\t2\t3.0
+                            2024-03-01T10:00:00.000000Z\t1\t4.0
+                            2024-12-01T10:00:00.000000Z\t1\t8.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-01-01T10:00:00.000000Z\t3\t7.0
+                            2024-10-01T10:00:00.000000Z\t1\t8.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-01-01T10:00:00.000000Z\t4\t15.0
+                            """
+            };
+            for (int i = 0; i < strides.length; i++) {
+                assertQuery("price_" + strides[i])
+                        .timestamp("ts")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(replaceExpectedTimestamp(expected[i]));
+                // the view must match its query run over the base table
+                assertQuery("select ts, count() c, sum(price) s from base_price sample by " + strides[i] + " align to calendar with offset '10:00'")
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .noLeakCheck()
+                        .returns(replaceExpectedTimestamp(expected[i]));
+            }
+            assertQuery("select view_name, view_status, " + txnColumns() + " from materialized_views order by view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\trefresh_base_table_txn\tbase_table_txn
+                            price_1M\tvalid\t4\t4
+                            price_1y\tvalid\t4\t4
+                            price_3M\tvalid\t4\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshMonthAndYearStrideWithTimeZoneAndOffset() throws Exception {
+        // Regression test for #7769 and #7798 on views with a time zone that has no fixed offset, which
+        // refresh through TimeZoneIntervalIterator rather than FixedOffsetIntervalIterator. The Kolkata views
+        // start their buckets at 10:00 local time; most of their rows land on the 1st of a month before 10:00,
+        // so they belong to the bucket that covers the end of the previous month, which the incremental refresh
+        // must rewrite. The Berlin view starts its buckets at 23:00 local time on the last day of the previous
+        // month, on both sides of the DST switch. Each row commits and refreshes on its own. Each row that lands
+        // before the bucket start in its month comes after every row of its bucket that lands after the bucket
+        // start in its month. Otherwise, the refresh of such a later row would recompute the bucket and hide a
+        // row that an earlier refresh missed.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE base_price (price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            final String[] viewNames = {"kolkata_1M", "kolkata_3M", "kolkata_1y", "berlin_1M"};
+            final String[] viewQueries = {
+                    "SELECT ts, count() c, sum(price) s FROM base_price SAMPLE BY 1M ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata' WITH OFFSET '10:00'",
+                    "SELECT ts, count() c, sum(price) s FROM base_price SAMPLE BY 3M ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata' WITH OFFSET '10:00'",
+                    "SELECT ts, count() c, sum(price) s FROM base_price SAMPLE BY 1y ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata' WITH OFFSET '10:00'",
+                    "SELECT ts, count() c, sum(price) s FROM base_price SAMPLE BY 1M ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '-01:00'"
+            };
+            for (int i = 0; i < viewNames.length; i++) {
+                execute("CREATE MATERIALIZED VIEW " + viewNames[i] + " AS (" + viewQueries[i] + ") PARTITION BY YEAR");
+            }
+            // Comments give the local time in Kolkata, then in Berlin.
+            final String[] rows = {
+                    "(1.0, '2024-03-10T12:00')", // 03-10T17:30, 03-10T13:00 CET
+                    "(2.0, '2024-04-30T21:45')", // 05-01T03:15, 04-30T23:45 CEST
+                    "(4.0, '2024-04-30T20:00')", // 05-01T01:30, 04-30T22:00 CEST
+                    "(8.0, '2024-01-15T08:00')", // 01-15T13:30, 01-15T09:00 CET
+                    "(16.0, '2024-02-01T01:00')", // 02-01T06:30, 02-01T02:00 CET
+                    "(32.0, '2024-04-01T01:00')", // 04-01T06:30, 04-01T03:00 CEST
+                    "(64.0, '2025-01-01T01:00')" // 2025-01-01T06:30, 2025-01-01T02:00 CET
+            };
+            for (String row : rows) {
+                execute("INSERT INTO base_price(price, ts) VALUES " + row);
+                drainQueues();
+            }
+
+            // Kolkata is at +05:30 all year, so its bucket starts at 10:00 local time fall at 04:30 UTC.
+            // Berlin is at +01:00 until 2024-03-31T01:00 UTC and at +02:00 from then until October.
+            final String[] expected = {
+                    """
+                            ts\tc\ts
+                            2024-01-01T04:30:00.000000Z\t2\t24.0
+                            2024-03-01T04:30:00.000000Z\t2\t33.0
+                            2024-04-01T04:30:00.000000Z\t2\t6.0
+                            2024-12-01T04:30:00.000000Z\t1\t64.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-01-01T04:30:00.000000Z\t4\t57.0
+                            2024-04-01T04:30:00.000000Z\t2\t6.0
+                            2024-10-01T04:30:00.000000Z\t1\t64.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2024-01-01T04:30:00.000000Z\t7\t127.0
+                            """,
+                    """
+                            ts\tc\ts
+                            2023-12-31T22:00:00.000000Z\t1\t8.0
+                            2024-01-31T22:00:00.000000Z\t1\t16.0
+                            2024-02-29T22:00:00.000000Z\t1\t1.0
+                            2024-03-31T21:00:00.000000Z\t2\t36.0
+                            2024-04-30T21:00:00.000000Z\t1\t2.0
+                            2024-12-31T22:00:00.000000Z\t1\t64.0
+                            """
+            };
+            for (int i = 0; i < viewNames.length; i++) {
+                assertQuery(viewNames[i])
+                        .timestamp("ts")
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(replaceExpectedTimestamp(expected[i]));
+                // the view must match its query run over the base table
+                assertQuery(viewQueries[i])
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .noLeakCheck()
+                        .returns(replaceExpectedTimestamp(expected[i]));
+            }
+            assertQuery("SELECT view_name, view_status, " + txnColumns() + " FROM materialized_views ORDER BY view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\trefresh_base_table_txn\tbase_table_txn
+                            berlin_1M\tvalid\t7\t7
+                            kolkata_1M\tvalid\t7\t7
+                            kolkata_1y\tvalid\t7\t7
+                            kolkata_3M\tvalid\t7\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshMonthStrideWithNegativeOffset() throws Exception {
+        // Regression test for #7798. With a negative offset, the view's query used to put a row at the end of a
+        // month shorter than 31 days, after the bucket start on its last day, into the previous bucket. Since the
+        // incremental refresh queries only the buckets of the new rows, the row fell outside of them, so the refresh
+        // failed with "timestamp out of replace range" and invalidated the view.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1M as (" +
+                            "select ts, count() c, sum(price) s from base_price sample by 1M align to calendar with offset '-01:00'" +
+                            ") partition by year"
+            );
+            execute("insert into base_price(price, ts) values (1.0, '2024-03-10T12:00')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (2.0, '2024-04-30T23:45')");
+            drainQueues();
+            execute("insert into base_price(price, ts) values (4.0, '2024-04-30T22:00')");
+            drainQueues();
+
+            final String expected = replaceExpectedTimestamp("""
+                    ts\tc\ts
+                    2024-02-29T23:00:00.000000Z\t1\t1.0
+                    2024-03-31T23:00:00.000000Z\t1\t4.0
+                    2024-04-30T23:00:00.000000Z\t1\t2.0
+                    """);
+            assertQuery("price_1M")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select ts, count() c, sum(price) s from base_price sample by 1M align to calendar with offset '-01:00'")
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select view_name, view_status, " + txnColumns() + " from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\trefresh_base_table_txn\tbase_table_txn
+                            price_1M\tvalid\t3\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testIncrementalRefreshOnExistingTable() throws Exception {
         // The base table is renamed, dropped, swapped or has its WAL purged here, so the
         // transaction the composite randomiser commits against it cannot be subtracted back
@@ -4010,6 +4241,59 @@ public class MatViewTest extends AbstractCairoTest {
                                     jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
                                     jpyusd\t103.21\t2024-09-10T14:00:00.000000Z
                                     """));
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshPeriodAndRefreshLimitLeaveNoIntervals() throws Exception {
+        // Regression test for #7772. The period cuts off the txn interval of the row in the incomplete period, and
+        // the refresh limit cuts off the txn interval of the older row, so the refresh interval iterator yields no
+        // intervals even though the refresh range is not empty. The refresh used to leak the view's query factory
+        // and never advance the watermark, leaving the view 'refreshing'.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (price double, ts #TIMESTAMP) timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:30:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh immediate period (length 1h) as " +
+                            "select ts, last(price) as price from base_price sample by 1h"
+            );
+            execute("alter materialized view price_1h set refresh limit 2h");
+            execute("insert into base_price(price, ts) values (1.0, '2024-09-10T10:01')");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final String expected = replaceExpectedTimestamp("""
+                    ts\tprice
+                    2024-09-10T10:00:00.000000Z\t1.0
+                    """);
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+
+            // a row older than the refresh limit and a row in the incomplete period, in two transactions
+            execute("insert into base_price(price, ts) values (2.0, '2024-09-10T08:01')");
+            execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:10')");
+            currentMicros = parseFloorPartialTimestamp("2024-09-10T11:40:00.000000Z");
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("select view_name, view_status, last_refresh_start_timestamp, last_refresh_finish_timestamp, " + txnColumns() + " from materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn
+                            price_1h\tvalid\t2024-09-10T11:40:00.000000Z\t2024-09-10T11:40:00.000000Z\t3\t3
+                            """);
         });
     }
 
@@ -6760,6 +7044,13 @@ public class MatViewTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
+                // Under the default ADAPTIVE commit mode the base-table WAL purge floor is held back to
+                // the last durable epoch (crash recovery re-applies from there). With the test clock
+                // frozen no cadence epoch fires, so close the writer to flush a final durable epoch over
+                // the applied tail -- exactly as an idle writer's eviction does in production -- before
+                // asserting the now-superseded base WAL is reclaimed.
+                engine.releaseInactive();
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -6883,6 +7174,13 @@ public class MatViewTest extends AbstractCairoTest {
                 path.of(configuration.getDbRoot()).concat(baseTableToken).concat(WalUtils.WAL_NAME_BASE).put(1);
                 Assert.assertTrue(Utf8s.toString(path), Files.exists(path.$()));
 
+                // Under the default ADAPTIVE commit mode the base-table WAL purge floor is held back to
+                // the last durable epoch (crash recovery re-applies from there). With the test clock
+                // frozen no cadence epoch fires, so close the writer to flush a final durable epoch over
+                // the applied tail -- exactly as an idle writer's eviction does in production -- before
+                // asserting the now-superseded base WAL is reclaimed.
+                engine.releaseInactive();
+                takeSavePointIfAdaptive(baseTableToken);
                 engine.releaseInactiveTableSequencers();
                 drainPurgeJob();
 
@@ -6952,8 +7250,30 @@ public class MatViewTest extends AbstractCairoTest {
             final long counterAfterInitial = TestTimestampCounterFactory.COUNTER.get();
             Assert.assertEquals("Initial period refresh should emit 1 bucket", 1, counterAfterInitial);
 
+            // Seed the EMA so the cost model has a known threshold, as
+            // testRefreshIntervalsO3MergesNarrowGap does for the merge case.
+            // Otherwise the threshold is commit * range / sample taken from the
+            // warmup refresh, a wall-clock property of the machine: under the
+            // suite's ADAPTIVE commit mode every commit fsyncs, and on a slow
+            // machine avgCommitNanos can grow until the threshold exceeds the
+            // 30h gap below, merging the two intervals and sweeping the untouched
+            // 10:00 bucket back in (3 buckets, not 2). With sample = range = 1 the
+            // threshold equals the commit cost; 5s is far below the 30h gap, so
+            // the test stays in the split regime.
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            final MatViewState viewState = engine.getMatViewStateStore().getViewState(viewToken);
+            final long fiveSecondsInTsUnits = timestampType.getDriver().fromMicros(5_000_000L);
+            Assert.assertNotNull(viewState);
+            Assert.assertTrue(viewState.tryLock());
+            try {
+                viewState.setRefreshMetricsForTesting(fiveSecondsInTsUnits, 1L, 1L);
+            } finally {
+                viewState.unlock();
+            }
+
             // O3 write 24h back, plus a current write -- arrived as 2 separate
-            // WAL txns. With ~24h gap and warm EMA, clustering should split.
+            // WAL txns. With a 30h gap and the threshold pinned to 5s above,
+            // clustering splits them regardless of machine speed.
             execute("insert into base_price(price, ts) values (2.0, '2024-09-09T05:01')");
             execute("insert into base_price(price, ts) values (3.0, '2024-09-10T11:01')");
 
@@ -7950,6 +8270,9 @@ public class MatViewTest extends AbstractCairoTest {
         // transaction the composite randomiser commits against it cannot be subtracted back
         // out by a single per-table offset the way txnColumns() does.
         disableCompositePartitionRandomisation();
+        // wal_tables() includes an adaptive epoch timestamp; this mode-independent suspend/resume test
+        // needs deterministic output.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
@@ -8011,9 +8334,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            base_price\tfalse\t2\t0\t2\t\t\t0
-                            price_1h\ttrue\t1\t0\t3\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            base_price\tfalse\t2\t0\t2\t\t\t0\t0\t0\t-1\t
+                            price_1h\ttrue\t1\t0\t3\t\t\t0\t0\t0\t-1\t
                             """);
 
             // resume mat view
@@ -8036,9 +8359,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            base_price\tfalse\t2\t0\t2\t\t\t0
-                            price_1h\tfalse\t3\t0\t3\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            base_price\tfalse\t2\t0\t2\t\t\t0\t0\t0\t-1\t
+                            price_1h\tfalse\t3\t0\t3\t\t\t0\t0\t0\t-1\t
                             """);
 
             // suspend mat view again
@@ -8063,9 +8386,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            base_price\tfalse\t3\t0\t3\t\t\t0
-                            price_1h\ttrue\t3\t0\t5\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            base_price\tfalse\t3\t0\t3\t\t\t0\t0\t0\t-1\t
+                            price_1h\ttrue\t3\t0\t5\t\t\t0\t0\t0\t-1\t
                             """);
 
             // resume mat view from txn
@@ -8088,9 +8411,9 @@ public class MatViewTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            base_price\tfalse\t3\t0\t3\t\t\t0
-                            price_1h\tfalse\t5\t0\t5\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            base_price\tfalse\t3\t0\t3\t\t\t0\t0\t0\t-1\t
+                            price_1h\tfalse\t5\t0\t5\t\t\t0\t0\t0\t-1\t
                             """);
         });
     }
@@ -9972,6 +10295,35 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWalTxnRangeLoaderSkipsRebaseSeeds() throws Exception {
+        // REBASE WAL seeds the table with two empty transactions. They hold no rows, so they add no refresh interval.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, val double, ts timestamp) timestamp(ts) partition by DAY WAL");
+            execute("insert into base values ('a', 1.0, '2024-09-10T12:00')");
+            drainWalQueue();
+            execute("alter table base suspend wal");
+            execute("alter table base rebase wal");
+            execute("insert into base values ('a', 2.0, '2024-09-10T13:00')");
+            drainWalQueue();
+            final TableToken baseToken = engine.verifyTableName("base");
+            try (
+                    WalTxnRangeLoader loader = new WalTxnRangeLoader(engine.getConfiguration());
+                    Path path = new Path()
+            ) {
+                final LongList intervals = new LongList();
+                loader.load(engine, path, baseToken, intervals, 0, 3);
+                final long ts = parseFloorPartialTimestamp("2024-09-10T13:00:00.000000Z");
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(ts, intervals.getQuick(0));
+                Assert.assertEquals(ts, intervals.getQuick(1));
+                Assert.assertEquals(ts, loader.getMinTimestamp());
+                Assert.assertEquals(ts, loader.getMaxTimestamp());
+            }
+        });
+    }
+
+    @Test
     public void testTtl() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -10450,6 +10802,16 @@ public class MatViewTest extends AbstractCairoTest {
                 throw new OutOfMemoryError(message);
             }
         };
+    }
+
+    // The WAL purge keeps the WAL above the older of the two save points, which recovery falls back to; one more
+    // save point at the applied cut moves the older one past the WAL the test expects purged.
+    private static void takeSavePointIfAdaptive(TableToken tableToken) {
+        if (engine.getConfiguration().getCommitMode() == CommitMode.ADAPTIVE) {
+            try (TableWriter writer = getWriter(tableToken)) {
+                writer.advanceDurableEpoch(engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L);
+            }
+        }
     }
 
     /**

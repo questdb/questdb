@@ -59,6 +59,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
     private final AtomicBoolean halted = new AtomicBoolean(false);
     private final DirectLongList partitionList;
     private final TxReader txnReader;
+    private final DurableEpochManifest.TxnSectionCache txnSectionCache;
 
     public O3PartitionPurgeJob(CairoEngine engine) {
         super(engine.getMessageBus().getO3PurgeDiscoveryQueue(), engine.getMessageBus().getO3PurgeDiscoverySubSeq());
@@ -71,6 +72,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                     MemoryTag.NATIVE_O3
             );
             this.txnReader = new TxReader(configuration.getFilesFacade());
+            this.txnSectionCache = new DurableEpochManifest.TxnSectionCache();
         } catch (Throwable th) {
             close();
             throw th;
@@ -91,6 +93,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         if (halted.compareAndSet(false, true)) {
             Misc.free(partitionList);
             Misc.free(txnReader);
+            Misc.free(txnSectionCache);
         }
     }
 
@@ -156,6 +159,13 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             int timestampType,
             int partitionBy
     ) {
+        final int commitMode = engine.getResolvedCommitMode();
+        if ((commitMode == CommitMode.SYNC || (commitMode == CommitMode.ADAPTIVE && tableToken.isWal()))
+                && !engine.isPartitionPurgeSafe(tableToken)) {
+            // the next writer open makes the table's state durable and removes the versions itself
+            LOG.info().$("partition purge deferred to the next writer open [table=").$(tableToken).I$();
+            return;
+        }
         LOG.info().$("processing [table=").$(tableToken).I$();
         Path path = Path.getThreadLocal(root).concat(tableToken);
         int plimit = path.size();
@@ -248,6 +258,7 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             LOG.error().$safe(ex.getFlyweightMessage()).$();
         } finally {
             txReader.clear();
+            txnSectionCache.clear();
             Misc.free(txnScoreboard);
         }
         LOG.info().$("processed [table=").$(tableToken).I$();
@@ -279,7 +290,8 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
             // When a backup checkpoint is in progress, skip deletion — the checkpoint may reference
             // these partitions via snapshotted metadata even if the scoreboard is not pinned yet.
             boolean rangeUnlocked = !checkpointInProgress
-                    && nameTxn < lastTxn && txnScoreboard.isRangeAvailable(nameTxn, lastTxn);
+                    && nameTxn < lastTxn
+                    && isDroppedVersionFree(tableToken, ff, path, tableRootLen, txnScoreboard, partitionTimestamp, nameTxn, lastTxn);
 
             path.trimTo(tableRootLen);
             TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn - 1);
@@ -298,6 +310,35 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
                 break;
             }
         }
+    }
+
+    // The drop's txn is not known here, so readers are checked up to the last txn. A save point pin is not: the
+    // older one is always below the last txn, which would keep the version for ever. Past a pin the version is
+    // free once no save point on disk lists it, the only way recovery can bring it back. The task reads each save
+    // point's _txn copy once. A save point written meanwhile copies a later _txn, which cannot list a version this
+    // task may delete: a partition created or attached later gets a parsed name txn (directory suffix + 1) at or
+    // above the snapshot's txn.
+    private boolean isDroppedVersionFree(
+            TableToken tableToken,
+            FilesFacade ff,
+            Path path,
+            int tableRootLen,
+            TxnScoreboard txnScoreboard,
+            long partitionTimestamp,
+            long nameTxn,
+            long lastTxn
+    ) {
+        final int holders = txnScoreboard.scanRangeHolders(nameTxn, lastTxn);
+        if (holders == TxnScoreboard.RANGE_FREE && isEpochRangeAvailable(tableToken, nameTxn, lastTxn)) {
+            return true;
+        }
+        return (holders & TxnScoreboard.RANGE_HELD_BY_OTHER) == 0
+                && !txnSectionCache.namesPartition(ff, path.trimTo(tableRootLen), tableRootLen, tableToken.getTableId(), partitionTimestamp, nameTxn - 1);
+    }
+
+    private boolean isEpochRangeAvailable(TableToken tableToken, long fromTxn, long toTxn) {
+        return !tableToken.isWal()
+                || engine.getTableSequencerAPI().getTxnTracker(tableToken).isRangeAvailableToEpoch(fromTxn, toTxn);
     }
 
     private void processPartition(
@@ -377,7 +418,8 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
                 boolean rangeUnlocked = !checkpointInProgress
                         && previousNameVersion < nextNameVersion
-                        && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion);
+                        && txnScoreboard.isRangeAvailable(previousNameVersion, nextNameVersion)
+                        && isEpochRangeAvailable(tableToken, previousNameVersion, nextNameVersion);
 
                 // Sometimes TableWriter can create a partition folder before committing the transaction
                 // and then clean it before committing because it was not necessary to do a copy on write.

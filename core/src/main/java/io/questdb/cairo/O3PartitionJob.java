@@ -703,7 +703,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 tableWriter.getTxn() + 1,
                 tableWriter.getCompositePartitionSeqTxn(),
                 tableWriter.getConfiguration().getMicrosecondClock().getTicks(),
-                tableWriter.getConfiguration().getCommitMode()
+                tableWriter.getFlushCommitMode()
         );
 
         // The floor is the partition's OWN first piece, not the incoming o3TimestampMin, which under a rows-less
@@ -904,7 +904,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         final TableWriterMetadata metadata = (TableWriterMetadata) tableWriter.getMetadata();
         final FrameFactory frameFactory = tableWriter.getFrameFactory();
-        final int commitMode = tableWriter.getConfiguration().getCommitMode();
+        final int commitMode = tableWriter.getFlushCommitMode();
         final long upcomingTableTxn = tableWriter.getTxn() + 1;
         final long nowMicros = tableWriter.getConfiguration().getMicrosecondClock().getTicks();
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(metadata.getTimestampType());
@@ -1252,7 +1252,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final TableWriterMetadata metadata = (TableWriterMetadata) tableWriter.getMetadata();
         final FrameFactory frameFactory = tableWriter.getFrameFactory();
         final FilesFacade ff = tableWriter.getFilesFacade();
-        final int commitMode = tableWriter.getConfiguration().getCommitMode();
+        final int commitMode = tableWriter.getFlushCommitMode();
         final long upcomingTableTxn = tableWriter.getTxn() + 1;
         final long stagingNameTxn = tableWriter.getTxn() + 1;
         final int columnCount = metadata.getColumnCount();
@@ -1573,7 +1573,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     tableWriter.getTxn() + 1,
                     tableWriter.getCompositePartitionSeqTxn(),
                     tableWriter.getConfiguration().getMicrosecondClock().getTicks(),
-                    tableWriter.getConfiguration().getCommitMode()
+                    tableWriter.getFlushCommitMode()
             );
             published = true;
         } finally {
@@ -1659,7 +1659,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     ) {
         final TableWriterMetadata metadata = (TableWriterMetadata) tableWriter.getMetadata();
         final FrameFactory frameFactory = tableWriter.getFrameFactory();
-        final int commitMode = tableWriter.getConfiguration().getCommitMode();
+        final int commitMode = tableWriter.getFlushCommitMode();
         final long upcomingTableTxn = tableWriter.getTxn() + 1;
 
         // Owned by ctx rather than Path.getThreadLocal(), because this reference has to survive every
@@ -2143,7 +2143,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     oldPartitionSize
             );
         } catch (Throwable th) {
-            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
+            tableWriter.o3BumpErrorCount(th);
         } finally {
             tableWriter.o3CountDownDoneLatch();
             tableWriter.o3ClockDownPartitionUpdateCount();
@@ -2189,6 +2189,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         boolean isRewrite = false;
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
         FilesFacade ff = tableWriter.getFilesFacade();
+        final boolean isSync = tableWriter.getFlushCommitMode() != CommitMode.NOSYNC;
+        final boolean isPowerLossDurable = CommitMode.isPowerLossDurable(tableWriter.getFlushCommitMode());
         final O3ParquetMergeContext ctx = PARQUET_MERGE_CONTEXT.get();
         ctx.clear();
         final ParquetPartitionDecoder partitionDecoder = ctx.getPartitionDecoder(cairoConfiguration);
@@ -2688,6 +2690,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         rowGroupBuffers
                 );
 
+                // Data before metadata: fsync the parquet data file before the
+                // _pm header is published below, so a power loss cannot leave a
+                // committed _pm pointing at data-file bytes still in the page
+                // cache. Both barriers of commitParquetMeta target _pm (footer,
+                // then header), not the data file. Only the power-loss-durable
+                // modes pay it: ASYNC promises nothing on a power loss and, as
+                // on the base release, flushes _pm alone.
+                if (isPowerLossDurable) {
+                    final long parquetNameTxn = isRewrite ? txn : srcNameTxn;
+                    path.of(pathToTable);
+                    setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                    TableUtils.fsyncFileDurable(ff, path.$());
+                }
+
                 // Publish the new _pm last. In sync modes an incremental update
                 // first fsyncs the appended footer while the old header is still
                 // authoritative, patches the header (the MVCC commit signal),
@@ -2697,7 +2713,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // is safe whether the old or new header reaches disk: _txn is
                 // unchanged and a pinned reader can walk back to the committed
                 // footer (see commit_parquet_meta).
-                partitionUpdater.commitParquetMeta(cairoConfiguration.getCommitMode() != CommitMode.NOSYNC);
+                //
+                // isSync is the writer's own grade, not the instance-wide mode: _pm
+                // is a structural site, eager under ADAPTIVE, and a table held at
+                // SYNC until it enrols in adaptive still takes the barrier here.
+                partitionUpdater.commitParquetMeta(isSync);
             } catch (Throwable e) {
                 if (isRewrite) {
                     // Rewrite mode: original is intact. Remove the new directory.
@@ -2761,8 +2781,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // the rethrow below must still happen so the caller can react.
                         // fsyncAndClose closes the fd even on failure (no leak), and a
                         // non-durable dead tail is harmless -- the next update rewrites it.
+                        // In sync and adaptive the failed flush has already stopped the
+                        // engine where it was raised.
                         long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
-                        if (cairoConfiguration.getCommitMode() != CommitMode.NOSYNC) {
+                        if (isSync) {
                             ff.fsyncAndClose(fd);
                         } else {
                             ff.close(fd);
@@ -2808,6 +2830,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * Copies every live row group of a Parquet partition into a fresh {@code data.parquet} and {@code _pm} in {@code
      * dstPartitionDir}, dropping the dead bytes in-place O3 updates left behind.
      *
+     * @param commitMode      the grade for the new {@code _pm}'s barrier, resolved through the engine's durability
+     *                        policy ({@link CairoEngine#getResolvedCommitMode()}), never the configured mode: a
+     *                        replica under ADAPTIVE takes no barrier here
      * @param srcPartitionDir the live partition directory, {@code <partition>.<nameTxn>}; trimmed back on return
      * @param dstPartitionDir the staging directory to build into, created here; trimmed back on return
      * @param fallbackSeqTxn  stamped into the new {@code _pm} only when the source footer carries no
@@ -2817,6 +2842,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      */
     static void compactParquetPartition(
             CairoConfiguration configuration,
+            int commitMode,
             FilesFacade ff,
             TableToken tableToken,
             TableRecordMetadata metadata,
@@ -2984,7 +3010,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
             final long newParquetSize = partitionUpdater.updateFileMetadata();
             final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();
-            partitionUpdater.commitParquetMeta(configuration.getCommitMode() != CommitMode.NOSYNC);
+            partitionUpdater.commitParquetMeta(commitMode != CommitMode.NOSYNC);
             LOG.info().$("parquet partition compacted off reader snapshot [table=").$(tableToken)
                     .$(", partition=").$ts(ColumnType.getTimestampDriver(metadata.getTimestampType()), partitionTimestamp)
                     .$(", rowGroups=").$(rowGroupCount)
@@ -3084,7 +3110,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 LOG.error().$("process composite partition error [table=").$(tableWriter.getTableToken())
                         .$(", e=").$(e)
                         .I$();
-                tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+                tableWriter.o3BumpErrorCount(e);
             } finally {
                 tableWriter.o3ClockDownPartitionUpdateCount();
                 tableWriter.o3CountDownDoneLatch();
@@ -3177,7 +3203,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     LOG.error().$("process new partition error [table=").$(tableWriter.getTableToken())
                             .$(", e=").$(e)
                             .I$();
-                    tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+                    tableWriter.o3BumpErrorCount(e);
                     tableWriter.o3ClockDownPartitionUpdateCount();
                     tableWriter.o3CountDownDoneLatch();
                     throw e;
@@ -3876,7 +3902,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         .I$();
                 // Record the error before the partition completes: completing it releases the writer, which
                 // then reads the error count.
-                tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+                tableWriter.o3BumpErrorCount(e);
                 O3CopyJob.closeColumnIdleQuick(0, 0, srcTimestampFd, srcTimestampAddr, srcTimestampSize, tableWriter);
                 throw e;
             }
@@ -5633,7 +5659,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     throw new IllegalStateException("commit mode not supported");
                 }
             } catch (Throwable e) {
-                tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+                tableWriter.o3BumpErrorCount(e);
                 LOG.critical().$("open column error [table=").$(tableWriter.getTableToken())
                         .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                         .$(", e=").$(e)
@@ -5848,7 +5874,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         } catch (Throwable e) {
             // Record the error before the partition can complete: completing it releases the writer, which
             // then reads the error count.
-            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(e));
+            tableWriter.o3BumpErrorCount(e);
             LOG.critical().$("open column error [table=").$(tableWriter.getTableToken())
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                     .$(", e=").$(e)
@@ -6100,6 +6126,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // entry would be undroppable, surfacing stale rows.
                         // No-op on BitmapIndexWriter.
                         indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
+                        // Set the table's effective commit mode before either commit path below. These writers
+                        // come from TableWriter's o3BasketPool and of() does not reset the mode, so without this
+                        // the flush grade would depend on whether the pooled instance last passed through
+                        // O3CopyJob, which sets it.
+                        indexWriter.setCommitMode(tableWriter.getEffectiveCommitMode());
                         if (IndexType.isPosting(indexType)) {
                             // commitDense may seal (spill-driven reseal), rotating the
                             // .pv and recording a purge for the superseded file. The
@@ -6163,7 +6194,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             LOG.error().$("release error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(th)
                     .I$();
-            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
+            tableWriter.o3BumpErrorCount(th);
         } finally {
             tableWriter.o3ClockDownPartitionUpdateCount();
             tableWriter.o3CountDownDoneLatch();
@@ -6209,6 +6240,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long partitionRowCount = srcOooHi - srcOooLo + 1;
         final FilesFacade ff = tableWriter.getFilesFacade();
         final CairoConfiguration configuration = tableWriter.getConfiguration();
+        final boolean isSync = tableWriter.getFlushCommitMode() != CommitMode.NOSYNC;
+        final boolean isPowerLossDurable = CommitMode.isPowerLossDurable(tableWriter.getFlushCommitMode());
         final long partitionNameTxn = txn - 1;
         final long mergeIndexAddr = sortedTimestampsAddr + srcOooLo * TableWriter.TIMESTAMP_MERGE_ENTRY_BYTES;
 
@@ -6311,7 +6344,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             parquetFileSize = ff.length(parquetPath.$());
 
-            if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+            if (isPowerLossDurable) {
+                // Data before metadata: the freshly encoded parquet data must be durable before _pm. ASYNC
+                // flushes _pm alone, as on the base release.
+                TableUtils.fsyncFileDurable(ff, parquetPath.$());
+            }
+            if (isSync) {
                 ff.fsync(parquetMetaFd);
             }
 
@@ -6379,7 +6417,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     LOG.error().$("could not remove fresh parquet partition dir [path=").$(path).I$();
                 }
             }
-            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
+            tableWriter.o3BumpErrorCount(th);
             throw th;
         } finally {
             // Encoder calls descriptor.clear() in its own finally; descriptor

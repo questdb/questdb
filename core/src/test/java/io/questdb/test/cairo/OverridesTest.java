@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.HashJoinBuildMode;
 import org.junit.Assert;
@@ -39,6 +40,9 @@ import org.junit.Test;
  * what building a {@code CairoConfiguration} does, so they do not use {@code assertMemoryLeak()}.
  */
 public class OverridesTest extends AbstractCairoTest {
+    private static final int MAX_UNCOMMITTED_ROWS = 12_345;
+    private static final int PART_COUNT = 16;
+    private static final long WINDOW_US = 5_000;
     // cairo.max.uncommitted.rows as Overrides' own default test properties set it.
     private static final int DEFAULT_TEST_MAX_UNCOMMITTED_ROWS = 1000;
     // cairo.sql.page.frame.min.rows as Overrides' own default test properties set it.
@@ -176,8 +180,82 @@ public class OverridesTest extends AbstractCairoTest {
         Assert.assertEquals(100, configuration.getSqlSymbolInBitsetMaxKeys());
     }
 
+    /**
+     * A setProperty call that leaves the stored properties unchanged must not cancel an earlier pending change.
+     */
+    @Test
+    public void testUnchangingSetPropertyKeepsAPendingChange() {
+        final Overrides overrides = node1.getConfigurationOverrides();
+        overrides.reset();
+        final int defaultPartCount = configuration.getDefaultSeqPartTxnCount();
+        final long defaultWindowUs = configuration.getAdaptiveCommitGroupWindowUs();
+        final int defaultMaxUncommittedRows = configuration.getMaxUncommittedRows();
+        Assert.assertNotEquals(PART_COUNT, defaultPartCount);
+        Assert.assertNotEquals(2 * PART_COUNT, defaultPartCount);
+        Assert.assertNotEquals(WINDOW_US, defaultWindowUs);
+        Assert.assertNotEquals(MAX_UNCOMMITTED_ROWS, defaultMaxUncommittedRows);
+
+        final StringSink lost = new StringSink();
+        for (Change change : Change.values()) {
+            for (Unchanging unchanging : Unchanging.values()) {
+                overrides.reset();
+                overrides.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, PART_COUNT);
+                overrides.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, WINDOW_US);
+                Assert.assertEquals(PART_COUNT, configuration.getDefaultSeqPartTxnCount());
+
+                int expectedPartCount = PART_COUNT;
+                int expectedMaxUncommittedRows = defaultMaxUncommittedRows;
+                switch (change) {
+                    case SET_NEW_KEY -> {
+                        overrides.setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, MAX_UNCOMMITTED_ROWS);
+                        expectedMaxUncommittedRows = MAX_UNCOMMITTED_ROWS;
+                    }
+                    case CHANGE_VALUE -> {
+                        overrides.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 2 * PART_COUNT);
+                        expectedPartCount = 2 * PART_COUNT;
+                    }
+                    case REMOVE_KEY -> {
+                        overrides.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, (String) null);
+                        expectedPartCount = defaultPartCount;
+                    }
+                    case RESET -> {
+                        overrides.reset();
+                        overrides.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, WINDOW_US);
+                        expectedPartCount = defaultPartCount;
+                    }
+                }
+
+                switch (unchanging) {
+                    case SAME_VALUE -> overrides.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, WINDOW_US);
+                    case REMOVE_ABSENT_KEY -> overrides.setProperty(PropertyKey.QUERY_TIMEOUT, (String) null);
+                    case DEFAULT_OF_ABSENT_KEY -> overrides.setProperty(PropertyKey.QUERY_TIMEOUT, 0);
+                }
+
+                final int partCount = configuration.getDefaultSeqPartTxnCount();
+                final long windowUs = configuration.getAdaptiveCommitGroupWindowUs();
+                final int maxUncommittedRows = configuration.getMaxUncommittedRows();
+                if (partCount != expectedPartCount || windowUs != WINDOW_US || maxUncommittedRows != expectedMaxUncommittedRows) {
+                    lost.put(change.name()).put(" then ").put(unchanging.name())
+                            .put(": partCount=").put(partCount).put(" (expected ").put(expectedPartCount)
+                            .put("), windowUs=").put(windowUs).put(" (expected ").put(WINDOW_US)
+                            .put("), maxUncommittedRows=").put(maxUncommittedRows).put(" (expected ").put(expectedMaxUncommittedRows)
+                            .put(")\n");
+                }
+            }
+        }
+        Assert.assertEquals("a stale configuration was served after:\n" + lost, 0, lost.length());
+    }
+
     private static CairoConfiguration configuration() {
         // The engine's configuration reads the overrides on every call.
         return engine.getConfiguration();
+    }
+
+    private enum Change {
+        SET_NEW_KEY, CHANGE_VALUE, REMOVE_KEY, RESET
+    }
+
+    private enum Unchanging {
+        SAME_VALUE, REMOVE_ABSENT_KEY, DEFAULT_OF_ABSENT_KEY
     }
 }

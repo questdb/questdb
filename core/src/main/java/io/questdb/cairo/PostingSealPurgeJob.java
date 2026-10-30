@@ -499,7 +499,9 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     private boolean processRetryQueue() {
         boolean useful = false;
         long now = clock.getTicks();
-        while (!retryQueue.isEmpty()) {
+        // A purge attempt can outlast another task's backoff. Bound this pass to the initial queue size,
+        // otherwise pinned tasks can rotate through the queue forever and monopolize the worker.
+        for (int remaining = retryQueue.size(); remaining > 0 && !retryQueue.isEmpty(); remaining--) {
             RetryEntry head = retryQueue.peek();
             if (head.nextRunTime > now) {
                 return useful;
@@ -508,7 +510,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             useful = true;
             boolean done;
             try {
-                done = operator.purge(head);
+                done = operator.purge(head, false);
             } catch (Throwable th) {
                 LOG.error().$("posting seal purge: operator threw, re-queuing [err=").$(th).I$();
                 done = false;
@@ -572,7 +574,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                     );
                     boolean done;
                     try {
-                        done = operator.purge(entry);
+                        done = operator.purge(entry, true);
                     } catch (Throwable th) {
                         LOG.error().$("posting seal purge: recovery purge failed [err=").$(th).I$();
                         done = false;
