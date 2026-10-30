@@ -86,7 +86,7 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
     private static final String ROW_A = "ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n";
     private static final String STALE_INDEX_ERROR = "index does not cover parquet partition data, rebuild it with REINDEX TABLE ";
 
-    private static void loadFixture(String tableDirName) throws Exception {
+    static void loadFixture(String tableDirName) throws Exception {
         final byte[] buffer = new byte[1024 * 1024];
         final File root = new File(configuration.getDbRoot().toString());
         try (InputStream is = StaleParquetColumnTopTest.class.getResourceAsStream("/parquet-stale-cv-top/" + tableDirName + ".zip")) {
@@ -142,6 +142,7 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
             drainWalQueue();
             execute("alter table bitmap_top alter column s add index type posting");
             drainWalQueue();
+            releaseSavePointHolds("bitmap_top");
 
             // the stale partition got a new directory version with zeroed tops, the index covers the merged rows
             final String[] day1Dirs = tableDir.list((dir, name) -> name.startsWith("2024-01-01"));
@@ -385,6 +386,7 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
             }
 
             engine.releaseAllReaders();
+            releaseSavePointHolds("bitmap_top");
             try (O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1)) {
                 //noinspection StatementWithEmptyBody
                 while (purgeJob.run()) {
@@ -473,6 +475,7 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
 
             execute("insert into " + table + " (ts, x, s) values ('2024-01-01T07:07:00.000000Z', -7, 'z')");
             drainWalQueue();
+            releaseSavePointHolds(table);
 
             final String[] after = tableDir.list((dir, name) -> name.startsWith("2024-01-01"));
             Assert.assertNotNull(after);

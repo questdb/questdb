@@ -371,7 +371,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ParquetPartitionDecoder parquetDecoder;
     private final ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
-    // (partition timestamp, replaced name txn) of the parquet partitions an ADD INDEX reindexed in its transaction
+    // (partition timestamp, replaced name txn) of the parquet partitions a reindex replaced: the ones an ADD INDEX
+    // reindexed in its transaction, or the ones an online REINDEX committed
     private final LongList parquetReindexedPartitions = new LongList();
     // Guards EVERY access to deferredPostingSealPurges + the seal-purge task pool.
     // Parquet index rebuilds run on parallel O3 workers, so several stash seal-purges
@@ -1159,7 +1160,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         prepareStaleParquetPartitionReindexes();
 
         final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
-        boolean committed = false;
+        boolean isTxnWriteStarted = false;
         try {
             writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
 
@@ -1168,15 +1169,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // set the index flag in metadata and create new _meta.swp
             rewriteAndSwapMetadata(metadata);
+            isTxnWriteStarted = true;
             clearTodoAndCommitMeta();
-            committed = true;
 
             indexers.extendAndSet(columnIndex, indexer);
             populateDenseIndexerList();
         } catch (Throwable th) {
             Misc.free(indexer);
-            if (!committed) {
+            // A failed _txn msync does not undo the write: the page cache may hold a _txn that names the reindexed
+            // directories, so they stay, and the distressed writer reloads the state.
+            if (!isTxnWriteStarted) {
                 rollbackParquetPartitionReindexes();
+            } else {
+                parquetReindexedPartitions.clear();
             }
             throw th;
         }
@@ -1184,10 +1189,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
         }
-        for (int i = 0, n = parquetReindexedPartitions.size(); i < n; i += 2) {
-            removeReindexedParquetPartitionDir(parquetReindexedPartitions.getQuick(i), parquetReindexedPartitions.getQuick(i + 1));
-        }
-        parquetReindexedPartitions.clear();
+        // ADD INDEX is in the WAL: a replay from an earlier save point repeats the repair, no save point is needed
+        finishParquetPartitionReindexes(false);
         LOG.info().$("ADDED index to '").$safe(columnName).$('[').$(ColumnType.nameOf(existingType))
                 .$("]' to ").$substr(pathRootSize, path).$();
     }
@@ -4142,6 +4145,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * without resetting the column tops. Commits one node-local transaction per partition and does not go through
      * WAL, so it runs on a replica as well. Each partition gets a new directory version (its parquet files are
      * hard-linked), readers of the old version keep it until they let go.
+     * <p>
+     * No WAL replay redoes it, so on an adaptive table it ends with a best-effort save point: without one, a
+     * recovery to an earlier save point would bring the stale column tops back. The replaced directories are
+     * removed after that save point, see {@link #finishParquetPartitionReindexes}.
      *
      * @param partitionName the partition to reindex, or null for every parquet partition of the table
      */
@@ -4153,36 +4160,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (inTransaction()) {
             commit();
         }
-        if (partitionName != null) {
-            final long partitionTimestamp = PartitionBy.parsePartitionDirName(partitionName, timestampType, partitionBy);
-            final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-            if (partitionIndex < 0) {
-                throw CairoException.nonCritical().put("partition does not exist [table=").put(tableToken.getTableName())
-                        .put(", partition=").put(partitionName).put(']');
-            }
-            if (!txWriter.isPartitionParquet(partitionIndex)) {
-                throw CairoException.nonCritical().put("partition is not parquet, use REINDEX ... LOCK EXCLUSIVE [table=")
-                        .put(tableToken.getTableName()).put(", partition=").put(partitionName).put(']');
-            }
-            if (txWriter.isPartitionReadOnly(partitionIndex) || txWriter.isPartitionRemote(partitionIndex)) {
-                throw CairoException.nonCritical().put("cannot reindex read-only or remote partition [table=")
-                        .put(tableToken.getTableName()).put(", partition=").put(partitionName).put(']');
-            }
-            reindexParquetPartition(partitionIndex);
-        } else {
-            for (int partitionIndex = 0; partitionIndex < txWriter.getPartitionCount(); partitionIndex++) {
-                if (!txWriter.isPartitionParquet(partitionIndex)) {
-                    continue;
+        parquetReindexedPartitions.clear();
+        try {
+            reindexParquetPartitions0(partitionName);
+        } catch (Throwable th) {
+            // The partitions committed before the failure still get their save point and housekeeping
+            if (!distressed) {
+                try {
+                    finishParquetPartitionReindexes(true);
+                } catch (Throwable e) {
+                    th.addSuppressed(e);
                 }
-                if (txWriter.isPartitionReadOnly(partitionIndex) || txWriter.isPartitionRemote(partitionIndex)) {
-                    LOG.info().$("skipping read-only or remote partition in reindex [table=").$(tableToken)
-                            .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(partitionIndex))
-                            .I$();
-                    continue;
-                }
-                reindexParquetPartition(partitionIndex);
             }
+            parquetReindexedPartitions.clear();
+            throw th;
         }
+        finishParquetPartitionReindexes(true);
     }
 
     /**
@@ -10024,6 +10017,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Post-commit housekeeping of the parquet partitions a reindex replaced, listed in
+     * {@link #parquetReindexedPartitions}: removes each replaced directory version once no reader or save point
+     * holds it. A failure here must not undo the committed transactions.
+     *
+     * @param isOutsideWal the reindex did not go through WAL, so no replay redoes it: take a best-effort save
+     *                     point first, or a recovery to an earlier one would bring the stale column tops back
+     */
+    private void finishParquetPartitionReindexes(boolean isOutsideWal) {
+        try {
+            if (parquetReindexedPartitions.size() == 0) {
+                return;
+            }
+            if (isOutsideWal) {
+                try {
+                    advanceDurableEpochAfter("parquet reindex");
+                } catch (Throwable th) {
+                    handleHousekeepingException(th);
+                }
+            }
+            for (int i = 0, n = parquetReindexedPartitions.size(); i < n; i += 2) {
+                removeReindexedParquetPartitionDir(parquetReindexedPartitions.getQuick(i), parquetReindexedPartitions.getQuick(i + 1));
+            }
+        } finally {
+            parquetReindexedPartitions.clear();
+        }
+    }
+
+    /**
      * JOIN (PARTITION_COMPACTION.md): folds the longest run of {@code partitionIndex}'s pieces that are
      * neighbours both in ordinal order and in the directory's column files (adjacent {@code rowOffset}s).
      *
@@ -10798,12 +10819,55 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!prepareParquetPartitionReindex(partitionIndex, false)) {
             return;
         }
-        if (columnVersionWriter.hasChanges()) {
-            columnVersionWriter.commit();
-            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        try {
+            if (columnVersionWriter.hasChanges()) {
+                columnVersionWriter.commit();
+                txWriter.setColumnVersion(columnVersionWriter.getVersion());
+            }
+            commitTxWriter();
+        } catch (Throwable th) {
+            // A failed _txn msync does not undo the write: the page cache may hold a _txn that names the new
+            // directory, so it stays. The in-memory _txn and _cv already name it too, so the writer must reload.
+            distressed = true;
+            if (engine.isDataSyncFailureFatal(th)) {
+                engine.handleDataSyncFailure(th);
+            }
+            throw th;
         }
-        commitTxWriter();
-        removeReindexedParquetPartitionDir(partitionTimestamp, partitionNameTxn);
+        parquetReindexedPartitions.add(partitionTimestamp, partitionNameTxn);
+    }
+
+    private void reindexParquetPartitions0(@Nullable CharSequence partitionName) {
+        if (partitionName != null) {
+            final long partitionTimestamp = PartitionBy.parsePartitionDirName(partitionName, timestampType, partitionBy);
+            final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+            if (partitionIndex < 0) {
+                throw CairoException.nonCritical().put("partition does not exist [table=").put(tableToken.getTableName())
+                        .put(", partition=").put(partitionName).put(']');
+            }
+            if (!txWriter.isPartitionParquet(partitionIndex)) {
+                throw CairoException.nonCritical().put("partition is not parquet, use REINDEX ... LOCK EXCLUSIVE [table=")
+                        .put(tableToken.getTableName()).put(", partition=").put(partitionName).put(']');
+            }
+            if (txWriter.isPartitionReadOnly(partitionIndex) || txWriter.isPartitionRemote(partitionIndex)) {
+                throw CairoException.nonCritical().put("cannot reindex read-only or remote partition [table=")
+                        .put(tableToken.getTableName()).put(", partition=").put(partitionName).put(']');
+            }
+            reindexParquetPartition(partitionIndex);
+        } else {
+            for (int partitionIndex = 0; partitionIndex < txWriter.getPartitionCount(); partitionIndex++) {
+                if (!txWriter.isPartitionParquet(partitionIndex)) {
+                    continue;
+                }
+                if (txWriter.isPartitionReadOnly(partitionIndex) || txWriter.isPartitionRemote(partitionIndex)) {
+                    LOG.info().$("skipping read-only or remote partition in reindex [table=").$(tableToken)
+                            .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(partitionIndex))
+                            .I$();
+                    continue;
+                }
+                reindexParquetPartition(partitionIndex);
+            }
+        }
     }
 
     /**
@@ -13781,11 +13845,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (parquetRewriteColumnIndexes.size() > 0) {
                 rebuildParquetRewriteIndexes(partitionTimestamp, newPartitionNameTxn, parquetFileSize, newPartitionDirLen, parquetRewriteColumnIndexes, false);
             }
+            // The index files are the last write into the new directory; the commit that names it comes next
+            fsyncConvertedPartitionDir(partitionTimestamp);
         } catch (Throwable th) {
             // Nothing is committed: drop the column top changes and the new directory.
             columnVersionWriter.readUnsafe();
             if (newDirCreated && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove partition dir after failed reindex [path=").$(other).I$();
+            }
+            if (engine.isDataSyncFailureFatal(th)) {
+                distressed = true;
+                engine.handleDataSyncFailure(th);
             }
             throw th;
         } finally {
@@ -16969,6 +17039,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$();
             parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
             parquetDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            final int flushCommitMode = getFlushCommitMode();
             for (int i = 0, n = columnIndexes.size(); i < n; i++) {
                 final int columnIndex = columnIndexes.getQuick(i);
                 final byte indexType = metadata.getColumnIndexType(columnIndex);
@@ -16992,6 +17063,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             normalizeColumnTops,
                             partitionNameTxn
                     );
+                    // The commit that names the new directory follows, and nothing else flushes these files: a
+                    // closed index writer leaves them to the kernel's writeback. Under ADAPTIVE the save point
+                    // flushes them, under NOSYNC nothing does, as for the columns.
+                    if (CommitMode.appliesColumnSync(flushCommitMode)) {
+                        parquetRewriteIndexer.sync(flushCommitMode == CommitMode.ASYNC);
+                    }
                 } finally {
                     parquetRewriteIndexer.clear();
                     path.trimTo(partitionDirLen);
@@ -17732,7 +17809,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Post-commit housekeeping of a reindexed parquet partition: removes the replaced directory version once no
-     * reader holds it. A failure here must not undo the committed transaction.
+     * reader or save point holds it, else leaves it to the async purge. A failure here must not undo the committed
+     * transaction.
      */
     private void removeReindexedParquetPartitionDir(long partitionTimestamp, long partitionNameTxn) {
         final boolean isLastPartition = partitionTimestamp == txWriter.getLastPartitionTimestamp();
