@@ -202,6 +202,10 @@ public class SqlOptimiser implements Mutable {
     // we've to use it because group by is likely to contain rewritten/aliased expressions that make matching input expressions by pure AST unreliable
     private final ObjList<CharSequence> groupByAliases = new ObjList<>();
     private final ObjList<ExpressionNode> groupByNodes = new ObjList<>();
+    // Window literals that use an alias naming the column only in the inner virtual model, paired with
+    // the translating model name of the same column. See rewriteSelectClause0().
+    private final ObjList<CharSequence> innerAliasWindowLiteralNames = new ObjList<>();
+    private final ObjList<ExpressionNode> innerAliasWindowLiterals = new ObjList<>();
     // Collects inner window models for nested window functions (e.g., sum(row_number() OVER ()) OVER ())
     private final ObjList<IQueryModel> innerWindowModels = new ObjList<>();
     private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
@@ -437,6 +441,8 @@ public class SqlOptimiser implements Mutable {
         tableFactoryModelsInFlight.clear();
         groupByAliases.clear();
         groupByNodes.clear();
+        innerAliasWindowLiteralNames.clear();
+        innerAliasWindowLiterals.clear();
         innerWindowModels.clear();
         lateralCountCarrierRefCounts.clear();
         lateralCountTemplateMap.clear();
@@ -4151,8 +4157,16 @@ public class SqlOptimiser implements Mutable {
                     return n;
                 }
             } else {
-                // Column already referenced - return existing alias
-                return nextLiteral(columnNameToAliasMap.valueAt(index), node.position);
+                // Column already referenced - return existing alias. When the projection selects the column
+                // under another name, the alias names the column only in the inner virtual model; below it,
+                // the name may be missing or name another column. Remember the translating model name too,
+                // in case rewriteSelectClause0() cancels the inner virtual model.
+                final ExpressionNode aliasLiteral = nextLiteral(columnNameToAliasMap.valueAt(index), node.position);
+                if (!Chars.equalsIgnoreCase(aliasLiteral.token, n.token)) {
+                    innerAliasWindowLiterals.add(aliasLiteral);
+                    innerAliasWindowLiteralNames.add(n.token);
+                }
+                return aliasLiteral;
             }
         }
         return doReplaceLiteral0(node, translatingModel, innerVirtualModel, baseModel, addColumnToInnerVirtualModel, preserveQualifiedNames);
@@ -11229,6 +11243,12 @@ public class SqlOptimiser implements Mutable {
                         orderByModel.addOrderBy(orderBy.getQuick(i), orderByDirection.getQuick(i));
                     }
                     nested.clearOrderBy();
+                    // LIMIT must apply to the sorted rows, so move it to the wrapper along with ORDER BY.
+                    // Left on the original model, it would cut the rows in hash order, before the sort (#7746).
+                    if (originalSbModel.getLimitLo() != null || originalSbModel.getLimitHi() != null) {
+                        model.setLimitPosition(originalSbModel.getLimitPosition());
+                        model.moveLimitFrom(originalSbModel);
+                    }
                 }
             }
 
@@ -12879,6 +12899,8 @@ public class SqlOptimiser implements Mutable {
 
         groupByAliases.clear();
         groupByNodes.clear();
+        innerAliasWindowLiteralNames.clear();
+        innerAliasWindowLiterals.clear();
         innerWindowModels.clear();
         clearWindowFunctionHashMap();
 
@@ -13425,6 +13447,19 @@ public class SqlOptimiser implements Mutable {
                 }
             }
         }
+
+        // The window model reads the translating model when the inner virtual model is cancelled, so a window
+        // literal that names a column by an inner virtual model alias must use the translating model name.
+        // A kept inner virtual model exposes both names, and the literal keeps the alias: renaming it would
+        // order the window by another copy of the timestamp than the one the code generator designates,
+        // which forces a sort and rejects a RANGE frame.
+        if ((rewriteStatus & REWRITE_STATUS_USE_INNER_MODEL) == 0) {
+            for (int i = 0, n = innerAliasWindowLiterals.size(); i < n; i++) {
+                innerAliasWindowLiterals.getQuick(i).token = innerAliasWindowLiteralNames.getQuick(i);
+            }
+        }
+        innerAliasWindowLiteralNames.clear();
+        innerAliasWindowLiterals.clear();
 
         // When innerVirtualModel is not used but we have innerWindowModels,
         // copy renamed aliases from innerVirtualModel to translatingModel.
