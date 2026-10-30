@@ -38,6 +38,7 @@ import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpGorillaEncoder;
 import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.std.Decimals;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.Long256;
 import io.questdb.std.Misc;
@@ -169,6 +170,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         final int n = columnCount;
         final QwpColumnScratch[] scs = scratchesArr;
         final byte[] wts = wireTypesArr;
+        final int[] qts = qdbTypesArr;
         final SymbolTable[] sts = symbolTablesArr;
         for (int ci = 0; ci < n; ci++) {
             final QwpColumnScratch scratch = scs[ci];
@@ -180,11 +182,17 @@ public class QwpResultBatchBuffer implements QuietCloseable {
             // vector. Those types take the per-row fallback which uses
             // {@code record.getX} to distinguish correctly.
             switch (wt) {
+                case QwpConstants.TYPE_DECIMAL64:
+                    if (ColumnType.tagOf(qts[ci]) != ColumnType.DECIMAL64) {
+                        // DECIMAL8/16/32 store 1/2/4 bytes per row; widen them per row.
+                        perColumnRowLoop(record, lo, hi, ci);
+                        break;
+                    }
+                    // fall through: DECIMAL64 storage is 8 bytes per row, like LONG
                 case QwpConstants.TYPE_LONG:
                 case QwpConstants.TYPE_DATE:
                 case QwpConstants.TYPE_TIMESTAMP:
-                case QwpConstants.TYPE_TIMESTAMP_NANOS:
-                case QwpConstants.TYPE_DECIMAL64: {
+                case QwpConstants.TYPE_TIMESTAMP_NANOS: {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
                         fillNulls(scratch, rows);
@@ -767,6 +775,30 @@ public class QwpResultBatchBuffer implements QuietCloseable {
         return count;
     }
 
+    /**
+     * Reads a DECIMAL8/16/32/64 cell as a DECIMAL64 mantissa, mapping each narrow
+     * type's NULL sentinel to {@link Decimals#DECIMAL64_NULL}. The narrow sentinels
+     * (the type's MIN_VALUE) lie outside the type's precision, so no real value
+     * collides with them.
+     */
+    private static long readDecimal64(Record record, int col, int questdbColumnType) {
+        return switch (ColumnType.tagOf(questdbColumnType)) {
+            case ColumnType.DECIMAL8 -> {
+                byte v = record.getDecimal8(col);
+                yield v == Decimals.DECIMAL8_NULL ? Decimals.DECIMAL64_NULL : v;
+            }
+            case ColumnType.DECIMAL16 -> {
+                short v = record.getDecimal16(col);
+                yield v == Decimals.DECIMAL16_NULL ? Decimals.DECIMAL64_NULL : v;
+            }
+            case ColumnType.DECIMAL32 -> {
+                int v = record.getDecimal32(col);
+                yield v == Decimals.DECIMAL32_NULL ? Decimals.DECIMAL64_NULL : v;
+            }
+            default -> record.getDecimal64(col);
+        };
+    }
+
     private static long readGeoBits(Record record, int col, int precisionBits) {
         if (precisionBits <= 7) return record.getGeoByte(col);
         if (precisionBits <= 15) return record.getGeoShort(col);
@@ -938,7 +970,7 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 break;
             }
             case QwpConstants.TYPE_DECIMAL64:
-                scratch.appendLongOrNull(record.getDecimal64(ci));
+                scratch.appendLongOrNull(readDecimal64(record, ci, qt));
                 break;
             case QwpConstants.TYPE_DECIMAL128: {
                 record.getDecimal128(ci, scratch.decimal128Sink);
