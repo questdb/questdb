@@ -233,12 +233,12 @@ public abstract class AbstractBootstrapTest extends AbstractTest {
             // faults nondeterministic. Tests that exercise persistence opt in explicitly.
             writer.println(METRICS_PERSIST_ENABLED + "=false");
             writer.println(MEMORY_USAGE_LOG_ENABLED + "=false");
-            // The suite's commit mode, so the end-to-end suites exercise the same path as everything else.
-            // These classes extend AbstractTest rather than AbstractCairoTest, so they never pass through
-            // Overrides and would otherwise follow the shipped default.
+            // The suite's commit mode, or a fuzz test class's own, so the end-to-end suites exercise the same
+            // path as everything else. These classes extend AbstractTest rather than AbstractCairoTest, so they
+            // never pass through Overrides and would otherwise follow the shipped default.
             // A caller that wants a different mode passes it in `extra`, which is written after this and
             // wins on a repeated key.
-            writer.println(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath() + "=" + Overrides.TEST_COMMIT_MODE);
+            writer.println(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath() + "=" + Overrides.getTestCommitMode());
             writer.println(TELEMETRY_ENABLED + "=" + telemetryEnable);
             writer.println(TELEMETRY_DISABLE_COMPLETELY + "=" + !telemetryEnable);
 

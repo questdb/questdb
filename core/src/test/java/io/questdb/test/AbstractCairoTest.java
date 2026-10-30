@@ -439,6 +439,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
     @Before
     public void setUp() {
         super.setUp();
+        // A fuzz test class runs under its own commit mode - see AbstractTest.fuzzCommitModeRule. Set for every
+        // test, since tearDown clears the overrides, and ahead of the test so a mode the test pins still wins.
+        final String fuzzCommitMode = Overrides.getFuzzCommitMode();
+        if (fuzzCommitMode != null) {
+            forEachNode(node -> {
+                if (!node.getConfigurationOverrides().isPropertySet(PropertyKey.CAIRO_COMMIT_MODE)) {
+                    node.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_COMMIT_MODE, fuzzCommitMode);
+                }
+            });
+        }
         previousSuspensionMode = SuspensionScope.enter(SuspensionScope.Mode.BLOCKING);
         SharedRandom.RANDOM.set(new Rnd());
         isCompositePartitionRandomisationEnabled = false;

@@ -28,18 +28,22 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CompositeAwarePartitionFrameCursor;
 import io.questdb.cairo.FullBwdPartitionFrameCursor;
 import io.questdb.cairo.FullFwdPartitionFrameCursor;
+import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PartitionFrame;
+import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.LongList;
 import io.questdb.test.AbstractCairoTest;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
 
 /**
  * Direct tests for {@link CompositeAwarePartitionFrameCursor}: non-composite passthrough, per-piece
- * splitting in both directions, and resume across {@code next()} calls. The end-to-end behavior these
+ * splitting in both directions, resume across {@code next()} calls, and splitting a parquet partition with an
+ * index row map into runs of row groups with contiguous index rows. The end-to-end behavior these
  * primitives support is covered by {@code CoveringIndexTest} and {@code PostingIndexDistinctRecordCursorFactory}
  * composite-partition tests; this class isolates the wrapper's own contract.
  */
@@ -162,6 +166,170 @@ public class CompositeAwarePartitionFrameCursorTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testParquetIndexRowMapClipsRunsToPartialRanges() throws Exception {
+        // Every partial partition-row range [lo, hi), as an interval filter would produce, must map to the
+        // index rows of exactly its own rows, with the run extension stopping at the range bounds. The oracle
+        // maps each row on its own and merges consecutive index rows, so it shares no code with the run walk.
+        assertMemoryLeak(() -> {
+            final TableToken tt = createIndexRowMapTable("t_pq_clip");
+            final LongList rowShifts = new LongList();
+            try (TableReader reader = engine.getReader(tt)) {
+                reader.openPartition(0);
+                final ParquetMetaFileReader metadata = reader.getAndInitParquetPartitionDecoder(0).metadata();
+                Assert.assertTrue("test precondition: the in-place update must write an index row map", metadata.hasIndexRowMap());
+                long rowGroupStartRow = 0;
+                for (int i = 0, n = metadata.getRowGroupCount(); i < n; i++) {
+                    final long shift = metadata.getRowGroupIndexRowLo(i, rowGroupStartRow) - rowGroupStartRow;
+                    for (long r = 0, size = metadata.getRowGroupSize(i); r < size; r++) {
+                        rowShifts.add(shift);
+                    }
+                    rowGroupStartRow += metadata.getRowGroupSize(i);
+                }
+
+                final LongList ranges = new LongList();
+                for (int lo = 0, rowCount = rowShifts.size(); lo < rowCount; lo++) {
+                    for (int hi = lo + 1; hi <= rowCount; hi++) {
+                        ranges.clear();
+                        metadata.collectIndexRowRanges(lo, hi, ranges);
+                        Assert.assertEquals("collectIndexRowRanges [" + lo + ", " + hi + ')', expectedIndexRowRanges(rowShifts, lo, hi), ranges);
+                    }
+                }
+            }
+
+            final ClippedFwdPartitionFrameCursor delegate = new ClippedFwdPartitionFrameCursor();
+            delegate.of(engine.getReader(tt));
+            try (CompositeAwarePartitionFrameCursor cursor = new CompositeAwarePartitionFrameCursor()) {
+                final LongList actual = new LongList();
+                final LongList ascending = new LongList();
+                for (int lo = 0, rowCount = rowShifts.size(); lo < rowCount; lo++) {
+                    for (int hi = lo + 1; hi <= rowCount; hi++) {
+                        final LongList expected = expectedIndexRowRanges(rowShifts, lo, hi);
+                        for (boolean descending : new boolean[]{false, true}) {
+                            delegate.clipPartition0(lo, hi);
+                            cursor.of(delegate, descending);
+                            actual.clear();
+                            PartitionFrame frame;
+                            while ((frame = cursor.next()) != null) {
+                                if (frame.getPartitionIndex() == 0) {
+                                    actual.add(frame.getRowLo(), frame.getRowHi());
+                                }
+                            }
+                            if (descending) {
+                                // frames come highest first; flip the pairs back to ascending order
+                                ascending.clear();
+                                for (int i = actual.size() - 2; i >= 0; i -= 2) {
+                                    ascending.add(actual.getQuick(i), actual.getQuick(i + 1));
+                                }
+                                Assert.assertEquals("descending [" + lo + ", " + hi + ')', expected, ascending);
+                            } else {
+                                Assert.assertEquals("ascending [" + lo + ", " + hi + ')', expected, actual);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testParquetIndexRowMapMergesRowGroupsWithContiguousIndexRows() throws Exception {
+        // One frame per run of row groups that share a shift, not one per row group: an in-place update of a
+        // middle row group leaves three runs (before it, the rewritten row group, after it).
+        assertMemoryLeak(() -> {
+            final TableToken tt = createIndexRowMapTable("t_pq");
+            final LongList expected = new LongList();
+            try (TableReader reader = engine.getReader(tt)) {
+                reader.openPartition(0);
+                final ParquetMetaFileReader metadata = reader.getAndInitParquetPartitionDecoder(0).metadata();
+                Assert.assertTrue("test precondition: the in-place update must write an index row map", metadata.hasIndexRowMap());
+                Assert.assertEquals(10, metadata.getRowGroupCount());
+                long rowGroupStartRow = 0;
+                for (int i = 0, n = metadata.getRowGroupCount(); i < n; i++) {
+                    final long indexRowLo = metadata.getRowGroupIndexRowLo(i, rowGroupStartRow);
+                    final long indexRowHi = indexRowLo + metadata.getRowGroupSize(i);
+                    if (expected.size() > 0 && expected.getLast() == indexRowLo) {
+                        expected.setQuick(expected.size() - 1, indexRowHi);
+                    } else {
+                        expected.add(indexRowLo, indexRowHi);
+                    }
+                    rowGroupStartRow += metadata.getRowGroupSize(i);
+                }
+                Assert.assertEquals("expected three runs of row groups", 6, expected.size());
+
+                final LongList ranges = new LongList();
+                metadata.collectIndexRowRanges(0, rowGroupStartRow, ranges);
+                Assert.assertEquals(expected, ranges);
+            }
+
+            for (boolean descending : new boolean[]{false, true}) {
+                final TableReader reader = engine.getReader(tt);
+                final LongList actual = new LongList();
+                try (CompositeAwarePartitionFrameCursor cursor = new CompositeAwarePartitionFrameCursor()) {
+                    if (descending) {
+                        final FullBwdPartitionFrameCursor delegate = new FullBwdPartitionFrameCursor();
+                        delegate.of(reader);
+                        cursor.of(delegate, true);
+                    } else {
+                        final FullFwdPartitionFrameCursor delegate = new FullFwdPartitionFrameCursor();
+                        delegate.of(reader);
+                        cursor.of(delegate, false);
+                    }
+                    PartitionFrame frame;
+                    while ((frame = cursor.next()) != null) {
+                        if (frame.getPartitionIndex() == 0) {
+                            actual.add(frame.getRowLo(), frame.getRowHi());
+                        }
+                    }
+                }
+                if (descending) {
+                    // frames come highest first; flip the pairs back to ascending order
+                    final LongList ascending = new LongList();
+                    for (int i = actual.size() - 2; i >= 0; i -= 2) {
+                        ascending.add(actual.getQuick(i), actual.getQuick(i + 1));
+                    }
+                    Assert.assertEquals("descending", expected, ascending);
+                } else {
+                    Assert.assertEquals("ascending", expected, actual);
+                }
+            }
+        });
+    }
+
+    private static LongList expectedIndexRowRanges(LongList rowShifts, long lo, long hi) {
+        final LongList expected = new LongList();
+        for (long r = lo; r < hi; r++) {
+            final long indexRow = r + rowShifts.getQuick((int) r);
+            if (expected.size() > 0 && expected.getLast() == indexRow) {
+                expected.setQuick(expected.size() - 1, indexRow + 1);
+            } else {
+                expected.add(indexRow, indexRow + 1);
+            }
+        }
+        return expected;
+    }
+
+    /**
+     * Builds a WAL table whose partition 0 is a parquet partition of 4-row row groups with an index row map: an
+     * in-place O3 update rewrites row group 4, moving it to fresh index rows past the end.
+     */
+    private TableToken createIndexRowMapTable(String tableName) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+        execute("CREATE TABLE " + tableName + " (sym SYMBOL INDEX TYPE POSTING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO " + tableName +
+                " SELECT rnd_symbol('a', 'b', 'c'), timestamp_sequence('2024-01-01', 60_000_000L) FROM long_sequence(40)");
+        execute("INSERT INTO " + tableName + " VALUES ('a', '2024-01-02')");
+        drainWalQueue();
+        execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+        drainWalQueue();
+        // lands in row group 4 (minutes 16-19), which the update rewrites in place
+        execute("INSERT INTO " + tableName + " VALUES ('b', '2024-01-01T00:17:30')");
+        drainWalQueue();
+        return engine.verifyTableName(tableName);
+    }
+
     /**
      * Builds a WAL table with a genuinely multi-piece (not just single-piece-with-offset) composite
      * partition 0: a full day of filler rows, committed first, then two cold-gap-separated backdated
@@ -188,5 +356,55 @@ public class CompositeAwarePartitionFrameCursorTest extends AbstractCairoTest {
         drainWalQueue();
 
         return engine.verifyTableName(tableName);
+    }
+
+    /**
+     * Clips partition 0's frame to partition rows {@code [lo, hi)}, as an interval-filtered cursor would.
+     */
+    private static class ClippedFwdPartitionFrameCursor extends FullFwdPartitionFrameCursor implements PartitionFrame {
+        private PartitionFrame base;
+        private long rowHi;
+        private long rowLo;
+
+        @Override
+        public ParquetPartitionDecoder getParquetMetaDecoder() {
+            return base.getParquetMetaDecoder();
+        }
+
+        @Override
+        public byte getPartitionFormat() {
+            return base.getPartitionFormat();
+        }
+
+        @Override
+        public int getPartitionIndex() {
+            return base.getPartitionIndex();
+        }
+
+        @Override
+        public long getRowHi() {
+            return rowHi;
+        }
+
+        @Override
+        public long getRowLo() {
+            return rowLo;
+        }
+
+        @Override
+        public @Nullable PartitionFrame next(long skipTarget) {
+            final PartitionFrame frame = super.next(skipTarget);
+            if (frame == null || frame.getPartitionIndex() != 0) {
+                return frame;
+            }
+            base = frame;
+            return this;
+        }
+
+        void clipPartition0(long lo, long hi) {
+            rowLo = lo;
+            rowHi = hi;
+            toTop();
+        }
     }
 }

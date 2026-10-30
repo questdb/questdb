@@ -115,7 +115,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testAdaptiveConvertToParquetWalFailedDataFsyncIsFailStop() throws Exception {
-        assertConvertToParquetSyncFailure("adaptive", true, new FsyncFailureFacade("produceParquetFromNative", 0, false));
+        assertConvertToParquetSyncFailure("adaptive", true, new FsyncFailureFacade("convertLogicalPartitionToParquet", 0, false));
     }
 
     @Test
@@ -212,7 +212,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testAsyncConvertToParquetNonWalFailedPmFsyncIsNotFailStop() throws Exception {
         // ASYNC fsyncs _pm and the partition directory but not data.parquet, so the first fsync is that of _pm
-        assertConvertToParquetSyncFailure("async", false, new FsyncFailureFacade("produceParquetFromNative", 0, false));
+        assertConvertToParquetSyncFailure("async", false, new FsyncFailureFacade("convertLogicalPartitionToParquet", 0, false));
     }
 
     @Test
@@ -472,23 +472,23 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testSyncConvertToParquetNonWalFailedDataFsyncIsFailStop() throws Exception {
-        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("produceParquetFromNative", 0, false));
+        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("convertLogicalPartitionToParquet", 0, false));
     }
 
     @Test
     public void testSyncConvertToParquetNonWalFailedDirFsyncIsFailStop() throws Exception {
         Assume.assumeFalse("a directory takes no fsync on Windows", Os.isWindows());
-        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("produceParquetFromNative", 2, false));
+        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("convertLogicalPartitionToParquet", 2, false));
     }
 
     @Test
     public void testSyncConvertToParquetNonWalFailedPmFsyncIsFailStop() throws Exception {
-        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("produceParquetFromNative", 1, false));
+        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("convertLogicalPartitionToParquet", 1, false));
     }
 
     @Test
     public void testSyncConvertToParquetNonWalFailedTxnMsyncIsFailStop() throws Exception {
-        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("commitTxWriter", 0, true));
+        assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("commitTxWithStorageVersionSync", 0, true));
     }
 
     @Test
@@ -523,7 +523,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testSyncConvertToParquetWalFailedDataFsyncIsFailStop() throws Exception {
-        assertConvertToParquetSyncFailure("sync", true, new FsyncFailureFacade("produceParquetFromNative", 0, false));
+        assertConvertToParquetSyncFailure("sync", true, new FsyncFailureFacade("convertLogicalPartitionToParquet", 0, false));
     }
 
     @Test
@@ -554,46 +554,6 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testSyncNewTableWalIdSurvivesCrash() throws Exception {
         assertNewTableWalIdSurvivesCrash("sync", new CrashFaultFilesFacade());
-    }
-
-    @Test
-    public void testSyncSwitchToParquetNonWalFailedBarrierIsFailStop() throws Exception {
-        assertSyncSchemaChangeBarrierFailureIsFailStop(false, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, "fsyncConvertedPartitionDir");
-    }
-
-    @Test
-    public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenCrashReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, true, false, false);
-    }
-
-    @Test
-    public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenRestartReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, false, false, false);
-    }
-
-    @Test
-    public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenVacuumThenCrashReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, true, false, true);
-    }
-
-    @Test
-    public void testSyncSwitchToParquetNonWalFailedTxnMsyncThenWriterOpenThenCrashReadsTable() throws Exception {
-        assertSyncConvertTxnMsyncFailureKeepsTable(this::stageConvertedParquetForSwitch, this::switchFirstPartitionToParquet, "switchNativePartitionWithParquet", true, true, true, false);
-    }
-
-    @Test
-    public void testSyncSwitchToParquetNonWalSurvivesCrash() throws Exception {
-        assertSyncSchemaChangeSurvivesCrash(false, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, this::assertParquetPartitionNames);
-    }
-
-    @Test
-    public void testSyncSwitchToParquetWalFailedBarrierIsFailStop() throws Exception {
-        assertSyncSchemaChangeBarrierFailureIsFailStop(true, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, "fsyncConvertedPartitionDir");
-    }
-
-    @Test
-    public void testSyncSwitchToParquetWalSurvivesCrash() throws Exception {
-        assertSyncSchemaChangeSurvivesCrash(true, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, this::assertParquetPartitionNames);
     }
 
     @Test
@@ -1146,7 +1106,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
             @Override
             public void msync(long addr, long len, boolean async) {
-                if (isArmed && !async && isCalledFrom("commitTxWriter") && isCalledFrom(operation)) {
+                if (isArmed && !async && isCalledFrom("commitTxWithStorageVersionSync") && isCalledFrom(operation)) {
                     isArmed = false;
                     failureCount++;
                     // nothing of the new _txn reaches the device
@@ -1590,24 +1550,6 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Leaves the real {@code data.parquet} and {@code _pm} of the first partition in its native partition
-     * directory, so that the switched partition reads back: converts the partition to parquet, keeps both files
-     * and converts it back.
-     */
-    private void stageConvertedParquetForSwitch() throws Exception {
-        convertFirstPartitionToParquet();
-        final File stageDir = temp.newFolder();
-        final String[] names = {TableUtils.PARQUET_PARTITION_NAME, TableUtils.PARQUET_METADATA_FILE_NAME};
-        for (String name : names) {
-            java.nio.file.Files.copy(new File(firstPartitionDir(), name).toPath(), new File(stageDir, name).toPath());
-        }
-        execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
-        for (String name : names) {
-            java.nio.file.Files.copy(new File(stageDir, name).toPath(), new File(firstPartitionDir(), name).toPath());
-        }
-    }
-
-    /**
      * Converts the first partition to parquet, detaches it and leaves it ready to attach without its {@code _pm},
      * which ATTACH then regenerates.
      */
@@ -1620,41 +1562,6 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
             attachable.of(root).concat(tableDir).concat("2024-01-01").put(configuration.getAttachPartitionSuffix()).$();
             Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(detached.$(), attachable.$()));
             Assert.assertTrue(Files.remove(attachable.concat(TableUtils.PARQUET_METADATA_FILE_NAME).$()));
-        }
-    }
-
-    /**
-     * Leaves {@code data.parquet} and {@code _pm} in the first, native partition, as the cold storage job does
-     * before it switches the partition to them. The switch only links them, so empty files do.
-     */
-    private void stageParquetForSwitch() throws Exception {
-        drainWalQueue();
-        try (TableReader reader = engine.getReader(engine.verifyTableName("x")); Path path = new Path()) {
-            path.of(root).concat(reader.getTableToken().getDirName());
-            TableUtils.setPathForNativePartition(
-                    path,
-                    reader.getMetadata().getTimestampType(),
-                    reader.getPartitionedBy(),
-                    reader.getPartitionTimestampByIndex(0),
-                    reader.getPartitionNameTxnByIndex(0)
-            );
-            final int partitionDirLen = path.size();
-            Assert.assertTrue(Files.touch(path.concat(TableUtils.PARQUET_PARTITION_NAME).$()));
-            Assert.assertTrue(Files.touch(path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$()));
-        }
-    }
-
-    /**
-     * Switches the first partition to its staged parquet file the way the cold storage job does: marks the file
-     * ready, then switches. The switch creates a new partition directory and links the parquet and index files
-     * into it.
-     */
-    private void switchFirstPartitionToParquet() {
-        try (TableWriter writer = getWriter("x")) {
-            final long partitionTimestamp = writer.getTxWriter().getPartitionTimestampByIndex(0);
-            Assert.assertTrue(writer.markPartitionParquetReady(partitionTimestamp));
-            final long parquetFileSize = new File(firstPartitionDir(), TableUtils.PARQUET_PARTITION_NAME).length();
-            Assert.assertEquals(TableWriter.SWITCH_OK, writer.switchNativePartitionWithParquet(partitionTimestamp, parquetFileSize));
         }
     }
 

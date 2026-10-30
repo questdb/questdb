@@ -39,8 +39,10 @@ import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Rnd;
 import io.questdb.std.Zip;
 import io.questdb.test.cutlass.http.HttpQueryTestBuilder;
+import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -75,6 +77,35 @@ public class AbstractTest {
         public void evaluate() throws Throwable {
             classThread = Thread.currentThread();
             base.evaluate();
+        }
+    };
+    /**
+     * Gives every fuzz test class ({@link Overrides#isFuzzTest}) a commit mode of its own, drawn from all modes
+     * independently of {@code -Dquestdb.test.commit.mode}, so across runs each fuzz class meets every mode rather
+     * than the two the suite sweeps. A class rule, so the mode is in place for {@code @BeforeClass} as well; the
+     * configuration paths read it through {@link Overrides#getTestCommitMode()}, and a test that pins a mode still
+     * wins. {@code -Dquestdb.test.fuzz.commit.mode} reproduces a run.
+     */
+    @ClassRule
+    public static final TestRule fuzzCommitModeRule = (base, description) -> new Statement() {
+        @Override
+        public void evaluate() throws Throwable {
+            final Class<?> testClass = description.getTestClass();
+            if (!Overrides.isFuzzTest(testClass)) {
+                base.evaluate();
+                return;
+            }
+            final String mode = Overrides.pickFuzzCommitMode(new Rnd(System.nanoTime(), System.currentTimeMillis()));
+            Overrides.setFuzzCommitMode(mode);
+            LOG.advisory().$("fuzz test commit mode [class=").$safe(testClass.getSimpleName())
+                    .$(", mode=").$(mode)
+                    .$(", reproduce=-Dquestdb.test.fuzz.commit.mode=").$(mode)
+                    .I$();
+            try {
+                base.evaluate();
+            } finally {
+                Overrides.setFuzzCommitMode(null);
+            }
         }
     };
     @ClassRule

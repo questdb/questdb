@@ -92,8 +92,6 @@ import java.util.stream.Stream;
  *   metadata and partition directory fsyncs. SYNC also fsyncs the directories that name the new
  *   files: each partition directory ALTER COLUMN TYPE writes into, and the partition directory CONVERT
  *   PARTITION creates, then the table directory.</li>
- *   <li>The switch of a native partition to its parquet file links the files into a new partition directory and
- *   fsyncs it, then the table directory, under SYNC only.</li>
  * </ul>
  * The crash tests that prove these are enough are in {@code DirectoryBarrierCrashTest}.
  */
@@ -360,11 +358,6 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReplicaSwitchToParquet() throws Exception {
-        assertSwitchToParquet(true);
-    }
-
-    @Test
     public void testSchemaChangeMetaSwap() throws Exception {
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
@@ -482,11 +475,6 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSwitchToParquet() throws Exception {
-        assertSwitchToParquet(false);
-    }
-
-    @Test
     public void testWalApplyPartitionSwitch() throws Exception {
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -583,49 +571,6 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
         final TableWriter.Row row = writer.newRow(ts);
         row.putLong(1, v);
         row.append();
-    }
-
-    private void assertSwitchToParquet(boolean replica) throws Exception {
-        assertMemoryLeak(ff, () -> {
-            if (replica) {
-                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
-            }
-            final boolean isSync = "sync".equals(commitMode);
-            for (String table : new String[]{"x", "w"}) {
-                execute("CREATE TABLE " + table + " (ts TIMESTAMP, s SYMBOL INDEX, v LONG) TIMESTAMP(ts) PARTITION BY DAY "
-                        + ("x".equals(table) ? "BYPASS WAL" : "WAL"));
-                execute("INSERT INTO " + table + " VALUES ('2024-01-01T00:00:00.000000Z', 'a', 1), "
-                        + "('2024-01-02T00:00:00.000000Z', 'b', 2)");
-                drainWalQueue();
-                // The durable epoch an adaptive WAL table takes after the switch fsyncs more.
-                final boolean exact = replica || "x".equals(table) || !"adaptive".equals(commitMode);
-
-                final String tableDir = tableDir(table);
-                // The cold storage job leaves data.parquet and _pm in the native partition; the switch links them.
-                final Path partitionDir;
-                try (Stream<Path> dirs = Files.list(Paths.get(tableDir))) {
-                    partitionDir = dirs.filter(p -> p.getFileName().toString().startsWith("2024-01-01")).findFirst().orElseThrow();
-                }
-                Files.createFile(partitionDir.resolve(TableUtils.PARQUET_PARTITION_NAME));
-                Files.createFile(partitionDir.resolve(TableUtils.PARQUET_METADATA_FILE_NAME));
-
-                // Under SYNC only, the new partition directory, once the parquet and index files are linked into
-                // it, then the table directory.
-                ff.clear();
-                try (TableWriter writer = getWriter(table)) {
-                    final long partitionTimestamp = writer.getTxWriter().getPartitionTimestampByIndex(0);
-                    Assert.assertTrue(writer.markPartitionParquetReady(partitionTimestamp));
-                    Assert.assertEquals(TableWriter.SWITCH_OK, writer.switchNativePartitionWithParquet(partitionTimestamp, 0));
-                }
-                if (exact) {
-                    Assert.assertEquals("switch to parquet" + ff.dump(), 0, ff.countOther());
-                    Assert.assertEquals("switch to parquet" + ff.dump(), isSync ? 1 : 0, ff.countChildren(tableDir));
-                    Assert.assertEquals("switch to parquet" + ff.dump(), isSync ? 1 : 0, ff.count(tableDir));
-                    Assert.assertEquals("switch to parquet" + ff.dump(), isSync ? 2 : 0, ff.total());
-                    Assert.assertEquals("switch to parquet" + ff.dump(), 0, ff.countEmpty());
-                }
-            }
-        });
     }
 
     private void assertNoTableSideFsyncs(String tableDir) {

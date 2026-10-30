@@ -126,6 +126,53 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertAllNullRowGroupAfterDataRoundTrips() throws Exception {
+        // Row groups of 4: rows 5..8 are NULL in every nullable column, a whole row group after
+        // the first values, so the conversion back to native must write them as NULL rows
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, vc VARCHAR, s STRING, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t
+                    SELECT x::INT,
+                           CASE WHEN x BETWEEN 5 AND 8 THEN NULL ELSE 'v' || x END,
+                           CASE WHEN x BETWEEN 5 AND 8 THEN NULL ELSE 's' || x END,
+                           CASE WHEN x BETWEEN 5 AND 8 THEN NULL ELSE x::INT END,
+                           '2024-01-01'::TIMESTAMP + x * 60_000_000L
+                    FROM long_sequence(12)
+                    """);
+            execute("INSERT INTO t (x, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+
+            final String expected = """
+                    x\tvc\ts\ti\tts
+                    1\tv1\ts1\t1\t2024-01-01T00:01:00.000000Z
+                    2\tv2\ts2\t2\t2024-01-01T00:02:00.000000Z
+                    3\tv3\ts3\t3\t2024-01-01T00:03:00.000000Z
+                    4\tv4\ts4\t4\t2024-01-01T00:04:00.000000Z
+                    5\t\t\tnull\t2024-01-01T00:05:00.000000Z
+                    6\t\t\tnull\t2024-01-01T00:06:00.000000Z
+                    7\t\t\tnull\t2024-01-01T00:07:00.000000Z
+                    8\t\t\tnull\t2024-01-01T00:08:00.000000Z
+                    9\tv9\ts9\t9\t2024-01-01T00:09:00.000000Z
+                    10\tv10\ts10\t10\t2024-01-01T00:10:00.000000Z
+                    11\tv11\ts11\t11\t2024-01-01T00:11:00.000000Z
+                    12\tv12\ts12\t12\t2024-01-01T00:12:00.000000Z
+                    """;
+            final String query = "SELECT * FROM t WHERE ts IN '2024-01-01'";
+            assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+            for (int i = 0; i < 2; i++) {
+                execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+                assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+                execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                drainWalQueue();
+                assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testConvertAllPartitionsToParquetAndBack() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             final String tableName = "testConvertAllPartitionsToParquetAndBack";
@@ -1317,6 +1364,89 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertPartitionsWithColTopSpanningRowGroupsRoundTrips() throws Exception {
+        // The top spans two whole row groups and part of a third; converting back to native must
+        // produce file rows and a column top that add up to the partition's rows.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT x::INT, '2024-01-01'::TIMESTAMP + x * 60_000_000L FROM long_sequence(10)");
+            drainWalQueue();
+            execute("ALTER TABLE t ADD COLUMN vc VARCHAR");
+            execute("ALTER TABLE t ADD COLUMN s STRING");
+            execute("ALTER TABLE t ADD COLUMN b BOOLEAN");
+            execute("ALTER TABLE t ADD COLUMN i INT");
+            execute("""
+                    INSERT INTO t
+                    SELECT (10 + x)::INT, '2024-01-01'::TIMESTAMP + (10 + x) * 60_000_000L,
+                           'v' || x, 's' || x, x % 2 = 0, x::INT
+                    FROM long_sequence(6)
+                    """);
+            execute("INSERT INTO t (x, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+
+            final String expected = """
+                    x\tts\tvc\ts\tb\ti
+                    1\t2024-01-01T00:01:00.000000Z\t\t\tfalse\tnull
+                    2\t2024-01-01T00:02:00.000000Z\t\t\tfalse\tnull
+                    3\t2024-01-01T00:03:00.000000Z\t\t\tfalse\tnull
+                    4\t2024-01-01T00:04:00.000000Z\t\t\tfalse\tnull
+                    5\t2024-01-01T00:05:00.000000Z\t\t\tfalse\tnull
+                    6\t2024-01-01T00:06:00.000000Z\t\t\tfalse\tnull
+                    7\t2024-01-01T00:07:00.000000Z\t\t\tfalse\tnull
+                    8\t2024-01-01T00:08:00.000000Z\t\t\tfalse\tnull
+                    9\t2024-01-01T00:09:00.000000Z\t\t\tfalse\tnull
+                    10\t2024-01-01T00:10:00.000000Z\t\t\tfalse\tnull
+                    11\t2024-01-01T00:11:00.000000Z\tv1\ts1\tfalse\t1
+                    12\t2024-01-01T00:12:00.000000Z\tv2\ts2\ttrue\t2
+                    13\t2024-01-01T00:13:00.000000Z\tv3\ts3\tfalse\t3
+                    14\t2024-01-01T00:14:00.000000Z\tv4\ts4\ttrue\t4
+                    15\t2024-01-01T00:15:00.000000Z\tv5\ts5\tfalse\t5
+                    16\t2024-01-01T00:16:00.000000Z\tv6\ts6\ttrue\t6
+                    """;
+            final String query = "SELECT * FROM t WHERE ts IN '2024-01-01'";
+            assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+
+            execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+
+            // the second conversion reads every var-size column up to the partition's last row
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+
+            execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            assertQuery(query).noLeakCheck().timestamp("ts").returns(expected);
+        });
+    }
+
+    @Test
+    public void testConvertToNativeIndexedSymbolColTopSpanningRowGroupsBitmap() throws Exception {
+        assertConvertToNativeIndexesSymbolColTopOnce("INDEX TYPE BITMAP", true);
+    }
+
+    @Test
+    public void testConvertToNativeIndexedSymbolColTopSpanningRowGroupsBitmapNonWal() throws Exception {
+        assertConvertToNativeIndexesSymbolColTopOnce("INDEX TYPE BITMAP", false);
+    }
+
+    @Test
+    public void testConvertToNativeIndexedSymbolColTopSpanningRowGroupsPosting() throws Exception {
+        assertConvertToNativeIndexesSymbolColTopOnce("INDEX TYPE POSTING", true);
+    }
+
+    @Test
+    public void testConvertToNativeIndexedSymbolColTopSpanningRowGroupsPostingNonWal() throws Exception {
+        assertConvertToNativeIndexesSymbolColTopOnce("INDEX TYPE POSTING", false);
+    }
+
+    @Test
     public void testConvertSecondCallIgnored() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute(
@@ -1438,6 +1568,70 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private void assertConvertToNativeIndexesSymbolColTopOnce(String indexClause, boolean isWal) throws Exception {
+        // Back to native, the skipped leading row groups become the column top again, for which index
+        // readers synthesize NULL rows, so the native index must not also hold them.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+            execute("INSERT INTO t SELECT x::INT, '2024-01-01'::TIMESTAMP + x * 60_000_000L FROM long_sequence(10)");
+            drainWalQueue();
+            execute("ALTER TABLE t ADD COLUMN s SYMBOL " + indexClause);
+            execute("""
+                    INSERT INTO t
+                    SELECT (10 + x)::INT, '2024-01-01'::TIMESTAMP + (10 + x) * 60_000_000L,
+                           CASE WHEN x % 3 = 1 THEN 'aa' WHEN x % 3 = 2 THEN 'bb' END
+                    FROM long_sequence(6)
+                    """);
+            execute("INSERT INTO t (x, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+            drainWalQueue();
+
+            final String expectedNull = """
+                    x\tts\ts
+                    1\t2024-01-01T00:01:00.000000Z\t
+                    2\t2024-01-01T00:02:00.000000Z\t
+                    3\t2024-01-01T00:03:00.000000Z\t
+                    4\t2024-01-01T00:04:00.000000Z\t
+                    5\t2024-01-01T00:05:00.000000Z\t
+                    6\t2024-01-01T00:06:00.000000Z\t
+                    7\t2024-01-01T00:07:00.000000Z\t
+                    8\t2024-01-01T00:08:00.000000Z\t
+                    9\t2024-01-01T00:09:00.000000Z\t
+                    10\t2024-01-01T00:10:00.000000Z\t
+                    13\t2024-01-01T00:13:00.000000Z\t
+                    16\t2024-01-01T00:16:00.000000Z\t
+                    """;
+            final String expectedAa = """
+                    x\tts\ts
+                    11\t2024-01-01T00:11:00.000000Z\taa
+                    14\t2024-01-01T00:14:00.000000Z\taa
+                    """;
+            // the second round trip converts the column top and index the first one wrote
+            for (int i = 0; i < 2; i++) {
+                execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+                assertIndexQueryMatchesTruth("s IS NULL", "s::STRING IS NULL", expectedNull);
+                assertIndexQueryMatchesTruth("s = 'aa'", "s::STRING = 'aa'", expectedAa);
+                execute("ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                drainWalQueue();
+                assertIndexQueryMatchesTruth("s IS NULL", "s::STRING IS NULL", expectedNull);
+                assertIndexQueryMatchesTruth("s = 'aa'", "s::STRING = 'aa'", expectedAa);
+            }
+        });
+    }
+
+    private void assertIndexQueryMatchesTruth(String indexFilter, String truthFilter, String expected) throws Exception {
+        final String partitionFilter = " FROM t WHERE ts IN '2024-01-01' AND ";
+        // the cast keeps the truth query off the index
+        assertQuery("SELECT x, ts, s" + partitionFilter + truthFilter).noLeakCheck().timestamp("ts").returns(expected);
+        final String indexQuery = "SELECT x, ts, s" + partitionFilter + indexFilter;
+        assertQuery(indexQuery).noLeakCheck().assertsPlanContaining("on: s");
+        sink.clear();
+        printSql(indexQuery, sink);
+        TestUtils.assertEquals(expected, sink);
+        assertQuery(indexQuery).noLeakCheck().timestamp("ts").returns(expected);
     }
 
     private void assertPartitionExists(String tableName, String partition) {
