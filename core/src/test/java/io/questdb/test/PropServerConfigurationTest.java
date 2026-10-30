@@ -368,7 +368,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(0.05, configuration.getCairoConfiguration().getSqlIndexScanChoiceMaxSelectivity(), 0);
         Assert.assertEquals(65_536, configuration.getCairoConfiguration().getSqlParallelCoveringFrameRows());
         Assert.assertEquals(8_192, configuration.getCairoConfiguration().getSqlParallelCoveringLocalMaxRows());
-        Assert.assertEquals(10_000, configuration.getCairoConfiguration().getGroupByShardingThreshold());
+        Assert.assertEquals(100_000, configuration.getCairoConfiguration().getGroupByShardingThreshold());
         Assert.assertTrue(configuration.getCairoConfiguration().isGroupByPresizeEnabled());
         Assert.assertEquals(100_000_000, configuration.getCairoConfiguration().getGroupByPresizeMaxCapacity());
         Assert.assertEquals(Numbers.SIZE_1GB, configuration.getCairoConfiguration().getGroupByPresizeMaxHeapSize());
