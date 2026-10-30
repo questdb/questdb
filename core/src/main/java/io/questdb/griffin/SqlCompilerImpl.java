@@ -1600,24 +1600,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         if (!tableMetadata.isWalEnabled()) {
             throw SqlException.$(tableNamePosition, "deduplication is only supported for WAL tables");
         }
-        AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupEnable(
-                tableNamePosition,
-                tableToken
-        );
         CharSequence tok = SqlUtil.fetchNext(lexer);
 
         boolean tsIncludedInDedupColumns = false;
 
-        // ALTER TABLE abc DEDUP <ENABLE> UPSERT KEYS(a, b)
+        // ALTER TABLE abc DEDUP <ENABLE> UPSERT|SKIP KEYS(a, b)
         // ENABLE word is not mandatory to be compatible v7.3
         // where it was omitted from the syntax
         if (tok != null && isEnableKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
         }
 
-        if (tok == null || !isUpsertKeyword(tok)) {
-            throw SqlException.position(lexer.lastTokenPosition()).put("expected 'upsert'");
+        final int dedupMode;
+        if (tok != null && isUpsertKeyword(tok)) {
+            dedupMode = TableUtils.DEDUP_MODE_UPSERT;
+        } else if (tok != null && isSkipKeyword(tok)) {
+            dedupMode = TableUtils.DEDUP_MODE_SKIP;
+        } else {
+            throw SqlException.position(lexer.lastTokenPosition()).put("expected 'upsert' or 'skip'");
         }
+        AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupEnable(
+                tableNamePosition,
+                tableToken,
+                dedupMode
+        );
 
         tok = SqlUtil.fetchNext(lexer);
         if (tok == null || !isKeysKeyword(tok)) {

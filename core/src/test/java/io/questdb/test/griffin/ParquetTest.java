@@ -1093,6 +1093,16 @@ public class ParquetTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupKeysAddedToParquetPartitionSkip() throws Exception {
+        testDedupKeysAddedToParquetPartition(true);
+    }
+
+    @Test
+    public void testDedupKeysAddedToParquetPartitionUpsert() throws Exception {
+        testDedupKeysAddedToParquetPartition(false);
+    }
+
+    @Test
     public void testDedupTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x (x int, ts timestamp) timestamp(ts) partition by day wal DEDUP UPSERT KEYS(ts) ;");
@@ -3471,6 +3481,58 @@ public class ParquetTest extends AbstractCairoTest {
                             10\t2024-06-10T00:03:00.000000Z\t4\t[1.0,null,3.0]
                             11\t2024-06-10T00:04:00.000000Z\t5\t[42.0]
                             """);
+        });
+    }
+
+    // The Parquet file of the last partition has more than one row group and lacks the dedup key columns added
+    // after it was written. The merge of a row group reads them as NULL: their column top is the row count of the
+    // whole partition, which exceeds the row count of the row group.
+    private void testDedupKeysAddedToParquetPartition(boolean isSkipMode) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+            execute("""
+                    INSERT INTO x (v, ts) VALUES
+                    (1, '2020-01-01T00:00:00.000000Z'),
+                    (2, '2020-01-01T01:00:00.000000Z'),
+                    (3, '2020-01-01T02:00:00.000000Z'),
+                    (4, '2020-01-01T03:00:00.000000Z'),
+                    (5, '2020-01-01T04:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            assertQuery("SELECT name, isParquet FROM table_partitions('x')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            name\tisParquet
+                            2020-01-01\ttrue
+                            """);
+
+            execute("ALTER TABLE x ADD COLUMN k INT");
+            execute("ALTER TABLE x ADD COLUMN s VARCHAR");
+            execute("ALTER TABLE x DEDUP ENABLE " + (isSkipMode ? "SKIP" : "UPSERT") + " KEYS(ts, k, s)");
+            // the first row matches the row of v=4 on all keys, the second one matches no row
+            execute("""
+                    INSERT INTO x (v, ts, k, s) VALUES
+                    (10, '2020-01-01T03:00:00.000000Z', null, null),
+                    (11, '2020-01-01T04:00:00.000000Z', 7, 'a')
+                    """);
+            drainWalQueue();
+
+            assertQuery("x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts\tk\ts
+                            1\t2020-01-01T00:00:00.000000Z\tnull\t
+                            2\t2020-01-01T01:00:00.000000Z\tnull\t
+                            3\t2020-01-01T02:00:00.000000Z\tnull\t
+                            %d\t2020-01-01T03:00:00.000000Z\tnull\t
+                            5\t2020-01-01T04:00:00.000000Z\tnull\t
+                            11\t2020-01-01T04:00:00.000000Z\t7\ta
+                            """.formatted(isSkipMode ? 4 : 10));
         });
     }
 

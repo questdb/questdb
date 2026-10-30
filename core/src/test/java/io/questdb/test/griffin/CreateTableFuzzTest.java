@@ -24,6 +24,8 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
@@ -32,6 +34,7 @@ import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -56,6 +59,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
     private final boolean useIndexCapacity = useIndex && rnd.nextBoolean();
     private final boolean usePartitionBy = rnd.nextBoolean();
     private final boolean useDedup = usePartitionBy && rnd.nextBoolean();
+    private final boolean isDedupSkipMode = useDedup && rnd.nextBoolean();
     private final boolean useSelectStar = rnd.nextBoolean();
     private final WrongNameChoice wrongName = WrongNameChoice.values()[rnd.nextInt(WrongNameChoice.values().length)];
     private String castCol = "str";
@@ -261,6 +265,16 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         }
     }
 
+    private void assertDedupMode() {
+        // a table without dedup keys has the default mode, UPSERT
+        try (TableReader reader = getReader("tango")) {
+            Assert.assertEquals(
+                    isDedupSkipMode ? TableUtils.DEDUP_MODE_SKIP : TableUtils.DEDUP_MODE_UPSERT,
+                    reader.getMetadata().getDedupMode()
+            );
+        }
+    }
+
     private StringBuilder generateCreateTable(boolean asSelect) {
         StringBuilder ddl = new StringBuilder();
         ddl.append("CREATE TABLE ");
@@ -281,7 +295,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
         ddl.append(wrongName == TIMESTAMP ? WRONG_NAME : rndCase("ts"))
                 .append(") PARTITION BY HOUR WAL");
         if (useDedup) {
-            ddl.append(" DEDUP UPSERT KEYS(");
+            ddl.append(isDedupSkipMode ? " DEDUP SKIP KEYS(" : " DEDUP UPSERT KEYS(");
             dedupPos = ddl.length();
             ddl.append(wrongName == DEDUP ? WRONG_NAME : rndCase("ts")).append(')');
         }
@@ -429,6 +443,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns(b);
+        assertDedupMode();
     }
 
     private void validateCreatedTableAsSelectBeforeMessing() throws Exception {
@@ -448,6 +463,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns(b);
+        assertDedupMode();
     }
 
     private void validateCreatedTableDirect() throws Exception {
@@ -460,6 +476,7 @@ public class CreateTableFuzzTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns(b);
+        assertDedupMode();
     }
 
     private void validateCreatedTableLike(boolean afterMessing) throws Exception {

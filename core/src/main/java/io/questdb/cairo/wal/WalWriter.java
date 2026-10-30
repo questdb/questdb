@@ -3009,7 +3009,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
+        public boolean enableDeduplication(LongList columnsIndexes, int dedupMode) {
             boolean isSubsetOfOldKeys = true;
             for (int i = 0, n = columnsIndexes.size(); i < n; i++) {
                 int columnIndex = (int) columnsIndexes.get(i);
@@ -3327,8 +3327,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
-        public boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes) {
-            return metadata.enableDeduplicationWithUpsertKeys();
+        public boolean enableDeduplication(LongList columnsIndexes, int dedupMode) {
+            return metadata.enableDeduplication();
         }
 
         @Override

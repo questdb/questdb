@@ -505,11 +505,12 @@ cargo test --lib  # Run unit tests
 
 All four must pass with zero errors and zero warnings.
 
-Java tests load the committed `libquestdbr` binary, or a dev build that an
-earlier run left in `core/target/classes/io/questdb/rust/`, not your current
-Rust source. To run them against changed Rust code, build the library with the
-`build-rust-library` profile, e.g.
-`mvn -f core/pom.xml test -P build-rust-library -Dtest=FooTest`.
+The repository commits no `libquestdbr` binary. Every Maven build of core
+compiles it from the current Rust source into
+`core/target/classes/io/questdb/bin/<platform>/`, where Java tests load it, so
+`mvn -f core/pom.xml test -Dtest=FooTest` runs them against your Rust changes.
+With `-DskipNative`, Maven skips that build, and the tests load whatever an
+earlier build left there.
 
 After writing or modifying tests, check coverage with
 `python3 ci/diff_coverage.py --lang rust` (see "Measuring coverage locally"; add

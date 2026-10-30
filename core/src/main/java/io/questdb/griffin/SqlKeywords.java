@@ -2217,6 +2217,14 @@ public class SqlKeywords {
                 && (tok.charAt(i) | 32) == 'w';
     }
 
+    public static boolean isSkipKeyword(CharSequence tok) {
+        return tok.length() == 4
+                && (tok.charAt(0) | 32) == 's'
+                && (tok.charAt(1) | 32) == 'k'
+                && (tok.charAt(2) | 32) == 'i'
+                && (tok.charAt(3) | 32) == 'p';
+    }
+
     public static boolean isSquashKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 's'

@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.griffin.PurgingOperator;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -132,6 +133,8 @@ public class VacuumColumnVersions implements Closeable {
     private void purgeColumnVersions(DirectLongList tableFiles, TableReader reader, CairoEngine engine) {
         int columnIndex = -1;
         int writerIndex = -1;
+        boolean isPostingColumn = false;
+        boolean isSymbolColumn = false;
         int tableId = reader.getMetadata().getTableId();
         long truncateVersion = reader.getTxFile().getTruncateVersion();
         TableReaderMetadata metadata = reader.getMetadata();
@@ -156,14 +159,23 @@ public class VacuumColumnVersions implements Closeable {
                             rogueColumns.keys().get(-newReaderIndex - 1).toString();
 
                     int columnType = newReaderIndex > -1 ? metadata.getColumnType(newReaderIndex) : ColumnType.UNDEFINED;
-                    byte indexType = newReaderIndex > -1 ? metadata.getColumnIndexType(newReaderIndex) : IndexType.NONE;
+                    // isPostingColumn and isSymbolColumn feed the NONE/0 rules of isLiveVersion below
+                    isPostingColumn = newReaderIndex > -1 && IndexType.isPosting(metadata.getColumnIndexType(newReaderIndex));
+                    isSymbolColumn = ColumnType.isSymbol(columnType);
+                    // VACUUM purges only stale instances, whose index type the live column, if any, does
+                    // not tell: DROP INDEX, an index type change and DROP COLUMN leave them behind. The
+                    // POSTING removal takes the files of every index type, the POSTING files and then the
+                    // BITMAP .k and .v files, each named with the column name txn of the stale instance.
+                    final byte staleIndexType = isSymbolColumn || columnType == ColumnType.UNDEFINED
+                            ? IndexType.POSTING
+                            : IndexType.NONE;
                     purgeTask.of(
                             reader.getTableToken(),
                             columnName,
                             tableId,
                             truncateVersion,
                             columnType,
-                            indexType,
+                            staleIndexType,
                             timestampType,
                             partitionBy,
                             updateTxn
@@ -175,8 +187,20 @@ public class VacuumColumnVersions implements Closeable {
             long partitionTs = tableFiles.get(i + 1);
             long columnVersion = tableFiles.get(i + 2);
             long latestColumnNameTxn = columnIndex > -1 ? columnVersionReader.getColumnNameTxn(partitionTs, writerIndex) : reader.getTxn();
+            // A .pc name writes the column name txn NONE and 0 alike, so in a partition of a POSTING column
+            // a purge of either version removes the live .pc files of the other. Txn 0 comes only from a
+            // change before the first commit, so no partition of a partitioned table holds files of both.
+            // The default partition of a non-partitioned table can, and VACUUM leaves the stale files there.
+            // A SYMBOL column of txn NONE without a POSTING index in the reader can get one from ADD INDEX
+            // while VACUUM runs, and its .pc files list as txn 0, so txn 0 is live next to a live NONE. No
+            // stale instance 0 can sit there: a partition never goes back to txn NONE after a change.
+            // The table root keeps the plain comparison: its purge removes no POSTING files.
+            boolean isLiveVersion = columnVersion == latestColumnNameTxn
+                    || ((isPostingColumn || (isSymbolColumn && latestColumnNameTxn == TableUtils.COLUMN_NAME_TXN_NONE))
+                    && partitionTs != PurgingOperator.TABLE_ROOT_PARTITION
+                    && PostingIndexUtils.coverFileHostTxn(columnVersion) == PostingIndexUtils.coverFileHostTxn(latestColumnNameTxn));
             // Do not delete if columnVersion >= reader.getTxn(), this may be the transaction not committed yet
-            if (columnVersion != latestColumnNameTxn && columnVersion < reader.getTxn()) {
+            if (!isLiveVersion && columnVersion < reader.getTxn()) {
                 // Has to be deleted. Columns can have multiple files e.g. .i, .d, .k, .v
                 if (!versionSetToDelete(purgeTask, partitionTs, columnVersion)) {
                     long partitionNameTxn = reader.getTxFile().getPartitionNameTxnByPartitionTimestamp(partitionTs);
@@ -238,8 +262,6 @@ public class VacuumColumnVersions implements Closeable {
             if (Files.notDots(fileNameSink)) {
                 int dotIndex = Utf8s.indexOfAscii(fileNameSink, '.');
                 if (dotIndex > 0) {
-                    long columnVersion = -1;
-
                     columnNameSink.clear();
                     Utf8s.utf8ToUtf16(fileNameSink, 0, dotIndex, columnNameSink);
                     int name2Index = resolveName2Index(columnNameSink, tableReader);
@@ -280,13 +302,19 @@ public class VacuumColumnVersions implements Closeable {
                         }
                     }
 
-                    int secondDot = Utf8s.indexOfAscii(fileNameSink, dotIndex + 1, '.');
-                    int lo = secondDot + 1;
-                    if (lo < fileNameSink.size()) {
-                        try {
-                            columnVersion = Numbers.parseLong(fileNameSink, lo, fileNameSink.size());
-                        } catch (NumericException e) {
-                            // leave -1, default version
+                    // POSTING sealed files carry the column name txn ahead of a seal txn:
+                    // <column>.pv[.<txn>].<seal> and <column>.pc<i>.<hostTxn>[.<coveredTxn>].<seal>
+                    long columnVersion = PostingIndexUtils.sealedFileColumnNameTxn(fileNameSink.asAsciiCharSequence(), dotIndex + 1);
+                    if (columnVersion == PostingIndexUtils.PARSE_FAIL) {
+                        columnVersion = -1;
+                        int secondDot = Utf8s.indexOfAscii(fileNameSink, dotIndex + 1, '.');
+                        int lo = secondDot + 1;
+                        if (lo < fileNameSink.size()) {
+                            try {
+                                columnVersion = Numbers.parseLong(fileNameSink, lo, fileNameSink.size());
+                            } catch (NumericException e) {
+                                // leave -1, default version
+                            }
                         }
                     }
 

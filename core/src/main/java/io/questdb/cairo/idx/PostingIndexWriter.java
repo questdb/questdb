@@ -5097,8 +5097,9 @@ public class PostingIndexWriter implements IndexWriter {
                     // purge delete the live file. The orphan .pv.{newSealTxn} only
                     // becomes reachable later if a freed+reopened writer REUSES
                     // newSealTxn and publishes it live; PostingSealPurgeOperator
-                    // re-reads the .pk head at delete time and abandons the purge
-                    // when the file is live again, so the deferral is safe past reuse.
+                    // re-reads the .pk chain at delete time and abandons the purge
+                    // when a reader above the purge's reader window can see an entry
+                    // that names newSealTxn, so the deferral is safe past reuse.
                     // Poison FIRST, before the LOG record and scheduleOrphanPurge (both
                     // allocate and can throw under heap pressure): a secondary failure
                     // must still leave the half-switched writer poisoned.
@@ -5496,8 +5497,9 @@ public class PostingIndexWriter implements IndexWriter {
                             // the now-live .pv.{newSealTxn}. The remaining route --
                             // a freed+reopened writer REUSING newSealTxn and
                             // publishing it live -- is closed at delete time:
-                            // PostingSealPurgeOperator re-reads the .pk head and
-                            // abandons the purge when the file is live again.
+                            // PostingSealPurgeOperator re-reads the .pk chain and
+                            // abandons the purge when a reader above the purge's reader
+                            // window can see an entry that names newSealTxn.
                             // Poison FIRST, before the LOG record and scheduleOrphanPurge
                             // (both allocate and can throw under heap pressure): a secondary
                             // failure must still leave the half-switched writer poisoned.
@@ -7022,21 +7024,21 @@ public class PostingIndexWriter implements IndexWriter {
                 sealTxns.setQuick(i, -1L);
             }
         }
-        PostingIndexUtils.scanSealedFiles(ff, path, plen, indexName, new PostingIndexUtils.SealedFileVisitor() {
+        PostingIndexUtils.scanSealedFiles(ff, path, plen, indexName, postingColumnNameTxn, new PostingIndexUtils.SealedFileVisitor() {
             @Override
-            public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-                final int i;
-                if (filePostingColumnNameTxn != postingColumnNameTxn || (i = sealTxns.indexOf(sealTxn)) < 0) {
+            public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+                final int i = sealTxns.indexOf(sealTxn);
+                if (i < 0) {
                     return;
                 }
-                if (!ff.removeQuiet(PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn))) {
+                if (!ff.removeQuiet(PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn))) {
                     scheduleOrphanPurge(sealTxn);
                     sealTxns.setQuick(i, -1L);
                 }
             }
 
             @Override
-            public void onValueFile(long filePostingColumnNameTxn, long sealTxn) {
+            public void onValueFile(long sealTxn) {
             }
         });
         path.trimTo(plen);
