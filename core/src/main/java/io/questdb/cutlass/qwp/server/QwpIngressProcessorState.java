@@ -198,6 +198,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // (DEBUG_HTTP_FORCE_SEND_FRAGMENTATION_CHUNK_SIZE) could otherwise drop
     // the second-fragment send without ever surfacing to the park/resume path.
     private boolean handshakeFlushPending;
+    // Survives per-message clears until the receive pass records its completion time.
+    private boolean hasProcessedDataInRecvPass;
     private long highestProcessedSequence = -1;
     private boolean isDurableProgressSnapshotFullyUploaded;
     // True while the durable-ack frame being sent (or parked mid-send) belongs
@@ -206,6 +208,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // blocked send so the resume path advances the right stream too.
     private boolean isSendingLocalDurableAck;
     private long lastAckedSequence = -1;
+    // Completion time of the last receive pass containing data; handlePing checks the idle threshold.
+    private long lastDataPassEndMicros;
     private long messageSequence;
     private byte negotiatedVersion = QwpConstants.VERSION;
     // Bytes that onHeadersReady staged in the raw response buffer waiting to
@@ -383,6 +387,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     public void addData(long lo, long hi) {
+        hasProcessedDataInRecvPass = true;
         int len = (int) (hi - lo);
         if (len <= 0) {
             return;
@@ -782,6 +787,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return lastAckedSequence;
     }
 
+    public long getLastDataPassEndMicros() {
+        return lastDataPassEndMicros;
+    }
+
     public CharSequenceLongHashMap getPendingAckSeqTxns() {
         return pendingAckSeqTxns;
     }
@@ -839,6 +848,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      */
     public boolean hasPendingDurableWork() {
         return pendingDurableSeqTxns.size() > 0;
+    }
+
+    public boolean hasProcessedDataInRecvPass() {
+        return hasProcessedDataInRecvPass;
     }
 
     /**
@@ -1387,6 +1400,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         // Reset WebSocket connection state
         highestProcessedSequence = -1;
         lastAckedSequence = -1;
+        hasProcessedDataInRecvPass = false;
+        lastDataPassEndMicros = 0;
         messageSequence = 0;
         recvBufferLen = 0;
         resumeAckSequence = -1;
@@ -1527,6 +1542,16 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
      */
     public void onPongBlocked() {
         sendState = SEND_STATE_RESUME_PONG;
+    }
+
+    public void onRecvPassComplete(boolean isIdleWriterReleaseEnabled) {
+        if (hasProcessedDataInRecvPass) {
+            if (isIdleWriterReleaseEnabled) {
+                // Start idle time after processing and sends, including slow or blocked passes.
+                lastDataPassEndMicros = configuration.getMicrosecondClock().getTicks();
+            }
+            hasProcessedDataInRecvPass = false;
+        }
     }
 
     /**
@@ -1720,6 +1745,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         }
         this.fd = fd;
         LOG.error().$('[').$(fd).$("] rejected [status=").$(status).$(", error=").$safe(errorText).$(']').$();
+    }
+
+    public void releaseIdleWriters() {
+        tudCache.releaseIdleWriters();
     }
 
     public void setDurableAckEnabled(boolean durableAckEnabled) {

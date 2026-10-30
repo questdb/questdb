@@ -55,6 +55,10 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
     // every setDistressed() caller also rejects the frame, so the unresolved-sequence gate
     // in QwpIngressUpgradeProcessor.handleBinaryMessage refuses every later data frame on
     // the connection and no re-seeded TUD is ever built for it.
+    // Healthy connections also free TUDs through QwpTudCache.releaseIdleWriters():
+    // ingress commit paths report the writer's latest seqTxn before idle release can
+    // discard its TUD. The connection state retains its ACK and durable-ACK maps across
+    // release, so the next frame can safely create a TUD and re-seed this watermark.
     private long lastReportedSeqTxn;
     /**
      * Sequencer transaction this table's writer was last checked for pending

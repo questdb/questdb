@@ -534,6 +534,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int qwpMaxRowsPerTable;
     private final int qwpMaxTablesPerConnection;
     private final long qwpMaxUncommittedRows;
+    private final long qwpMinIdleMsBeforeWriterRelease;
     private final long qwpUdpCommitInterval;
     private final boolean qwpUdpEnabled;
     private final int qwpUdpGroupIPv4Address;
@@ -2302,6 +2303,12 @@ public class PropServerConfiguration implements ServerConfiguration {
                                 + " must be at least 1"
                 );
             }
+            this.qwpMinIdleMsBeforeWriterRelease = getMillis(
+                    properties,
+                    env,
+                    PropertyKey.QWP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE,
+                    QwpConstants.DEFAULT_MIN_IDLE_MS_BEFORE_WRITER_RELEASE
+            );
             long qwpUdpCommitInterval = getMillis(properties, env, PropertyKey.QWP_UDP_COMMIT_INTERVAL, COMMIT_INTERVAL_DEFAULT);
             if (qwpUdpCommitInterval < 1L) {
                 throw new ServerConfigurationException(
@@ -7107,6 +7114,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getQwpMaxUncommittedRows() {
             return qwpMaxUncommittedRows;
+        }
+
+        @Override
+        public long getQwpMinIdleMsBeforeWriterRelease() {
+            return qwpMinIdleMsBeforeWriterRelease;
         }
 
         @Override

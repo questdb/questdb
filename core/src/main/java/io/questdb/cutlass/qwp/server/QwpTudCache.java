@@ -638,6 +638,30 @@ public class QwpTudCache implements QuietCloseable {
         }
     }
 
+    /**
+     * Returns the WAL writer of every cached table without uncommitted rows to
+     * the pool, so a quiet but open connection does not pin writers (and the
+     * WAL segments they hold) indefinitely. A table with uncommitted rows (an
+     * open FLAG_DEFER_COMMIT group) keeps its entry: freeing it would roll its
+     * rows back. The next data frame for a released table acquires a fresh
+     * writer through {@link #getTableUpdateDetails}.
+     */
+    public void releaseIdleWriters() {
+        ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
+        for (int i = 0; i < keys.size(); ) {
+            Utf8Sequence tableName = keys.getQuick(i);
+            int keyIndex = tableUpdateDetails.keyIndex(tableName);
+            WalTableUpdateDetails tud = tableUpdateDetails.valueAt(keyIndex);
+            if (tud.isFirstRow()) {
+                tableUpdateDetails.removeAtQuick(keyIndex, i);
+                cachedTableCount = tableUpdateDetails.size();
+                Misc.free(tud);
+            } else {
+                i++;
+            }
+        }
+    }
+
     public void reset() {
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
         for (int i = 0, n = keys.size(); i < n; i++) {

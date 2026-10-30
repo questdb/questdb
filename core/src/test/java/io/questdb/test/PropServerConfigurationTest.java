@@ -2288,6 +2288,30 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testQwpMinIdleMsBeforeWriterRelease() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(
+                30_000,
+                configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMinIdleMsBeforeWriterRelease()
+        );
+
+        properties.setProperty(PropertyKey.QWP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE.getPropertyPath(), "5s");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(
+                5_000,
+                configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMinIdleMsBeforeWriterRelease()
+        );
+
+        properties.setProperty(PropertyKey.QWP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE.getPropertyPath(), "0");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(
+                0,
+                configuration.getHttpServerConfiguration().getLineHttpProcessorConfiguration().getQwpMinIdleMsBeforeWriterRelease()
+        );
+    }
+
+    @Test
     public void testMemoryUsageLogConfiguration() throws Exception {
         Properties properties = new Properties();
         properties.setProperty(PropertyKey.MEMORY_USAGE_LOG_ENABLED.getPropertyPath(), "false");
