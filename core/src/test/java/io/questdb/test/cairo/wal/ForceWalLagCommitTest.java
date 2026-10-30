@@ -59,7 +59,7 @@ public class ForceWalLagCommitTest extends AbstractCairoTest {
                 Assert.assertEquals(0, writer.getPartitionSize(0));
                 Assert.assertEquals(MicrosTimestampDriver.floor("2024-01-02"), writer.getPartitionTimestamp(0));
             }
-            forceAfterReopen(ff, token, 2, 2, 2, false);
+            forceCurrentLagThenReopen(ff, token, 2, 2, 2, false);
 
             try (TableWriter writer = getWriter(token)) {
                 Assert.assertEquals(2, writer.getPartitionCount());
@@ -104,7 +104,7 @@ public class ForceWalLagCommitTest extends AbstractCairoTest {
             execute("INSERT INTO lag VALUES (99, 9, 'tail', 'not applied', 'tail', '2024-01-03')");
 
             applyTransactionsToLag(token, 2, 5, false);
-            forceAfterReopen(ff, token, 3, 2, 5, false);
+            forceCurrentLagThenReopen(ff, token, 3, 2, 5, false);
 
             assertQuery("SELECT x, k, sym, s, vc, ts FROM lag ORDER BY ts, k")
                     .noLeakCheck()
@@ -142,7 +142,7 @@ public class ForceWalLagCommitTest extends AbstractCairoTest {
             execute("INSERT INTO lag VALUES (100, 'tail', 'not applied', 'tail', null, '2024-01-03')");
 
             applyTransactionsToLag(token, 1, 3, true);
-            forceAfterReopen(ff, token, 2, 1, 3, true);
+            forceCurrentLagThenReopen(ff, token, 2, 1, 3, true);
 
             assertQuery("SELECT x, sym, s, vc, b, ts FROM lag ORDER BY ts, x")
                     .noLeakCheck()
@@ -176,7 +176,7 @@ public class ForceWalLagCommitTest extends AbstractCairoTest {
             execute("INSERT INTO lag VALUES (99, '2024-01-03')");
 
             applyTransactionsToLag(token, 2, 2, false);
-            forceAfterReopen(ff, token, 3, 2, 2, false);
+            forceCurrentLagThenReopen(ff, token, 3, 2, 2, false);
 
             assertQuery("lag").noLeakCheck().timestamp("ts").expectSize().returns("""
                     x\tts
@@ -200,7 +200,7 @@ public class ForceWalLagCommitTest extends AbstractCairoTest {
             execute("INSERT INTO lag VALUES (99, 'tail', 'not applied', 'tail', null, '2024-01-04')");
 
             applyTransactionsToLag(token, 2, 2, false);
-            forceAfterReopen(ff, token, 3, 2, 2, false);
+            forceCurrentLagThenReopen(ff, token, 3, 2, 2, false);
 
             assertQuery("SELECT x, sym, s, vc, b, ts FROM lag")
                     .noLeakCheck()
@@ -262,7 +262,7 @@ public class ForceWalLagCommitTest extends AbstractCairoTest {
                 "TIMESTAMP(ts) PARTITION BY DAY WAL");
     }
 
-    private void forceAfterReopen(
+    private void forceCurrentLagThenReopen(
             NoWalReadFilesFacade ff,
             TableToken token,
             long targetTxn,
@@ -270,12 +270,13 @@ public class ForceWalLagCommitTest extends AbstractCairoTest {
             int lagRowCount,
             boolean isOrdered
     ) {
-        engine.releaseAllWriters();
         final TableWriterPressureControl pressure = engine.getTableSequencerAPI().getTxnTracker(token).getMemPressureControl();
         ff.denyWalReads = true;
         try {
             try (TableWriter writer = getWriter(token)) {
-                // The lag must survive closing the old writer; in-memory counters are insufficient.
+                // The Delta switch runs on the active apply writer, where the lag is still available. A physical
+                // writer reopen intentionally discards saved lag and replays it from WAL, so keep this writer pooled
+                // until the forced commit and test the physical reopen only after the lag has been committed.
                 assertLag(writer, lagTxnCount, lagRowCount, isOrdered);
                 Assert.assertEquals(targetTxn, writer.getAppliedSeqTxn());
                 writer.forceWalLagCommit(pressure);
