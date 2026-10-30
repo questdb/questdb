@@ -719,52 +719,57 @@ public class OrderedMap implements Map, Reopenable {
         long entrySize = keySize + valueSize;
         long alignedEntrySize = Bytes.align8b(entrySize);
 
-        OUTER:
-        for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
-            // Read the slot as a single 64-bit value, as probe0 does.
-            long srcSlot = Unsafe.getLong(srcMap.offsetsAddr + ((long) i << 3));
-            long srcStartAddr = srcEntryAddr(srcMap, srcSlot);
-            if (srcStartAddr == 0) {
-                continue;
-            }
-
-            int hashCodeLo = Numbers.decodeHighInt(srcSlot);
-            int index = hashCodeLo & mask;
-
-            long destSlot;
-            int destRawOffset;
-            long destP = offsetsAddr + ((long) index << 3);
-            while (!isEmptySlot(destRawOffset = Numbers.decodeLowInt(destSlot = Unsafe.getLong(destP)))) {
-                // Only the hash-match branch consumes the offset, so decompress it there rather
-                // than on every probe step.
-                if (hashCodeLo == Numbers.decodeHighInt(destSlot)) {
-                    long destOffset = decompressOffset(destRawOffset);
-                    if (Vect.memeq(heapAddr + destOffset, srcStartAddr, keySize)) {
-                        // Match found, merge values.
-                        mergeFunc.merge(
-                                valueAt(heapAddr + destOffset),
-                                srcMap.valueAt(srcStartAddr)
-                        );
-                        continue OUTER;
-                    }
+        final long blockSlots = Map.mergeBlockSlots(srcMap.keyCapacity, srcMap.size, keyCapacity, loadFactor);
+        final long blockCount = srcMap.keyCapacity / blockSlots;
+        for (long block = 0; block < blockCount; block++) {
+            final long blockStart = Map.mergeBlock(block, blockCount) * blockSlots;
+            OUTER:
+            for (long i = blockStart, blockLimit = blockStart + blockSlots; i < blockLimit; i++) {
+                // Read the slot as a single 64-bit value, as probe0 does.
+                long srcSlot = Unsafe.getLong(srcMap.offsetsAddr + (i << 3));
+                long srcStartAddr = srcEntryAddr(srcMap, srcSlot);
+                if (srcStartAddr == 0) {
+                    continue;
                 }
-                index = (index + 1) & mask;
-                destP = offsetsAddr + ((long) index << 3);
-            }
 
-            if (kPos + entrySize > heapLimit) {
-                resize(entrySize, kPos);
-            }
-            Unsafe.copyMemory(srcStartAddr, kPos, entrySize);
-            Unsafe.putLong(destP, Numbers.encodeLowHighInts(compressOffset(kPos - heapAddr), hashCodeLo));
-            kPos += alignedEntrySize;
-            size++;
-            if (--free == 0) {
-                try {
-                    rehash();
-                } catch (CairoException e) {
-                    free = 1;
-                    throw e;
+                int hashCodeLo = Numbers.decodeHighInt(srcSlot);
+                int index = hashCodeLo & mask;
+
+                long destSlot;
+                int destRawOffset;
+                long destP = offsetsAddr + ((long) index << 3);
+                while (!isEmptySlot(destRawOffset = Numbers.decodeLowInt(destSlot = Unsafe.getLong(destP)))) {
+                    // Only the hash-match branch consumes the offset, so decompress it there rather
+                    // than on every probe step.
+                    if (hashCodeLo == Numbers.decodeHighInt(destSlot)) {
+                        long destOffset = decompressOffset(destRawOffset);
+                        if (Vect.memeq(heapAddr + destOffset, srcStartAddr, keySize)) {
+                            // Match found, merge values.
+                            mergeFunc.merge(
+                                    valueAt(heapAddr + destOffset),
+                                    srcMap.valueAt(srcStartAddr)
+                            );
+                            continue OUTER;
+                        }
+                    }
+                    index = (index + 1) & mask;
+                    destP = offsetsAddr + ((long) index << 3);
+                }
+
+                if (kPos + entrySize > heapLimit) {
+                    resize(entrySize, kPos);
+                }
+                Unsafe.copyMemory(srcStartAddr, kPos, entrySize);
+                Unsafe.putLong(destP, Numbers.encodeLowHighInts(compressOffset(kPos - heapAddr), hashCodeLo));
+                kPos += alignedEntrySize;
+                size++;
+                if (--free == 0) {
+                    try {
+                        rehash();
+                    } catch (CairoException e) {
+                        free = 1;
+                        throw e;
+                    }
                 }
             }
         }
@@ -773,57 +778,62 @@ public class OrderedMap implements Map, Reopenable {
     private void mergeVarSizeKey(OrderedMap srcMap, MapValueMergeFunction mergeFunc) {
         assert keySize == -1;
 
-        OUTER:
-        for (int i = 0, n = srcMap.keyCapacity; i < n; i++) {
-            // Read the slot as a single 64-bit value, as probe0 does.
-            long srcSlot = Unsafe.getLong(srcMap.offsetsAddr + ((long) i << 3));
-            long srcStartAddr = srcEntryAddr(srcMap, srcSlot);
-            if (srcStartAddr == 0) {
-                continue;
-            }
-
-            int srcKeySize = Unsafe.getInt(srcStartAddr);
-            int hashCodeLo = Numbers.decodeHighInt(srcSlot);
-            int index = hashCodeLo & mask;
-
-            long destSlot;
-            int destRawOffset;
-            long destOffsetAddr = offsetsAddr + ((long) index << 3);
-            while (!isEmptySlot(destRawOffset = Numbers.decodeLowInt(destSlot = Unsafe.getLong(destOffsetAddr)))) {
-                // Only the hash-match branch consumes the offset, so decompress it there rather
-                // than on every probe step.
-                if (hashCodeLo == Numbers.decodeHighInt(destSlot)) {
-                    long destOffset = decompressOffset(destRawOffset);
-                    if (
-                            Unsafe.getInt(heapAddr + destOffset) == srcKeySize
-                                    && Vect.memeq(heapAddr + destOffset + keyOffset, srcStartAddr + keyOffset, srcKeySize)
-                    ) {
-                        // Match found, merge values.
-                        mergeFunc.merge(
-                                valueAt(heapAddr + destOffset),
-                                srcMap.valueAt(srcStartAddr)
-                        );
-                        continue OUTER;
-                    }
+        final long blockSlots = Map.mergeBlockSlots(srcMap.keyCapacity, srcMap.size, keyCapacity, loadFactor);
+        final long blockCount = srcMap.keyCapacity / blockSlots;
+        for (long block = 0; block < blockCount; block++) {
+            final long blockStart = Map.mergeBlock(block, blockCount) * blockSlots;
+            OUTER:
+            for (long i = blockStart, blockLimit = blockStart + blockSlots; i < blockLimit; i++) {
+                // Read the slot as a single 64-bit value, as probe0 does.
+                long srcSlot = Unsafe.getLong(srcMap.offsetsAddr + (i << 3));
+                long srcStartAddr = srcEntryAddr(srcMap, srcSlot);
+                if (srcStartAddr == 0) {
+                    continue;
                 }
-                index = (index + 1) & mask;
-                destOffsetAddr = offsetsAddr + ((long) index << 3);
-            }
 
-            long entrySize = keyOffset + srcKeySize + valueSize;
-            if (kPos + entrySize > heapLimit) {
-                resize(entrySize, kPos);
-            }
-            Unsafe.copyMemory(srcStartAddr, kPos, entrySize);
-            Unsafe.putLong(destOffsetAddr, Numbers.encodeLowHighInts(compressOffset(kPos - heapAddr), hashCodeLo));
-            kPos = Bytes.align8b(kPos + entrySize);
-            size++;
-            if (--free == 0) {
-                try {
-                    rehash();
-                } catch (CairoException e) {
-                    free = 1;
-                    throw e;
+                int srcKeySize = Unsafe.getInt(srcStartAddr);
+                int hashCodeLo = Numbers.decodeHighInt(srcSlot);
+                int index = hashCodeLo & mask;
+
+                long destSlot;
+                int destRawOffset;
+                long destOffsetAddr = offsetsAddr + ((long) index << 3);
+                while (!isEmptySlot(destRawOffset = Numbers.decodeLowInt(destSlot = Unsafe.getLong(destOffsetAddr)))) {
+                    // Only the hash-match branch consumes the offset, so decompress it there rather
+                    // than on every probe step.
+                    if (hashCodeLo == Numbers.decodeHighInt(destSlot)) {
+                        long destOffset = decompressOffset(destRawOffset);
+                        if (
+                                Unsafe.getInt(heapAddr + destOffset) == srcKeySize
+                                        && Vect.memeq(heapAddr + destOffset + keyOffset, srcStartAddr + keyOffset, srcKeySize)
+                        ) {
+                            // Match found, merge values.
+                            mergeFunc.merge(
+                                    valueAt(heapAddr + destOffset),
+                                    srcMap.valueAt(srcStartAddr)
+                            );
+                            continue OUTER;
+                        }
+                    }
+                    index = (index + 1) & mask;
+                    destOffsetAddr = offsetsAddr + ((long) index << 3);
+                }
+
+                long entrySize = keyOffset + srcKeySize + valueSize;
+                if (kPos + entrySize > heapLimit) {
+                    resize(entrySize, kPos);
+                }
+                Unsafe.copyMemory(srcStartAddr, kPos, entrySize);
+                Unsafe.putLong(destOffsetAddr, Numbers.encodeLowHighInts(compressOffset(kPos - heapAddr), hashCodeLo));
+                kPos = Bytes.align8b(kPos + entrySize);
+                size++;
+                if (--free == 0) {
+                    try {
+                        rehash();
+                    } catch (CairoException e) {
+                        free = 1;
+                        throw e;
+                    }
                 }
             }
         }

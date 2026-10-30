@@ -522,6 +522,41 @@ public class MapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMergeBlockOrder() {
+        final long[] expected = {0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11};
+        for (int position = 0; position < expected.length; position++) {
+            Assert.assertEquals(expected[position], Map.mergeBlock(position, expected.length));
+        }
+    }
+
+    @Test
+    public void testMergeBlockSlots() {
+        // A source that adds keys to each destination region at under half its free share keeps one block.
+        Assert.assertEquals(1 << 20, Map.mergeBlockSlots(1 << 20, 100_000, 1 << 22, 0.7));
+        Assert.assertEquals(1 << 20, Map.mergeBlockSlots(1 << 20, 150_000, 1 << 20, 0.7));
+        Assert.assertEquals(1024, Map.mergeBlockSlots(1 << 20, 500_000, 1 << 20, 0.7));
+        Assert.assertEquals(1024, Map.mergeBlockSlots(1 << 20, 500_000, 1 << 18, 0.7));
+        Assert.assertEquals(1024, Map.mergeBlockSlots(1 << 20, 150_000, 1 << 22, 0.95));
+        Assert.assertEquals(512, Map.mergeBlockSlots(512, 400, 512, 0.7));
+    }
+
+    @Test
+    public void testMergeBlocksVisitEverySlotOnce() {
+        for (int shift = 0; shift <= 24; shift++) {
+            final long capacity = 1L << shift;
+            final long blockSlots = Map.mergeBlockSlots(capacity, capacity, capacity, 0.7);
+            final long blockCount = capacity / blockSlots;
+            Assert.assertEquals(capacity, blockSlots * blockCount);
+            final boolean[] visited = new boolean[(int) blockCount];
+            for (long position = 0; position < blockCount; position++) {
+                final int block = (int) Map.mergeBlock(position, blockCount);
+                Assert.assertFalse(visited[block]);
+                visited[block] = true;
+            }
+        }
+    }
+
+    @Test
     public void testMergeIntersectingMaps() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             SingleColumnType keyTypes = keyColumnType(ColumnType.INT);
@@ -630,6 +665,55 @@ public class MapTest extends AbstractCairoTest {
                         Assert.assertFalse(valueB.isNew());
                         Assert.assertEquals(valueA.getInt(0), valueB.getInt(0));
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMergeSameCapacityNonIntersectingMaps() throws Exception {
+        // Both tables have the same slot count and the destination crosses its load factor
+        // mid-merge, the shape that made a front-to-back merge quadratic.
+        TestUtils.assertMemoryLeak(() -> {
+            SingleColumnType keyTypes = keyColumnType(ColumnType.INT);
+            SingleColumnType valueTypes = new SingleColumnType(ColumnType.INT);
+
+            try (
+                    Map mapA = createMap(keyTypes, valueTypes, 10_000, 0.7, Integer.MAX_VALUE);
+                    Map mapB = createMap(keyTypes, valueTypes, 10_000, 0.7, Integer.MAX_VALUE)
+            ) {
+                final int sizeA = 9_800;
+                final int sizeB = 8_000;
+                for (int i = 0; i < sizeA; i++) {
+                    MapKey keyA = mapA.withKey();
+                    populateKey(keyA, i);
+                    MapValue valueA = keyA.createValue();
+                    Assert.assertTrue(valueA.isNew());
+                    valueA.putInt(0, i);
+                }
+                for (int i = sizeA; i < sizeA + sizeB; i++) {
+                    MapKey keyB = mapB.withKey();
+                    populateKey(keyB, i);
+                    MapValue valueB = keyB.createValue();
+                    Assert.assertTrue(valueB.isNew());
+                    valueB.putInt(0, i);
+                }
+                final int keyCapacity = mapA.getKeyCapacity();
+                Assert.assertEquals(keyCapacity, mapB.getKeyCapacity());
+                Assert.assertTrue(keyCapacity > 4 * 1024);
+
+                mapA.merge(mapB, new TestMapValueMergeFunction());
+
+                Assert.assertEquals(sizeA + sizeB, mapA.size());
+                Assert.assertTrue(mapA.getKeyCapacity() > keyCapacity);
+                final boolean[] found = new boolean[sizeA + sizeB];
+                RecordCursor cursorA = mapA.getCursor();
+                MapRecord recordA = mapA.getRecord();
+                while (cursorA.hasNext()) {
+                    int i = readKey(recordA, 1);
+                    Assert.assertFalse(found[i]);
+                    found[i] = true;
+                    Assert.assertEquals(i, recordA.getValue().getInt(0));
                 }
             }
         });
