@@ -293,10 +293,11 @@ public class OrderByLimitTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns(printReference("SELECT * FROM agg ORDER BY s, ts DESC LIMIT 2, 6"));
-            // Every bucket of an ascending stream enters a descending top-K, so the full sort stays.
             assertQuery("SELECT ts, count() c, sum(v) s FROM ss SAMPLE BY 1s ORDER BY ts DESC LIMIT 3")
                     .noLeakCheck()
-                    .withPlanNotContaining("Encode sort lo:")
+                    .noRandomAccess()
+                    .withPlanContaining("Frame backward scan")
+                    .withPlanNotContaining("sort")
                     .timestampDesc("ts")
                     .returns(printReference("SELECT * FROM agg ORDER BY ts DESC LIMIT 3"));
             // An outer negative limit rewinds the top-K, which replays its copies instead of

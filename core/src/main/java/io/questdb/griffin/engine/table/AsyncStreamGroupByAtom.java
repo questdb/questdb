@@ -63,6 +63,7 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
     private final CairoConfiguration configuration;
     private final AsyncFilterContext filterContext;
     private final ObjList<GroupByFunction> groupByFunctions;
+    private final boolean isDescending;
     private final Function keyFunction;
     private final int keyFunctionIndex;
     private final ObjList<Function> keyFunctions;
@@ -98,10 +99,12 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
             Function filter,
             IntHashSet filterUsedColumnIndexes,
             ObjList<Function> perWorkerFilters,
-            int workerCount
+            int workerCount,
+            boolean isDescending
     ) {
         this.configuration = configuration;
         this.keyFunction = keyFunction;
+        this.isDescending = isDescending;
         this.keyFunctionIndex = streamKeyIndex - columnFilter.getColumnCount();
         this.keyFunctions = keyFunctions;
         this.perWorkerKeys = perWorkerKeys;
@@ -285,6 +288,10 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
                 throw th;
             }
         }
+    }
+
+    public boolean isDescending() {
+        return isDescending;
     }
 
     public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {

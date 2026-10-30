@@ -4192,15 +4192,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10")
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
-                        Encode sort lo: 10
-                          keys: [ts desc]
+                        Limit value: 10 skip-rows-max: 0 take-rows-max: 10
                             Async JIT Stream Group By workers: 1
                               keys: [ts]
                               values: [count(*)]
                               filter: y=5
                                 PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: di
+                                    Row backward scan
+                                    Frame backward scan on: di
                         """);
     }
 

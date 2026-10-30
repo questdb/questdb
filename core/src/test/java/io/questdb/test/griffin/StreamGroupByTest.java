@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
@@ -44,6 +45,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.TestUtils;
@@ -415,6 +417,85 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     "select * from (select timestamp_floor('1m', ts) bucket, count(*) c, sum(v) from $table) where c > 10 order by bucket limit 2, 5");
             assertMatchesHash(compiler, context,
                     "select timestamp_floor('1m', ts) bucket, count(*), sum(v) from $table order by bucket desc limit 3");
+        });
+    }
+
+    @Test
+    public void testDescendingOrderScansBackward() throws Exception {
+        run((engine, compiler, context) -> {
+            createTable(compiler, context);
+            for (String bucket : new String[]{"1d", "1m", "7s", "1U"}) {
+                for (String keys : new String[]{"", ", sym"}) {
+                    for (String filter : new String[]{"", " WHERE v % 7 <> 0"}) {
+                        assertMatchesHash(compiler, context, "SELECT timestamp_floor('" + bucket + "', ts) bucket" + keys
+                                + ", count(*), sum(v), min(d), max(d), first(v), last(v), first_not_null(v), last_not_null(v) "
+                                + "FROM $table" + filter + " ORDER BY bucket DESC" + keys);
+                    }
+                }
+            }
+            assertMatchesHash(compiler, context,
+                    "SELECT timestamp_floor('1m', ts) bucket, sym, count(*), last(v) FROM $table ORDER BY bucket DESC, sym LIMIT 3, 7");
+            assertMatchesHash(compiler, context,
+                    "SELECT * FROM (SELECT timestamp_floor('1m', ts) bucket, count(*), last(v) FROM $table) ORDER BY bucket DESC LIMIT 4");
+
+            final String expected;
+            try (RecordCursorFactory factory = compiler.compile(
+                    "SELECT timestamp_floor('1m', ts) ts, sum(v), first(v) FROM hash_input ORDER BY ts DESC", context).getRecordCursorFactory()) {
+                expected = read(factory, context);
+            }
+            final QueryAssertion sampleBy = assertQuery("SELECT ts, sum(v), first(v) FROM trades SAMPLE BY 1m ORDER BY ts DESC")
+                    .withEngine(engine).withContext(context).noLeakCheck().timestampDesc("ts");
+            if (parallel) {
+                sampleBy.noRandomAccess().withPlan("""
+                        Async Stream Group By workers: %d
+                          keys: [ts]
+                          keyFunctions: [timestamp_floor_utc('1m',ts)]
+                          values: [sum(v),first(v)]
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: trades
+                        """.formatted(Math.max(1, workers)));
+            } else {
+                sampleBy.withPlan("""
+                        Encode sort
+                          keys: [ts desc]
+                            Stream Group By
+                              keys: [ts]
+                              keyFunctions: [timestamp_floor_utc('1m',ts)]
+                              values: [sum(v),first(v)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
+                        """);
+            }
+            sampleBy.returns(expected);
+
+            final String fillPlan = TestUtils.printSqlToString(engine, context,
+                    "EXPLAIN SELECT ts, sum(v) FROM trades SAMPLE BY 1m FILL(NULL) ORDER BY ts DESC", new StringSink());
+            Assert.assertTrue(fillPlan, fillPlan.contains("Frame forward scan"));
+        });
+    }
+
+    @Test
+    public void testDescendingOrderMatchesForwardScanAroundJoinsAndUnions() throws Exception {
+        run((engine, compiler, context) -> {
+            createTable(compiler, context);
+            final String sampleBy = "(SELECT ts, sum(v) s, last(v) l FROM trades SAMPLE BY 1m)";
+            for (String sql : new String[]{
+                    "SELECT * FROM " + sampleBy + " a ASOF JOIN trades b ORDER BY a.ts DESC",
+                    "SELECT * FROM " + sampleBy + " a LT JOIN trades b ORDER BY a.ts DESC LIMIT 4",
+                    "SELECT * FROM (" + sampleBy + " UNION ALL (SELECT ts, sum(v) s, first(v) l FROM trades SAMPLE BY 7m)) ORDER BY ts DESC, s",
+                    "SELECT ts, s, sum(s) OVER (ORDER BY ts) FROM " + sampleBy + " ORDER BY ts DESC",
+                    "SELECT * FROM (SELECT ts, sum(v) s FROM trades SAMPLE BY 1m ORDER BY ts DESC) LIMIT 3",
+                    "SELECT * FROM (SELECT ts, sum(v) s FROM trades SAMPLE BY 1m ORDER BY ts DESC) ORDER BY ts",
+                    "SELECT first(s), last(s) FROM (SELECT ts, sum(v) s FROM trades SAMPLE BY 1m ORDER BY ts DESC)",
+                    "SELECT ts, sum(s) FROM (SELECT ts, sum(v) s FROM trades SAMPLE BY 1m ORDER BY ts DESC) SAMPLE BY 1h",
+            }) {
+                context.setParallelGroupByEnabled(false);
+                final String expected = readOrError(compiler, context, sql);
+                context.setParallelGroupByEnabled(parallel);
+                Assert.assertEquals(sql, expected, readOrError(compiler, context, sql));
+            }
         });
     }
 
@@ -1399,6 +1480,14 @@ public class StreamGroupByTest extends AbstractCairoTest {
             CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
         }
         return sink.toString();
+    }
+
+    private static String readOrError(SqlCompiler compiler, SqlExecutionContext context, String sql) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+            return read(factory, context);
+        } catch (SqlException e) {
+            return e.getFlyweightMessage().toString();
+        }
     }
 
     private void run(CustomisableRunnable runnable) throws Exception {

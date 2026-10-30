@@ -101,6 +101,9 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     public void close() {
         try {
             if (frameSequence != null) {
+                if (!done) {
+                    frameSequence.cancel(SqlExecutionCircuitBreaker.STATE_OK);
+                }
                 collect(true);
                 if (prepared) {
                     frameSequence.await();

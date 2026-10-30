@@ -269,16 +269,14 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 LIMIT 6;""")
                 .withPlan("""
                         Limit value: 6 skip-rows-max: 0 take-rows-max: 6
-                            Encode sort
-                              keys: [Time desc]
-                                Async JIT Stream Group By workers: 1
-                                  keys: [Time]
-                                  keyFunctions: [timestamp_floor_utc('1s',timestamp)]
-                                  values: [avg(asks[1,1]-bids[1,1]),sum(bids[1,1]*bids[2,1]),sum(asks[1,1]*asks[2,1])]
-                                  filter: symbol='''
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: market_data
+                            Async JIT Stream Group By workers: 1
+                              keys: [Time]
+                              keyFunctions: [timestamp_floor_utc('1s',timestamp)]
+                              values: [avg(asks[1,1]-bids[1,1]),sum(bids[1,1]*bids[2,1]),sum(asks[1,1]*asks[2,1])]
+                              filter: symbol='''
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: market_data
                         """)
                 .ddl("""
                         
@@ -289,6 +287,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                         \tasks DOUBLE[][]
                         ) timestamp(timestamp);""")
                 .timestampDesc("Time")
+                .noRandomAccess()
                 .mutateWith("INSERT INTO market_data (timestamp, symbol, bids, asks) " +
                         "VALUES " +
                         "(0, 'abc', array[[1d,2d],[3d,4d]], array[[2d,3d],[4d,5d]]), " +

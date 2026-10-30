@@ -1889,6 +1889,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return viewExpr != null ? viewExpr.position : 0;
     }
 
+    private static boolean hasFillValues(IQueryModel fillModel) {
+        final ObjList<ExpressionNode> fill = fillModel.getFillValues();
+        return fill != null && fill.size() > 0 && (fill.size() > 1 || !isNoneKeyword(fill.getQuick(0).token));
+    }
+
     /**
      * Returns true when the base factory delivers rows in ascending designated-timestamp order, which the
      * TWAP and sparkline aggregates require: their single-batch step-function integration trusts each page
@@ -1905,16 +1910,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     private static boolean isStreamGroupByFillSupported(IQueryModel model, int keyCount, RecordMetadata metadata) {
         for (IQueryModel current = model; current != null; current = current.getNestedModel()) {
-            if (current.getFillStride() == null) {
+            if (current.getFillStride() == null || keyCount > 1 || !hasFillValues(current)) {
                 continue;
             }
             final ObjList<ExpressionNode> fill = current.getFillValues();
-            if (fill == null || fill.size() == 0 || (fill.size() == 1 && isNoneKeyword(fill.getQuick(0).token))) {
-                continue;
-            }
-            if (keyCount > 1) {
-                continue;
-            }
             for (int i = 0, n = fill.size(); i < n; i++) {
                 if (isPrevKeyword(fill.getQuick(i).token)) {
                     for (int col = 0, count = metadata.getColumnCount(); col < count; col++) {
@@ -2062,35 +2061,46 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     /**
      * Reports the stream group-by key as the designated timestamp only where a hash group-by gains one
      * through a sort: for the SAMPLE BY bucket, which the rewrite orders by and the fill requires in
-     * order, and for an ORDER BY that leads with the key ascending, held by the model or advised by an
-     * enclosing one. generateFill and generateOrderBy then skip the sort. Any other GROUP BY reports no
-     * designated timestamp, so the schema that INSERT ... SELECT and CREATE TABLE AS see does not depend
-     * on which group-by implementation the aggregates select.
+     * order, and for an ORDER BY that leads with the key, held by the model or advised by an enclosing
+     * one. An ORDER BY that leads with the key descending turns the stream group-by into a backward
+     * scan when the caller supports one and no fill reads the buckets. generateFill and generateOrderBy
+     * then skip the sort. Any other GROUP BY reports no designated timestamp, so the schema that
+     * INSERT ... SELECT and CREATE TABLE AS see does not depend on which group-by implementation the
+     * aggregates select.
+     *
+     * @return true when the stream group-by scans backward
      */
-    private static void setStreamGroupByTimestampIndex(IQueryModel model, GenericRecordMetadata metadata, ObjList<Function> functions, int keyIndex) {
+    private static boolean setStreamGroupByTimestampIndex(
+            IQueryModel model,
+            GenericRecordMetadata metadata,
+            ObjList<Function> functions,
+            int keyIndex,
+            boolean isBackwardScanSupported
+    ) {
         final int timestampIndex = GroupByUtils.getStreamGroupByTimestampIndex(metadata, functions, keyIndex);
         if (timestampIndex < 0) {
-            return;
+            return false;
         }
         IQueryModel fillModel = model;
         while (fillModel != null && fillModel.getFillStride() == null) {
             fillModel = fillModel.getNestedModel();
         }
-        if (fillModel != null && findFillBucketIndex(model, metadata, fillModel) == timestampIndex) {
-            metadata.setTimestampIndex(timestampIndex);
-            return;
-        }
+        final boolean isSampleByBucket = fillModel != null && findFillBucketIndex(model, metadata, fillModel) == timestampIndex;
         ObjList<ExpressionNode> orderBy = model.getOrderBy();
         IntList orderByDirection = model.getOrderByDirection();
         if (orderBy.size() == 0) {
             orderBy = model.getOrderByAdvice();
             orderByDirection = model.getOrderByDirectionAdvice();
         }
-        if (orderBy.size() > 0
-                && (orderByDirection.size() == 0 || orderByDirection.getQuick(0) == IQueryModel.ORDER_DIRECTION_ASCENDING)
-                && SqlUtil.getColumnIndexQuiet(metadata, orderBy.getQuick(0).token) == timestampIndex) {
+        final boolean isOrderedByKey = orderBy.size() > 0 && SqlUtil.getColumnIndexQuiet(metadata, orderBy.getQuick(0).token) == timestampIndex;
+        final boolean isDescending = isOrderedByKey
+                && orderByDirection.size() > 0
+                && orderByDirection.getQuick(0) == IQueryModel.ORDER_DIRECTION_DESCENDING;
+        final boolean isBackward = isDescending && isBackwardScanSupported && !(isSampleByBucket && hasFillValues(fillModel));
+        if (isSampleByBucket || isBackward || (isOrderedByKey && !isDescending)) {
             metadata.setTimestampIndex(timestampIndex);
         }
+        return isBackward;
     }
 
     private static long tolerance(IQueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
@@ -10902,7 +10912,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         base0, metadata, columnFilter, keys, values, streamKeyIndex, streamKey,
                         functions, perWorkerFunctions0, keyFunctions, perWorkerKeys0, recordFunctions0,
                         compiledFilter0, bindVarMemory0, bindVarFunctions0, filter0, filterColumns, perWorkerFilters0,
-                        reduceTaskFactory, executionContext.getSharedQueryWorkerCount()
+                        reduceTaskFactory, executionContext.getSharedQueryWorkerCount(), false
                 );
             }
             final RecordCursorFactory base0 = base;
@@ -11772,7 +11782,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     sharedOuterProjectionFunctions = null;
 
                     if (streamKey != null) {
-                        setStreamGroupByTimestampIndex(model, outerProjectionMetadata, outerProjectionFunctions0, valueTypesCopy.getColumnCount() + streamKeyIndex);
+                        final boolean isDescending = setStreamGroupByTimestampIndex(model, outerProjectionMetadata, outerProjectionFunctions0,
+                                valueTypesCopy.getColumnCount() + streamKeyIndex, true);
                         return generateFill(
                                 model,
                                 new AsyncStreamGroupByRecordCursorFactory(
@@ -11781,7 +11792,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         groupByFunctions0, perWorkerGroupByFunctions0, keyFunctions, perWorkerKeyFunctions0,
                                         outerProjectionFunctions0, compiledFilter, bindVarMemory, bindVarFunctions,
                                         filter, filterUsedColumnIndexes, perWorkerFilters0,
-                                        reduceTaskFactory, executionContext.getSharedQueryWorkerCount()
+                                        reduceTaskFactory, executionContext.getSharedQueryWorkerCount(), isDescending
                                 ),
                                 executionContext
                         );
@@ -11848,7 +11859,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             sharedOuterProjectionFunctions = null;
 
             if (streamKey != null) {
-                setStreamGroupByTimestampIndex(model, outerProjectionMetadata, outerProjectionFunctions0, valueTypes.getColumnCount() + streamKeyIndex);
+                setStreamGroupByTimestampIndex(model, outerProjectionMetadata, outerProjectionFunctions0, valueTypes.getColumnCount() + streamKeyIndex, false);
                 return generateFill(
                         model,
                         new StreamGroupByRecordCursorFactory(asm, configuration, factory, outerProjectionMetadata,
