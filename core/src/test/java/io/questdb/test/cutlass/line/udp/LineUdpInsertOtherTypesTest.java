@@ -694,6 +694,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         A\t1970-01-01T00:00:07.000000Z
                         @plant2\t1970-01-01T00:00:08.000000Z
                         @plant\t1970-01-01T00:00:09.000000Z
+                        @plant\t1970-01-01T00:00:10.000000Z
                         \t1970-01-01T00:00:11.000000Z
                         """,
                 new String[]{
@@ -706,7 +707,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "A", // valid
                         "@plant2", // valid
                         "@plant", // valid
-                        "\"@plant\"", // discarded bad type string
+                        "\"@plant\"", // valid, a quoted string loses its quotes
                         "" // valid null
                 });
     }
@@ -725,6 +726,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         A\t1970-01-01T00:00:07.000000Z
                         @plant2\t1970-01-01T00:00:08.000000Z
                         @plant\t1970-01-01T00:00:09.000000Z
+                        @plant\t1970-01-01T00:00:10.000000Z
                         \t1970-01-01T00:00:11.000000Z
                         """,
                 new String[]{
@@ -737,7 +739,7 @@ public class LineUdpInsertOtherTypesTest extends LineUdpInsertTest {
                         "A", // valid
                         "@plant2", // valid
                         "@plant", // valid
-                        "\"@plant\"", // discarded bad type string
+                        "\"@plant\"", // valid, a quoted string loses its quotes
                         "" // valid null
                 });
     }
