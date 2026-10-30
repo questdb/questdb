@@ -149,6 +149,16 @@ final class AggregateBinder implements Mutable {
         return false;
     }
 
+    /**
+     * True when the projection selects its input's designated timestamp as the column at the index, by a plain
+     * reference without a cast.
+     */
+    private static boolean isPassedTimestamp(ProjectPlan project, int index) {
+        final int timestampId = project.getChild().getOutput().getTimestampColumnId();
+        return timestampId >= 0 && project.getExpressions().getQuick(index) instanceof ColumnExpression column
+                && column.isDirectReference() && !column.isCast() && column.getColumnId() == timestampId;
+    }
+
     private static boolean isSelectAlias(ExpressionNode literal, QueryModel model) {
         if (FunctionBinder.qualifierEnd(literal, null) >= 0) {
             return false;
@@ -363,7 +373,7 @@ final class AggregateBinder implements Mutable {
                 sort.getColumnIds().setQuick(0, project.getOutput().getColumnId(timestampIndex));
                 project.replaceInput(0, sort.getChild());
                 sort.replaceInput(0, project);
-                project.getOutput().setTimestampIndex(-1);
+                orderBinder.designateTimestamp(project, timestampIndex);
                 result = sort;
                 if (project.getExpressions().size() > visibleCount) {
                     result = orderBinder.projectVisible(sort, project, project);
@@ -427,6 +437,9 @@ final class AggregateBinder implements Mutable {
                 }
                 scope.orderOutputIndexes.add(index);
                 orderBinder.addSortKey(sort, (ordering == null ? project : ordering).getOutput(), index, source.getOrderByDirection().getQuick(i), order.position);
+            }
+            if (ordering == null && isPassedTimestamp(project, scope.orderOutputIndexes.getQuick(0))) {
+                orderBinder.designateTimestamp(project, scope.orderOutputIndexes.getQuick(0));
             }
             final ProjectPlan sortInput = ordering == null ? project : ordering;
             sort.replaceInput(0, sortInput);

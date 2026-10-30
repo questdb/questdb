@@ -63,6 +63,12 @@ interface KeyOrderedRowCursorFactory extends RowCursorFactory {
     RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory, int keyLo, int keyHi, long firstRow);
 
     /**
+     * The key whose rows the cursor of the last {@code getCursor} call returns, which is the key of the row it returned
+     * last.
+     */
+    int getCursorKey();
+
+    /**
      * The direction the cursors read the rows of each key in, {@link io.questdb.cairo.idx.IndexReader#DIR_FORWARD} or
      * {@link io.questdb.cairo.idx.IndexReader#DIR_BACKWARD}.
      */

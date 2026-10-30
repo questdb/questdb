@@ -222,38 +222,6 @@ final class OrderBinder implements Mutable {
         return ctx.identityProjection(input, position);
     }
 
-    private void designateTimestamp(ProjectPlan project, int orderedProjectionIndex) {
-        final OutputSchema input = project.getChild().getOutput();
-        final OutputSchema output = project.getOutput();
-        // Projection keeps fresh output identities; timestamp designation maps through
-        // its explicit column references.
-        output.setTimestampIndex(-1);
-        final int inputTimestampIndex = input.getTimestampIndex();
-        if (inputTimestampIndex < 0) {
-            return;
-        }
-        final int timestampId = input.getColumnId(inputTimestampIndex);
-        final CharSequence timestampName = input.getColumnName(inputTimestampIndex);
-        final int preferredTimestampIndex = output.getColumnIndexById(ctx.scope().preferredTimestampColumnId);
-        // A computed projection designates the last plain reference, as the virtual factory does.
-        final boolean isLastReference = !LogicalPlans.isColumnReferenceProjection(project);
-        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-            if (project.getExpressions().getQuick(i) instanceof ColumnExpression column && column.getColumnId() == timestampId
-                    && (column.isDirectReference() || i == orderedProjectionIndex)
-                    && (preferredTimestampIndex < 0 || orderedProjectionIndex >= 0 || i == preferredTimestampIndex)
-                    && !ctx.scope().translatingCopyIds.contains(output.getColumnId(i))
-                    && !ctx.scope().nonTimestampReferenceIds.contains(output.getColumnId(i))) {
-                if (i == orderedProjectionIndex
-                        || output.getTimestampIndex() < 0
-                        || orderedProjectionIndex < 0 && (isLastReference
-                        || Chars.equalsIgnoreCase(output.getColumnName(i), timestampName))) {
-                    output.setTimestampIndex(i);
-                }
-            }
-        }
-        designateTimestampOffset(project);
-    }
-
     private boolean hasOrderAliasReference(ExpressionNode expression, OutputSchema input, ProjectPlan project, int visibleCount) throws SqlException {
         if (expression == null) {
             return false;
@@ -608,6 +576,42 @@ final class OrderBinder implements Mutable {
     ProjectPlan designateTimestamp(ProjectPlan project) {
         designateTimestamp(project, -1);
         return project;
+    }
+
+    /**
+     * Designates the projected timestamp of a projection that keeps its input's order, preferring the column at
+     * {@code orderedProjectionIndex}, the key the rows are sorted by first, or -1 for none.
+     */
+    void designateTimestamp(ProjectPlan project, int orderedProjectionIndex) {
+        final OutputSchema input = project.getChild().getOutput();
+        final OutputSchema output = project.getOutput();
+        // Projection keeps fresh output identities; timestamp designation maps through
+        // its explicit column references.
+        output.setTimestampIndex(-1);
+        final int inputTimestampIndex = input.getTimestampIndex();
+        if (inputTimestampIndex < 0) {
+            return;
+        }
+        final int timestampId = input.getColumnId(inputTimestampIndex);
+        final CharSequence timestampName = input.getColumnName(inputTimestampIndex);
+        final int preferredTimestampIndex = output.getColumnIndexById(ctx.scope().preferredTimestampColumnId);
+        // A computed projection designates the last plain reference, as the virtual factory does.
+        final boolean isLastReference = !LogicalPlans.isColumnReferenceProjection(project);
+        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
+            if (project.getExpressions().getQuick(i) instanceof ColumnExpression column && column.getColumnId() == timestampId
+                    && (column.isDirectReference() || i == orderedProjectionIndex)
+                    && (preferredTimestampIndex < 0 || orderedProjectionIndex >= 0 || i == preferredTimestampIndex)
+                    && !ctx.scope().translatingCopyIds.contains(output.getColumnId(i))
+                    && !ctx.scope().nonTimestampReferenceIds.contains(output.getColumnId(i))) {
+                if (i == orderedProjectionIndex
+                        || output.getTimestampIndex() < 0
+                        || orderedProjectionIndex < 0 && (isLastReference
+                        || Chars.equalsIgnoreCase(output.getColumnName(i), timestampName))) {
+                    output.setTimestampIndex(i);
+                }
+            }
+        }
+        designateTimestampOffset(project);
     }
 
     /**

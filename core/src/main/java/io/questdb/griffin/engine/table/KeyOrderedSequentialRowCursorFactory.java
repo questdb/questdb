@@ -53,6 +53,11 @@ class KeyOrderedSequentialRowCursorFactory extends SequentialRowCursorFactory im
     }
 
     @Override
+    public int getCursorKey() {
+        return getCursorIndex();
+    }
+
+    @Override
     public int getIndexDirection() {
         return indexDirection;
     }

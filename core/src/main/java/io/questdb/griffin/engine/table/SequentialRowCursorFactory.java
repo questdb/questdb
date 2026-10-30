@@ -46,6 +46,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
     private final SequentialRowCursor cursor;
     private final ObjList<? extends RowCursorFactory> cursorFactories;
     private final ObjList<RowCursor> cursors;
+    private int cursorLo;
 
     public SequentialRowCursorFactory(ObjList<? extends RowCursorFactory> cursorFactories, int[] cursorFactoriesIdx) {
         this.cursorFactories = cursorFactories;
@@ -73,6 +74,7 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
         for (int i = cursorLo; i < cursorHi; i++) {
             cursors.add(cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
         }
+        this.cursorLo = cursorLo;
         cursor.init();
         return cursor;
     }
@@ -87,8 +89,16 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
         for (int i = cursorLo + 1; i < cursorHi; i++) {
             cursors.add(cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
         }
+        this.cursorLo = cursorLo;
         cursor.init();
         return cursor;
+    }
+
+    /**
+     * The index of the cursor whose rows the cursor of the page frame returns, among all the cursors of the factory.
+     */
+    protected int getCursorIndex() {
+        return cursorLo + cursor.cursorIndex;
     }
 
     @Override

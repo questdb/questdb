@@ -84,6 +84,11 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
     }
 
     @Override
+    public int getCursorKey() {
+        return cursor.index - 1;
+    }
+
+    @Override
     public int getIndexDirection() {
         return indexDirection;
     }

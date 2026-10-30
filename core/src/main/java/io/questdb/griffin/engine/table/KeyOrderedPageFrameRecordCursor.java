@@ -572,32 +572,24 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
 
     /**
      * Collects the rows that the filter keeps of the keys {@code keyLo} to {@code keyHi} in the page frame as a run per
-     * key, which the read links to the run of the key before it.
+     * key, which the read links to the run of the key before it. One cursor of the factory over those keys returns the
+     * rows, so that a sequential factory opens the cursors of all of them, which seeks their index cursors, before it
+     * reads the rows of the first, as a scan in frame order does.
      */
     private void collectFrameRows(PageFrame frame, int frameIndex, int keyLo, int keyHi) {
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        for (int key = keyLo; key < keyHi; key++) {
-            final long rowLo = collectedRows.size();
-            rowCursor = keyOrderedFactory.getCursor(frame, frameMemory, key, key + 1);
-            while (rowCursor.hasNext()) {
-                collectedRows.add(rowCursor.next());
+        rowCursor = keyOrderedFactory.getCursor(frame, frameMemoryPool.navigateTo(frameIndex), keyLo, keyHi);
+        int runKey = -1;
+        while (rowCursor.hasNext()) {
+            final long row = rowCursor.next();
+            final int key = keyOrderedFactory.getCursorKey();
+            if (key != runKey) {
+                endCollectedRun(frameIndex, runKey);
+                runKey = key;
             }
-            rowCursor = Misc.free(rowCursor);
-            if (collectedRows.size() > rowLo) {
-                final long run = collectedRuns.size() / 3;
-                collectedRuns.add(frameIndex);
-                collectedRuns.add(collectedRows.size());
-                collectedRuns.add(-1);
-                final long keyRuns = 2L * key;
-                final long lastRun = collectedKeyRuns.get(keyRuns + 1);
-                if (lastRun < 0) {
-                    collectedKeyRuns.set(keyRuns, run);
-                } else {
-                    collectedRuns.set(3 * lastRun + 2, run);
-                }
-                collectedKeyRuns.set(keyRuns + 1, run);
-            }
+            collectedRows.add(row);
         }
+        rowCursor = Misc.free(rowCursor);
+        endCollectedRun(frameIndex, runKey);
     }
 
     /**
@@ -702,6 +694,28 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             count += frame.getPartitionHi() - frame.getPartitionLo();
         }
         return count;
+    }
+
+    /**
+     * Ends the run of the rows of the key that the collection added last, and links it to the run of the key before
+     * it, unless the key is -1.
+     */
+    private void endCollectedRun(int frameIndex, int key) {
+        if (key < 0) {
+            return;
+        }
+        final long run = collectedRuns.size() / 3;
+        collectedRuns.add(frameIndex);
+        collectedRuns.add(collectedRows.size());
+        collectedRuns.add(-1);
+        final long keyRuns = 2L * key;
+        final long lastRun = collectedKeyRuns.get(keyRuns + 1);
+        if (lastRun < 0) {
+            collectedKeyRuns.set(keyRuns, run);
+        } else {
+            collectedRuns.set(3 * lastRun + 2, run);
+        }
+        collectedKeyRuns.set(keyRuns + 1, run);
     }
 
     /**
