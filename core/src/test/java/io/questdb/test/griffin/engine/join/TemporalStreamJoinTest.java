@@ -47,6 +47,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.CustomisableRunnable;
@@ -131,13 +132,15 @@ public class TemporalStreamJoinTest extends AbstractCairoTest {
                         final Record recordB = cursor.getRecordB();
                         cursor.recordAt(recordB, firstId);
                         TestUtils.assertEquals("alpha", recordB.getVarcharA(2));
-                        final long initialMemory = tracker.getUsed();
+                        final long initialMemory = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
                         int count = 1;
                         while (cursor.hasNext()) {
                             count++;
                         }
                         Assert.assertEquals(10_000, count);
-                        Assert.assertTrue(tracker.getUsed() > initialMemory + 256);
+                        final long copiedMemory = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
+                        Assert.assertTrue(copiedMemory > initialMemory + 256);
+                        Assert.assertTrue(tracker.getUsed() >= copiedMemory);
                         cursor.recordAt(recordB, firstId);
                         Assert.assertEquals(0, recordB.getTimestamp(0));
                         TestUtils.assertEquals("alpha", recordB.getVarcharA(2));

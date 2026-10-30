@@ -432,8 +432,8 @@ public class OrderedMap implements Map, Reopenable {
         final long usedHeapSize = kPos - heapAddr;
         final boolean isOffsetValid = rowIndex == size ? heapOffset == usedHeapSize
                 : rowIndex == 0 ? heapOffset == 0
-                : keySize != -1 ? heapOffset == rowIndex * Bytes.align8b(keySize + valueSize)
-                : heapOffset > 0 && heapOffset < usedHeapSize;
+                  : keySize != -1 ? heapOffset == rowIndex * Bytes.align8b(keySize + valueSize)
+                    : heapOffset > 0 && heapOffset < usedHeapSize;
         if (!isOffsetValid) {
             throw new IllegalArgumentException("heap offset does not start row " + rowIndex + ": " + heapOffset);
         }
