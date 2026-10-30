@@ -1451,6 +1451,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 final int partitionPathLen = path.size();
+                boolean isParquetMetaGenerated = false;
                 try {
                     if (isCopied) {
                         // Copy partition if configured to do so, and it's not CSV import
@@ -1517,6 +1518,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 ff.close(parquetFd);
                                 ff.close(parquetMetaFd);
                             }
+                            isParquetMetaGenerated = true;
                             if (!Os.isWindows() && getFlushCommitMode() != CommitMode.NOSYNC) {
                                 path.trimTo(partitionPathLen);
                                 final long dirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
@@ -1539,11 +1541,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         parquetFileSize = ff.length(path.$());
                     }
                     path.trimTo(partitionPathLen);
+                    if (parquetFileSize >= 0) {
+                        attachValidateParquetColumnTypes(partitionPathLen, parquetFileSize);
+                    }
                     attachPartitionUpdateSymbolNullFlags(timestamp, partitionSize, parquetFileSize, isSymbolNullKnown);
                     checkPassed = true;
                 } finally {
                     path.trimTo(partitionPathLen);
                     if (!checkPassed) {
+                        if (isParquetMetaGenerated) {
+                            // Restore the partition as staged, so a retry with a replaced
+                            // data.parquet does not meet metadata generated for the old file.
+                            removeFileOrLog(ff, path.concat(PARQUET_METADATA_FILE_NAME).$());
+                            path.trimTo(partitionPathLen);
+                        }
                         attachPartitionRevertDir(isRenamed, isSoftLink, detachedPath.trimTo(detachedRootLen));
                     }
                 }
@@ -6777,6 +6788,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } finally {
                 partitionPath.trimTo(rootLen);
             }
+        }
+    }
+
+    // _pm stores type -1 for a foreign Parquet column QuestDB cannot read. Such a column is
+    // harmless while no live table column maps to it, but reads of a mapped one cannot succeed.
+    private void attachValidateParquetColumnTypes(int partitionPathLen, long parquetFileSize) {
+        try {
+            openParquetMetadataOrThrow(path, partitionPathLen, parquetFileSize);
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (metadata.getColumnType(i) <= 0) {
+                    continue;
+                }
+                final int parquetColumnIndex = findParquetColumnIndex(parquetMetaReader, i);
+                if (parquetColumnIndex < 0) {
+                    continue;
+                }
+                final int columnType = parquetMetaReader.getColumnType(parquetColumnIndex);
+                if (columnType <= 0 || ColumnType.sizeOf(columnType) == -1) {
+                    // The table is unchanged, so WAL apply can skip this ATTACH.
+                    throw CairoException.partitionManipulationRecoverable().put("invalid parquet column type [column=")
+                            .put(metadata.getColumnName(i)).put(", type=").put(columnType).put(']');
+                }
+            }
+        } finally {
+            final long parquetMetaAddr = parquetMetaReader.getAddr();
+            final long parquetMetaSize = parquetMetaReader.getFileSize();
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(partitionPathLen);
         }
     }
 
