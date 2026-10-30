@@ -1211,6 +1211,21 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprElementWithBracketedTimeAndDurationFails() {
+        // A date list element without a day, with a bracketed time and a duration of its own, in a date
+        // list with a time part: the parser appends the time part of the list after the duration of the
+        // element, so the first date that the element expands to, 2024-01-01T09:00;1hT10:00, holds a 'T'
+        // where the duration expects a number. The compiled form must fail with the same error when it
+        // compiles, rather than give each day of the element the time of the list.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        final String error = "Expected number before unit 'T'";
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00];1h, $today]T10:00", now, error);
+        // after a date variable, with two slots, a duration of two parts and a timezone on the list:
+        // 2024-01-01T09:00;1h30mT10:00
+        assertParsedAndCompiledRejectedAtCompileTime("[$today, 2024-01T[09:00,10:00];1h30m]T10:00@+02:00", now, error);
+    }
+
+    @Test
     public void testCompiledTickExprElementWithBracketedTimeFails() {
         // A date list element without a day whose own time part is in brackets, in a date list with a
         // time part: the parser appends the time part of the list to the element, and fails on the first
