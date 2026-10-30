@@ -317,6 +317,44 @@ public class WalApplyBlockSizeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetTableMeasuresRecordSize() throws Exception {
+        // (ts TIMESTAMP, x LONG, s VARCHAR) with 1,000-byte strings: 8 + 8 + 16 (aux) + 1,000 = 1,032 bytes per row.
+        // The estimate takes s for 28 bytes, 44 per row, which would fit all 100 txns in one block of 2,462 rows.
+        // A parquet partition has no column files to measure, so the WAL apply measures the rows it applies.
+        final int recordSize = 1_032;
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 105L * recordSize);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL FORMAT PARQUET");
+            final TableToken tableToken = engine.verifyTableName("t");
+            // The first txn applies on its own and measures the rows
+            execute("INSERT INTO t SELECT ('2024-01-01'::TIMESTAMP + x * 1_000_000)::TIMESTAMP, x, rpad('a', 1_000, 'a') FROM long_sequence(10)");
+            drainWalQueue();
+            try (TableWriter writer = getWriter(tableToken)) {
+                Assert.assertTrue(writer.getTxWriter().isPartitionParquet(0));
+            }
+            final long txnBefore = getTableTxn(tableToken);
+            for (int i = 0; i < TXN_COUNT; i++) {
+                execute(
+                        "INSERT INTO t SELECT ('2024-01-01'::TIMESTAMP + (x - 1) * 100_000_000 + " + i
+                                + " * 1_000_000 + 7)::TIMESTAMP, x, rpad('a', 1_000, 'a') FROM long_sequence(" + ROWS_PER_TXN + ")"
+                );
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            // 105 rows fit 10 txns a block
+            Assert.assertEquals(10, getTableTxn(tableToken) - txnBefore);
+            assertQuery("SELECT count(), sum(x), sum(length(s)) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\tsum1\n"
+                            + (10 + TXN_COUNT * ROWS_PER_TXN) + "\t"
+                            + (55 + TXN_COUNT * (ROWS_PER_TXN * (ROWS_PER_TXN + 1) / 2)) + "\t"
+                            + (10 + TXN_COUNT * ROWS_PER_TXN) * 1_000L + "\n");
+        });
+    }
+
+    @Test
     public void testPressureCapDoesNotGrowBlock() throws Exception {
         // Pressure control caps blocks at 49 rows, below the 100-row block size. Those blocks are not cut by the row
         // limit, so it stays at 100 rows: the look-ahead sizes to 10 txns of 10 rows, not to a doubled limit.

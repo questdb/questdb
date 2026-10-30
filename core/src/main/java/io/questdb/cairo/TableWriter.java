@@ -422,6 +422,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long attachPartitionTimestamp;
     private TxReader attachTxReader;
     private long avgRecordSize;
+    // Whether setAppendPosition() measured avgRecordSize from the last partition's column files. Until it does - always
+    // on a parquet last partition, which has none - the WAL apply measures it from the rows it applies.
+    private boolean avgRecordSizeMeasured;
     private boolean avoidIndexOnCommit = false;
     private BlockFileWriter blockFileWriter;
     private int columnCount;
@@ -10779,6 +10782,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Bytes per row of the rows {@code [lo, hi)} in {@code o3Columns}, data and aux vectors, the same measure
+     * {@link #setAppendPosition(long, boolean)} takes of the column files. The designated timestamp counts its 8 bytes
+     * on disk, not the 16 of the merge index.
+     */
+    private long measureO3RecordSize(long lo, long hi) {
+        final long rowCount = hi - lo;
+        long size = 0;
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = metadata.getColumnType(i);
+            if (columnType > 0) {
+                if (ColumnType.isVarSize(columnType)) {
+                    final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                    final long auxAddr = o3Columns.getQuick(getSecondaryColumnIndex(i)).addressOf(0);
+                    size += driver.getDataVectorSize(auxAddr, lo, hi - 1) + driver.auxRowsToBytes(rowCount);
+                } else {
+                    size += rowCount << ColumnType.pow2SizeOf(columnType);
+                }
+            }
+        }
+        return Math.max(1, size / rowCount);
+    }
+
     private int moveTailCut(LongList bounds, O3CompositeMergeStrategy.Plan plan, long futureFloor) {
         return O3CompositeMergeStrategy.moveTailCut(
                 bounds,
@@ -14281,6 +14307,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setLagMaxTimestamp(Long.MIN_VALUE);
 
         o3RowCount = o3Hi - o3Lo + walLagRowCount;
+        if (!avgRecordSizeMeasured && o3Hi > o3Lo) {
+            // Without it, a var-size column counts as ESTIMATED_VAR_COL_SIZE bytes, and on wide rows the next WAL
+            // apply block, sized by bytes, comes out orders of magnitude too many rows long
+            avgRecordSize = measureO3RecordSize(o3Lo, o3Hi);
+        }
 
         // Real data writing into table happens here.
         // Everything above it is to figure out how much data to write now,
@@ -17184,7 +17215,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         for (int i = 0; i < columnCount; i++) {
             recordLength += setColumnAppendPosition(i, rowCount, doubleAllocate);
         }
-        avgRecordSize = rowCount > 0 ? recordLength / rowCount : Math.max(avgRecordSize, recordLength);
+        if (rowCount > 0) {
+            avgRecordSize = recordLength / rowCount;
+            avgRecordSizeMeasured = true;
+        } else {
+            avgRecordSize = Math.max(avgRecordSize, recordLength);
+        }
     }
 
     private long setColumnAppendPosition(int columnIndex, long size, boolean doubleAllocate) {
