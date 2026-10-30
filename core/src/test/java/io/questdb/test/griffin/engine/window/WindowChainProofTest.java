@@ -631,8 +631,10 @@ public class WindowChainProofTest extends AbstractCairoTest {
         private String describe(int c, long value) {
             return switch (types.getQuick(c)) {
                 case ColumnType.DOUBLE -> Double.longBitsToDouble(value) + " (bits 0x" + Long.toHexString(value) + ')';
-                case ColumnType.FLOAT -> Float.intBitsToFloat((int) value) + " (bits 0x" + Integer.toHexString((int) value) + ')';
-                case ColumnType.SYMBOL -> value == NULL_SYMBOL ? "NULL" : "'" + symbolIds.keys().getQuick((int) value) + '\'';
+                case ColumnType.FLOAT ->
+                        Float.intBitsToFloat((int) value) + " (bits 0x" + Integer.toHexString((int) value) + ')';
+                case ColumnType.SYMBOL ->
+                        value == NULL_SYMBOL ? "NULL" : "'" + symbolIds.keys().getQuick((int) value) + '\'';
                 default -> Long.toString(value);
             };
         }
