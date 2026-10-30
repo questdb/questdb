@@ -578,6 +578,10 @@ public class RecordToRowCopierUtils {
         int implicitCastLongAsByte = asm.poolMethod(SqlUtil.class, "implicitCastLongAsByte", "(J)B");
         int implicitCastFloatAsByte = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsByte", "(F)B");
         int implicitCastDoubleAsByte = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsByte", "(D)B");
+        int implicitCastIntAsChar = asm.poolMethod(SqlUtil.class, "implicitCastIntAsChar", "(I)C");
+        int implicitCastLongAsChar = asm.poolMethod(SqlUtil.class, "implicitCastLongAsChar", "(J)C");
+        int implicitCastFloatAsChar = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsChar", "(F)C");
+        int implicitCastDoubleAsChar = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsChar", "(D)C");
 
         int implicitCastIntAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastIntAsDouble", "(I)D");
         int implicitCastIntAsLong = asm.poolMethod(SqlUtil.class, "implicitCastIntAsLong", "(I)J");
@@ -792,6 +796,10 @@ public class RecordToRowCopierUtils {
                     case ColumnType.INT:
                         asm.invokeInterface(rGetInt);
                         switch (toColumnTypeTag) {
+                            case ColumnType.CHAR:
+                                asm.invokeStatic(implicitCastIntAsChar);
+                                asm.invokeInterface(wPutChar, 2);
+                                break;
                             case ColumnType.BYTE:
                                 asm.invokeStatic(implicitCastIntAsByte);
                                 asm.invokeInterface(wPutByte, 2);
@@ -840,6 +848,10 @@ public class RecordToRowCopierUtils {
                     case ColumnType.LONG:
                         asm.invokeInterface(rGetLong);
                         switch (toColumnTypeTag) {
+                            case ColumnType.CHAR:
+                                asm.invokeStatic(implicitCastLongAsChar);
+                                asm.invokeInterface(wPutChar, 2);
+                                break;
                             case ColumnType.BYTE:
                                 asm.invokeStatic(implicitCastLongAsByte);
                                 asm.invokeInterface(wPutByte, 2);
@@ -882,6 +894,10 @@ public class RecordToRowCopierUtils {
                     case ColumnType.BYTE:
                         asm.invokeInterface(rGetByte);
                         switch (toColumnTypeTag) {
+                            case ColumnType.CHAR:
+                                asm.invokeStatic(implicitCastIntAsChar);
+                                asm.invokeInterface(wPutChar, 2);
+                                break;
                             case ColumnType.BOOLEAN:
                             case ColumnType.BYTE:
                                 asm.invokeInterface(wPutByte, 2);
@@ -926,6 +942,10 @@ public class RecordToRowCopierUtils {
                     case ColumnType.SHORT:
                         asm.invokeInterface(rGetShort);
                         switch (toColumnTypeTag) {
+                            case ColumnType.CHAR:
+                                asm.invokeStatic(implicitCastIntAsChar);
+                                asm.invokeInterface(wPutChar, 2);
+                                break;
                             case ColumnType.BYTE:
                                 asm.invokeStatic(implicitCastShortAsByte);
                                 asm.invokeInterface(wPutByte, 2);
@@ -973,6 +993,10 @@ public class RecordToRowCopierUtils {
                     case ColumnType.FLOAT:
                         asm.invokeInterface(rGetFloat);
                         switch (toColumnTypeTag) {
+                            case ColumnType.CHAR:
+                                asm.invokeStatic(implicitCastFloatAsChar);
+                                asm.invokeInterface(wPutChar, 2);
+                                break;
                             case ColumnType.BYTE:
                                 asm.invokeStatic(implicitCastFloatAsByte);
                                 asm.invokeInterface(wPutByte, 2);
@@ -1012,6 +1036,10 @@ public class RecordToRowCopierUtils {
                     case ColumnType.DOUBLE:
                         asm.invokeInterface(rGetDouble);
                         switch (toColumnTypeTag) {
+                            case ColumnType.CHAR:
+                                asm.invokeStatic(implicitCastDoubleAsChar);
+                                asm.invokeInterface(wPutChar, 2);
+                                break;
                             case ColumnType.BYTE:
                                 asm.invokeStatic(implicitCastDoubleAsByte);
                                 asm.invokeInterface(wPutByte, 2);
@@ -1051,6 +1079,10 @@ public class RecordToRowCopierUtils {
                     case ColumnType.DATE:
                         asm.invokeInterface(rGetDate);
                         switch (toColumnTypeTag) {
+                            case ColumnType.CHAR:
+                                asm.invokeStatic(implicitCastLongAsChar);
+                                asm.invokeInterface(wPutChar, 2);
+                                break;
                             case ColumnType.BYTE:
                                 asm.invokeStatic(implicitCastLongAsByte);
                                 asm.invokeInterface(wPutByte, 2);
@@ -1089,6 +1121,10 @@ public class RecordToRowCopierUtils {
                     case ColumnType.TIMESTAMP:
                         asm.invokeInterface(rGetTimestamp);
                         switch (toColumnTypeTag) {
+                            case ColumnType.CHAR:
+                                asm.invokeStatic(implicitCastLongAsChar);
+                                asm.invokeInterface(wPutChar, 2);
+                                break;
                             case ColumnType.BYTE:
                                 asm.invokeStatic(implicitCastLongAsByte);
                                 asm.invokeInterface(wPutByte, 2);
@@ -1741,6 +1777,10 @@ public class RecordToRowCopierUtils {
         int implicitCastLongAsByte = asm.poolMethod(SqlUtil.class, "implicitCastLongAsByte", "(J)B");
         int implicitCastFloatAsByte = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsByte", "(F)B");
         int implicitCastDoubleAsByte = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsByte", "(D)B");
+        int implicitCastIntAsChar = asm.poolMethod(SqlUtil.class, "implicitCastIntAsChar", "(I)C");
+        int implicitCastLongAsChar = asm.poolMethod(SqlUtil.class, "implicitCastLongAsChar", "(J)C");
+        int implicitCastFloatAsChar = asm.poolMethod(SqlUtil.class, "implicitCastFloatAsChar", "(F)C");
+        int implicitCastDoubleAsChar = asm.poolMethod(SqlUtil.class, "implicitCastDoubleAsChar", "(D)C");
 
 
         int implicitCastIntAsDouble = asm.poolMethod(SqlUtil.class, "implicitCastIntAsDouble", "(I)D");
@@ -1963,6 +2003,10 @@ public class RecordToRowCopierUtils {
                     asm.invokeInterface(rGetInt);
                     // stack: [rowWriter, toColumnIndex, int]
                     switch (toColumnTypeTag) {
+                        case ColumnType.CHAR:
+                            asm.invokeStatic(implicitCastIntAsChar);
+                            asm.invokeInterface(wPutChar, 2);
+                            break;
                         case ColumnType.BYTE:
                             asm.invokeStatic(implicitCastIntAsByte);
                             asm.invokeInterface(wPutByte, 2);
@@ -2019,6 +2063,10 @@ public class RecordToRowCopierUtils {
                 case ColumnType.LONG: // from
                     asm.invokeInterface(rGetLong);
                     switch (toColumnTypeTag) {
+                        case ColumnType.CHAR:
+                            asm.invokeStatic(implicitCastLongAsChar);
+                            asm.invokeInterface(wPutChar, 2);
+                            break;
                         case ColumnType.BYTE:
                             asm.invokeStatic(implicitCastLongAsByte);
                             asm.invokeInterface(wPutByte, 2);
@@ -2068,6 +2116,10 @@ public class RecordToRowCopierUtils {
                 case ColumnType.DATE: // from
                     asm.invokeInterface(rGetDate);
                     switch (toColumnTypeTag) {
+                        case ColumnType.CHAR:
+                            asm.invokeStatic(implicitCastLongAsChar);
+                            asm.invokeInterface(wPutChar, 2);
+                            break;
                         case ColumnType.BYTE:
                             asm.invokeStatic(implicitCastLongAsByte);
                             asm.invokeInterface(wPutByte, 2);
@@ -2106,6 +2158,10 @@ public class RecordToRowCopierUtils {
                 case ColumnType.TIMESTAMP: // from
                     asm.invokeInterface(rGetTimestamp);
                     switch (toColumnTypeTag) {
+                        case ColumnType.CHAR:
+                            asm.invokeStatic(implicitCastLongAsChar);
+                            asm.invokeInterface(wPutChar, 2);
+                            break;
                         case ColumnType.BYTE:
                             asm.invokeStatic(implicitCastLongAsByte);
                             asm.invokeInterface(wPutByte, 2);
@@ -2148,6 +2204,10 @@ public class RecordToRowCopierUtils {
                 case ColumnType.BYTE: // from
                     asm.invokeInterface(rGetByte);
                     switch (toColumnTypeTag) {
+                        case ColumnType.CHAR:
+                            asm.invokeStatic(implicitCastIntAsChar);
+                            asm.invokeInterface(wPutChar, 2);
+                            break;
                         case ColumnType.BOOLEAN:
                         case ColumnType.BYTE:
                             asm.invokeInterface(wPutByte, 2);
@@ -2199,6 +2259,10 @@ public class RecordToRowCopierUtils {
                 case ColumnType.SHORT: // from
                     asm.invokeInterface(rGetShort);
                     switch (toColumnTypeTag) {
+                        case ColumnType.CHAR:
+                            asm.invokeStatic(implicitCastIntAsChar);
+                            asm.invokeInterface(wPutChar, 2);
+                            break;
                         case ColumnType.BYTE:
                             asm.invokeStatic(implicitCastShortAsByte);
                             asm.invokeInterface(wPutByte, 2);
@@ -2254,6 +2318,10 @@ public class RecordToRowCopierUtils {
                 case ColumnType.FLOAT: // from
                     asm.invokeInterface(rGetFloat);
                     switch (toColumnTypeTag) {
+                        case ColumnType.CHAR:
+                            asm.invokeStatic(implicitCastFloatAsChar);
+                            asm.invokeInterface(wPutChar, 2);
+                            break;
                         case ColumnType.BYTE:
                             asm.invokeStatic(implicitCastFloatAsByte);
                             asm.invokeInterface(wPutByte, 2);
@@ -2293,6 +2361,10 @@ public class RecordToRowCopierUtils {
                 case ColumnType.DOUBLE: // from
                     asm.invokeInterface(rGetDouble);
                     switch (toColumnTypeTag) {
+                        case ColumnType.CHAR:
+                            asm.invokeStatic(implicitCastDoubleAsChar);
+                            asm.invokeInterface(wPutChar, 2);
+                            break;
                         case ColumnType.BYTE:
                             asm.invokeStatic(implicitCastDoubleAsByte);
                             asm.invokeInterface(wPutByte, 2);
