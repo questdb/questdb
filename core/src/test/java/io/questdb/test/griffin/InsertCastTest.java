@@ -24,8 +24,10 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
@@ -36,125 +38,12 @@ import org.junit.Ignore;
 import org.junit.Test;
 
 public class InsertCastTest extends AbstractCairoTest {
-
-    @Test
-    public void testInsertSelectByteIntoChar() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE src (l BYTE)");
-            execute("INSERT INTO src VALUES (55)");
-            execute("CREATE TABLE dst (c CHAR)");
-            try {
-                execute("INSERT INTO dst SELECT l FROM src");
-                Assert.fail();
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: BYTE -> CHAR");
-            }
-        });
-    }
-
-    @Test
-    public void testInsertSelectDateIntoChar() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE src (l DATE)");
-            execute("INSERT INTO src VALUES (55)");
-            execute("CREATE TABLE dst (c CHAR)");
-            try {
-                execute("INSERT INTO dst SELECT l FROM src");
-                Assert.fail();
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: DATE -> CHAR");
-            }
-        });
-    }
-
-    @Test
-    public void testInsertSelectDoubleIntoChar() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE src (l DOUBLE)");
-            execute("INSERT INTO src VALUES (55)");
-            execute("CREATE TABLE dst (c CHAR)");
-            try {
-                execute("INSERT INTO dst SELECT l FROM src");
-                Assert.fail();
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: DOUBLE -> CHAR");
-            }
-        });
-    }
-
-    @Test
-    public void testInsertSelectFloatIntoChar() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE src (l FLOAT)");
-            execute("INSERT INTO src VALUES (55)");
-            execute("CREATE TABLE dst (c CHAR)");
-            try {
-                execute("INSERT INTO dst SELECT l FROM src");
-                Assert.fail();
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: FLOAT -> CHAR");
-            }
-        });
-    }
-
-    @Test
-    public void testInsertSelectLongIntoChar() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE src (l LONG)");
-            execute("INSERT INTO src VALUES (55)");
-            execute("CREATE TABLE dst (c CHAR)");
-            try {
-                execute("INSERT INTO dst SELECT l FROM src");
-                Assert.fail();
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: LONG -> CHAR");
-            }
-        });
-    }
-
-    @Test
-    public void testInsertSelectShortIntoChar() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE src (l SHORT)");
-            execute("INSERT INTO src VALUES (55)");
-            execute("CREATE TABLE dst (c CHAR)");
-            try {
-                execute("INSERT INTO dst SELECT l FROM src");
-                Assert.fail();
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: SHORT -> CHAR");
-            }
-        });
-    }
-
-    @Test
-    public void testInsertSelectTimestampIntoChar() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE src (l TIMESTAMP)");
-            execute("INSERT INTO src VALUES (55)");
-            execute("CREATE TABLE dst (c CHAR)");
-            try {
-                execute("INSERT INTO dst SELECT l FROM src");
-                Assert.fail();
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: TIMESTAMP -> CHAR");
-            }
-        });
-    }
-
-    @Test
-    public void testCreateTableAsSelectLongCastToChar() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE src (l LONG)");
-            execute("INSERT INTO src VALUES (55)");
-            try {
-                execute("CREATE TABLE dst AS (SELECT l FROM src), CAST(l AS CHAR)");
-                Assert.fail();
-            } catch (SqlException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible types: LONG -> CHAR");
-            }
-        });
-    }
+    private static final int[] COPIER_TYPES = {
+            RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD,
+            RecordToRowCopierUtils.COPIER_TYPE_CHUNKED,
+            RecordToRowCopierUtils.COPIER_TYPE_LOOPING
+    };
+    private static final String[] NUMERIC_TO_CHAR_TYPES = {"BYTE", "SHORT", "INT", "LONG", "FLOAT", "DOUBLE", "DATE", "TIMESTAMP"};
 
     @Test
     public void testCastByteToCharBind() throws Exception {
@@ -1752,6 +1641,28 @@ public class InsertCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableAsCastNumericToChar() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int copierType : COPIER_TYPES) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                for (String type : NUMERIC_TO_CHAR_TYPES) {
+                    execute("CREATE TABLE src (l " + type + ")");
+                    execute("INSERT INTO src VALUES (55), (65), (NULL)");
+                    execute("CREATE TABLE dst AS (SELECT l FROM src), CAST(l AS CHAR)");
+                    assertQuery("SELECT l FROM dst LIMIT 2").noLeakCheck().expectSize().returns("""
+                            l
+                            7
+                            A
+                            """);
+                    assertSqlCursors("SELECT l::CHAR l FROM src", "dst");
+                    execute("DROP TABLE src");
+                    execute("DROP TABLE dst");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testInsertNullDateIntoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x(ts timestamp)");
@@ -1778,6 +1689,47 @@ public class InsertCastTest extends AbstractCairoTest {
                             ts
                             
                             """);
+        });
+    }
+
+    @Test
+    public void testInsertSelectLongIntoChar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (l LONG)");
+            execute("INSERT INTO src VALUES (55)");
+            execute("CREATE TABLE dst (c CHAR)");
+            execute("INSERT INTO dst SELECT l FROM src");
+            assertQuery("dst").noLeakCheck().expectSize().returns("""
+                    c
+                    7
+                    """);
+        });
+    }
+
+    @Test
+    public void testInsertSelectNumericIntoChar() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int copierType : COPIER_TYPES) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                for (String type : NUMERIC_TO_CHAR_TYPES) {
+                    // INSERT ... SELECT rejects INT -> CHAR at compile time
+                    if ("INT".equals(type)) {
+                        continue;
+                    }
+                    execute("CREATE TABLE src (l " + type + ")");
+                    execute("INSERT INTO src VALUES (55), (65), (NULL)");
+                    execute("CREATE TABLE dst (c CHAR)");
+                    execute("INSERT INTO dst SELECT l FROM src");
+                    assertQuery("SELECT c FROM dst LIMIT 2").noLeakCheck().expectSize().returns("""
+                            c
+                            7
+                            A
+                            """);
+                    assertSqlCursors("SELECT l::CHAR c FROM src", "dst");
+                    execute("DROP TABLE src");
+                    execute("DROP TABLE dst");
+                }
+            }
         });
     }
 
