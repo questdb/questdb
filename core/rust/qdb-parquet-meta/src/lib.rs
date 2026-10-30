@@ -37,4 +37,4 @@ pub use qdb_meta::{
 pub use reader::ParquetMetaReader;
 pub use row_group::{RowGroupBlockBuilder, RowGroupBlockReader};
 pub use types::*;
-pub use writer::{ParquetMetaUpdateWriter, ParquetMetaWriter};
+pub use writer::{ParquetMetaUpdateWriter, ParquetMetaWriter, RowGroupSlot};

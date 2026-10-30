@@ -125,6 +125,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
         ) {
 
             ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(
+                    timestampDriver,
                     nTotalRows,
                     sequencerMetadata,
                     xw.getMetadata(),

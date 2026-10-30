@@ -63,6 +63,9 @@ import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE
  * timestamps for the record where the comparison fails.
  */
 public class WalWriterFuzzTest extends AbstractFuzzTest {
+    // The parquet tests write about 3_300 rows per partition, so every partition holds
+    // at least two row groups and can update in place.
+    private static final int PARQUET_FUZZ_MAX_ROW_GROUP_SIZE = 1_500;
     private static boolean ASYNC_MUNMAP = false;
     private boolean existingFilesParanoia;
     private boolean fsAllowsMixedIO;
@@ -195,6 +198,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     public void testConvertPartitionToParquet() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
+        setRndParquetO3Properties(rnd, 50, PARQUET_FUZZ_MAX_ROW_GROUP_SIZE);
 
         setFuzzProbabilities(
                 0.01,
@@ -212,8 +216,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.5,
                 0.1,
                 0.0,
-                0.8,
-                0.00,
+                0.3, // setTtlProb: replace stops at the SET TTL iteration
+                0.1, // replaceProb
                 0,
                 0.1,
                 0.1,
@@ -221,7 +225,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.1 // SET FORMAT PARQUET|NATIVE probability
         );
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
-        runFuzz(rnd);
+        runParquetFuzz(rnd, false);
     }
 
     @Test
@@ -229,6 +233,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // Creates WAL table in parquet format and keeps then run all parquet supported operations.
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
+        setRndParquetO3Properties(rnd, 50, PARQUET_FUZZ_MAX_ROW_GROUP_SIZE);
         setCreateWalAsParquet(true);
 
         setFuzzProbabilities(
@@ -247,8 +252,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.0, // partitionToNativeProb — disabled
                 0.1,
                 0.0,
-                0.8,
-                0.00,
+                0.3, // setTtlProb: replace stops at the SET TTL iteration
+                0.1, // replaceProb
                 0,
                 0.01,
                 0.1,
@@ -256,13 +261,14 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.0 // setTableFormatProb — disabled
         );
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
-        runFuzz(rnd);
+        runParquetFuzz(rnd, true);
     }
 
     @Test
     public void testConvertPartitionToParquetWithCoveringIndex() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
+        setRndParquetO3Properties(rnd, 50, PARQUET_FUZZ_MAX_ROW_GROUP_SIZE);
 
         setFuzzProbabilities(
                 0.01,
@@ -280,8 +286,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.5,
                 0.1,
                 0.0,
-                0.8,
-                0.00,
+                0.3, // setTtlProb: replace stops at the SET TTL iteration
+                0.1, // replaceProb
                 0,
                 0.01,
                 0.1,
@@ -290,7 +296,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
         );
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
-        runFuzz(rnd);
+        runParquetFuzz(rnd, false);
     }
 
     @Test
@@ -868,6 +874,19 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 .$(", deadMinSize=").$(deadMinSize)
                 .$(", tableDeadThreshold=").$(tableDeadThreshold)
                 .I$();
+    }
+
+    /**
+     * Runs the fuzz and logs the parquet O3 paths it took. With isAllParquet (FORMAT PARQUET),
+     * every partition is parquet from its first write, so the run must write parquet O3.
+     */
+    private void runParquetFuzz(Rnd rnd, boolean isAllParquet) throws Exception {
+        final O3ParquetPathCounts counts = new O3ParquetPathCounts();
+        runFuzz(rnd);
+        counts.log(LOG, getTestName());
+        if (isAllParquet) {
+            Assert.assertTrue("no parquet O3 ran: " + counts, counts.getWritten() > 0);
+        }
     }
 
     private void setTestParams(Rnd rnd) throws Exception {

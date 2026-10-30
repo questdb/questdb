@@ -154,6 +154,7 @@ public class O3MaxLagFuzzTest extends AbstractO3Test {
             int rowCount = Math.min(2_000_000, Math.max(1, txCount * rnd.nextInt(200) * 1000));
 
             ObjList<FuzzTransaction> transactions = FuzzTransactionGenerator.generateSet(
+                    driver,
                     nTotalRows,
                     sequencerMetadata,
                     w.getMetadata(),

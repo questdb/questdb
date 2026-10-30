@@ -98,6 +98,54 @@ public class FrameAlgebra {
         }
     }
 
+    /**
+     * Checks that a dedup merge leaves one column unchanged. Same check as
+     * {@code TableWriter.checkDedupCommitIdenticalToPartition}, minus column tops.
+     *
+     * @param columnType     column type; the buffers use its native layout
+     * @param rowCount       existing row count, also the merge index entry count
+     * @param srcAuxAddr     existing aux vector (var-size columns only, else 0)
+     * @param srcDataAddr    existing data vector
+     * @param o3AuxAddr      O3 aux vector (var-size columns only, else 0)
+     * @param o3DataAddr     O3 data vector, indexed by the merge index's O3 row ids
+     * @param mergeIndexAddr merge index, {@code rowCount} (timestamp, row id) entries
+     * @return true if every O3 row the merge index takes equals the row it replaces, NULLs included
+     */
+    public static boolean isColumnMergeIdentical(
+            int columnType,
+            long rowCount,
+            long srcAuxAddr,
+            long srcDataAddr,
+            long o3AuxAddr,
+            long o3DataAddr,
+            long mergeIndexAddr
+    ) {
+        assert rowCount > 0;
+        final short columnTypeTag = ColumnType.tagOf(columnType);
+        return isColumnReplaceIdentical(
+                columnTypeTag,
+                ColumnType.isVarSize(columnType) ? -1 : ColumnType.sizeOf(columnType),
+                0,
+                0,
+                rowCount,
+                srcAuxAddr,
+                srcDataAddr,
+                0,
+                // The O3 range is read only when every existing row is in the column
+                // top, which a zero column top rules out; O3 row ids are absolute.
+                0,
+                0,
+                o3AuxAddr,
+                o3DataAddr,
+                mergeIndexAddr,
+                rowCount,
+                TableUtils.getNullLong(columnTypeTag, 0),
+                TableUtils.getNullLong(columnTypeTag, 1),
+                TableUtils.getNullLong(columnTypeTag, 2),
+                TableUtils.getNullLong(columnTypeTag, 3)
+        );
+    }
+
     @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     public static boolean isColumnReplaceIdentical(
             int columnIndex,

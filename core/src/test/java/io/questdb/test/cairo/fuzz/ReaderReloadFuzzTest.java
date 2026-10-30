@@ -103,7 +103,10 @@ public class ReaderReloadFuzzTest extends AbstractFuzzTest {
             String tableName = testName.getMethodName();
             TableToken tableToken = fuzzer.createInitialTableWal(tableName, 100);
 
-            execute("insert into " + tableName + " (ts) values ('2000-01-01')");
+            // 2000-01-01 is the partition under test. A replace commit can remove every 2022
+            // partition; without 2000-01-02 the sentinel would then become the last partition
+            // and take the column-top files of a later ADD COLUMN, which rightly reopens it.
+            execute("insert into " + tableName + " (ts) values ('2000-01-01'), ('2000-01-02')");
             drainWalQueue();
 
             try (TableReader reader = engine.getReader(tableToken)) {

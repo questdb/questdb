@@ -46,10 +46,11 @@ import org.jetbrains.annotations.Nullable;
  * The coordinates:
  * <ul>
  *     <li>{@code C} - {@link #getCorrectionTs() correctionTs}, the earliest
- *     timestamp whose existing live-view output may have changed: the triggering
- *     commit's lowest touched timestamp clamped up to the view's {@code START
- *     FROM} boundary {@code S}. {@link Numbers#LONG_NULL} for a non-DATA or
- *     recovery trigger, which authorises no deletion at all.</li>
+ *     timestamp whose existing live-view output may have changed: the lowest
+ *     timestamp the triggering commit - and, under apply-ahead, any DATA commit
+ *     apply raced past it - touched, clamped up to the view's {@code START FROM}
+ *     boundary {@code S}. {@link Numbers#LONG_NULL} for a non-DATA or recovery
+ *     trigger, which authorises no deletion at all.</li>
  *     <li>{@code E} - {@link #getPinnedSeqTxn() pinnedSeqTxn}, the applied base
  *     {@code seqTxn} the repair materialises and commits at.</li>
  *     <li>{@link #getRetireLowTs() retireLowTs} - the floor at or above which
@@ -710,8 +711,10 @@ public final class LiveViewCheckpointRepairPlan {
      *                                over the logical boundaries a resume may roll
      *                                back to
      * @param lateRowTs               lowest timestamp the triggering DATA commit
-     *                                touched, or {@link Numbers#LONG_NULL} for a
-     *                                non-DATA / recovery trigger
+     *                                touched, lowered to the lowest timestamp any
+     *                                DATA commit in the apply-ahead range touched,
+     *                                or {@link Numbers#LONG_NULL} for a non-DATA /
+     *                                recovery trigger
      * @param viewLowerBoundTimestamp the view's {@code START FROM} boundary
      *                                {@code S}
      * @param triggerSeqTxn           base {@code seqTxn} that triggered the repair

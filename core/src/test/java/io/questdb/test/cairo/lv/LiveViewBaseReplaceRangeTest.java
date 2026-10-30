@@ -32,6 +32,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Numbers;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -197,6 +198,24 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
 
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    @Test
+    public void testPureDeleteAppliedAheadOfTriggerRemovesEmittedRows() throws Exception {
+        // Apply races the refresh past an O3 trigger: by the time the worker drains
+        // the trigger, the base already holds the pure delete that follows it. The
+        // replay pins that snapshot and commits at it, so no later cycle drains the
+        // delete - the replay's REPLACE_RANGE has to reach down to the delete's range
+        // low, not only to the trigger.
+        assertPureDeleteAppliedAheadRemovesEmittedRows(null);
+    }
+
+    @Test
+    public void testPureDeleteAppliedAheadPastNonDataTxnRemovesEmittedRows() throws Exception {
+        // The same race with a non-DATA txn between the trigger and the delete. It
+        // makes the apply-ahead range unclassifiable, which denies any resume, but the
+        // boundary rebuild still incorporates the delete behind it.
+        assertPureDeleteAppliedAheadRemovesEmittedRows("UPDATE base SET x = 0 WHERE ts > '2027-01-01'");
     }
 
     @Test
@@ -481,6 +500,65 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
         LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull(instance);
         Assert.assertFalse("LV must stay valid after a base replace-range commit", instance.isInvalid());
+    }
+
+    private void assertPureDeleteAppliedAheadRemovesEmittedRows(@Nullable String nonDataSql) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("""
+                        INSERT INTO base (ts, x) VALUES
+                        ('2026-01-01T00:00:01.000000Z', 1),
+                        ('2026-01-01T00:00:02.000000Z', 2),
+                        ('2026-01-01T00:00:03.000000Z', 3),
+                        ('2026-01-01T00:00:04.000000Z', 4)""");
+                drainWalQueue();
+                refreshCycle(job);
+                assertQuery("SELECT count() FROM lv")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n4\n");
+
+                // The trigger: a row below the frontier (00:04), so the drain hands it to
+                // the replay with a correction floor of 00:03.5.
+                execute("INSERT INTO base (ts, x) VALUES ('2026-01-01T00:00:03.500000Z', 35)");
+                if (nonDataSql != null) {
+                    execute(nonDataSql);
+                }
+                // The pure delete of [00:01, 00:03) sits entirely below the trigger.
+                final TableToken baseToken = engine.verifyTableName("base");
+                try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                    walWriter.commitWithParams(
+                            ts("2026-01-01T00:00:01.000000Z"),
+                            ts("2026-01-01T00:00:03.000000Z"),
+                            WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                    );
+                }
+                // Apply every commit before the worker runs, so the replay of the trigger
+                // pins a snapshot that already holds the delete.
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                assertLiveViewValid();
+            }
+
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\trn
+                            2026-01-01T00:00:03.000000Z\t3\t1
+                            2026-01-01T00:00:03.500000Z\t35\t2
+                            2026-01-01T00:00:04.000000Z\t4\t3
+                            """);
+            assertNoRefreshFaults("lv");
+
+            execute("DROP LIVE VIEW lv");
+        });
     }
 
     // One refresh cycle past the FLUSH EVERY rate-limit: advances the clock so

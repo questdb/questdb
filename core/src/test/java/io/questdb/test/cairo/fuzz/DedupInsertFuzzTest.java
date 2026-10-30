@@ -333,7 +333,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0,
                 parquet ? 0 : rnd.nextDouble(),
                 0.0,
-                parquet ? 0 : rnd.nextDouble(),
+                // Keep data inserts on under Parquet: with every column operation off,
+                // a zero here would normalise truncate to probability 1.0 and the
+                // generator would emit no data transactions at all.
+                rnd.nextDouble(),
                 0.5,
                 0.0,
                 0.1 * rnd.nextDouble(),
@@ -359,17 +362,24 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testRandomColumnsDedupMultipleKeyColWithRCommits() throws Exception {
-        // Replace commits not yet supported with Parquet
         Rnd rnd = generateRandomAndProps();
+        boolean createAsParquet = rnd.nextBoolean();
+        boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
+        boolean parquet = createAsParquet || convertToParquet;
+        setCreateWalAsParquet(createAsParquet);
         setFuzzProbabilities(
                 rnd.nextDouble() / 100,
                 rnd.nextDouble(),
                 rnd.nextDouble(),
                 0.1 * rnd.nextDouble(),
-                0.1 * rnd.nextDouble(),
+                // TODO(eugene): table column manipulation is not yet supported for Parquet
+                parquet ? 0 : 0.1 * rnd.nextDouble(),
                 0,
-                rnd.nextDouble(),
+                parquet ? 0 : rnd.nextDouble(),
                 0.0,
+                // Keep data inserts on under Parquet: with every column operation off,
+                // a zero here would normalise truncate to probability 1.0 and the
+                // generator would emit no data or replace transactions at all.
                 rnd.nextDouble(),
                 0.0,
                 0.0,
@@ -393,7 +403,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 1 + rnd.nextInt(1)
         );
 
-        runFuzzWithRandomColsDedup(rnd, -1, false);
+        runFuzzWithRandomColsDedup(rnd, -1, convertToParquet);
     }
 
     @Test
@@ -414,7 +424,10 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 0,
                 parquet ? 0 : rnd.nextDouble(),
                 0.0,
-                parquet ? 0 : rnd.nextDouble(),
+                // Keep data inserts on under Parquet: with every column operation off,
+                // a zero here would normalise truncate to probability 1.0 and the
+                // generator would emit no data transactions at all.
+                rnd.nextDouble(),
                 0.5,
                 0.0,
                 0.1 * rnd.nextDouble(),
@@ -747,6 +760,24 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         return rnd;
     }
 
+    // True when the first row the where clause selects lies in a parquet partition.
+    private boolean isFirstRowInParquetPartition(String tableName, String timestampColumnName, String where) throws SqlException {
+        final long firstTs;
+        try (
+                RecordCursorFactory factory = select("select " + timestampColumnName + " from " + tableName + where + " limit 1");
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            if (!cursor.hasNext()) {
+                return false;
+            }
+            firstTs = cursor.getRecord().getTimestamp(0);
+        }
+        try (TableReader reader = getReader(tableName)) {
+            final int partitionIndex = reader.getTxFile().getPartitionIndex(firstTs);
+            return partitionIndex > -1 && reader.getTxFile().isPartitionParquet(partitionIndex);
+        }
+    }
+
     private void maybeConvertToParquet(String tableName, boolean convertToParquet) {
         if (convertToParquet) {
             // convert to parquet, so we can test dedup with parquet
@@ -768,7 +799,12 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         };
     }
 
-    private void reinsertSameData(Rnd rnd, String tableNameDedup, String timestampColumnName) throws SqlException {
+    /**
+     * Re-inserts copies of random intervals of the table's rows, which a dedup table must
+     * absorb without touching any partition. Returns how many inserts start in a parquet
+     * partition, each of which takes an identical dedup commit.
+     */
+    private int reinsertSameData(Rnd rnd, String tableNameDedup, String timestampColumnName) throws SqlException {
         execute("ALTER TABLE \"" + tableNameDedup + "\" SQUASH PARTITIONS", sqlExecutionContext);
         drainWalQueue();
 
@@ -779,22 +815,26 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         long minTs, maxTs;
         try (TableReader reader = getReader(tableNameDedup)) {
             if (reader.size() == 0) {
-                return;
+                return 0;
             }
             minTs = reader.getMinTimestamp();
             maxTs = reader.getMaxTimestamp();
         }
 
+        int parquetInserts = 0;
         for (int i = 0; i < inserts; i++) {
             // maxTs > minTs condition prevents arithmetic exception thrown from rnd.nextLong() when maxTs = minTs
             long fromTs = minTs + (maxTs > minTs ? rnd.nextLong(maxTs - minTs) : 0);
             long toTs = (long) (fromTs + Micros.DAY_MICROS * Math.pow(1.2, rnd.nextDouble()));
 
+            String where = " where " + timestampColumnName + " >= " + fromTs + " and ts < " + toTs;
             String insertSql = "insert into " + tableNameDedup +
-                    " select * from " + tableNameDedup +
-                    " where " + timestampColumnName + " >= " + fromTs + " and ts < " + toTs
+                    " select * from " + tableNameDedup + where
                     + " LIMIT 100000";
 
+            if (isFirstRowInParquetPartition(tableNameDedup, timestampColumnName, where)) {
+                parquetInserts++;
+            }
             execute(insertSql);
         }
         drainWalQueue();
@@ -802,6 +842,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         Assert.assertFalse("table should not be suspended", engine.getTableSequencerAPI().getTxnTracker(tt).isSuspended());
         String partitionsAfter = readTxnToString(tt, false, true, true, false);
         Assert.assertEquals("partitions should be not rewritten", partitions, partitionsAfter);
+        return parquetInserts;
     }
 
     private void runDedupWithShiftAndStep(Rnd rnd, String tableName, int colType, boolean convertToParquet) {
@@ -873,15 +914,34 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableNameDedup = tableNameBase + "_wal";
             String tableNameWalNoDedup = tableNameBase + "_nodedup";
 
+            // The reference table stays native whatever format the table under test has: a
+            // parquet replace or dedup bug that hit both tables would cancel out in the compare.
+            final boolean isCreateWalAsParquet = fuzzer.isCreateWalAsParquet();
+            fuzzer.setCreateWalAsParquet(false);
             fuzzer.createInitialTableWal(tableNameWalNoDedup);
+            fuzzer.setCreateWalAsParquet(isCreateWalAsParquet);
             fuzzer.createInitialTableWal(tableNameDedup);
-            maybeConvertToParquet(tableNameDedup, convertToParquet);
 
             // Add long256 type to have to be a chance of a dedup key
             execute("alter table " + tableNameDedup + " add column col256 long256");
             execute("alter table " + tableNameWalNoDedup + " add column col256 long256");
 
             drainWalQueue();
+            if (convertToParquet) {
+                // The initial rows start at 2022-02-24 and the transactions straddle the end of that
+                // day, so its partition is the last one and CONVERT would skip it. A row on a later
+                // day, in both tables, makes it convertible. CONVERT runs after the ADD COLUMN, so
+                // the files hold every column and an O3 merge can update them in place.
+                execute("insert into " + tableNameDedup + " (ts) values ('2022-02-27T12:00:00.000000Z')");
+                execute("insert into " + tableNameWalNoDedup + " (ts) values ('2022-02-27T12:00:00.000000Z')");
+                drainWalQueue();
+                maybeConvertToParquet(tableNameDedup, true);
+            }
+            final boolean isParquet = isCreateWalAsParquet || convertToParquet;
+            if (isParquet) {
+                setRndParquetRewriteGate(rnd);
+            }
+            final O3ParquetPathCounts counts = new O3ParquetPathCounts();
 
             ObjList<FuzzTransaction> transactions = null;
             IntList upsertKeyIndexes = new IntList();
@@ -935,12 +995,24 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                     fuzzer.assertCounts(tableNameDedup, timestampColumnName);
                     fuzzer.assertStringColDensity(tableNameDedup);
 
+                    counts.log(LOG, getTestName());
+
                     // Re-insert exactly same data, random intervals to the table with dedup enabled
-                    reinsertSameData(
+                    final O3ParquetPathCounts reinsertCounts = new O3ParquetPathCounts();
+                    final int parquetInserts = reinsertSameData(
                             rnd,
                             tableNameDedup,
                             timestampColumnName
                     );
+                    reinsertCounts.log(LOG, getTestName());
+                    if (parquetInserts > 0) {
+                        // a re-insert whose rows start in a parquet partition must take the
+                        // identical-dedup skip there, not merge or leave it untouched by chance
+                        Assert.assertTrue(
+                                "identical re-inserts reached " + parquetInserts + " parquet partition(s) without the skip: " + reinsertCounts,
+                                reinsertCounts.getDedupIdentical() > 0
+                        );
+                    }
                     assertSqlCursorsNoDups(
                             tableNameWalNoDedup,
                             upsertKeyNames,
