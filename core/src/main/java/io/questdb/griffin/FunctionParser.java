@@ -236,13 +236,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
      * statement when the compile stores its result in a materialized or live view, and records it for
      * the checks that run after the optimiser. The compiler creates the cursor of a SHOW statement
      * directly, not through a function factory, so it reports the statement here, before it creates
-     * the cursor.
+     * the cursor. Ordinary-view PIVOT IN subqueries also check their requirements here: they run
+     * while deriving metadata, including during detached recompilation.
      *
      * @param position         the position of the statement in the compiled SQL
      * @param statement        the statement, e.g. SHOW TABLES
      * @param requirements     the requirements of the statement, see {@link SqlExecutionRequirements}
      * @param executionContext the context of the compile
-     * @throws SqlException when a materialized or live view may not store the result of the statement
+     * @throws SqlException when a stored view cannot use the statement in this position
      */
     public void addStatementRequirements(
             int position,
@@ -252,6 +253,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     ) throws SqlException {
         final int requirementPosition = executionRequirementPosition > -1 ? executionRequirementPosition : position;
         final SqlExecutionContext.TableFunctionView view = executionContext.getTableFunctionView();
+        if (executionContext.isViewMetadataSubquery()) {
+            SqlExecutionRequirements.checkViewMetadataSubquery(requirements, requirementPosition, statement, true);
+        }
         if (!executionContext.allowNonDeterministicFunctions()) {
             SqlExecutionRequirements.checkStoredView(
                     requirements,
@@ -764,19 +768,23 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         // definition of the view.
         final int requirementPosition = executionRequirementPosition > -1 ? executionRequirementPosition : position;
         final SqlExecutionContext.TableFunctionView view = sqlExecutionContext.getTableFunctionView();
-        if (factoryExecutionRequirements != SqlExecutionRequirements.NONE
-                && !sqlExecutionContext.allowNonDeterministicFunctions()) {
-            // The compile stores what the function returns in a materialized or live view, at CREATE or
-            // at refresh. Check before the function is created, a rejected one must not run at all.
+        if (factoryExecutionRequirements != SqlExecutionRequirements.NONE) {
+            // Check before creating the function: a rejected administrative function must not run,
+            // including when a PIVOT IN subquery derives an ordinary view's metadata.
             try {
-                SqlExecutionRequirements.checkStoredView(
-                        factoryExecutionRequirements,
-                        requirementPosition,
-                        node.token,
-                        false,
-                        view,
-                        sqlExecutionContext
-                );
+                if (sqlExecutionContext.isViewMetadataSubquery()) {
+                    SqlExecutionRequirements.checkViewMetadataSubquery(factoryExecutionRequirements, requirementPosition, node.token, false);
+                }
+                if (!sqlExecutionContext.allowNonDeterministicFunctions()) {
+                    SqlExecutionRequirements.checkStoredView(
+                            factoryExecutionRequirements,
+                            requirementPosition,
+                            node.token,
+                            false,
+                            view,
+                            sqlExecutionContext
+                    );
+                }
             } catch (Throwable th) {
                 Misc.freeObjList(args, th);
                 throw th;

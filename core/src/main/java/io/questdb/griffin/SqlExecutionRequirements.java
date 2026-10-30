@@ -54,6 +54,8 @@ public final class SqlExecutionRequirements implements Mutable {
      * the refresh of a materialized or live view does not have, or it has side effects. Materialized
      * and live views reject such a function or statement, at CREATE and at refresh alike. A SHOW
      * statement gets the requirement from {@link SqlParserCallback#getShowExecutionRequirements}.
+     * Ordinary views also reject them in PIVOT IN subqueries, which execute while the detached view
+     * compiler derives metadata; the rest of an ordinary view's SELECT still runs as its caller.
      */
     public static final int REQUIRES_ENTERPRISE_SECURITY_CONTEXT = 1 << 1;
     public static final int REQUIRES_LIVE_WAL_PROGRESS = 1;
@@ -92,6 +94,20 @@ public final class SqlExecutionRequirements implements Mutable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         checkStoredView0(requirements, position, name, isStatement, viewNameOf(view), isAlterable(view), executionContext);
+    }
+
+    public static void checkViewMetadataSubquery(
+            int requirements,
+            int position,
+            CharSequence name,
+            boolean isStatement
+    ) throws SqlException {
+        if ((requirements & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
+            throw SqlException.functionNotAllowed(position)
+                    .put(isStatement ? "administrative statement" : "administrative function")
+                    .put(" cannot be used in view PIVOT IN subquery: ")
+                    .put(name);
+        }
     }
 
     /**

@@ -795,6 +795,16 @@ public class SqlOptimiser implements Mutable {
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
     }
 
+    private static boolean isPivotInSubquery(IQueryModel model, ExpressionNode node) {
+        final ObjList<PivotForColumn> columns = model.getPivotForColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (columns.getQuick(i).getSelectSubqueryExpr() == node) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // Whether the model reads the table through the view it was expanded from. The view lends its authority
     // to the tables its definition names only, see SqlExecutionContext.TableFunctionView.isDependency(): a
     // table a caller substitutes into the view, e.g. through an OVERRIDABLE variable, is read as the caller.
@@ -7597,9 +7607,19 @@ public class SqlOptimiser implements Mutable {
                     // the joins, the query model will be set to null.
                     if (node.queryModel != null) {
                         node.tableFunctionView = executionContext.getTableFunctionView();
-                        IQueryModel optimised = optimise(node.queryModel, executionContext, sqlParserCallback);
-                        if (optimised != node.queryModel) {
-                            node.queryModel = optimised;
+                        final boolean wasViewMetadataSubquery = executionContext.isViewMetadataSubquery();
+                        // Optimising instantiates functions too, before preparePivotForSelectSubquery
+                        // opens their cursors. Reject caller-dependent ones before either can run.
+                        if (executionContext.isViewCompile() && isPivotInSubquery(model, node)) {
+                            executionContext.setViewMetadataSubquery(true);
+                        }
+                        try {
+                            IQueryModel optimised = optimise(node.queryModel, executionContext, sqlParserCallback);
+                            if (optimised != node.queryModel) {
+                                node.queryModel = optimised;
+                            }
+                        } finally {
+                            executionContext.setViewMetadataSubquery(wasViewMetadataSubquery);
                         }
                     }
                 }
@@ -7985,6 +8005,8 @@ public class SqlOptimiser implements Mutable {
                     // re-parses its lexer, which holds the statement it compiled last. When a table
                     // the sub-query reads goes out of date, the exception propagates to whatever
                     // compiles this statement, which holds the statement's text and can retry it.
+                    final boolean wasViewMetadataSubquery = sqlExecutionContext.isViewMetadataSubquery();
+                    sqlExecutionContext.setViewMetadataSubquery(wasViewMetadataSubquery || sqlExecutionContext.isViewCompile());
                     try (RecordCursorFactory inListFactory = compiler.generateSelectWithoutRetries(subQueryNode.queryModel, sqlExecutionContext, true)) {
                         final RecordMetadata inListMetadata = inListFactory.getMetadata();
                         final int columnCount = inListMetadata.getColumnCount();
@@ -8045,6 +8067,8 @@ public class SqlOptimiser implements Mutable {
                         if (valueCount == 0) {
                             throw SqlException.$(subQueryNode.position, "PIVOT IN subquery returned empty result set");
                         }
+                    } finally {
+                        sqlExecutionContext.setViewMetadataSubquery(wasViewMetadataSubquery);
                     }
                     pivotForColumn.setSelectSubqueryExpr(null);
                     pivotForColumn.setIsValueList(true);
