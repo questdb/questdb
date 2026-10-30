@@ -1759,19 +1759,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(pos, "table is not partitioned");
             }
             // Conversion and DETACH check partition layout before WAL; a WAL table has no reader yet.
-            TableReader deltaCheckReader = null;
+            TableReader partitionCheckReader = null;
             if ((action == PartitionAction.CONVERT_TO_PARQUET || action == PartitionAction.CONVERT_TO_NATIVE
                     || action == PartitionAction.DETACH)
                     && !isPartitionLayoutCheckSkipped(executionContext, tableToken)) {
                 if (reader == null) {
                     layoutReader = executionContext.getReader(tableToken);
                 }
-                deltaCheckReader = reader != null ? reader : layoutReader;
+                partitionCheckReader = reader != null ? reader : layoutReader;
             }
 
             final CharSequence tok = expectToken(lexer, "'list' or 'where'");
             if (isListKeyword(tok)) {
-                alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, deltaCheckReader, pos, action);
+                alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, reader, partitionCheckReader, pos, action);
             } else if (isWhereKeyword(tok)) {
                 AlterOperationBuilder alterOperationBuilder = switch (action) {
                     case PartitionAction.DROP ->
@@ -1788,8 +1788,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                 final int functionPosition = lexer.getPosition();
                 try (Function function = parsePartitionFilter(tableMetadata, executionContext)) {
-                    if (deltaCheckReader != null) {
-                        rejectDeltaPartitionChange(deltaCheckReader, tableToken, function, Long.MIN_VALUE,
+                    if (partitionCheckReader != null) {
+                        rejectPartitionChange(partitionCheckReader, tableToken, function, Long.MIN_VALUE,
                                 action, functionPosition);
                     }
                     if (reader != null) {
@@ -1823,7 +1823,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableRecordMetadata tableMetadata,
             TableToken tableToken,
             @Nullable TableReader reader,
-            @Nullable TableReader deltaCheckReader,
+            @Nullable TableReader partitionCheckReader,
             int pos,
             int action
     ) throws SqlException {
@@ -1886,8 +1886,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // Otherwise ignore the split time part.
                 int hi = action == PartitionAction.FORCE_DROP ? partitionName.length() : -1;
                 long timestamp = PartitionBy.parsePartitionDirName(partitionName, timestampType, partitionBy, 0, hi);
-                if (deltaCheckReader != null) {
-                    rejectDeltaPartitionChange(deltaCheckReader, tableToken, null, timestamp,
+                if (partitionCheckReader != null) {
+                    rejectPartitionChange(partitionCheckReader, tableToken, null, timestamp,
                             action, lastPosition);
                 }
                 alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
@@ -6054,12 +6054,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Rejects CONVERT PARTITION or DETACH PARTITION of a delta-active partition before WAL
-     * submission. TableWriter refuses both, and WAL apply would skip the whole ALTER. A
-     * delta-active base already in the target format stays the usual no-op. Checks the
-     * partitions that {@code filter} selects, or else the one at {@code listedTimestamp}.
+     * Rejects, before WAL submission, CONVERT PARTITION or DETACH PARTITION of a delta-active
+     * partition, and DETACH PARTITION of a read-only one that is not a soft link. TableWriter
+     * refuses them too, and WAL apply would skip the whole ALTER. A delta-active base already in
+     * the target format stays the usual no-op. Checks the partitions that {@code filter}
+     * selects, or else the one at {@code listedTimestamp}.
      */
-    private void rejectDeltaPartitionChange(
+    private void rejectPartitionChange(
             TableReader reader,
             TableToken tableToken,
             @Nullable Function filter,
@@ -6068,16 +6069,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int position
     ) throws SqlException {
         final TxReader txFile = reader.getTxFile();
-        if (!txFile.hasAnyDeltaActive()) {
+        final boolean isDetach = action == PartitionAction.DETACH;
+        if (!isDetach && !txFile.hasAnyDeltaActive()) {
             return;
         }
-        final boolean isDetach = action == PartitionAction.DETACH;
         final boolean toParquet = action == PartitionAction.CONVERT_TO_PARQUET;
         for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
-            if (!txFile.isPartitionDeltaActive(i) || (!isDetach && txFile.isPartitionParquet(i) == toParquet)) {
+            final boolean isDeltaActive = txFile.isPartitionDeltaActive(i);
+            final boolean isRefused = isDetach
+                    ? isDeltaActive || txFile.isPartitionReadOnly(i)
+                    : isDeltaActive && txFile.isPartitionParquet(i) != toParquet;
+            if (!isRefused) {
                 continue;
             }
-            final long logicalTimestamp = txFile.getPartitionFloor(txFile.getPartitionTimestampByIndex(i));
+            final long partitionTimestamp = txFile.getPartitionTimestampByIndex(i);
+            final long logicalTimestamp = txFile.getPartitionFloor(partitionTimestamp);
             final boolean selected;
             if (filter != null) {
                 partitionFunctionRec.setTimestamp(logicalTimestamp);
@@ -6085,17 +6091,29 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } else {
                 selected = logicalTimestamp == listedTimestamp;
             }
-            if (selected) {
-                throw SqlException.position(position)
-                        .put(switch (action) {
-                            case PartitionAction.DETACH -> "cannot detach partition, partition is delta-active [table=";
-                            case PartitionAction.CONVERT_TO_PARQUET -> "cannot convert partition to parquet, partition is delta-active [table=";
-                            default -> "cannot convert parquet partition to native, partition is delta-active [table=";
-                        })
-                        .put(tableToken.getTableName())
-                        .put(", partition=").put(formatPartitionName(reader, logicalTimestamp))
-                        .put(']');
+            if (!selected) {
+                continue;
             }
+            if (!isDeltaActive) {
+                // A read-only soft link detaches by unlink, and its target keeps the data.
+                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                TableUtils.setPathForNativePartition(path, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(),
+                        partitionTimestamp, txFile.getPartitionNameTxn(i));
+                if (ff.isSoftLink(path.$())) {
+                    continue;
+                }
+            }
+            throw SqlException.position(position)
+                    .put(switch (action) {
+                        case PartitionAction.DETACH -> isDeltaActive
+                                ? "cannot detach partition, partition is delta-active [table="
+                                : "cannot detach partition, partition is read-only [table=";
+                        case PartitionAction.CONVERT_TO_PARQUET -> "cannot convert partition to parquet, partition is delta-active [table=";
+                        default -> "cannot convert parquet partition to native, partition is delta-active [table=";
+                    })
+                    .put(tableToken.getTableName())
+                    .put(", partition=").put(formatPartitionName(reader, logicalTimestamp))
+                    .put(']');
         }
     }
 

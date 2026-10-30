@@ -2700,19 +2700,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return AttachDetachStatus.DETACH_ERR_MISSING_PARTITION;
         }
 
-        // A remotely served partition has no local data file; detaching it yields an unreadable stub.
-        // A Delta catalog can read a remote base while _txn keeps the local base's format.
-        if (txWriter.isPartitionRemotelyServed(partitionIndex) || isDeltaBaseRemote(partitionIndex)) {
-            LOG.error().$("cannot detach remotely served partition [table=").$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, timestamp).I$();
-            return AttachDetachStatus.DETACH_ERR_REMOTE;
-        }
-
         // The partition's Delta catalog changes in place, so a detached copy cannot carry it.
         if (txWriter.isPartitionDeltaActive(partitionIndex)) {
             LOG.error().$("cannot detach delta-active partition [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, timestamp).I$();
             return AttachDetachStatus.DETACH_ERR_DELTA;
+        }
+
+        // Read-only is replicated, so every instance refuses a sealed partition alike, whether its copy is local
+        // or cold. A read-only soft link detaches by unlink, and its target keeps the data.
+        if (txWriter.isPartitionReadOnly(partitionIndex) && !isPartitionSoftLink(partitionIndex)) {
+            LOG.error().$("cannot detach read-only partition [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, timestamp).I$();
+            return AttachDetachStatus.DETACH_ERR_READ_ONLY;
         }
 
         // Detach hard-links the directory into <ts>.detached with its pieces intact, while attach reads
@@ -11662,21 +11662,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             other.trimTo(pathSize);
         }
-    }
-
-    /**
-     * Whether a Delta partition's catalog reads its base from cold storage.
-     */
-    private boolean isDeltaBaseRemote(int partitionIndex) {
-        if (!txWriter.getPartitionHasDelta(partitionIndex)) {
-            return false;
-        }
-        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
-        if (deltaWriter == null) {
-            return false;
-        }
-        deltaWriter.readBaseSource(this, partitionIndex, deltaBaseSource);
-        return deltaBaseSource.getKind() == PartitionFrameSource.REMOTE_PARQUET;
     }
 
     /**

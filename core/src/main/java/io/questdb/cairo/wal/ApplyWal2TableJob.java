@@ -718,8 +718,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return;
         }
         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-        // An epoch owed after a change no WAL replay can redo is taken whatever the cadence.
-        final boolean epochOwed = tracker.isDurableEpochOwed();
+        // An epoch owed after a change no WAL replay can redo, or a required completion, is taken whatever the cadence.
+        final boolean epochOwed = tracker.isDurableEpochOwed() || tracker.isDurableEpochCompletionRequired();
         final long intervalMs = config.getAdaptiveEpochIntervalMs();
         // A negative interval disables adaptive epochs, except an owed one.
         if (intervalMs < 0 && !epochOwed) {
@@ -738,7 +738,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
             return;
         }
         try {
-            advance(writer, nowMs);
+            if (tracker.isDurableEpochCompletionRequired()) {
+                // A required completion that failed, e.g. after a Delta catalog initialization, is retried here
+                // rather than at the next writer open, which a pooled writer may not see for long.
+                writer.completeDurableEpochAfter("owed save point");
+            } else {
+                advance(writer, nowMs);
+            }
         } catch (CairoException e) {
             engine.handleDataSyncFailure(e);
             LOG.error().$("could not advance adaptive durable epoch [table=").$(tableToken)
