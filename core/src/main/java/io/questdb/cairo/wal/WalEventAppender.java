@@ -121,6 +121,11 @@ public final class WalEventAppender extends WalWriterBase implements QuietClosea
         tableToken = token;
     }
 
+    @Override
+    void syncSegmentFilesBeforeSequencing(int commitMode) {
+        // A Delta event segment holds the event files only.
+    }
+
     private void openSegment() {
         final int oldSegment = segmentId;
         final int oldLastTxn = lastSegmentTxn;

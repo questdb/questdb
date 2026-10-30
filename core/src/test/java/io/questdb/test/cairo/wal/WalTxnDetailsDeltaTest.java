@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalTxnType;
@@ -242,6 +243,6 @@ public class WalTxnDetailsDeltaTest extends AbstractCairoTest {
     private TableTransactionLogFile newLog() {
         return isPartitioned
                 ? new TableTransactionLogV2(configuration, 2, DefaultWalDirectoryPolicy.INSTANCE)
-                : new TableTransactionLogV1(configuration);
+                : new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON, () -> new long[]{0, -1});
     }
 }
