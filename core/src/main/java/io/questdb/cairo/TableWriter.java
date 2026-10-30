@@ -11217,15 +11217,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Whether superseded column version files must go to the asynchronous purge instead of being deleted now.
-     * A reader pinned before the last committed txn or a backup checkpoint may still reference them.
+     * Returns true when the writer must leave superseded column version files to {@link ColumnPurgeJob} instead of
+     * deleting them now: a reader pinned before the last committed txn, or a backup checkpoint, may still reference
+     * them.
      * <p>
-     * Adaptive WAL tables need the same, for another reason: recovery may rewind the table to its last epoch and
-     * replay the WAL forward, and a synchronous purge deletes column files (a symbol column's
-     * {@code <name>.o/.c/.k/.v} included) that a replayed transaction still needs. A crash that rewinds _meta to a
-     * version still declaring a dropped column would then fail the apply on the missing symbol map, and the table
-     * could never apply another transaction. The async purge runs once nothing can rewind to that state. A non-WAL
-     * table is never rewound, so it purges at once.
+     * An adaptive WAL table always takes the async purge, for another reason. Recovery may rewind the table to its
+     * last epoch and replay the WAL forward, and a replayed transaction still needs the column files a synchronous
+     * purge deletes, a symbol column's {@code <name>.o/.c/.k/.v} included. After a crash that rewinds _meta to a
+     * version still declaring a dropped column, the apply would fail on the missing symbol map, and the table could
+     * never apply another transaction. ColumnPurgeJob deletes the files only once nothing can rewind to that state.
+     * A non-WAL table never rewinds, so this reason does not apply to it.
      */
     private boolean isColumnPurgeAsyncOnly() {
         return checkScoreboardHasReadersBeforeLastCommittedTxn()
@@ -16351,8 +16352,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Purges the index versions that in-place parquet O3 updates superseded in the commit
-     * that just landed. Defers to ColumnPurgeJob while an older reader or a checkpoint may
-     * still use them.
+     * that just landed. Leaves them to ColumnPurgeJob when {@link #isColumnPurgeAsyncOnly()}
+     * holds: an older reader or a checkpoint may still use them, or the table is an
+     * adaptive WAL table.
      */
     private void purgeSupersededParquetIndexes() {
         if (!isParquetIndexPurgePending) {
@@ -20925,15 +20927,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * After an in-place parquet O3 update, zero column tops so that column-version
-     * records match the parquet content: the Rust updater (update.rs end()) zeroes
-     * every column_top in the file. The rewrite and fresh-parquet paths use
-     * {@link #zeroColumnTopsAfterFullMaterialization} instead.
+     * Zeroes column tops so that column-version records match a parquet file the Rust
+     * updater finished: update.rs end() zeroes every column_top in the file. The in-place
+     * parquet O3 update and {@link #normalizeColumnTopsAfterParquetRewrite} call it; the
+     * O3 rewrite and fresh-parquet paths use {@link #zeroColumnTopsAfterFullMaterialization}.
      *
-     * @param zeroAllColumns when {@code true}, zero column tops for ALL columns
-     *                       (including ones that had no data at all); when
-     *                       {@code false}, only partial ones
-     *                       (0 &lt; column_top &lt; partitionRowCount).
+     * @param zeroAllColumns when {@code true}, zero the column tops of every column,
+     *                       including one with no data at all; when {@code false},
+     *                       only partial tops (0 &lt; column_top &lt; partitionRowCount)
      */
     private void zeroColumnTopsAfterParquetRewrite(long partitionTimestamp, long partitionRowCount, boolean zeroAllColumns) {
         final int columnCount = metadata.getColumnCount();

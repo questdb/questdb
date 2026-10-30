@@ -1377,16 +1377,15 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Parses a directory entry name and dispatches to the visitor if it matches
-     * a sealed-file pattern for {@code columnName}.
-     * <p>
-     * Recognised patterns (segment indices use 0-based dot splits):
+     * Parses a directory entry name and calls {@code visitor} when it names a sealed
+     * file of {@code columnName}:
      * <ul>
-     *   <li>{@code <columnName>.pv.<postingColumnNameTxn>.<sealTxn>} — value file</li>
-     *   <li>{@code <columnName>.pc<includeIdx>.<postingColumnNameTxn>[.<coveredColumnNameTxn>].<sealTxn>} — cover data file</li>
+     *   <li>{@code <columnName>.pv[.<postingColumnNameTxn>].<sealTxn>}: value file</li>
+     *   <li>{@code <columnName>.pc<includeIdx>.<postingColumnNameTxn>[.<coveredColumnNameTxn>].<sealTxn>}:
+     *   cover data file; a posting column name txn of 0 stands for {@code COLUMN_NAME_TXN_NONE}</li>
      * </ul>
-     * Files that do not match (different column, .pk, .pci, partition data, etc.)
-     * are silently ignored.
+     * A txn segment the name omits reaches the visitor as {@code COLUMN_NAME_TXN_NONE}.
+     * Ignores every other name: another column, {@code .pk}, {@code .pci}, partition data.
      */
     public static void parseSealedFileName(CharSequence fileName, CharSequence columnName, SealedFileVisitor visitor) {
         int nameLen = columnName.length();

@@ -3492,12 +3492,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * a range can be perfectly classifiable - every commit DATA, every timestamp
      * readable - and still have deleted rows through a REPLACE_RANGE band.
      * <p>
-     * It also fills {@link #applyAheadDataMinTs}, the same minimum taken over the DATA
-     * commits alone, skipping the structural and non-DATA entries instead of aborting on
-     * them - exactly as {@link #drainAppliedBase}'s overlap walk does. An unclassifiable
-     * range denies the resume, but the rebuild that replaces it still materialises the
-     * range's DATA commits and walks the watermark past them, so their deletions still
-     * have to reach the repair's correction floor.
+     * It also fills {@link #applyAheadDataMinTs}, the same minimum over the DATA commits
+     * alone: like {@link #drainAppliedBase}'s overlap walk, it skips the structural and
+     * non-DATA entries instead of aborting on them. The repair needs it for an
+     * unclassifiable range too. Such a range denies the resume, but the rebuild still
+     * materialises the range's DATA commits and moves the watermark past them, so the
+     * repair's correction floor must cover their deletions.
      */
     private long[] computeApplyAheadBounds(TableToken baseToken, long fromSeqTxn, long toSeqTxn, long viewLowerBoundTimestamp) {
         applyAheadBounds[0] = Numbers.LONG_NULL;
