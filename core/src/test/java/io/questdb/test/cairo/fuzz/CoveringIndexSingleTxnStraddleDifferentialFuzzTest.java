@@ -52,10 +52,10 @@ import java.util.List;
  * overflow must still go through O3.
  * <p>
  * The same precomputed stream is replayed into two identically-shaped tables, one
- * with {@code COVERING_FASTPATH_DISABLED = true} (everything through O3 +
- * rebuildSidecars) and one with it active, then the two are asserted identical.
- * The counters additionally prove the two modes genuinely diverged, so a green
- * run cannot mean "the fast path never fired".
+ * with {@code COVERING_FASTPATH_DISABLED = true} (everything through O3) and one
+ * with it active, then the two are asserted identical. The counters additionally
+ * prove the two modes genuinely diverged, so a green run cannot mean "the fast
+ * path never fired".
  */
 public class CoveringIndexSingleTxnStraddleDifferentialFuzzTest extends AbstractFuzzTest {
 
@@ -74,6 +74,13 @@ public class CoveringIndexSingleTxnStraddleDifferentialFuzzTest extends Abstract
     @Test
     public void testSingleTxnStraddleDifferentialFuzz() throws Exception {
         runDifferential(generateRandom(LOG));
+    }
+
+    @Test
+    public void testSingleTxnStraddleDifferentialFuzzEqualReseals() throws Exception {
+        // No insert into an empty table straddles a partition boundary in this stream,
+        // so both runs pay the same reseals; see the reseal assertion in runDifferential.
+        runDifferential(generateRandom(LOG, 1_399_220_600_612_498L, 1_793_216_488_918L));
     }
 
     @Test
@@ -159,6 +166,7 @@ public class CoveringIndexSingleTxnStraddleDifferentialFuzzTest extends Abstract
         PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.set(0);
         PostingIndexWriter.COVERING_AUTOSEAL_COUNT.set(0);
         PostingIndexWriter.COVERING_BLOCK_FASTPATH_COUNT.set(0);
+        PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.set(0);
     }
 
     private void runDifferential(Rnd rnd) throws Exception {
@@ -185,6 +193,7 @@ public class CoveringIndexSingleTxnStraddleDifferentialFuzzTest extends Abstract
             applyStream("o3", ops, symbolCardinality);
             final long o3FastPath = PostingIndexWriter.COVERING_BLOCK_FASTPATH_COUNT.get();
             final long o3Reseals = PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.get();
+            final long o3SealAppends = PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get();
 
             // Replay 2: fast path ACTIVE.
             PostingIndexWriter.COVERING_FASTPATH_DISABLED = false;
@@ -192,6 +201,7 @@ public class CoveringIndexSingleTxnStraddleDifferentialFuzzTest extends Abstract
             applyStream("fast", ops, symbolCardinality);
             final long fastFastPath = PostingIndexWriter.COVERING_BLOCK_FASTPATH_COUNT.get();
             final long fastReseals = PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.get();
+            final long fastSealAppends = PostingIndexWriter.COVERING_SEAL_APPEND_COUNT.get();
 
             Assert.assertFalse("o3 suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("o3")));
             Assert.assertFalse("fast suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("fast")));
@@ -204,9 +214,27 @@ public class CoveringIndexSingleTxnStraddleDifferentialFuzzTest extends Abstract
             // time), so any increment is this change's call site, not block-apply.
             Assert.assertEquals("fast path fired while disabled", 0, o3FastPath);
             Assert.assertTrue("single-txn fast path never fired -- test is vacuous", fastFastPath > 0);
-            Assert.assertTrue("fast run must avoid reseals the o3 run paid"
+            // The o3 run appends a straddle's prefix to the last partition through
+            // the seal sweep's covered tail append. The fast run commits the prefix
+            // before O3 runs, so its sweep appends fewer tails.
+            Assert.assertTrue("fast run must commit straddle prefixes the o3 run appended in the seal sweep"
+                            + " (fastSealAppends=" + fastSealAppends + ", o3SealAppends=" + o3SealAppends + ")",
+                    fastSealAppends < o3SealAppends);
+            // The reseal count is NO LONGER a discriminator. It used to be, because
+            // the o3 run resealed the whole last partition for each prefix; the
+            // covered tail append removed that cost. Both runs now reseal the
+            // partitions the overflow creates and the ones late data merges into,
+            // and both route those through O3. Only a straddling insert into an
+            // empty table still differs: its prefix lands in a 0-row partition,
+            // where TableWriter.isCoveredAppendSealedByWriter() leaves the indexing
+            // to O3, so the o3 run reseals it and the fast run does not.
+            Assert.assertTrue("fast run must not reseal more than the o3 run"
                             + " (fastReseals=" + fastReseals + ", o3Reseals=" + o3Reseals + ")",
-                    fastReseals < o3Reseals);
+                    fastReseals <= o3Reseals);
+            // The overflow's new partitions and the late-data merges still need a
+            // reseal. Without this, a sweep that wrongly skipped them in both runs
+            // would pass the comparison above.
+            Assert.assertTrue("o3 run must still reseal (o3Reseals=" + o3Reseals + ")", o3Reseals > 0);
         });
     }
 
