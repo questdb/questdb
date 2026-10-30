@@ -2706,7 +2706,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // A remotely served partition has no local data file; detaching it yields an unreadable stub.
-        if (txWriter.isPartitionRemotelyServed(partitionIndex)) {
+        // A Delta catalog can read a remote base while _txn keeps the local base's format.
+        if (txWriter.isPartitionRemotelyServed(partitionIndex) || isDeltaBaseRemote(partitionIndex)) {
             LOG.error().$("cannot detach remotely served partition [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, timestamp).I$();
             return AttachDetachStatus.DETACH_ERR_REMOTE;
@@ -3636,7 +3637,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Gives a delta-active partition without a Delta catalog an empty one, keeping the WAL seqTxn.
-     * Returns false when the partition is gone, not delta-active, or already has a catalog.
+     * Returns false when the partition is gone, not delta-active, or already has a catalog. On an adaptive
+     * table it returns once every save point covers the commit, and throws when one cannot be taken.
      */
     public boolean initDeltaPartition(long partitionTimestamp) {
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
@@ -3651,6 +3653,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         txWriter.setPartitionHasDelta(partitionIndex, true);
         txWriter.bumpPartitionTableVersion();
         commitTxWriter();
+        // The commit moves no seqTxn, so no replay redoes it, and a save point before it reads the native base,
+        // which an eviction deletes once the catalog serves the partition. Both save points must cover it first.
+        completeDurableEpochAfter("Delta catalog initialization");
         return true;
     }
 
@@ -11720,6 +11725,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             other.trimTo(pathSize);
         }
+    }
+
+    /**
+     * Whether a Delta partition's catalog reads its base from cold storage.
+     */
+    private boolean isDeltaBaseRemote(int partitionIndex) {
+        if (!txWriter.getPartitionHasDelta(partitionIndex)) {
+            return false;
+        }
+        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+        if (deltaWriter == null) {
+            return false;
+        }
+        deltaWriter.readBaseSource(this, partitionIndex, deltaBaseSource);
+        return deltaBaseSource.getKind() == PartitionFrameSource.REMOTE_PARQUET;
     }
 
     /**

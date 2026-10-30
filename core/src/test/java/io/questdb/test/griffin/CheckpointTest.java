@@ -5086,6 +5086,43 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRestoreOntoAnotherColdRootKeepsTxnVerifying() throws Exception {
+        // A restore onto another cold storage root clears REMOTE in _txn's live record in place, with no commit.
+        // The next open must still verify that record.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE remote_cleared (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO remote_cleared VALUES (1, '2020-01-01T00:00'), (2, '2020-01-02T00:00')");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("remote_cleared");
+            try (TableWriter writer = engine.getWriter(token, "upload")) {
+                writer.getTxWriter().setPartitionRemote(0, true);
+                writer.getTxWriter().bumpPartitionTableVersion();
+                writer.commit();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            try (
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration);
+                    Path tablePath = new Path().of(configuration.getDbRoot()).concat(token).slash()
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), false, true);
+            }
+            TxReader.resetBodyChecksumFallbackCount();
+            try (
+                    Path txnPath = new Path().of(configuration.getDbRoot()).concat(token).concat(TableUtils.TXN_FILE_NAME);
+                    TxReader reader = new TxReader(configuration.getFilesFacade())
+            ) {
+                reader.ofRO(txnPath.$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+                Assert.assertTrue(reader.unsafeLoadAll());
+                Assert.assertFalse(reader.unsafeIsLiveAreaTorn());
+                Assert.assertFalse(reader.isPartitionRemote(0));
+            }
+            Assert.assertEquals(0, TxReader.getBodyChecksumFallbackCount());
+            assertQuery("SELECT x FROM remote_cleared").expectSize().returns("x\n1\n2\n");
+        });
+    }
+
+    @Test
     public void testRunWalPurgeJobLockTimeout() throws Exception {
         configureCircuitBreakerTimeoutOnFirstCheck(); // trigger timeout on first check
         assertMemoryLeak(() -> {

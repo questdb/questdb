@@ -225,9 +225,28 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
         final long flags = isSealStampCleared ? PARTITION_SEAL_STAMP_BIT | PARTITION_REMOTE_BIT : PARTITION_REMOTE_BIT;
         final int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION + PARTITION_VERSION_OFFSET;
-        final long word = attachedPartitions.getQuick(indexRaw) & ~flags;
+        final long oldWord = attachedPartitions.getQuick(indexRaw);
+        final long word = oldWord & ~flags;
+        final long partitionTableStart = getPartitionTableSizeOffset(symbolColumnCount);
+        final long offset = getPartitionTableIndexOffset(partitionTableStart, indexRaw);
         attachedPartitions.setQuick(indexRaw, word);
-        txMemBase.putLong(readBaseOffset + getPartitionTableIndexOffset(getPartitionTableSizeOffset(symbolColumnCount), indexRaw), word);
+        txMemBase.putLong(readBaseOffset + offset, word);
+        // Unlike the lag and structure resets, this write lands in the body checksum's partition table. The flags
+        // sit in the word's high int: fold it into a cached hash of this record, then checksum the record again.
+        // A record without a checksum stamp stays without one, so it still loads as a released record.
+        final PartitionTableHash partitionTableHash = (baseVersion & 1) == 0 ? partitionTableHashA : partitionTableHashB;
+        if (partitionTableHash.isFor(readBaseOffset, readRecordSize, partitionTableStart)) {
+            foldPartitionTableInt(
+                    partitionTableHash,
+                    attachedPartitions.size(),
+                    offset - partitionTableStart + Integer.BYTES,
+                    (int) (oldWord >>> 32),
+                    (int) (word >>> 32)
+            );
+        }
+        if (isLoadedRecordChecksumVerified()) {
+            storeBodyChecksum(readBaseOffset, calculateBodyChecksum(readBaseOffset, readRecordSize, partitionTableStart, partitionTableHash));
+        }
     }
 
     @Override
