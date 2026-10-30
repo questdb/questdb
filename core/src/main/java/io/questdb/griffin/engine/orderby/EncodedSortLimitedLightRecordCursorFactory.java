@@ -28,6 +28,7 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -55,9 +56,14 @@ import org.jetbrains.annotations.Nullable;
  * Used only when {@link SortKeyEncoder#isSupported(RecordMetadata,
  * io.questdb.std.IntList)} accepts the sort key. The legacy tree-chain
  * factory remains the fallback for unsupported keys.
+ * <p>
+ * Given a record sink, the factory serves a base without random access: the
+ * cursor copies only the rows that enter the top-K and emits from the copies,
+ * replacing a full sort of the base followed by a limit.
  */
 public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCursorFactory {
     private final Function hiFunction;
+    private final boolean isCopying;
     private final Function loFunction;
     private final ListColumnFilter sortColumnFilter;
     private final int timestampIndex;
@@ -71,17 +77,19 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
             Function loFunction,
             @Nullable Function hiFunction,
             ListColumnFilter sortColumnFilter,
-            int timestampIndex
+            int timestampIndex,
+            @Nullable RecordSink recordSink // copies the kept rows of a base without random access
     ) {
         super(metadata);
-        // The build phase never calls recordAt, but emit re-fetches the kept rows from the base.
-        assert base.recordCursorSupportsRandomAccess();
+        // The build phase never calls recordAt, but without copies emit re-fetches the kept rows from the base.
+        assert recordSink != null || base.recordCursorSupportsRandomAccess();
         this.base = base;
         this.loFunction = loFunction;
         this.hiFunction = hiFunction;
         this.sortColumnFilter = sortColumnFilter;
         this.timestampIndex = timestampIndex;
-        this.cursor = new EncodedSortLimitedLightRecordCursor(configuration, metadata, sortColumnFilter, timestampIndex);
+        this.isCopying = recordSink != null;
+        this.cursor = new EncodedSortLimitedLightRecordCursor(configuration, metadata, sortColumnFilter, timestampIndex, recordSink);
     }
 
     @Override
@@ -125,7 +133,7 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Encode sort light");
+        sink.type(isCopying ? "Encode sort" : "Encode sort light");
         sink.meta("lo").val(loFunction);
         if (hiFunction != null) {
             sink.meta("hi").val(hiFunction);

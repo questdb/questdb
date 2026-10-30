@@ -1982,6 +1982,7 @@ public class DeclareTest extends AbstractSqlParserTest {
             final String sameViewInsideItself = "DECLARE @lim := (SELECT max(l) - 1 FROM v_tail) SELECT * FROM v_tail";
             assertQuery(sameViewInsideItself)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             l
                             2

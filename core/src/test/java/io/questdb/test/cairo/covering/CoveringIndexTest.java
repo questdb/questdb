@@ -11841,6 +11841,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // sorted stream to confirm only K0 rows are produced.
             assertQuery("SELECT sym FROM t_unknown_sym WHERE sym IN ('K0', 'qrsw') ORDER BY 1 LIMIT 3")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             sym
                             K0

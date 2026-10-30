@@ -745,18 +745,17 @@ public class ClickBenchTest extends AbstractCairoTest {
                         "Q40",
                         "SELECT URLHash, EventTime, COUNT(*) AS PageViews FROM hits WHERE CounterID = 62 AND EventTime >= '2013-07-01T00:00:00Z' AND EventTime <= '2013-07-31T23:59:59Z' AND IsRefresh = 0 AND TraficSourceID IN (-1, 6) AND RefererHash = 3594120000172545465 GROUP BY URLHash, EventTime ORDER BY PageViews DESC LIMIT 100, 110;",
                         """
-                                Limit left: 100 right: 110 skip-rows-max: 100 take-rows-max: 10
-                                    Encode sort
-                                      keys: [PageViews desc]
-                                        Async JIT Stream Group By workers: 1
-                                          segmentKey: EventTime
-                                          keys: [URLHash,EventTime]
-                                          values: [count(*)]
-                                          filter: (CounterID=62 and IsRefresh=0 and TraficSourceID in [-1,6] and RefererHash=3594120000172545465L)
-                                            PageFrame
-                                                Row forward scan
-                                                Interval forward scan on: hits
-                                                  intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
+                                Encode sort lo: 100 hi: 110
+                                  keys: [PageViews desc]
+                                    Async JIT Stream Group By workers: 1
+                                      segmentKey: EventTime
+                                      keys: [URLHash,EventTime]
+                                      values: [count(*)]
+                                      filter: (CounterID=62 and IsRefresh=0 and TraficSourceID in [-1,6] and RefererHash=3594120000172545465L)
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: hits
+                                              intervals: [("2013-07-01T00:00:00.000000Z","2013-07-31T23:59:59.000000Z")]
                                 """
                 ),
                 new TestCase(

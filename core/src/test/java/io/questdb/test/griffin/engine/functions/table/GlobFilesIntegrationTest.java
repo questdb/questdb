@@ -65,6 +65,7 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testFilesOrderByDiskSizeDescLimit() throws Exception {
         assertMemoryLeak(() -> assertQuery("select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') order by diskSize desc, path limit 3")
                 .noLeakCheck()
+                .expectSize()
                 .returns("path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                         "reports" + File.separator + "2023_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
                         "reports" + File.separator + "monthly_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
@@ -79,6 +80,7 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testFilesOrderByModifiedTimeLimit() throws Exception {
         assertMemoryLeak(() -> assertQuery("select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') order by modifiedTime, path limit 2")
                 .noLeakCheck()
+                .expectSize()
                 .returns("path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                         "temp" + File.separator + "backup.sql\t45\t45.0 B\t1970-04-26T17:46:40.045Z\n" +
                         "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n"));
@@ -92,6 +94,7 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testFilesOrderByMultipleColumnsLimit() throws Exception {
         assertMemoryLeak(() -> assertQuery("select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') order by diskSize, path limit 4")
                 .noLeakCheck()
+                .expectSize()
                 .returns("path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                         "temp" + File.separator + "backup.sql\t45\t45.0 B\t1970-04-26T17:46:40.045Z\n" +
                         "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
@@ -107,6 +110,7 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testFilesWithLimit() throws Exception {
         assertMemoryLeak(() -> assertQuery("select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') order by path limit 2")
                 .noLeakCheck()
+                .expectSize()
                 .returns("path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                         "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
                         "data" + File.separator + "file2.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n"));
@@ -132,6 +136,7 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testGlobFilterOrderByPathDescLimit() throws Exception {
         assertMemoryLeak(() -> assertQuery("select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.csv') order by path desc limit 2")
                 .noLeakCheck()
+                .expectSize()
                 .returns("path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                         "test.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n" +
                         "reports" + File.separator + "monthly_report.csv\t15076\t14.7 KiB\t1970-04-26T17:46:55.076Z\n"));
@@ -172,6 +177,7 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
     public void testGlobFilterWithLimit() throws Exception {
         assertMemoryLeak(() -> assertQuery("select path, diskSize, diskSizeHuman, modifiedTime from files('" + inputRoot + "') where glob(path, '*.parquet') order by path limit 2")
                 .noLeakCheck()
+                .expectSize()
                 .returns("path\tdiskSize\tdiskSizeHuman\tmodifiedTime\n" +
                         "data" + File.separator + "file1.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n" +
                         "data" + File.separator + "file2.parquet\t256\t256.0 B\t1970-04-26T17:46:40.256Z\n"));
@@ -211,6 +217,7 @@ public class GlobFilesIntegrationTest extends AbstractCairoTest {
 
                     assertQuery(query)
                             .noLeakCheck()
+                            .expectSize()
                             .returns(expected);
                 }
         );

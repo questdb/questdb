@@ -209,6 +209,43 @@ public class OrderByEncodeSortFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFuzzEncodedSortLimitNoRandomAccess() throws Exception {
+        // A UNION ALL input has no random access, so the encoded top-K copies the rows it
+        // keeps, while the legacy engine fully sorts the input and applies a separate limit.
+        // Both keep tied rows in input order, so the results match without a total-order key.
+        // Inputs past the 4_096-entry compaction trigger exercise the copy compaction.
+        assertMemoryLeak(() -> {
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            // The union holds 1.5x rowCount rows on average, past the compaction trigger.
+            int rowCount = 3_000 + rnd.nextInt(2_001);
+            createFuzzTable("fuzz_sort_union", rowCount, rnd.nextBoolean());
+            final String queryPrefix = "SELECT * FROM (fuzz_sort_union UNION ALL SELECT * FROM fuzz_sort_union WHERE col_bool) ORDER BY ";
+
+            int[] targetMaxBytes = {8, 16, 24, 32, 40};
+            for (int targetMax : targetMaxBytes) {
+                for (int attempt = 0; attempt < 4; attempt++) {
+                    ObjList<Column> selected = selectColumns(rnd, COLUMNS, targetMax);
+                    StringSink query = new StringSink();
+                    query.put(queryPrefix).put(buildOrderByClause(rnd, selected)).put(' ');
+                    // Small limits compact many times over a large input.
+                    appendLimitClause(rnd, query, rnd.nextBoolean() ? 2 * rowCount : 20);
+                    assertQueryMatch(query, "no random access limit");
+                }
+            }
+
+            for (int attempt = 0; attempt < 8; attempt++) {
+                ObjList<Column> selected = selectColumns(rnd, COLUMNS, rnd.nextInt(33));
+                selected.add(VAR_COLUMNS[rnd.nextInt(VAR_COLUMNS.length)]);
+                shuffleColumns(rnd, selected);
+                StringSink query = new StringSink();
+                query.put(queryPrefix).put(buildOrderByClause(rnd, selected)).put(' ');
+                appendLimitClause(rnd, query, rnd.nextBoolean() ? 2 * rowCount : 20);
+                assertQueryMatch(query, "no random access limit variable");
+            }
+        });
+    }
+
+    @Test
     public void testFuzzEncodedSortParquet() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = TestUtils.generateRandom(LOG);

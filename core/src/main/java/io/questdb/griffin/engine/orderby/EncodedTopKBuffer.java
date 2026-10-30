@@ -77,6 +77,7 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
     // boundary's key tail lives in thresholdTailMem.
     private final long[] thresholdEntry = new long[SortKeyType.MAX_ENTRY_LONGS];
     private final long valueCapBytes;
+    private long compactionCount;
     private long compactionTrigger;
     private long count;
     private int entrySize;
@@ -252,6 +253,14 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
         return entryMem.getAddress();
     }
 
+    /**
+     * The number of compactions since construction; a change across an append
+     * tells the caller that the append compacted the buffer.
+     */
+    public long getCompactionCount() {
+        return compactionCount;
+    }
+
     public long getCount() {
         return count;
     }
@@ -309,6 +318,23 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
             SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
         }
         entryMem.setCapacity(entries * longsPerEntry);
+    }
+
+    /**
+     * Replaces each entry's rowId with the entry's position, and the threshold's
+     * rowId with the boundary entry's position. A caller that keeps its own copy
+     * of the rows calls this right after a compaction, once it has re-stored the
+     * surviving rows in entry order. Positions keep the rowId tie-break order:
+     * compaction leaves the entries sorted, and every later candidate carries a
+     * rowId past the last position.
+     */
+    public void renumberRowIds() {
+        for (long i = 0, addr = entryMem.getAddress() + entrySize - Long.BYTES; i < count; i++, addr += entrySize) {
+            Unsafe.putLong(addr, i);
+        }
+        if (hasThreshold) {
+            thresholdEntry[longsPerEntry - 1] = isFirstN ? limit - 1 : 0;
+        }
     }
 
     @Override
@@ -407,6 +433,7 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
             captureThresholdTail();
         }
         hasThreshold = true;
+        compactionCount++;
         if (isFirstN) {
             fastRejectKeyThreshold = thresholdEntry[0];
         }

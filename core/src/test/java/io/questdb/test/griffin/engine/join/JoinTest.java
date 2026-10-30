@@ -10462,6 +10462,7 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table xy3 as (select a::symbol a, rnd_int() b from xy2);");
             assertQuery("xy3 join xy2 on (a) order by a desc, b limit 5")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             a\tb\ta1
                             ZY\t-2057990897\tZY
@@ -10472,6 +10473,7 @@ public class JoinTest extends AbstractCairoTest {
                             """);
             assertQuery("xy2 join xy3 on (a) order by a desc, b limit 5")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             a\ta1\tb
                             ZY\tZY\t-2057990897
@@ -10490,6 +10492,7 @@ public class JoinTest extends AbstractCairoTest {
             execute("create table xy3 as (select a::symbol a, rnd_int() b from xy2);");
             assertQuery("xy3 join xy2 on (a) order by a desc, b limit 5")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             a\tb\ta1
                             סּ\uDA07\uDD7B\uDBD1\uDCF9\t393942866\tסּ\uDA07\uDD7B\uDBD1\uDCF9
@@ -10500,6 +10503,7 @@ public class JoinTest extends AbstractCairoTest {
                             """);
             assertQuery("xy2 join xy3 on (a) order by a desc, b limit 5")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             a\ta1\tb
                             \uDBE9\uDC70,䜉\t\uDBE9\uDC70,䜉\t1756786531

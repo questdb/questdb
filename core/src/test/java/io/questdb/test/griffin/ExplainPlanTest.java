@@ -4192,16 +4192,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertQuery("select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10")
                 .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
                 .assertsPlan("""
-                        Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                            Encode sort
-                              keys: [ts desc]
-                                Async JIT Stream Group By workers: 1
-                                  keys: [ts]
-                                  values: [count(*)]
-                                  filter: y=5
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: di
+                        Encode sort lo: 10
+                          keys: [ts desc]
+                            Async JIT Stream Group By workers: 1
+                              keys: [ts]
+                              values: [count(*)]
+                              filter: y=5
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: di
                         """);
     }
 
@@ -4783,28 +4782,28 @@ public class ExplainPlanTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                                Encode sort
-                                  keys: [bits desc]
-                                    VirtualRecord
-                                      functions: [timestamp,cluster,alias,timestamp-timestamp1,octets-octets1*8,packets-packets1]
-                                        SelectedRecord
-                                            Lt Join Light
-                                              condition: maps.cluster=_xQdbA3.cluster and maps.alias=_xQdbA3.alias
-                                                LatestByAllSymbolsFiltered
-                                                  jit: true
-                                                  filter: cluster in [cluster10]
-                                                    Row backward scan
-                                                      expectedSymbolsCount: 2147483647
-                                                    Interval backward scan on: maps
-                                                      intervals: [("2023-09-01T09:40:27.286000Z","2023-09-01T10:40:27.286000Z")]
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: maps
+                            Encode sort lo: 10
+                              keys: [bits desc]
+                                VirtualRecord
+                                  functions: [timestamp,cluster,alias,timestamp-timestamp1,octets-octets1*8,packets-packets1]
+                                    SelectedRecord
+                                        Lt Join Light
+                                          condition: maps.cluster=_xQdbA3.cluster and maps.alias=_xQdbA3.alias
+                                            LatestByAllSymbolsFiltered
+                                              jit: true
+                                              filter: cluster in [cluster10]
+                                                Row backward scan
+                                                  expectedSymbolsCount: 2147483647
+                                                Interval backward scan on: maps
+                                                  intervals: [("2023-09-01T09:40:27.286000Z","2023-09-01T10:40:27.286000Z")]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: maps
                             """);
 
             assertQuery(sql)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             timestamp\tcluster\talias\tinterval\tbits\tpackets
                             2023-09-01T09:42:00.000000Z\tcluster10\ta\t60000000\t8\t1
@@ -12489,17 +12488,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             SelectedRecord
                                 Lt Join Fast
-                                    Limit value: 10 skip-rows: 0 take-rows: 0
-                                        Encode sort
-                                          keys: [ts, l]
-                                            SelectedRecord
-                                                Cross Join
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: a
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: a
+                                    Encode sort lo: 10
+                                      keys: [ts, l]
+                                        SelectedRecord
+                                            Cross Join
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: a

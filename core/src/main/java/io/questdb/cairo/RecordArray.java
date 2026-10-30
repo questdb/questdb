@@ -159,6 +159,19 @@ public class RecordArray extends RecordChain {
         recordAt(record, rowToOffset(rowIndex));
     }
 
+    /**
+     * Empties the array like {@link #clear()}, but keeps its memory, so a caller
+     * that refills the array repeatedly does not reallocate it each time.
+     */
+    public void reset() {
+        varAppendOffset = 0L;
+        size = 0L;
+        nextRecordIndex = 0L;
+        if (auxMem != null) {
+            auxMem.jumpTo(0);
+        }
+    }
+
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         // Bind auxMem too (the per-row startOffset region), else it escapes the
