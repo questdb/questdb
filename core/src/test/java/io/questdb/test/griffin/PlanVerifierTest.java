@@ -1158,6 +1158,17 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByBucketKeyStale() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sampled (sym SYMBOL, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertAlgorithmContradicts("SELECT sym, ts, sum(x) s FROM sampled SAMPLE BY 1h", AggregatePlan.class, aggregate -> {
+                Assert.assertEquals(1, aggregate.getBucketKeyIndex());
+                aggregate.setBucketKeyIndex(0);
+            }, PlanVerifier.SAMPLE_BY_BUCKET);
+        });
+    }
+
+    @Test
     public void testSampleByFirstLastWithoutIndex() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE grouped (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

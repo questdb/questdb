@@ -30,8 +30,8 @@ import io.questdb.griffin.BoundExpressionRewriter.ConjunctTest;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.LogicalPlans;
-import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
+import io.questdb.griffin.PlanReadIds;
 import io.questdb.griffin.SetOperationCasts;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -52,7 +52,6 @@ import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
-import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
@@ -119,28 +118,10 @@ final class Decorrelation implements OptimiserPass {
     private final IntList chainOuterIds;
     private final OptimiserContext context;
     private final OuterColumnMapping mapping;
-    private final OuterColumnReads outerColumnReads;
     private final PlanNodePools planNodes;
+    private final PlanReadIds planReadIds;
     private final IntIntHashMap substitution;
     private final IntList tmpColumnIds;
-    private final ExpressionVisitor readIdCollector = this::collectReadId;
-    private final PlanExpressionVisitor nodeReadIds = new PlanExpressionVisitor() {
-        @Override
-        public int visitColumnId(int columnId, int position) {
-            tmpColumnIds.add(columnId);
-            return columnId;
-        }
-
-        @Override
-        public BoundExpression visitExpression(BoundExpression expression) {
-            expression.walk(readIdCollector);
-            return expression;
-        }
-    };
-    private final PlanVisitor readingNodes = plan -> {
-        plan.visitReads(nodeReadIds);
-        return TreeWalk.CONTINUE;
-    };
     private final DecorrelationCarriers verificationCarriers = ParanoiaState.PLAN_PARANOIA_MODE ? new DecorrelationCarriers() : null;
     private final ScalarCompensation compensation;
     private final DecorrelationContext ctx;
@@ -176,7 +157,7 @@ final class Decorrelation implements OptimiserPass {
             IntIntHashMap substitution,
             IntIntHashMap consumerRemap,
             UniqueColumnNames takenNames,
-            OuterColumnReads outerColumnReads
+            PlanReadIds planReadIds
     ) {
         liftedConjuncts = tmpConjuncts;
         liftedSelectionIds = tmpOrder;
@@ -187,15 +168,15 @@ final class Decorrelation implements OptimiserPass {
         this.chainOuterIds = new IntList();
         this.tmpColumnIds = tmpIndexes;
         this.substitution = substitution;
-        this.outerColumnReads = outerColumnReads;
+        this.planReadIds = planReadIds;
         mapping = new OuterColumnMapping(tmpValues, tmpKeys);
         ctx = new DecorrelationContext(context, planNodes, characterStore, mapping, chain, tmpIndexes, tmpSlaveKeys,
-                tmpSchema, substitution, takenNames, outerColumnReads, verificationCarriers);
+                tmpSchema, substitution, takenNames, planReadIds, verificationCarriers);
         domains = new DecorrelationDomains(ctx, mapping, context, planNodes, tmpSteps);
         final IntList ids = new IntList();
         keys = new CorrelationKeys(ctx, mapping, context, tmpPairs, ids);
         carriers = new OuterJoinCarriers(ctx, domains, keys, mapping, context, planNodes, substitution, ids);
-        compensation = new ScalarCompensation(ctx, domains, mapping, context, planNodes, chain, tmpIndexes, substitution, outerColumnReads, consumerRemap);
+        compensation = new ScalarCompensation(ctx, domains, mapping, context, planNodes, chain, tmpIndexes, substitution, planReadIds, consumerRemap);
         rewriter = new CorrelatedChainRewriter(ctx, keys, compensation, mapping, context, planNodes, chain, substitution);
     }
 
@@ -307,13 +288,13 @@ final class Decorrelation implements OptimiserPass {
      */
     private void collectBodyColumnReads(int chainBase) {
         for (int i = chainBase, n = chain.size(); i < n; i++) {
-            chain.getQuick(i).visitReads(nodeReadIds);
+            planReadIds.collectReadIds(chain.getQuick(i), tmpColumnIds);
         }
         final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(ctx.master());
         for (int i = steps.indexOf(ctx.step()) + 1, n = steps.size(); i < n; i++) {
             final JoinInput input = steps.getQuick(i);
             if (input.isDependent() && input.getInput() != null) {
-                input.getInput().walkTopDown(readingNodes);
+                planReadIds.collectSubtreeReadIds(input.getInput(), tmpColumnIds);
             }
         }
     }
@@ -325,21 +306,12 @@ final class Decorrelation implements OptimiserPass {
     private void collectChainOuterIds(LogicalPlan source, int chainBase, int chainOuterBase, int deferredBase) {
         chainOuterIds.setPos(chainOuterBase);
         for (int i = chainBase, n = chain.size(); i < n; i++) {
-            outerColumnReads.collect(chain.getQuick(i), chainOuterIds);
+            planReadIds.collectOuterIds(chain.getQuick(i), chainOuterIds);
         }
         if (source instanceof JoinPlan join) {
-            outerColumnReads.collect(join, chainOuterIds);
+            planReadIds.collectOuterIds(join, chainOuterIds);
         }
         keys.collectDeferredOuterIds(deferredBase, chainOuterIds);
-    }
-
-    private int collectReadId(BoundExpression expression) {
-        if (expression instanceof ColumnExpression column) {
-            tmpColumnIds.add(column.getColumnId());
-        } else if (expression instanceof OuterColumnExpression outer) {
-            tmpColumnIds.add(outer.getColumnId());
-        }
-        return TreeWalk.CONTINUE;
     }
 
     /**
@@ -639,7 +611,7 @@ final class Decorrelation implements OptimiserPass {
             addUnmappedOuterId(mapping.outerIdAt(i), base, slaveBase);
         }
         final int readBase = tmpColumnIds.size();
-        outerColumnReads.collect(join, tmpColumnIds);
+        planReadIds.collectOuterIds(join, tmpColumnIds);
         for (int i = readBase, n = tmpColumnIds.size(); i < n; i++) {
             addUnmappedOuterId(tmpColumnIds.getQuick(i), base, slaveBase);
         }
@@ -716,7 +688,7 @@ final class Decorrelation implements OptimiserPass {
 
     private int findBodyOuterColumn(LogicalPlan plan) {
         final int base = tmpColumnIds.size();
-        outerColumnReads.collect(plan, tmpColumnIds);
+        planReadIds.collectOuterIds(plan, tmpColumnIds);
         boolean isFound = false;
         for (int i = base, n = tmpColumnIds.size(); i < n && !isFound; i++) {
             isFound = readBody.getColumnIndexById(tmpColumnIds.getQuick(i)) > -1;
@@ -727,7 +699,7 @@ final class Decorrelation implements OptimiserPass {
 
     private int findMasterOuterColumn(LogicalPlan plan) {
         final int base = tmpColumnIds.size();
-        outerColumnReads.collect(plan, tmpColumnIds);
+        planReadIds.collectOuterIds(plan, tmpColumnIds);
         boolean isFound = false;
         for (int i = base, n = tmpColumnIds.size(); i < n && !isFound; i++) {
             isFound = ctx.isMasterOuter(tmpColumnIds.getQuick(i));

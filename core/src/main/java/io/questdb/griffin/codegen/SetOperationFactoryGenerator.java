@@ -633,7 +633,7 @@ final class SetOperationFactoryGenerator {
             Misc.free(branch, th);
             throw th;
         }
-        return sortGenerator.generateSort(metadata, branch, branchSortKeys, null, null, 0, -1, configuration.isSqlOrderBySortEnabled(),
+        return sortGenerator.generateSort(metadata, branch, branchSortKeys, null, -1, configuration.isSqlOrderBySortEnabled(),
                 algorithm == SortPlan.Algorithm.MATERIALIZED);
     }
 

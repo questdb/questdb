@@ -614,6 +614,16 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSequencedUpdateRecordedAtBinding() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE w (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE nw (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            assertSequencedUpdate(true, "UPDATE w SET x = 2 WHERE x > 0");
+            assertSequencedUpdate(false, "UPDATE nw SET x = 2 WHERE x > 0");
+        });
+    }
+
+    @Test
     public void testSharedConsumerCountMakesSharedCursorsKnown() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
@@ -777,16 +787,6 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                             2024-01-01T02:00:00.000000Z\t3\tb
                             2024-01-02T00:00:00.000000Z\t4\tb
                             """);
-        });
-    }
-
-    @Test
-    public void testWalClientUpdateRecordedAtBinding() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE w (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE nw (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            assertWalClientUpdate(true, "UPDATE w SET x = 2 WHERE x > 0");
-            assertWalClientUpdate(false, "UPDATE nw SET x = 2 WHERE x > 0");
         });
     }
 
@@ -973,6 +973,16 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertSequencedUpdate(boolean expected, String sql) throws Exception {
+        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+            try (UpdateOperation ignore = compiler.compile(sql, sqlExecutionContext).getUpdateOperation()) {
+                final FilterPlan filter = find(compiler.getPlanForTesting(), FilterPlan.class);
+                Assert.assertEquals(expected, ((ScanPlan) filter.getChild()).isSequencedUpdate());
+                Assert.assertEquals(!expected, PlanToFactoryRules.isFusedFilter(filter));
+            }
+        }
+    }
+
     private static void assertSharedCursors(AggregatePlan.Algorithm algorithm, Capability expected, String sql) throws Exception {
         try (
                 SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
@@ -1003,16 +1013,6 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
         ) {
             Assert.assertEquals(expected, PhysicalProperties.supportsTimeFrameCursor(compiler.getPlanForTesting()));
             Assert.assertEquals(expected == Capability.YES, factory.supportsTimeFrameCursor());
-        }
-    }
-
-    private static void assertWalClientUpdate(boolean expected, String sql) throws Exception {
-        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-            try (UpdateOperation ignore = compiler.compile(sql, sqlExecutionContext).getUpdateOperation()) {
-                final FilterPlan filter = find(compiler.getPlanForTesting(), FilterPlan.class);
-                Assert.assertEquals(expected, ((ScanPlan) filter.getChild()).isWalClientUpdate());
-                Assert.assertEquals(!expected, PlanToFactoryRules.isFusedFilter(filter));
-            }
         }
     }
 

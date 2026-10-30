@@ -1218,6 +1218,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody2, "asof_index(t q)", "Indexed", expected2);
             assertAlgoAndResult(queryBody2, "asof_memoized(t q)", "Memoized", expected2);
             assertAlgoAndResult(queryBody2, "asof_dense(t q)", "Dense", expected2);
+
+            String queryBody3 = "t.symbol, t.price, q.bid, q.ask FROM trades t " +
+                    "ASOF JOIN quotes q ON t.symbol = q.symbol " +
+                    "TOLERANCE 1_500s";
+            assertAlgoAndResult(queryBody3, "", "Fast", expected2);
         });
     }
 

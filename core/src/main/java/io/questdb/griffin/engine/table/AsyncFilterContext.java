@@ -42,6 +42,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -51,7 +52,7 @@ import java.io.Closeable;
  * Shared filter and memory-pool infrastructure used by {@link AsyncGroupByAtom},
  * {@link AsyncGroupByNotKeyedAtom}, and {@link AsyncTopKAtom}.
  */
-public class AsyncFilterContext implements Closeable {
+public class AsyncFilterContext implements Closeable, Mutable {
     private final ObjList<Function> bindVarFunctions;
     private final MemoryCARW bindVarMemory;
     private final CompiledFilter compiledFilter;
@@ -159,6 +160,7 @@ public class AsyncFilterContext implements Closeable {
         }
     }
 
+    @Override
     public void clear() {
         Throwable failure = filter.cursorClosed(null);
         failure = Function.cursorClosed(failure, bindVarFunctions);
@@ -305,6 +307,14 @@ public class AsyncFilterContext implements Closeable {
 
     public void toPlan(PlanSink sink) {
         sink.val(filter.getFunction());
+    }
+
+    /**
+     * Rewinds the filter and its clones. A cursor that dispatches its page frames again after its own {@code toTop()}
+     * calls this; one that re-reads what its first pass built does not.
+     */
+    public void toTop() {
+        filter.toTop();
     }
 
     private static void resetCapacity(@Nullable DirectLongList list) {

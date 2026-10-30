@@ -3498,6 +3498,20 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLateralLimitNullSecondBoundMatchesOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            createLimitOracleTables();
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT -2, NULL::LONG", """
+                    k\tv
+                    1\t10
+                    1\t11
+                    """);
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT 3, NULL::LONG", "k\tv\n");
+            assertLateralScalarBodyMatchesOracle("SELECT count() v FROM t2 WHERE t2.k = t1.k LIMIT -1, NULL::LONG", "k\tv\n");
+        });
+    }
+
+    @Test
     public void testLateralLimitOuterColumnCheckedPerOuterRow() throws Exception {
         assertMemoryLeak(() -> {
             createT1("(1), (2), (3), (NULL), (4)");

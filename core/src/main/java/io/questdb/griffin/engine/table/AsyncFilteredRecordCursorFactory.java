@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.mp.SCSequence;
@@ -233,7 +234,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 // The buffer cannot hold the last rows the limit selects, so read all rows and skip to the last ones.
                 cursor.of(execute(executionContext, collectSubSeq, baseOrder), Long.MAX_VALUE);
                 if (lastRowsCursor == null) {
-                    lastRowsCursor = new LimitRecordCursorFactory.LimitRecordCursor(limitLoFunction, null, limitLoPos, null);
+                    lastRowsCursor = new LimitRecordCursorFactory.LimitRecordCursor(new LimitBounds(limitLoFunction, null, limitLoPos), null);
                 }
                 try {
                     lastRowsCursor.of(cursor, executionContext);

@@ -63,10 +63,10 @@ public final class ScanPlan extends LogicalPlan {
     private IndexRead indexRead = IndexRead.NONE;
     private boolean isIntervalScan;
     private boolean isRandomAccess = true;
+    private boolean isSequencedUpdate;
     private boolean isSinglePartition;
     private boolean isTimestampDropped;
     private boolean isUpdate;
-    private boolean isWalClientUpdate;
     private WindowJoinStep joinIntervalStep;
     private FunctionExpression keyPattern;
     private CursorExpression keySubquery;
@@ -107,7 +107,7 @@ public final class ScanPlan extends LogicalPlan {
         viewName = null;
         viewPosition = -1;
         isUpdate = false;
-        isWalClientUpdate = false;
+        isSequencedUpdate = false;
         isRandomAccess = true;
         rowOrder = RowOrder.REQUIRED;
         scanDirection = SortDirection.ASCENDING;
@@ -484,6 +484,16 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     /**
+     * True when the scan belongs to the client-side compilation of an UPDATE of a WAL table, see
+     * {@link io.questdb.griffin.bind.UpdateTarget#isSequenced()}: the client only validates the statement, so the scan
+     * reads no rows and takes no reader, and only the WAL apply job reads the rows. The target binds the sequencer
+     * metadata; a sub-query's scan binds the table it reads as any scan does.
+     */
+    public boolean isSequencedUpdate() {
+        return isSequencedUpdate;
+    }
+
+    /**
      * Whether the intervals the scan reads lie in a single partition, which lets an index access path emit rows in
      * key order.
      */
@@ -503,16 +513,6 @@ public final class ScanPlan extends LogicalPlan {
      */
     public boolean isUpdate() {
         return isUpdate;
-    }
-
-    /**
-     * True when the scan belongs to the client-side compilation of an UPDATE of a WAL table, see
-     * {@link io.questdb.griffin.bind.UpdateTarget#isSequenced()}: the client only validates the statement, so the scan
-     * reads no rows and takes no reader, and only the WAL apply job reads the rows. The target binds the sequencer
-     * metadata; a sub-query's scan binds the table it reads as any scan does.
-     */
-    public boolean isWalClientUpdate() {
-        return isWalClientUpdate;
     }
 
     /**
@@ -543,10 +543,10 @@ public final class ScanPlan extends LogicalPlan {
 
     /**
      * Marks the scan as part of the client-side compilation of an UPDATE of a WAL table, see
-     * {@link #isWalClientUpdate}; the binder marks every scan it binds for such a statement.
+     * {@link #isSequencedUpdate}; the binder marks every scan it binds for such a statement.
      */
-    public void markWalClientUpdate() {
-        isWalClientUpdate = true;
+    public void markSequencedUpdate() {
+        isSequencedUpdate = true;
     }
 
     public ScanPlan of(TableToken tableToken, long metadataVersion, int position) {

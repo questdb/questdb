@@ -45,6 +45,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
@@ -699,33 +700,29 @@ public final class AggregateFactoryGenerator {
         // timestamp-specialized factory's forward input into a backward scan.
         final RecordCursorFactory base = codeGenerator.generate(frame, distinct.getChild(), executionContext);
         if (limitAdvice == null || isTimeSeriesDistinct(base)) {
-            return generateDistinct(base, null, null);
+            return generateDistinct(base, null);
         }
-        codeGenerator.instantiateLimit(frame, limitAdvice, base, executionContext);
-        return generateDistinct(base, frame.limitLo, frame.limitHi);
+        return generateDistinct(base, codeGenerator.instantiateLimit(limitAdvice, base, executionContext));
     }
 
     /**
      * Consumes the input and optional LIMIT advice on entry, including on failure.
      */
-    RecordCursorFactory generateDistinct(RecordCursorFactory base, Function loAdvice, Function hiAdvice) {
+    RecordCursorFactory generateDistinct(RecordCursorFactory base, @Nullable LimitBounds limitAdvice) {
         boolean isAdopted = false;
         try {
             if (isTimeSeriesDistinct(base)) {
-                assert loAdvice == null && hiAdvice == null;
+                assert limitAdvice == null;
                 isAdopted = true;
                 return new DistinctTimeSeriesRecordCursorFactory(configuration, base, entityColumnFilter, asm);
             }
             // Both constructors consume their inputs even when initialization fails.
             isAdopted = true;
-            return new DistinctRecordCursorFactory(configuration, base, entityColumnFilter, asm, loAdvice, hiAdvice);
+            return new DistinctRecordCursorFactory(configuration, base, entityColumnFilter, asm, limitAdvice);
         } catch (Throwable th) {
             if (!isAdopted) {
                 Misc.free(base, th);
-                Misc.free(loAdvice, th);
-                if (hiAdvice != loAdvice) {
-                    Misc.free(hiAdvice, th);
-                }
+                Misc.free(limitAdvice, th);
             }
             throw th;
         }

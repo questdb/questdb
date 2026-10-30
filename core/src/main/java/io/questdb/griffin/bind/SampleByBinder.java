@@ -642,11 +642,11 @@ final class SampleByBinder {
     }
 
     /**
-     * The FILL values follow the grouping's aggregates by position.
+     * The FILL values follow the grouping's aggregates by position. The fill steps over the grid of the grouping, in
+     * its time zone for a stride of a day or more.
      */
     FillPlan bindFill(
-            QueryModel source, GroupingPlan aggregate, ObjList<ExpressionNode> aggregateNodes, int timestampIndex,
-            SqlExecutionContext executionContext
+            QueryModel source, GroupingPlan aggregate, ObjList<ExpressionNode> aggregateNodes, SqlExecutionContext executionContext
     ) throws SqlException {
         final BindScope scope = ctx.scope();
         final ObjList<ExpressionNode> fill = source.getSampleByFill();
@@ -660,15 +660,11 @@ final class SampleByBinder {
         final ExpressionNode period = source.getSampleBy();
         final FillPlan plan = ctx.planNodes.fills.next().of(aggregate, period.position);
         final OutputSchema output = aggregate.getOutput();
+        final int timestampIndex = aggregate.getBucketKeyIndex();
         plan.setTimestampColumnId(output.getColumnId(timestampIndex));
         plan.deriveOutput();
         final int timestampType = output.getColumnType(timestampIndex);
-        if (aggregate instanceof SampleByPlan sampleBy) {
-            plan.setPeriod(sampleBy.getStride(), sampleBy.getPeriodUnit(), sampleBy.getPeriodUnitPosition());
-        } else {
-            final int unitIndex = period.token.length() - 1;
-            plan.setPeriod(TimestampSamplerFactory.parsePeriodStride(period.token, period.position), period.token.charAt(unitIndex), period.position + unitIndex);
-        }
+        plan.setPeriod(aggregate.getStride(), aggregate.getPeriodUnit(), aggregate.getPeriodUnitPosition());
         final ExpressionNode timezone = sampleByTimezone(source);
         final boolean isSubDay = CommonUtils.isSubDayUnit(plan.getPeriodUnit());
         final ExpressionNode from = source.getSampleByFrom();
@@ -676,8 +672,8 @@ final class SampleByBinder {
         final ExpressionNode rangeTimezone = isSubDay ? timezone : null;
         plan.setFrom(bindSampleByBound(sampleByRangeBound(from, rangeTimezone, timestampType), timestampType, FROM_BOUND_ERROR, executionContext));
         plan.setTo(bindSampleByBound(sampleByRangeBound(to, rangeTimezone, timestampType), timestampType, TO_BOUND_ERROR, executionContext));
-        if (!isSubDay) {
-            plan.setTimezone(bindSampleByParameter(timezone, ColumnType.STRING, executionContext));
+        if (!isSubDay && timezone != null) {
+            plan.setTimezone(aggregate.getTimezone());
         }
         final ExpressionNode offset = sampleByOffset(source);
         if ((timezone == null || isSubDay && from != null || !isSubDay) && offset != null && offset != SqlParser.ZERO_OFFSET) {
@@ -790,10 +786,10 @@ final class SampleByBinder {
         final ExpressionNode unit = source.getSampleByUnit();
         final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         if (unit == null) {
-            final long stride = TimestampSamplerFactory.parsePeriodStride(sampleBy.token, sampleBy.position);
-            final int unitIndex = sampleBy.token.length() - 1;
-            TimestampSamplerFactory.getSampleByInstance(driver, stride, sampleBy.token.charAt(unitIndex), sampleBy.position + unitIndex);
-            plan.setPeriod(sampleBy.token, stride, sampleBy.position, sampleBy.token.charAt(unitIndex), sampleBy.position + unitIndex);
+            final int unitIndex = TimestampSamplerFactory.periodUnitIndex(sampleBy.token);
+            plan.setPeriod(sampleBy.token, TimestampSamplerFactory.parsePeriodStride(sampleBy.token, sampleBy.position), sampleBy.position,
+                    sampleBy.token.charAt(unitIndex), sampleBy.position + unitIndex);
+            TimestampSamplerFactory.getSampleByInstance(driver, plan.getStride(), plan.getPeriodUnit(), plan.getPeriodUnitPosition());
         } else {
             final BoundExpression bound = ctx.functionBinder.bind(sampleBy, ctx.emptySchema, null, executionContext);
             if (!(bound instanceof ConstantExpression period)
@@ -807,6 +803,11 @@ final class SampleByBinder {
         return plan;
     }
 
+    /**
+     * The bucket of a SAMPLE BY that lowers to an aggregate grouped by it: the timestamp_floor_utc call over the
+     * input's timestamp, with the period, offset, origin and time zone the clause states. Records the grid on the
+     * aggregate the scope holds for the grouping, see {@link GroupingPlan}.
+     */
     BoundExpression bindSampleByBucket(
             QueryModel model, QueryModel source, LogicalPlan sourcePlan, SqlExecutionContext executionContext
     ) throws SqlException {
@@ -820,12 +821,14 @@ final class SampleByBinder {
         markTimestampSubqueries(source, timestampType);
         bindSampleByBound(from, timestampType, FROM_BOUND_ERROR, executionContext);
         bindSampleByBound(source.getSampleByTo(), timestampType, TO_BOUND_ERROR, executionContext);
+        final AggregatePlan aggregate = ctx.planNodes.aggregates.next();
         final ExpressionNode timezoneName = source.getSampleByTimezoneName();
-        scope.sampleByTimezone = timezoneName != null ? ctx.functionBinder.bindStandalone(timezoneName, executionContext) : null;
-        validateRuntimeConstant(scope.sampleByTimezone, ColumnType.STRING, "timezone must be a constant expression of STRING or CHAR type");
+        aggregate.setTimezone(timezoneName != null ? ctx.functionBinder.bindStandalone(timezoneName, executionContext) : null);
+        validateRuntimeConstant(aggregate.getTimezone(), ColumnType.STRING, "timezone must be a constant expression of STRING or CHAR type");
         final ExpressionNode timezone = sampleByTimezone(source);
         final ExpressionNode offset = sampleByOffset(source);
-        final boolean isSubDay = !sampleBy.token.isEmpty() && CommonUtils.isSubDayUnit(sampleBy.token.charAt(sampleBy.token.length() - 1));
+        final int unitIndex = TimestampSamplerFactory.periodUnitIndex(sampleBy.token);
+        final boolean isSubDay = unitIndex >= 0 && CommonUtils.isSubDayUnit(sampleBy.token.charAt(unitIndex));
         final ExpressionNode floor = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, "timestamp_floor_utc", 0, sampleBy.position);
         floor.paramCount = 5;
         floor.args.add(timezone != null && !(isSubDay && from != null) ? timezone : sampleByNull());
@@ -842,8 +845,13 @@ final class SampleByBinder {
             validateConvertible(ctx.functionBinder.bind(offset, input, sourceAlias(source), ColumnType.STRING, executionContext), ColumnType.STRING, OFFSET_ERROR);
             throw e;
         }
-        TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(bucket.getDataType()), CommonUtils.getStrideMultiple(sampleBy.token, sampleBy.position),
-                CommonUtils.getStrideUnit(sampleBy.token, sampleBy.position), sampleBy.position + sampleBy.token.length() - 1);
+        aggregate.setPeriod(sampleBy.token, CommonUtils.getStrideMultiple(sampleBy.token, sampleBy.position), sampleBy.position,
+                CommonUtils.getStrideUnit(sampleBy.token, sampleBy.position), sampleBy.position + unitIndex);
+        TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(bucket.getDataType()), aggregate.getStride(), aggregate.getPeriodUnit(),
+                aggregate.getPeriodUnitPosition());
+        aggregate.setOffset(((FunctionExpression) bucket).argumentAt(3));
+        aggregate.setTimestampColumnId(scope.sampleByTimestampColumnId);
+        scope.sampleByAggregate = aggregate;
         return bucket;
     }
 

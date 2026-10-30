@@ -28,16 +28,14 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.LimitRecordCursorFactory;
+import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.std.Misc;
-import org.jetbrains.annotations.Nullable;
 
 /**
  * Encoded-key top-K replacement for {@link LimitedSizeSortedLightRecordCursorFactory}.
@@ -57,21 +55,17 @@ import org.jetbrains.annotations.Nullable;
  * factory remains the fallback for unsupported keys.
  */
 public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final LimitRecordCursorFactory.Bounds bounds;
+    private final LimitBounds bounds;
     private final ListColumnFilter sortColumnFilter;
     private final int timestampIndex;
     private RecordCursorFactory base;
     private EncodedSortLimitedLightRecordCursor cursor;
-    private Function hiFunction;
-    private Function loFunction;
 
     public EncodedSortLimitedLightRecordCursorFactory(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             RecordCursorFactory base,
-            Function loFunction,
-            @Nullable Function hiFunction,
-            int limitPosition,
+            LimitBounds bounds,
             ListColumnFilter sortColumnFilter,
             int timestampIndex
     ) {
@@ -79,9 +73,7 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
         // The build phase never calls recordAt, but emit re-fetches the kept rows from the base.
         assert base.recordCursorSupportsRandomAccess();
         this.base = base;
-        this.loFunction = loFunction;
-        this.hiFunction = hiFunction;
-        this.bounds = new LimitRecordCursorFactory.Bounds(limitPosition);
+        this.bounds = bounds;
         this.sortColumnFilter = sortColumnFilter;
         this.timestampIndex = timestampIndex;
         try {
@@ -134,10 +126,7 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Encode sort light");
-        sink.meta("lo").val(loFunction);
-        if (hiFunction != null) {
-            sink.meta("hi").val(hiFunction);
-        }
+        bounds.toPlan(sink);
         if (timestampIndex != -1) {
             sink.meta("partiallySorted").val(true);
         }
@@ -161,12 +150,7 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
      * limits re-bind on cached plans.
      */
     private void initialize(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
-        loFunction.init(baseCursor, executionContext);
-        if (hiFunction != null) {
-            hiFunction.init(baseCursor, executionContext);
-        }
-
-        bounds.of(loFunction, hiFunction);
+        bounds.init(baseCursor, executionContext);
         cursor.setSelection(bounds.isFirstN(), bounds.getLimit(), bounds.getSkipFirst(), bounds.getSkipLast());
     }
 
@@ -176,16 +160,9 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
         this.base = null;
         final EncodedSortLimitedLightRecordCursor cursor = this.cursor;
         this.cursor = null;
-        final Function loFunction = this.loFunction;
-        this.loFunction = null;
-        final Function hiFunction = this.hiFunction;
-        this.hiFunction = null;
         Throwable failure = Misc.freeBestEffort(null, base);
         failure = Misc.freeBestEffort(failure, cursor);
-        failure = Misc.freeBestEffort(failure, loFunction);
-        if (hiFunction != loFunction) {
-            failure = Misc.freeBestEffort(failure, hiFunction);
-        }
+        failure = bounds.close(failure);
         CairoException.rethrowCleanupFailure(failure);
     }
 }

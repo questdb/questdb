@@ -28,8 +28,8 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.LogicalPlans;
-import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
+import io.questdb.griffin.PlanReadIds;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -76,8 +76,8 @@ final class DecorrelationContext implements Mutable {
     private final OuterColumnMapping mapping;
     private final IntList masterOuterIds;
     private final IntIntHashMap outerAliases = new IntIntHashMap();
-    private final OuterColumnReads outerColumnReads;
     private final PlanNodePools planNodes;
+    private final PlanReadIds planReadIds;
     private final IntIntHashMap substitution;
     private final UniqueColumnNames takenNames;
     private final IntList tmpColumnIds;
@@ -120,7 +120,7 @@ final class DecorrelationContext implements Mutable {
             OutputSchema tmpSchema,
             IntIntHashMap substitution,
             UniqueColumnNames takenNames,
-            OuterColumnReads outerColumnReads,
+            PlanReadIds planReadIds,
             @Nullable DecorrelationCarriers carriers
     ) {
         this.context = context;
@@ -133,7 +133,7 @@ final class DecorrelationContext implements Mutable {
         this.tmpSchema = tmpSchema;
         this.substitution = substitution;
         this.takenNames = takenNames;
-        this.outerColumnReads = outerColumnReads;
+        this.planReadIds = planReadIds;
         this.carriers = carriers;
         this.copier = new LogicalPlanCopier(context, planNodes, substitution);
     }
@@ -262,7 +262,7 @@ final class DecorrelationContext implements Mutable {
 
     private int collectNodeMasterOuterIds(LogicalPlan plan) {
         final int base = tmpColumnIds.size();
-        outerColumnReads.collect(plan, tmpColumnIds);
+        planReadIds.collectOuterIds(plan, tmpColumnIds);
         for (int i = base, n = tmpColumnIds.size(); i < n; i++) {
             final int outerId = tmpColumnIds.getQuick(i);
             if (masterInput(outerId) > -1 && outerIdSink.indexOf(outerId, outerIdBase, outerIdSink.size()) < 0) {
@@ -315,7 +315,7 @@ final class DecorrelationContext implements Mutable {
             return;
         }
         final int base = tmpColumnIds.size();
-        outerColumnReads.collect(expression, tmpColumnIds);
+        planReadIds.collectOuterIds(expression, tmpColumnIds);
         for (int i = base, n = tmpColumnIds.size(); i < n; i++) {
             final int carrierId = substitution.get(tmpColumnIds.getQuick(i));
             if (carrierId > -1) {
@@ -542,7 +542,7 @@ final class DecorrelationContext implements Mutable {
             return expression;
         }
         final int columnBase = tmpColumnIds.size();
-        outerColumnReads.collect(expression, tmpColumnIds);
+        planReadIds.collectOuterIds(expression, tmpColumnIds);
         substitution.clear();
         for (int i = columnBase, n = tmpColumnIds.size(); i < n; i++) {
             final int outerId = tmpColumnIds.getQuick(i);

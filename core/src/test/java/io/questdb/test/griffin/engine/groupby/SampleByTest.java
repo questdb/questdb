@@ -16442,6 +16442,44 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByUnderscoreStrideOnCursorShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        (1.0, '2024-01-01T00:00:00.000000Z'),
+                        (3.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+            final String filled = """
+                    ts\tfv
+                    2024-01-01T00:00:00.000000Z\t1.0
+                    2024-01-01T00:20:00.000000Z\tnull
+                    2024-01-01T00:40:00.000000Z\tnull
+                    2024-01-01T01:00:00.000000Z\t3.0
+                    """;
+            assertQuery("SELECT ts, first(val) fv FROM x SAMPLE BY 1_200s FILL(NULL) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(filled);
+            assertQuery("SELECT ts, first(val) fv FROM (SELECT * FROM x) SAMPLE BY 1_200s FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(filled);
+            assertQuery("SELECT ts, first(val) fv FROM x SAMPLE BY 1_200s ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tfv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleByWeekWithOffset0() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));

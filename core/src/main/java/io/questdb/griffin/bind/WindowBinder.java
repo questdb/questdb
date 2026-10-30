@@ -772,11 +772,12 @@ final class WindowBinder {
         if (expression == null) {
             return null;
         }
-        final boolean isAlias = expression.type == ExpressionNode.LITERAL && !expression.isWildcard()
-                && FunctionBinder.qualifierEnd(expression, null) < 0 && getColumnIndexQuiet(scope.windowInput.getOutput(), expression.token) < 0;
-        if (!isWindowArgument && !isAlias && expression.type == ExpressionNode.LITERAL && !expression.isWildcard()
-                && !ctx.functionBinder.isOuterScopeColumn(expression)) {
-            ctx.bindColumnIndex(expression, scope.windowInput.getOutput(), source);
+        final OutputSchema input = scope.windowInput.getOutput();
+        final boolean isLiteral = expression.type == ExpressionNode.LITERAL && !expression.isWildcard();
+        final boolean isAlias = isLiteral && FunctionBinder.qualifierEnd(expression, null) < 0 && getColumnIndexQuiet(input, expression.token) < 0;
+        final boolean isOuter = isLiteral && ctx.functionBinder.isOuterColumn(expression, input, sourceAlias(source));
+        if (!isWindowArgument && isLiteral && !isAlias && !isOuter) {
+            ctx.bindColumnIndex(expression, input, source);
         }
         if (isAlias) {
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
@@ -790,7 +791,7 @@ final class WindowBinder {
                 if (!Chars.equalsIgnoreCase(column.getName(), expression.token)) {
                     continue;
                 }
-                if (i == columnIndex && ctx.functionBinder.isOuterScopeColumn(expression)) {
+                if (i == columnIndex && isOuter) {
                     return expression;
                 }
                 int id = scope.windowAliasIds.getQuick(i);
@@ -827,8 +828,8 @@ final class WindowBinder {
                 }
                 return windowColumnReference(id, expression.position);
             }
-            if (!isWindowArgument && !ctx.functionBinder.isOuterScopeColumn(expression)) {
-                ctx.bindColumnIndex(expression, scope.windowInput.getOutput(), source);
+            if (!isWindowArgument && !isOuter) {
+                ctx.bindColumnIndex(expression, input, source);
             }
         }
         if (expression.windowExpression != null) {

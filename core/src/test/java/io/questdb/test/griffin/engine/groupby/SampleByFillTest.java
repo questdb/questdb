@@ -3245,6 +3245,29 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillUnderscoreStride() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        (1.0, '2024-01-01T00:00:00.000000Z'),
+                        (3.0, '2024-01-01T01:00:00.000000Z')
+                    """);
+            assertQuery("SELECT ts, first(val) fv FROM x SAMPLE BY 1_200s FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tfv
+                            2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T00:20:00.000000Z\tnull
+                            2024-01-01T00:40:00.000000Z\tnull
+                            2024-01-01T01:00:00.000000Z\t3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testFillValueIntCastsToDecimalAggregate() throws Exception {
         // IntFunction has no typed DECIMAL accessor, so SampleByFillRecord would crash at runtime
         // with UnsupportedOperationException. The compiler wraps the fill value in an INT -> DECIMAL

@@ -72,13 +72,29 @@ public final class JoinGraph implements Mutable {
     }
 
     /**
-     * Sets in {@code reachable} two bit sets of {@code (count + 63) >>> 6} longs per input of the {@code count}: first,
-     * per input, the inputs that a path of two or more links of the {@code children} sets orders after it, then, from
-     * bit set {@code count} on, per input, every input a path orders after it. {@code order} is the order
-     * {@link #sortTopologically} appended over the same child sets; an input it misses keeps empty bit sets.
+     * True when a path of two or more links orders {@code child} after {@code parent} in the bit sets
+     * {@link #setReachableInputs} set in {@code reachable} for {@code count} inputs.
+     */
+    public static boolean isIndirectlyReachable(LongList reachable, int count, int parent, int child) {
+        return (reachable.getQuick(parent * reachabilityWords(count) + (child >>> 6)) & 1L << child) != 0;
+    }
+
+    /**
+     * True when a path orders {@code child} after {@code parent} in the bit sets {@link #setReachableInputs} set in
+     * {@code reachable} for {@code count} inputs.
+     */
+    public static boolean isReachable(LongList reachable, int count, int parent, int child) {
+        return (reachable.getQuick((count + parent) * reachabilityWords(count) + (child >>> 6)) & 1L << child) != 0;
+    }
+
+    /**
+     * Sets in {@code reachable}, for each of the {@code count} inputs, the inputs that a path of two or more links of
+     * the {@code children} sets orders after it, see {@link #isIndirectlyReachable}, and every input a path orders after
+     * it, see {@link #isReachable}. {@code order} is the order {@link #sortTopologically} appended over the same child
+     * sets; an input it misses reaches no input.
      */
     public static void setReachableInputs(IntList order, ObjList<IntHashSet> children, int count, LongList reachable) {
-        final int words = (count + 63) >>> 6;
+        final int words = reachabilityWords(count);
         final int descendantsBase = count * words;
         reachable.setAll(2 * descendantsBase, 0);
         for (int i = order.size() - 1; i >= 0; i--) {
@@ -151,6 +167,15 @@ public final class JoinGraph implements Mutable {
             }
         }
         return order.size();
+    }
+
+    /**
+     * Removes {@code child} from the inputs a path orders after {@code parent} in the bit sets
+     * {@link #setReachableInputs} set in {@code reachable} for {@code count} inputs.
+     */
+    public static void unsetReachable(LongList reachable, int count, int parent, int child) {
+        final int word = (count + parent) * reachabilityWords(count) + (child >>> 6);
+        reachable.setQuick(word, reachable.getQuick(word) & ~(1L << child));
     }
 
     /**
@@ -240,6 +265,10 @@ public final class JoinGraph implements Mutable {
                 addUnnestEdges(inputs, function.argumentAt(i), step, edges);
             }
         }
+    }
+
+    private static int reachabilityWords(int count) {
+        return (count + 63) >>> 6;
     }
 
     private int residualOwnersLo(int residual) {

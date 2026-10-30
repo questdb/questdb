@@ -472,7 +472,7 @@ final class JoinBinder implements Mutable {
         }
         final IntList outerColumnIds = ctx.scope().outerColumnIds;
         final int outerColumnBase = outerColumnIds.size();
-        ctx.outerColumnReads.collect(input, outerColumnIds);
+        ctx.planReadIds.collectOuterIds(input, outerColumnIds);
         addLateralDependencies(join, index, outerColumnBase);
         outerColumnIds.setPos(outerColumnBase);
     }

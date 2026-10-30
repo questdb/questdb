@@ -38,8 +38,9 @@ import org.jetbrains.annotations.Nullable;
 /**
  * A function of a parallel operator that the owner thread evaluates, and its per-worker clones, one per worker slot,
  * which are null when the function is thread-safe and every worker evaluates it; the function is null where the
- * operator has none. Owns both, and acts on the function before its clones: initializes the clones over clones of
- * the symbol tables, with the state the function offers them, and rewinds, notifies and frees them with the function.
+ * operator has none. Owns both, or only the clones where the operator's factory frees the function, see
+ * {@link #closePerWorkerFunctions}. Acts on the function before its clones: initializes the clones over clones of the
+ * symbol tables, with the state the function offers them, and rewinds, notifies and frees them with the function.
  */
 public final class ClonedFunction implements QuietCloseable {
     private @Nullable Function function;
@@ -56,9 +57,16 @@ public final class ClonedFunction implements QuietCloseable {
     public Throwable close(@Nullable Throwable cleanupFailure) {
         final Function function = this.function;
         this.function = null;
+        return closePerWorkerFunctions(Misc.freeBestEffort(cleanupFailure, function));
+    }
+
+    /**
+     * Frees the clones alone, for an operator whose factory frees the function, folding each failure into
+     * {@code cleanupFailure}, which it returns.
+     */
+    public Throwable closePerWorkerFunctions(@Nullable Throwable cleanupFailure) {
         final ObjList<Function> perWorkerFunctions = this.perWorkerFunctions;
         this.perWorkerFunctions = null;
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, function);
         return Misc.freeObjListBestEffort(cleanupFailure, perWorkerFunctions);
     }
 

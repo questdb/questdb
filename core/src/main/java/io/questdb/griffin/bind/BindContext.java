@@ -34,8 +34,8 @@ import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.CompilerTemporaries;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.LogicalPlans;
-import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
+import io.questdb.griffin.PlanReadIds;
 import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.PreparedFunctions;
@@ -82,8 +82,8 @@ final class BindContext implements Mutable {
     final FunctionFactoryCache functionFactoryCache;
     final FunctionInstantiator functionInstantiator;
     final TableFunctionSources functionSources;
-    final OuterColumnReads outerColumnReads;
     final PlanNodePools planNodes;
+    final PlanReadIds planReadIds;
     final PlanTables planTables;
     final PreparedFunctions preparedFunctions;
     final ObjList<BoundExpression> tmpArguments;
@@ -117,7 +117,7 @@ final class BindContext implements Mutable {
             BoundExpressionRewriter expressionRewriter,
             FunctionInstantiator functionInstantiator,
             PostOrderTreeTraversalAlgo traverseAlgo,
-            OuterColumnReads outerColumnReads,
+            PlanReadIds planReadIds,
             CompilerTemporaries temporaries
     ) {
         this.scopes = scopes;
@@ -134,7 +134,7 @@ final class BindContext implements Mutable {
         this.tmpPositions = temporaries.positions;
         this.tmpScope = temporaries.scope;
         this.tmpOuterColumns = temporaries.indexes;
-        this.outerColumnReads = outerColumnReads;
+        this.planReadIds = planReadIds;
         this.functionFactoryCache = functionParser.getFunctionFactoryCache();
         this.functionBinder = new FunctionBinder(this, functionParser.getFunctionResolver(), compiler, traverseAlgo, temporaries);
     }
@@ -318,14 +318,21 @@ final class BindContext implements Mutable {
     }
 
     /**
-     * An aggregate over the rows of {@code input}. Over a HORIZON JOIN it is the join's consumer, which the generator
-     * fuses with the join.
+     * An aggregate over the rows of {@code input}, see {@link #aggregate(AggregatePlan, LogicalPlan, int)}.
      */
     AggregatePlan aggregate(LogicalPlan input, int position) {
+        return aggregate(planNodes.aggregates.next(), input, position);
+    }
+
+    /**
+     * Makes {@code aggregate} an aggregate over the rows of {@code input}. Over a HORIZON JOIN it is the join's
+     * consumer, which the generator fuses with the join.
+     */
+    AggregatePlan aggregate(AggregatePlan aggregate, LogicalPlan input, int position) {
         if (input instanceof HorizonJoinPlan horizon) {
             horizon.setConsumer(HorizonJoinPlan.Consumer.AGGREGATE);
         }
-        return planNodes.aggregates.next().of(input, position);
+        return aggregate.of(input, position);
     }
 
     /**

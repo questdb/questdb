@@ -150,6 +150,7 @@ public final class PlanVerifier {
     public static final String PROJECT_TYPE = "projection output type differs from its expression";
     public static final String READ_UNCHECKED = "node reads an expression or column id its checks do not cover";
     public static final String SAMPLE_BY_ALGORITHM = "SAMPLE BY algorithm contradicts its fill";
+    public static final String SAMPLE_BY_BUCKET = "SAMPLE BY bucket key is not a grouping key over the SAMPLE BY timestamp";
     public static final String SCAN_LIMIT = "scan has a LIMIT hi without a lo";
     public static final String SCAN_SHAPE = "scan source column indexes differ in length from its output";
     public static final String SET_OPERATION_CAST = "set operation cast facts differ from its branch types";
@@ -600,6 +601,14 @@ public final class PlanVerifier {
                 fail(AGGREGATE_TYPE, output.getColumnId(keyCount + i));
             }
         }
+        final int bucketKeyIndex = aggregate.getBucketKeyIndex();
+        if (bucketKeyIndex >= keyCount || bucketKeyIndex >= 0 && !LogicalPlans.readsColumn(keys.getQuick(bucketKeyIndex), aggregate.getTimestampColumnId())) {
+            fail(SAMPLE_BY_BUCKET);
+        }
+        if (aggregate.getTimestampColumnId() >= 0) {
+            site = "SAMPLE BY timestamp";
+            timestampColumn(input, aggregate.getTimestampColumnId());
+        }
         if (aggregate instanceof AggregatePlan plain) {
             if (plain.getSharedInputIds().size() != plain.getSharedSourceIds().size()) {
                 fail(SHARED_SOURCE_IDS);
@@ -608,8 +617,6 @@ public final class PlanVerifier {
         }
         if (aggregate instanceof SampleByPlan sample) {
             failIfViolated(PhysicalChoiceVerifier.sampleBy(sample, isAccessPathRequired));
-            site = "SAMPLE BY timestamp";
-            timestampColumn(input, sample.getTimestampColumnId());
             noColumnReads(sample.getFrom());
             noColumnReads(sample.getTo());
             noColumnReads(sample.getOffset());

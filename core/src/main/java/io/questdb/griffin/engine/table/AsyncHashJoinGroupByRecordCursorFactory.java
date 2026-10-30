@@ -74,6 +74,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final UnorderedPageFrameReducer AGGREGATE = AsyncHashJoinGroupByRecordCursorFactory::aggregate;
     private static final UnorderedPageFrameReducer FILTER_AND_AGGREGATE = AsyncHashJoinGroupByRecordCursorFactory::filterAndAggregate;
+    // The build ON filter, and each worker's copy of it for a build on the workers.
+    private final ClonedFunction buildOnFilter = new ClonedFunction();
     private final String condition;
     // True when any key column is a SYMBOL pair, which the probe translates into the build's keys.
     private final boolean hasSymbolKey;
@@ -84,14 +86,11 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     private final int workerCount;
     private RecordCursorFactory buildFactory;
     private AsyncFilterContext buildFilterContext;
-    private Function buildOnFilter;
     private AsyncHashJoinGroupByRecordCursor cursor;
     private AsyncFilterContext filterContext;
     private UnorderedPageFrameSequence<AsyncHashJoinGroupByAtom> frameSequence;
     private HashJoinGroupByFunctions functions;
     private RecordCursorFactory probeFactory;
-    // Each worker's copy of the build ON filter for a build on the workers; null when not needed.
-    private ObjList<Function> workerBuildOnFilters;
 
     @TestOnly
     public AsyncHashJoinGroupByRecordCursorFactory(
@@ -129,8 +128,8 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         this.probeFactory = probeFactory;
         this.buildFactory = buildFactory;
         this.buildFilterContext = buildFilterContext;
-        this.buildOnFilter = buildOnFilter;
-        this.workerBuildOnFilters = workerBuildOnFilters;
+        this.buildOnFilter.setFunction(buildOnFilter);
+        this.buildOnFilter.setPerWorkerFunctions(workerBuildOnFilters);
         this.functions = functions;
         this.filterContext = filterContext;
         this.isOuter = isOuter;
@@ -146,7 +145,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 throw new IllegalArgumentException("unsupported fused hash join execution inputs");
             }
             AsyncHashJoinGroupByAtom atom = new AsyncHashJoinGroupByAtom(engine, buildFactory, buildFilterContext,
-                    buildOnFilter, workerBuildOnFilters, metadata, functions, filterContext, isOuter, workerCount);
+                    this.buildOnFilter, metadata, functions, filterContext, isOuter, workerCount);
             // A probe filter belongs to the query, not to a frame, so the reducer is fixed here:
             // queries without one keep the dense loops that never test a filter per row.
             final UnorderedPageFrameReducer reducer = filterContext.getFilter(-1) != null
@@ -259,7 +258,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             // name speaks for the probe filter only.
             sink.optAttr(buildFilterContext.getCompiledFilter() != null ? "buildJitFilter" : "buildFilter",
                     buildFilterContext.getFilter(-1));
-            sink.optAttr("buildOnFilter", buildOnFilter);
+            sink.optAttr("buildOnFilter", buildOnFilter.getFunction());
             sink.setMetadata(null);
             sink.child("Probe", probeFactory);
             sink.child("Build", buildFactory);
@@ -2065,10 +2064,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         filterContext = null;
         failure = Misc.freeBestEffort(failure, buildFilterContext);
         buildFilterContext = null;
-        failure = Misc.freeBestEffort(failure, buildOnFilter);
-        buildOnFilter = null;
-        failure = Misc.freeObjListBestEffort(failure, workerBuildOnFilters);
-        workerBuildOnFilters = null;
+        failure = buildOnFilter.close(failure);
         failure = Misc.freeBestEffort(failure, functions);
         functions = null;
         failure = Misc.freeBestEffort(failure, probeFactory);

@@ -27,7 +27,6 @@ package io.questdb.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
@@ -42,8 +41,6 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
-import io.questdb.griffin.engine.groupby.TimestampSampler;
-import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilderImpl;
 import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
@@ -90,7 +87,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.CommonUtils;
-import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.StringSink;
@@ -3542,15 +3538,10 @@ public class SqlParser {
                 if (isLengthKeyword(tok)) {
                     // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
                     tok = tok(lexer, "LENGTH interval");
-                    final int length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
-                    final char lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
-                    validateMatViewPeriodLength(length, lengthUnit, lexer.lastTokenPosition());
-                    final TimestampSampler periodSamplerMicros = TimestampSamplerFactory.getInstance(
-                            MicrosTimestampDriver.INSTANCE,
-                            length,
-                            lengthUnit,
-                            lexer.lastTokenPosition()
-                    );
+                    final int lengthPosition = lexer.lastTokenPosition();
+                    final int length = CommonUtils.getStrideMultiple(tok, lengthPosition);
+                    final char lengthUnit = CommonUtils.getStrideUnit(tok, lengthPosition);
+                    validateMatViewPeriodLength(length, lengthUnit, lengthPosition);
                     tok = tok(lexer, "'time zone' or 'delay' or ')'");
 
                     TimeZoneRules tzRulesMicros = null;
@@ -3562,11 +3553,7 @@ public class SqlParser {
                             throw SqlException.position(lexer.lastTokenPosition()).put("TIME ZONE name expected");
                         }
                         tz = unquote(tok).toString();
-                        try {
-                            tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, tz);
-                        } catch (CairoException e) {
-                            throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
-                        }
+                        tzRulesMicros = periodTimeZoneRules(tz, lexer.lastTokenPosition());
                         tok = tok(lexer, "'delay' or ')'");
                     }
 
@@ -3580,11 +3567,7 @@ public class SqlParser {
                         tok = tok(lexer, "')'");
                     }
 
-                    // Period timer start is at the boundary of the current period.
-                    final long nowMicros = configuration.getMicrosecondClock().getTicks();
-                    final long nowLocalMicros = tzRulesMicros != null ? nowMicros + tzRulesMicros.getOffset(nowMicros) : nowMicros;
-                    final long startUs = periodSamplerMicros.round(nowLocalMicros);
-
+                    final long startUs = periodTimerStartUs(configuration.getMicrosecondClock(), length, lengthUnit, tzRulesMicros, lengthPosition);
                     mvOpBuilder.setTimer(tz, startUs, every, everyUnit);
                     mvOpBuilder.setPeriodLength(length, lengthUnit, delay, delayUnit);
                 } else if (isSampleKeyword(tok)) {

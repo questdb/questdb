@@ -86,7 +86,7 @@ public final class UpdateTarget implements Mutable {
     /**
      * True when the target is a WAL table and the statement binds outside WAL apply: the WAL sequences the statement
      * and its apply job runs it, so the client compiles it only to validate it, and every scan the statement binds
-     * reads no rows, see {@link io.questdb.griffin.plan.logical.ScanPlan#isWalClientUpdate()}.
+     * reads no rows, see {@link io.questdb.griffin.plan.logical.ScanPlan#isSequencedUpdate()}.
      */
     public boolean isSequenced() {
         return isSequenced;

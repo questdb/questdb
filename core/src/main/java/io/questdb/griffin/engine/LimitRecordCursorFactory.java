@@ -47,6 +47,7 @@ import org.jetbrains.annotations.TestOnly;
 
 public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RecordCursorFactory base;
+    private final LimitBounds bounds;
     private final LimitRecordCursor cursor;
 
     /**
@@ -59,35 +60,13 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
      */
     public LimitRecordCursorFactory(
             RecordCursorFactory base,
-            Function loFunction,
-            @Nullable Function hiFunction,
-            int argPos,
+            LimitBounds bounds,
             @Nullable MasterSuffixLimitFunction masterSuffixLimit
     ) {
         super(base.getMetadata());
         this.base = base;
-        this.cursor = new LimitRecordCursor(loFunction, hiFunction, argPos, masterSuffixLimit);
-    }
-
-    /**
-     * Whether {@link LimitRecordCursor#of} applies the bounds of {@code LIMIT lo, hi} as {@code LIMIT hi, lo}: the
-     * {@link #rowCount} is a constant and {@code lo} exceeds {@code hi}.
-     */
-    public static boolean isDescending(long lo, long hi) {
-        return lo > hi && rowCount(lo, hi) > -1;
-    }
-
-    /**
-     * The most rows {@code LIMIT lo, hi} returns, as {@link LimitRecordCursor#of} resolves the bounds, which reads
-     * {@code LIMIT n} as {@code LIMIT n, 0}: the distance between the bounds where both are non-negative or both
-     * negative, or where {@code lo} is negative and {@code hi} is zero. -1 where the count is not a constant: a
-     * non-negative {@code lo} with a negative {@code hi} ends the rows that many rows before the last row of the input,
-     * execution rejects a negative {@code lo} with a positive {@code hi}, and the distance from {@link Long#MIN_VALUE}
-     * to zero exceeds a long.
-     */
-    public static long rowCount(long lo, long hi) {
-        final long count = Math.abs(hi - lo);
-        return count > -1 && (Numbers.sameSign(lo, hi) || lo < 0 && hi == 0) ? count : -1;
+        this.bounds = bounds;
+        this.cursor = new LimitRecordCursor(bounds, masterSuffixLimit);
     }
 
     @Override
@@ -125,15 +104,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     // Stable iff the limit expressions (which may be arbitrary functions) and the base are stable.
     @Override
     public boolean isNonDeterministic() {
-        final Function leftFunc = cursor.leftFunction;
-        if (leftFunc != null && leftFunc.isNonDeterministic()) {
-            return true;
-        }
-        final Function rightFunc = cursor.rightFunction;
-        if (rightFunc != null && rightFunc.isNonDeterministic()) {
-            return true;
-        }
-        return base.isNonDeterministic();
+        return bounds.isNonDeterministic() || base.isNonDeterministic();
     }
 
     @Override
@@ -144,15 +115,13 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Limit");
-        Function leftFunc = cursor.leftFunction;
-        Function rightFunc = cursor.rightFunction;
-        boolean isCursorOpen = cursor.base != null;
-        if (leftFunc != null) {
-            sink.meta(rightFunc != null ? "left" : "value");
-            sink.val(leftFunc);
-            if (leftFunc.isRuntimeConstant() && isCursorOpen) {
-                sink.val('[').val(leftFunc.getLong(null)).val(']');
-            }
+        final Function leftFunc = bounds.getLoFunction();
+        final Function rightFunc = bounds.getHiFunction();
+        final boolean isCursorOpen = cursor.base != null;
+        sink.meta(rightFunc != null ? "left" : "value");
+        sink.val(leftFunc);
+        if (leftFunc.isRuntimeConstant() && isCursorOpen) {
+            sink.val('[').val(leftFunc.getLong(null)).val(']');
         }
         if (rightFunc != null) {
             sink.meta("right").val(rightFunc);
@@ -161,7 +130,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             }
         }
 
-        if (isCursorOpen && leftFunc != null && leftFunc.getLong(null) != Numbers.LONG_NULL) {
+        if (isCursorOpen && leftFunc.getLong(null) != Numbers.LONG_NULL) {
             if (cursor.isBaseSizeKnown()) {
                 sink.meta("skip-rows").val(cursor.baseRowsToSkip);
                 sink.meta("take-rows").val(cursor.baseRowsToTake);
@@ -169,15 +138,11 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 sink.meta("skip-rows-max").val(cursor.baseRowsToSkip);
                 sink.meta("take-rows-max").val(cursor.baseRowsToTake);
             } else {
-                long lo = cursor.lo;
-                long hi = cursor.hi;
+                final long lo = bounds.getLo();
+                final long hi = bounds.getHi();
                 if (lo < 0) {
                     sink.meta("skip-rows").val("baseRows").val(lo);
-                    // if lo < 0, hi should always be <= 0, but guard it just in case.
-                    // We don't want any exceptions in toPlan(), so just silently skip unexpected value.
-                    if (hi <= 0) {
-                        sink.meta("take-rows-max").val(hi - lo);
-                    }
+                    sink.meta("take-rows-max").val(hi - lo);
                 } else {
                     // lo >= 0
                     // If both lo and hi were >= 0, bounds would already have been resolved in cursor.of().
@@ -203,116 +168,26 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     protected void _close() {
         Throwable failure = Misc.freeBestEffort(null, base);
-        failure = Misc.freeBestEffort(failure, cursor.leftFunction);
-        failure = Misc.freeBestEffort(failure, cursor.rightFunction);
+        failure = bounds.close(failure);
         failure = Misc.freeBestEffort(failure, cursor.masterRowRing);
         failure = Misc.freeBestEffort(failure, cursor.masterRows);
         CairoException.rethrowCleanupFailure(failure);
     }
 
     /**
-     * The bounds of a LIMIT as execution applies them, which every LIMIT cursor resolves through {@link #of}, and the
-     * rows a sort under the LIMIT keeps for them.
-     */
-    public static final class Bounds {
-        private final int position;
-        private long hi;
-        private long lo;
-
-        /**
-         * {@code position}: the position of the LIMIT in the query text, which {@link #of} reports its error at.
-         */
-        public Bounds(int position) {
-            this.position = position;
-        }
-
-        public long getHi() {
-            return hi;
-        }
-
-        /**
-         * The rows of its order a sort keeps: the first ones where {@link #isFirstN} holds, the last ones otherwise,
-         * none where 0, and every row where negative.
-         */
-        public long getLimit() {
-            if (lo < 0) {
-                return lo == hi ? 0 : -lo;
-            }
-            if (hi < 0) {
-                return hi == Numbers.LONG_NULL ? 0 : -1;
-            }
-            return hi;
-        }
-
-        public long getLo() {
-            return lo;
-        }
-
-        /**
-         * The rows a sort skips at the start of the rows it keeps.
-         */
-        public long getSkipFirst() {
-            return lo >= 0 && hi != Numbers.LONG_NULL ? lo : 0;
-        }
-
-        /**
-         * The rows a sort skips at the end of the rows it keeps.
-         */
-        public long getSkipLast() {
-            if (lo < 0) {
-                return lo == hi ? 0 : Math.max(-hi, 0);
-            }
-            return hi < 0 && hi != Numbers.LONG_NULL ? -hi : 0;
-        }
-
-        /**
-         * Whether a sort keeps the first rows of its order: both bounds are non-negative.
-         */
-        public boolean isFirstN() {
-            return lo >= 0 && hi >= 0;
-        }
-
-        /**
-         * Reads {@code LIMIT lo, hi}, or {@code LIMIT lo} as {@code LIMIT lo, 0} where {@code hiFunction} is null. A NULL
-         * {@code lo} of a pair reads 0 where {@code hi} is not NULL, and the bounds apply as {@code LIMIT hi, lo} where
-         * {@link #isDescending} holds. Rejects a negative {@code lo} with a positive {@code hi}.
-         */
-        public void of(Function loFunction, @Nullable Function hiFunction) throws SqlException {
-            long lo = loFunction.getLong(null);
-            long hi = 0;
-            if (hiFunction != null) {
-                hi = hiFunction.getLong(null);
-                if (lo == Numbers.LONG_NULL && hi != Numbers.LONG_NULL) {
-                    lo = 0;
-                }
-            }
-            final boolean isDescending = isDescending(lo, hi);
-            this.lo = isDescending ? hi : lo;
-            this.hi = isDescending ? lo : hi;
-            if (this.lo < 0 && this.hi > 0) {
-                throw SqlException.$(position, "LIMIT <negative>, <positive> is not allowed");
-            }
-        }
-    }
-
-    /**
      * Applies a LIMIT over a base cursor; a negative LIMIT counts the base rows first, then skips to the last ones.
      */
     public static class LimitRecordCursor implements RecordCursor {
-        private final Bounds bounds;
+        private final LimitBounds bounds;
         private final RecordCursor.Counter counter = new Counter();
-        private final Function leftFunction;
         private final MasterSuffixLimitFunction masterSuffixLimit;
-        private final Function rightFunction;
         private RecordCursor base;
         private long baseRowsToSkip;
         private long baseRowsToTake;
         private long baseSize;
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private long hi;
         // The base sits at the first row the LIMIT returns, where toTop() left it.
         private boolean isBaseAtFirstRow;
-        private long lo;
         // The trailing master rows of one read of the master filter whose joined rows cover the rows the LIMIT still
         // misses, as a ring of (row id, joined row count) pairs.
         private DirectLongList masterRowRing;
@@ -328,15 +203,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         // The joined rows the last read of older master rows walked one by one, see remainingMasterRowCount().
         private long walkedRowCount;
 
-        public LimitRecordCursor(
-                Function leftFunction,
-                Function rightFunction,
-                int argPos,
-                MasterSuffixLimitFunction masterSuffixLimit
-        ) {
-            this.leftFunction = leftFunction;
-            this.rightFunction = rightFunction;
-            this.bounds = new Bounds(argPos);
+        public LimitRecordCursor(LimitBounds bounds, @Nullable MasterSuffixLimitFunction masterSuffixLimit) {
+            this.bounds = bounds;
             this.masterSuffixLimit = masterSuffixLimit;
         }
 
@@ -485,6 +353,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 // If baseSize was cheap to get, bounds would already have been sorted out in of().
                 // Now it's time to use the heavy-handed approach to getting baseSize.
                 calculateBaseSize();
+                final long lo = bounds.getLo();
                 if (masterSuffixLimit != null && masterSuffixLimit.isReadingLastRows(lo) && baseSize < -lo) {
                     readOlderMasterRows();
                 }
@@ -516,7 +385,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
          * which the bounds trim to the last {@code -lo}.
          */
         private void readOlderMasterRows() {
-            final long rowCount = -lo;
+            final long rowCount = -bounds.getLo();
             final long ringCapacity = rowCount + 1;
             if (masterRows == null) {
                 masterRows = new DirectLongList(rowCount, MemoryTag.NATIVE_DEFAULT);
@@ -598,6 +467,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void resolveBoundsCheap() {
+            final long lo = bounds.getLo();
+            final long hi = bounds.getHi();
             if (lo == hi) {
                 // There's either a single zero argument (LIMIT 0) or two equal arguments (LIMIT n, n).
                 // In both cases the result is an empty cursor.
@@ -614,6 +485,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         private void resolveBoundsFromNegativeArgs() {
             assert baseSize >= 0 : "baseSize < 0";
+            final long lo = bounds.getLo();
+            final long hi = bounds.getHi();
             long startInclusive, endExclusive;
             if (lo < 0) {
                 startInclusive = baseSize + lo;
@@ -647,13 +520,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             this.base = base;
             this.circuitBreaker = executionContext.getCircuitBreaker();
 
-            leftFunction.init(base, executionContext);
-            if (rightFunction != null) {
-                rightFunction.init(base, executionContext);
-            }
-            bounds.of(leftFunction, rightFunction);
-            lo = bounds.getLo();
-            hi = bounds.getHi();
+            bounds.init(base, executionContext);
 
             baseSize = -1;
             size = -1;
@@ -662,11 +529,12 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             remaining = -1;
             isBaseAtFirstRow = false;
             counter.clear();
+            final long lo = bounds.getLo();
             // A negative LIMIT over a master suffix resolves its bounds once the join runs.
             if (masterSuffixLimit == null || lo >= 0) {
                 resolveBoundsCheap();
             }
-            if (lo >= 0 && hi > lo) {
+            if (lo >= 0 && bounds.getHi() > lo) {
                 base.expectLimitedIteration();
             }
         }

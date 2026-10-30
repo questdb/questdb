@@ -66,6 +66,9 @@ public final class TimestampSamplerFactory {
 
         for (int i = start; i < len; i++) {
             char c = cs.charAt(i);
+            if (c == '_' && atLeastOneDigit) {
+                continue;
+            }
             if (c < '0' || c > '9') {
                 k = i;
                 break;
@@ -96,7 +99,8 @@ public final class TimestampSamplerFactory {
 
     /**
      * Find the end of the interval token in the input string. The interval token is expected to be a number followed by
-     * a single letter qualifier.
+     * a single letter qualifier. The number may separate its digits with underscores, which
+     * {@link #parsePositiveInterval} validates as {@link Numbers#parseInt} does.
      *
      * @param cs       input string
      * @param position position in SQL text to report error against
@@ -120,6 +124,9 @@ public final class TimestampSamplerFactory {
         boolean atLeastOneDigit = false;
         for (int i = 0; i < len; i++) {
             char c = cs.charAt(i);
+            if (c == '_' && atLeastOneDigit) {
+                continue;
+            }
             if (c < '0' || c > '9') {
                 k = i;
                 break;
@@ -173,7 +180,7 @@ public final class TimestampSamplerFactory {
      */
     public static TimestampSampler getInstance(TimestampDriver driver, CharSequence cs, int position) throws SqlException {
         final long stride = parsePeriodStride(cs, position);
-        final int unitIndex = cs.length() - 1;
+        final int unitIndex = periodUnitIndex(cs);
         return getSampleByInstance(driver, stride, cs.charAt(unitIndex), position + unitIndex);
     }
 
@@ -225,7 +232,7 @@ public final class TimestampSamplerFactory {
 
     /**
      * The stride of the SAMPLE BY period literal {@code cs}, such as 15 for {@code 15m} or 1 for {@code m}: an optional
-     * positive INT followed by the one-letter unit that ends the literal, at index {@code cs.length() - 1}. The stride
+     * positive INT followed by the one-letter unit that ends the literal, at {@link #periodUnitIndex}. The stride
      * must also fit the timestamp range in that unit, which {@link #getSampleByInstance} checks.
      *
      * @param position position of the literal in SQL text to report error against
@@ -270,5 +277,12 @@ public final class TimestampSamplerFactory {
             ex.put(']');
             throw ex;
         }
+    }
+
+    /**
+     * The index of the one-letter unit that ends the SAMPLE BY period literal {@code cs}; -1 for an empty literal.
+     */
+    public static int periodUnitIndex(CharSequence cs) {
+        return cs.length() - 1;
     }
 }

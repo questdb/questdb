@@ -2214,10 +2214,11 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     /**
-     * True when the name does not resolve in the input but does in an enclosing lateral scope.
+     * True when the name does not resolve in the input but does in an enclosing lateral scope, see
+     * {@link #outerColumnId}.
      */
     boolean isOuterColumn(ExpressionNode node, OutputSchema input, CharSequence inputAlias) {
-        return node.type == ExpressionNode.LITERAL && findColumn(node, input, inputAlias) == -1 && isOuterScopeColumn(node);
+        return outerColumnId(node, input, inputAlias) > -1;
     }
 
     /**
@@ -2225,6 +2226,18 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      */
     boolean isOuterScopeColumn(ExpressionNode node) {
         return outerScopeColumnId(node) > -1;
+    }
+
+    /**
+     * The id of the outer column the literal reads: the column of the innermost enclosing lateral scope that defines its
+     * name, when the name does not resolve in {@code scope}; otherwise -1, as for any other node.
+     */
+    int outerColumnId(ExpressionNode node, OutputSchema scope, CharSequence scopeAlias) {
+        if (node.type != ExpressionNode.LITERAL) {
+            return -1;
+        }
+        final int columnId = outerScopeColumnId(node);
+        return columnId > -1 && findColumn(node, scope, scopeAlias) == -1 ? columnId : -1;
     }
 
     /**

@@ -321,7 +321,23 @@ public class TimestampSamplerFactoryTest {
     }
 
     @Test
-    public void testUnsupportedQualifier() {
+    public void testUnderscoreSeparatedInterval() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        Assert.assertEquals(5, TimestampSamplerFactory.findPositiveIntervalEndIndex("1_200s", 0, "sample"));
+        Assert.assertEquals(6, TimestampSamplerFactory.findIntervalEndIndex("-1_200s", 0));
+        Assert.assertEquals(-1_200, TimestampSamplerFactory.parseInterval("-1_200s", 6, 0));
+        final TimestampSampler underscored = TimestampSamplerFactory.getInstance(driver, "1_200s", 0);
+        final TimestampSampler plain = TimestampSamplerFactory.getInstance(driver, "1200s", 0);
+        final long ts = driver.fromSeconds(86_400 + 3_601);
+        Assert.assertEquals(plain.round(ts), underscored.round(ts));
+        Assert.assertEquals(plain.nextTimestamp(ts), underscored.nextTimestamp(ts));
+        assertFailure(10, "invalid sample value", "5_s", 10);
+        assertFailure(10, "invalid sample value", "1__0s", 10);
+        assertFailure(10, "expected single letter qualifier", "_5s", 10);
+    }
+
+    @Test
+    public void testUnsupportedQualifier(){
         assertFailure(130, "unsupported interval qualifier", "K", 130);
     }
 

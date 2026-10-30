@@ -350,7 +350,7 @@ final class AggregateRewrite implements OptimiserPass {
     }
 
     private boolean liftKeys(ProjectPlan project, AggregatePlan aggregate) {
-        if (aggregate.hasSampleByBucket() || isJoinInput(aggregate)
+        if (aggregate.getBucketKeyIndex() >= 0 || isJoinInput(aggregate)
                 || !aggregate.hasExplicitGrouping() && LogicalPlans.isPlainColumnProjection(project)
                 || !hasRepeatedKeyColumn(aggregate)) {
             return false;

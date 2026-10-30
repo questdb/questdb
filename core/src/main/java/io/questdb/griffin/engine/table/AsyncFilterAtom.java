@@ -54,13 +54,12 @@ import java.util.concurrent.atomic.LongAdder;
 public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Plannable {
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
     private final IntList columnTypes;
-    private final Function filter;
+    private final ClonedFunction filter = new ClonedFunction();
     private final IntHashSet filterUsedColumnIndexes;
     // Shared by the owner, every reducing worker and every work-stealing thread: a thread-safe
     // filter hands out no slots, so there is no per-thread identity to key stats on. Concurrent
     // updates are safe, see SelectivityStats.
     private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
-    private final ObjList<Function> perWorkerFilters;
     private final PerWorkerLocks perWorkerLocks;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final boolean preTouchEnabled;
@@ -79,9 +78,9 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
             @NotNull IntList columnTypes,
             boolean preTouchEnabled
     ) {
-        this.filter = filter;
+        this.filter.setFunction(filter);
+        this.filter.setPerWorkerFunctions(perWorkerFilters);
         this.filterUsedColumnIndexes = filterUsedColumnIndexes;
-        this.perWorkerFilters = perWorkerFilters;
         if (perWorkerFilters != null) {
             final int slotCount = perWorkerFilters.size();
             perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
@@ -100,7 +99,7 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
 
     @Override
     public void clear() {
-        final Throwable failure = Function.cursorClosed(Function.cursorClosed(null, filter), perWorkerFilters);
+        final Throwable failure = filter.cursorClosed(null);
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
         memoryTracker = null;
@@ -110,15 +109,11 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
 
     @Override
     public void close() {
-        final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, perWorkerFilters);
-        CairoException.rethrowCleanupFailure(cleanupFailure);
+        CairoException.rethrowCleanupFailure(filter.closePerWorkerFunctions(null));
     }
 
     public Function getFilter(int filterId) {
-        if (filterId == -1 || perWorkerFilters == null) {
-            return filter;
-        }
-        return perWorkerFilters.getQuick(filterId);
+        return filter.get(filterId);
     }
 
     public @Nullable IntHashSet getFilterUsedColumnIndexes() {
@@ -151,15 +146,6 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         memoryTracker = executionContext.getMemoryTracker();
         filter.init(symbolTableSource, executionContext);
-        if (perWorkerFilters != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                Function.init(perWorkerFilters, symbolTableSource, executionContext, filter);
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
     }
 
     /**
@@ -314,7 +300,7 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(filter);
+        sink.val(filter.getFunction());
         if (preTouchEnabled) {
             sink.val(" [pre-touch]");
         }

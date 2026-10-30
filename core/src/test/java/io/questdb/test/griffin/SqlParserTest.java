@@ -15546,9 +15546,9 @@ public class SqlParserTest extends AbstractSqlParserTest {
                             Encode sort
                               keys: [c]
                                 Window
-                                  functions: [lag(c1, 1, NULL) over ()]
+                                  functions: [lag(c, 1, NULL) over ()]
                                     VirtualRecord
-                                      functions: [a[1,1],c]
+                                      functions: [a[1,1]]
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab

@@ -407,9 +407,7 @@ final class JoinOrderSolver implements Mutable {
      * True when a path of ordering constraints orders {@code parent} before {@code child}, see {@link #laterInputs}.
      */
     private boolean isConstrainedBefore(int parent, int child) {
-        final int count = dependencies.size();
-        final int words = (count + 63) >>> 6;
-        return (laterInputs.getQuick((count + parent) * words + (child >>> 6)) & 1L << child) != 0;
+        return JoinGraph.isReachable(laterInputs, dependencies.size(), parent, child);
     }
 
     /**

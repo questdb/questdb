@@ -32,8 +32,8 @@ import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CompilerTemporaries;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionInstantiator;
-import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
+import io.questdb.griffin.PlanReadIds;
 import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -105,7 +105,7 @@ public final class SqlOptimiser implements Mutable {
             FunctionFactoryCache functionFactoryCache,
             PlanNodePools planNodes,
             CompilerTemporaries temporaries,
-            OuterColumnReads outerColumnReads,
+            PlanReadIds planReadIds,
             BoundExpressionRewriter rewriter,
             CallBinder callBinder,
             FunctionInstantiator instantiator,
@@ -129,7 +129,7 @@ public final class SqlOptimiser implements Mutable {
         final ObjectPool<ProjectPlan> projects = planNodes.projects;
         final ObjectPool<SortPlan> sorts = planNodes.sorts;
         decorrelation = new Decorrelation(context, planNodes, characterStore, tmpConjuncts, tmpIndexes, tmpValues,
-                tmpKeys, tmpSlaveKeys, tmpOrder, tmpPending, tmpPairs, tmpPlans, tmpSchema, tmpSteps, substitution, tmpColumnMap, takenNames, outerColumnReads);
+                tmpKeys, tmpSlaveKeys, tmpOrder, tmpPending, tmpPairs, tmpPlans, tmpSchema, tmpSteps, substitution, tmpColumnMap, takenNames, planReadIds);
         aggregateInputOrder = new AggregateInputOrder();
         final ProjectionMerge projectionMerge = new ProjectionMerge(context, columnIds);
         // The endpoint LIMIT comes first so the later passes keep filters below it.

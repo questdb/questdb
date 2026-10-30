@@ -51,6 +51,7 @@ import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.TableFunctionSources;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ExplainPlanFactory;
+import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.table.MasterSuffixLimitFunction;
@@ -381,8 +382,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             frame.masterSuffixScan = outerScan;
             frame.masterSuffixLimit = outerSuffixLimit;
         }
-        instantiateLimit(frame, limit, base, executionContext);
-        return new LimitRecordCursorFactory(base, frame.limitLo, frame.limitHi, limit.getPosition(), masterSuffixLimit);
+        return new LimitRecordCursorFactory(base, instantiateLimit(limit, base, executionContext), masterSuffixLimit);
     }
 
     /**
@@ -457,14 +457,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case SortPlan sort -> {
                 return sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION
                         ? declareTimestamp(base, PhysicalProperties.timestampIndex(sort))
-                        : sortGenerator.generate(frame, sort, base, null, null, null);
+                        : sortGenerator.generate(frame, sort, base, null, null);
             }
             case LimitPlan limit -> {
                 if (limit.getApplication() == LimitPlan.Application.INPUT) {
                     return base;
                 }
-                instantiateLimit(frame, limit, base, executionContext);
-                return new LimitRecordCursorFactory(base, frame.limitLo, frame.limitHi, limit.getPosition(), null);
+                return new LimitRecordCursorFactory(base, instantiateLimit(limit, base, executionContext), null);
             }
             default -> {
                 final IllegalStateException failure = new IllegalStateException("unknown logical operation");
@@ -618,11 +617,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Instantiates the bounds of the LIMIT into {@link GenerationFrame#limitLo} and {@link GenerationFrame#limitHi}, null
-     * without a hi bound, for the caller to hand over at once. Frees the factory the LIMIT applies to on failure.
+     * Instantiates the bounds of the LIMIT for the caller to hand over at once. Frees the factory the LIMIT applies to
+     * on failure.
      */
-    void instantiateLimit(GenerationFrame frame, LimitPlan limit, RecordCursorFactory base, SqlExecutionContext executionContext)
-            throws SqlException {
+    LimitBounds instantiateLimit(LimitPlan limit, RecordCursorFactory base, SqlExecutionContext executionContext) throws SqlException {
         Function lo = null;
         final Function hi;
         try {
@@ -633,8 +631,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(base, th);
             throw th;
         }
-        frame.limitLo = lo;
-        frame.limitHi = hi;
+        return new LimitBounds(lo, hi, limit.getPosition());
     }
 
     private static class RecordCursorFactoryStub implements RecordCursorFactory {

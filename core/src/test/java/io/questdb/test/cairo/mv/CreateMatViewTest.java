@@ -1499,6 +1499,39 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewSampleByNestedNonConstantAlignment() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String message = "SAMPLE BY in a materialized view requires a constant offset and time zone";
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "Europe/Berlin");
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select ts, sum(s) s from (select ts, sum(v) s from (select * from " + TABLE1 + " where v > 0) "
+                            + "sample by 1h align to calendar time zone $1) sample by 1d",
+                    "$1",
+                    message
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1h align to calendar time zone 'Asia/Kolkata') "
+                            + "sample by 1d align to calendar time zone $1",
+                    "$1",
+                    message
+            );
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "00:30");
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select ts, sum(s) s from (select ts, sum(v) s from (select * from " + TABLE1 + " where v > 0) "
+                            + "sample by 1h align to calendar with offset $1) sample by 1d",
+                    "$1",
+                    "non-deterministic function cannot be used in materialized view: coalesce"
+            );
+        });
+    }
+
+    @Test
     public void testCreateMatViewSampleByNestedSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -1637,6 +1670,16 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery0("ts\tavg\n", "test", "ts");
             assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 1, 'd', tz, offset);
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 1, 'd', tz, offset);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleByUnderscoreStride() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, avg(v) from " + TABLE1 + " sample by 1_000s";
+            execute("create materialized view test as (" + query + ") partition by day");
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 1000, 's', null, null);
         });
     }
 

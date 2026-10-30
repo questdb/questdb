@@ -28,7 +28,8 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
 /**
- * A SAMPLE BY grouping: the bucketed timestamp and the keys, with the period, range and fill the clause states.
+ * A SAMPLE BY grouping the SAMPLE BY cursor executes: the bucketed timestamp and the keys on the grid the grouping
+ * records, with the range and fill the clause states. The cursor reads the grid's time zone and offset itself.
  */
 public final class SampleByPlan extends GroupingPlan {
     public static final ObjectFactory<SampleByPlan> FACTORY = SampleByPlan::new;
@@ -39,14 +40,6 @@ public final class SampleByPlan extends GroupingPlan {
     private boolean isFillInput;
     private boolean isJoinInput;
     private boolean isTimestampRequired = true;
-    private BoundExpression offset;
-    private int periodPosition;
-    private CharSequence periodToken;
-    private char periodUnit;
-    private int periodUnitPosition;
-    private long stride;
-    private int timestampColumnId = -1;
-    private BoundExpression timezone;
     private BoundExpression to;
 
     @Override
@@ -59,14 +52,6 @@ public final class SampleByPlan extends GroupingPlan {
         isFillInput = false;
         isJoinInput = false;
         isTimestampRequired = true;
-        offset = null;
-        periodPosition = 0;
-        periodToken = null;
-        periodUnit = 0;
-        periodUnitPosition = 0;
-        stride = 0;
-        timestampColumnId = -1;
-        timezone = null;
         to = null;
     }
 
@@ -98,54 +83,6 @@ public final class SampleByPlan extends GroupingPlan {
 
     public int getFromPosition() {
         return from == null ? 0 : from.getPosition();
-    }
-
-    public BoundExpression getOffset() {
-        return offset;
-    }
-
-    public int getOffsetPosition() {
-        return offset == null ? 0 : offset.getPosition();
-    }
-
-    public int getPeriodPosition() {
-        return periodPosition;
-    }
-
-    /**
-     * The period as written, such as {@code 15m}; null when a constant expression states the period's
-     * {@link #getStride() stride}.
-     */
-    public CharSequence getPeriodToken() {
-        return periodToken;
-    }
-
-    public char getPeriodUnit() {
-        return periodUnit;
-    }
-
-    public int getPeriodUnitPosition() {
-        return periodUnitPosition;
-    }
-
-    /**
-     * The number of {@link #getPeriodUnit() units} in a period, which the binder validated, whether the
-     * {@link #getPeriodToken() period token} or a constant expression states it.
-     */
-    public long getStride() {
-        return stride;
-    }
-
-    public int getTimestampColumnId() {
-        return timestampColumnId;
-    }
-
-    public BoundExpression getTimezone() {
-        return timezone;
-    }
-
-    public int getTimezonePosition() {
-        return timezone == null ? 0 : timezone.getPosition();
     }
 
     public BoundExpression getTo() {
@@ -192,28 +129,8 @@ public final class SampleByPlan extends GroupingPlan {
         this.isJoinInput = isJoinInput;
     }
 
-    public void setOffset(BoundExpression offset) {
-        this.offset = offset;
-    }
-
-    public void setPeriod(CharSequence token, long stride, int position, char unit, int unitPosition) {
-        this.periodToken = token;
-        this.stride = stride;
-        this.periodPosition = position;
-        this.periodUnit = unit;
-        this.periodUnitPosition = unitPosition;
-    }
-
-    public void setTimestampColumnId(int timestampColumnId) {
-        this.timestampColumnId = timestampColumnId;
-    }
-
     public void setTimestampRequired(boolean isTimestampRequired) {
         this.isTimestampRequired = isTimestampRequired;
-    }
-
-    public void setTimezone(BoundExpression timezone) {
-        this.timezone = timezone;
     }
 
     public void setTo(BoundExpression to) {
@@ -226,9 +143,8 @@ public final class SampleByPlan extends GroupingPlan {
         PlanReads.expressions(fillValues, visitor);
         from = PlanReads.expression(from, visitor);
         to = PlanReads.expression(to, visitor);
-        offset = PlanReads.expression(offset, visitor);
-        timezone = PlanReads.expression(timezone, visitor);
-        timestampColumnId = PlanReads.columnId(timestampColumnId, -1, visitor);
+        setOffset(PlanReads.expression(getOffset(), visitor));
+        setTimezone(PlanReads.expression(getTimezone(), visitor));
     }
 
     /**

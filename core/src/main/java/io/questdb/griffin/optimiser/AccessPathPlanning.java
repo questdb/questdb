@@ -443,7 +443,7 @@ final class AccessPathPlanning {
             predicate = filter.getPredicate();
             source = filter.getChild();
         }
-        if (!(source instanceof ScanPlan scan) || scan.isWalClientUpdate() || scan.hasHint(ScanPlan.HINT_NO_COVERING)
+        if (!(source instanceof ScanPlan scan) || scan.isSequencedUpdate() || scan.hasHint(ScanPlan.HINT_NO_COVERING)
                 || scan.hasHint(ScanPlan.HINT_NO_INDEX)) {
             return false;
         }
@@ -538,7 +538,7 @@ final class AccessPathPlanning {
         final SqlExecutionContext executionContext = context.getExecutionContext();
         final OutputSchema output = scan.getOutput();
         final int timestampType = scan.getNativeTimestampType();
-        final boolean isWalClientUpdate = scan.isWalClientUpdate();
+        final boolean isSequencedUpdate = scan.isSequencedUpdate();
         final boolean isLiveView = scan.getTableToken().isLiveView();
         BoundExpression residual = null;
         SymbolKeyExtractor latestKeys = null;
@@ -563,8 +563,8 @@ final class AccessPathPlanning {
                 latestKeys = keys;
             }
         }
-        final boolean isOverridden = executionContext.isOverriddenIntrinsics(scan.getTableToken()) && !isWalClientUpdate;
-        final boolean isMerged = step != null && !isWalClientUpdate && capturedTypes.getQuick(captureLevel) == timestampType;
+        final boolean isOverridden = executionContext.isOverriddenIntrinsics(scan.getTableToken()) && !isSequencedUpdate;
+        final boolean isMerged = step != null && !isSequencedUpdate && capturedTypes.getQuick(captureLevel) == timestampType;
         if (isOverridden || isMerged) {
             if (!hasExtractor) {
                 intervals.of(timestampType);
@@ -582,7 +582,7 @@ final class AccessPathPlanning {
                 scan.getJoinIntervals().add(masterIntervals);
             }
         }
-        if (isWalClientUpdate) {
+        if (isSequencedUpdate) {
             scan.setAccessPath(ScanPlan.AccessPath.UPDATE_STUB, null);
             return;
         }

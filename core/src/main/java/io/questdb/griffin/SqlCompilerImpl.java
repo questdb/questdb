@@ -82,8 +82,6 @@ import io.questdb.griffin.bind.UpdateTarget;
 import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
-import io.questdb.griffin.engine.groupby.TimestampSampler;
-import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.griffin.engine.ops.CopyCancelFactory;
 import io.questdb.griffin.engine.ops.CopyExportFactory;
@@ -146,7 +144,6 @@ import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -160,7 +157,7 @@ import java.util.concurrent.locks.Lock;
 
 import static io.questdb.cairo.TableUtils.TABLE_KIND_REGULAR_TABLE;
 import static io.questdb.griffin.SqlKeywords.*;
-import static io.questdb.griffin.engine.ops.CreateMatViewOperation.validateMatViewPeriodLength;
+import static io.questdb.griffin.engine.ops.CreateMatViewOperation.*;
 import static io.questdb.griffin.model.ExportModel.COPY_TYPE_FROM;
 import static io.questdb.std.GenericLexer.unquote;
 
@@ -219,11 +216,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final MessageBus messageBus;
     private final NonDeterministicCalls nonDeterministicCalls = new NonDeterministicCalls();
     private final SqlOptimiser optimiser;
-    private final OuterColumnReads outerColumnReads = new OuterColumnReads();
     private final SqlParser parser;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
     private final GenericRecordMetadata partitionWhereMetadata = new GenericRecordMetadata();
     private final PlanNodePools planNodePools;
+    private final PlanReadIds planReadIds = new PlanReadIds();
     private final PlanTables planTables = new PlanTables();
     private final PreparedFunctions preparedFunctions;
     private final QueryBuilder queryBuilder;
@@ -322,7 +319,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compileViewContext = new ViewCompilerExecutionContext(engine, 1);
             binder = newBinder(functionParser, scopes, expressionRewriter, functionInstantiator);
             optimiser = new SqlOptimiser(configuration, characterStore, engine.getFunctionFactoryCache(), planNodePools, temporaries,
-                    outerColumnReads, expressionRewriter, binder.getCallBinder(), functionInstantiator, functionSources, planTables);
+                    planReadIds, expressionRewriter, binder.getCallBinder(), functionInstantiator, functionSources, planTables);
         } catch (Throwable th) {
             close();
             throw th;
@@ -2837,21 +2834,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
 
                         if (tok != null && isPeriodKeyword(tok)) {
-                            final TimestampSampler periodSamplerMicros;
+                            final int lengthPosition;
                             expectKeyword(lexer, "(");
                             tok = expectToken(lexer, "'length' or 'sample'");
                             if (isLengthKeyword(tok)) {
                                 // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
                                 tok = expectToken(lexer, "LENGTH interval");
-                                length = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
-                                lengthUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
-                                validateMatViewPeriodLength(length, lengthUnit, lexer.lastTokenPosition());
-                                periodSamplerMicros = TimestampSamplerFactory.getInstance(
-                                        MicrosTimestampDriver.INSTANCE,
-                                        length,
-                                        lengthUnit,
-                                        lexer.lastTokenPosition()
-                                );
+                                lengthPosition = lexer.lastTokenPosition();
+                                length = CommonUtils.getStrideMultiple(tok, lengthPosition);
+                                lengthUnit = CommonUtils.getStrideUnit(tok, lengthPosition);
+                                validateMatViewPeriodLength(length, lengthUnit, lengthPosition);
                                 tok = expectToken(lexer, "'time zone' or 'delay' or ')'");
 
                                 if (isTimeKeyword(tok)) {
@@ -2861,11 +2853,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                         throw SqlException.position(lexer.lastTokenPosition()).put("TIME ZONE name expected");
                                     }
                                     timerTimeZone = unquote(tok).toString();
-                                    try {
-                                        tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
-                                    } catch (CairoException e) {
-                                        throw SqlException.position(lexer.lastTokenPosition()).put(e.getFlyweightMessage());
-                                    }
+                                    tzRulesMicros = periodTimeZoneRules(timerTimeZone, lexer.lastTokenPosition());
                                     tok = expectToken(lexer, "'delay' or ')'");
                                 }
 
@@ -2883,37 +2871,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 expectKeyword(lexer, "interval");
                                 tok = expectToken(lexer, "')'");
 
+                                lengthPosition = lexer.lastTokenPosition();
                                 length = (int) Math.min(viewDefinition.getSamplingInterval(), Integer.MAX_VALUE);
                                 lengthUnit = viewDefinition.getSamplingIntervalUnit();
-                                validateMatViewPeriodLength(length, lengthUnit, lexer.lastTokenPosition());
-                                periodSamplerMicros = TimestampSamplerFactory.getInstance(
-                                        MicrosTimestampDriver.INSTANCE,
-                                        length,
-                                        lengthUnit,
-                                        lexer.lastTokenPosition()
-                                );
-
+                                validateMatViewPeriodLength(length, lengthUnit, lengthPosition);
                                 timerTimeZone = viewDefinition.getTimeZone();
-                                if (timerTimeZone != null) {
-                                    tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
-                                }
-                                if (viewDefinition.getTimeZoneOffset() != null) {
-                                    final long val = Dates.parseOffset(viewDefinition.getTimeZoneOffset());
-                                    if (val == Numbers.LONG_NULL) {
-                                        throw SqlException.position(lexer.lastTokenPosition()).put("invalid offset: ").put(viewDefinition.getTimeZoneOffset());
-                                    }
-                                    if (Numbers.decodeLowInt(val) != 0) {
-                                        throw SqlException.position(lexer.lastTokenPosition()).put("PERIOD (SAMPLE BY INTERVAL) can't be used with WITH OFFSET");
-                                    }
-                                }
+                                tzRulesMicros = periodTimeZoneRules(timerTimeZone, lengthPosition);
+                                validatePeriodSampleByOffset(viewDefinition.getTimeZoneOffset(), lengthPosition);
                             } else {
                                 throw SqlException.position(lexer.lastTokenPosition()).put("'length' or 'sample' expected");
                             }
 
-                            // Period timer start is at the boundary of the current period.
-                            final long nowMicros = configuration.getMicrosecondClock().getTicks();
-                            final long nowLocalMicros = tzRulesMicros != null ? nowMicros + tzRulesMicros.getOffset(nowMicros) : nowMicros;
-                            timerStartUs = periodSamplerMicros.round(nowLocalMicros);
+                            timerStartUs = periodTimerStartUs(configuration.getMicrosecondClock(), length, lengthUnit, tzRulesMicros, lengthPosition);
 
                             if (!Chars.equals(tok, ')')) {
                                 throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
@@ -6069,7 +6038,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private SqlBinder newBinder(FunctionParser parser, BindScopeStack scopes, BoundExpressionRewriter rewriter, FunctionInstantiator instantiator) {
         return new SqlBinder(configuration, parser, this, scopes, sqlNodePool, characterStore, planNodePools, planTables,
                 preparedFunctions, functionSources, rewriter, instantiator, joinGraphBuilder, updateTarget, emptySchema, traversalAlgo,
-                outerColumnReads, temporaries);
+                planReadIds, temporaries);
     }
 
     private BoundExpressionRewriter newExpressionRewriter(FunctionParser parser) {

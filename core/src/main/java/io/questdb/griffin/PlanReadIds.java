@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
@@ -34,16 +35,42 @@ import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.IntList;
 
 /**
- * Finds the outer columns, those of an enclosing LATERAL's outer input, that plan nodes read.
+ * Collects the ids of the columns plan nodes read: the outer columns, those of an enclosing LATERAL's outer input, or
+ * every column, outer columns included.
  */
-public final class OuterColumnReads implements ExpressionVisitor, PlanExpressionVisitor {
+public final class PlanReadIds implements ExpressionVisitor, PlanExpressionVisitor {
     private final PlanVisitor readingNodes = this::findReadingNode;
     private IntList sink;
+    private final ExpressionVisitor expressionReadIds = expression -> {
+        if (expression instanceof ColumnExpression column) {
+            sink.add(column.getColumnId());
+        } else if (expression instanceof OuterColumnExpression outer) {
+            sink.add(outer.getColumnId());
+        }
+        return TreeWalk.CONTINUE;
+    };
+    private final PlanExpressionVisitor nodeReadIds = new PlanExpressionVisitor() {
+        @Override
+        public int visitColumnId(int columnId, int position) {
+            sink.add(columnId);
+            return columnId;
+        }
+
+        @Override
+        public BoundExpression visitExpression(BoundExpression expression) {
+            expression.walk(expressionReadIds);
+            return expression;
+        }
+    };
+    private final PlanVisitor subtreeReadIds = plan -> {
+        plan.visitReads(nodeReadIds);
+        return TreeWalk.CONTINUE;
+    };
 
     /**
      * Adds the ids of the outer columns the expression reads, with repeats.
      */
-    public void collect(BoundExpression expression, IntList sink) {
+    public void collectOuterIds(BoundExpression expression, IntList sink) {
         this.sink = sink;
         try {
             expression.walk(this);
@@ -55,7 +82,7 @@ public final class OuterColumnReads implements ExpressionVisitor, PlanExpression
     /**
      * Adds the ids of the outer columns the node reads, with repeats; its inputs are not visited.
      */
-    public void collect(LogicalPlan plan, IntList sink) {
+    public void collectOuterIds(LogicalPlan plan, IntList sink) {
         this.sink = sink;
         try {
             plan.visitReads(this);
@@ -65,9 +92,33 @@ public final class OuterColumnReads implements ExpressionVisitor, PlanExpression
     }
 
     /**
+     * Adds the ids of the columns and outer columns the node reads, with repeats; its inputs are not visited.
+     */
+    public void collectReadIds(LogicalPlan plan, IntList sink) {
+        this.sink = sink;
+        try {
+            plan.visitReads(nodeReadIds);
+        } finally {
+            this.sink = null;
+        }
+    }
+
+    /**
+     * Adds the ids of the columns and outer columns the plan and each of its inputs read, with repeats.
+     */
+    public void collectSubtreeReadIds(LogicalPlan plan, IntList sink) {
+        this.sink = sink;
+        try {
+            plan.walkTopDown(subtreeReadIds);
+        } finally {
+            this.sink = null;
+        }
+    }
+
+    /**
      * True when the plan or one of its inputs reads an outer column; {@code tmpColumnIds} is restored on return.
      */
-    public boolean isReadBy(LogicalPlan plan, IntList tmpColumnIds) {
+    public boolean isOuterReadBy(LogicalPlan plan, IntList tmpColumnIds) {
         final int base = tmpColumnIds.size();
         sink = tmpColumnIds;
         try {

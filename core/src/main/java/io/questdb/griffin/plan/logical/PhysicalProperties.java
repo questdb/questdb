@@ -28,7 +28,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.LogicalPlans;
-import io.questdb.griffin.engine.LimitRecordCursorFactory;
+import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -683,7 +683,7 @@ public final class PhysicalProperties {
     }
 
     /**
-     * The most rows a LIMIT returns, see {@link LimitRecordCursorFactory#rowCount}; -1 where only execution knows a bound
+     * The most rows a LIMIT returns, see {@link LimitBounds#rowCount}; -1 where only execution knows a bound
      * or a bound is NULL.
      */
     private static long limitCount(LimitPlan limit) {
@@ -692,7 +692,7 @@ public final class PhysicalProperties {
         }
         final long lo = LogicalPlans.limitValue((ConstantExpression) limit.getLo());
         final long hi = limit.getHi() == null ? 0 : LogicalPlans.limitValue((ConstantExpression) limit.getHi());
-        return lo == Numbers.LONG_NULL || hi == Numbers.LONG_NULL ? -1 : LimitRecordCursorFactory.rowCount(lo, hi);
+        return lo == Numbers.LONG_NULL || hi == Numbers.LONG_NULL ? -1 : LimitBounds.rowCount(lo, hi);
     }
 
     /**
@@ -849,7 +849,7 @@ public final class PhysicalProperties {
      */
     private static TableToken scanTableToken(ScanPlan scan) {
         final TableToken table = scan.getTableToken();
-        if (scan.isWalClientUpdate() || table.isLiveView() && !scan.isUpdate()) {
+        if (scan.isSequencedUpdate() || table.isLiveView() && !scan.isUpdate()) {
             return null;
         }
         return switch (scan.getAccessPath()) {

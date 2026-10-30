@@ -622,6 +622,7 @@ final class FilterPushdown implements OptimiserPass {
 
     private void deriveTransitiveFilters(JoinPlan join, BoundExpression pushedPredicate) throws SqlException {
         final boolean isInnerRegion = !LogicalPlans.hasBarrierInput(join);
+        final boolean isMasterNulled = !isInnerRegion && pushedPredicate == null && LogicalPlans.lastMasterNullingStep(join) >= 0;
         if (pushedPredicate == null) {
             collectTransitiveFacts(join, isInnerRegion);
         }
@@ -645,7 +646,7 @@ final class FilterPushdown implements OptimiserPass {
                         if (column.getColumnId() == masterId) {
                             final int origin = transitiveFactOrigins.getQuick(f);
                             if (isInnerRegion || (origin < 0
-                                    ? isTransitiveFactSafe(join, joinSourceOrdinal(column, join), f)
+                                    ? isTransitiveFactSafe(join, joinSourceOrdinal(column, join), isMasterNulled, fact, f)
                                     : isOnFactSafe(join, masterId, slave, origin, f))) {
                                 deriveTransitiveFilter(fact, masterId, slave, k);
                             }
@@ -657,20 +658,17 @@ final class FilterPushdown implements OptimiserPass {
         }
     }
 
-    private void deriveTransitiveFiltersFromPushedPredicate(JoinPlan join, BoundExpression predicate) throws SqlException {
+    private void deriveTransitiveFiltersFromPushedPredicate(JoinPlan join, BoundExpression predicate, boolean isMasterNulled) throws SqlException {
         if (!(predicate instanceof FunctionExpression call) || call.getArgumentCount() != 2) {
             return;
         }
         if (call.isAnd()) {
-            deriveTransitiveFiltersFromPushedPredicate(join, call.argumentAt(0));
-            deriveTransitiveFiltersFromPushedPredicate(join, call.argumentAt(1));
+            deriveTransitiveFiltersFromPushedPredicate(join, call.argumentAt(0), isMasterNulled);
+            deriveTransitiveFiltersFromPushedPredicate(join, call.argumentAt(1), isMasterNulled);
         } else if ("=".equals(call.getName()) && isColumnConstantComparison(call)) {
             final int source = joinSourceOrdinal(call, join);
-            if (source >= 0) {
-                final int safety = transitiveSourceSafety(join, source);
-                if (safety == NULL_REJECTION_UNDECIDED ? context.isNullRejecting(predicate) : safety == 1) {
-                    deriveTransitiveFilters(join, predicate);
-                }
+            if (source >= 0 && isTransitiveFactSafe(join, source, isMasterNulled, predicate, -1)) {
+                deriveTransitiveFilters(join, predicate);
             }
         }
     }
@@ -781,13 +779,24 @@ final class FilterPushdown implements OptimiserPass {
     }
 
     /**
-     * Whether the transitive fact at {@code factIndex} of those {@link #collectTransitiveFacts} collected, a WHERE
-     * fact on the columns of the join input {@code source}, holds for every row a key's slave joins, see
-     * {@link #transitiveSourceSafety}.
+     * Whether a WHERE fact on the columns of the join input {@code source} holds for every row a key's slave joins, so
+     * the filter it derives for the slave drops only rows the fact drops above the join. The input must lead the join
+     * or join by an INNER or CROSS step. When a step of the join NULL-extends its master, {@code isMasterNulled}, the
+     * fact holds only when it rejects NULL, see {@link OptimiserContext#isNullRejecting}; {@code factIndex} is the
+     * fact's index among those {@link #collectTransitiveFacts} collected, whose verdict {@link #isNullRejectingFact}
+     * keeps, or -1 for a pushed predicate. Otherwise no step after the input may NULL-extend it, see
+     * {@link LogicalPlans#canPushJoinFilter}. The steps after the slave keep the derived filter's result, see
+     * {@link LogicalPlans#canPushJoinFilterPast}.
      */
-    private boolean isTransitiveFactSafe(JoinPlan join, int source, int factIndex) {
-        final int safety = transitiveSourceSafety(join, source);
-        return safety == NULL_REJECTION_UNDECIDED ? isNullRejectingFact(factIndex) : safety == 1;
+    private boolean isTransitiveFactSafe(JoinPlan join, int source, boolean isMasterNulled, BoundExpression fact, int factIndex) {
+        final JoinInput input = join.getInputs().getQuick(source);
+        if (join.getOrderedInputs().indexOf(input) > 0 && input.getJoinType().isBarrier()) {
+            return false;
+        }
+        if (isMasterNulled) {
+            return factIndex < 0 ? context.isNullRejecting(fact) : isNullRejectingFact(factIndex);
+        }
+        return LogicalPlans.canPushJoinFilter(join, source, join.getOrderedInputs().size() - 1);
     }
 
     /**
@@ -936,7 +945,7 @@ final class FilterPushdown implements OptimiserPass {
                 isOrderCrossed = true;
             } else if (input instanceof JoinPlan join) {
                 final BoundExpression residual = pushSingleSourceJoinFilter(join, filter.getPredicate(), join.getOrderedInputs().size() - 1);
-                deriveTransitiveFiltersFromPushedPredicate(join, filter.getPredicate());
+                deriveTransitiveFiltersFromPushedPredicate(join, filter.getPredicate(), LogicalPlans.lastMasterNullingStep(join) >= 0);
                 return spliceResidual(result, parent, filter, join, residual);
             } else if (input instanceof SetOperationPlan operation) {
                 final int timestampIndex = LogicalPlans.setTimestampIndex(operation);
@@ -1194,29 +1203,6 @@ final class FilterPushdown implements OptimiserPass {
         singleColumnId = -1;
         expression.walk(singleColumnReads);
         return singleColumnId;
-    }
-
-    /**
-     * Whether a WHERE fact on the columns of the join input {@code source} holds for every row a key's slave joins,
-     * so the filter it derives for the slave drops only rows the fact drops above the join. The input must lead the
-     * join or join by an INNER or CROSS step: 1 when no step NULL-extends its master, and
-     * {@link #NULL_REJECTION_UNDECIDED} when one does, as the fact then holds only when it rejects NULL, see
-     * {@link OptimiserContext#isNullRejecting}; 0 otherwise. The steps after the slave keep the derived filter's
-     * result, see {@link LogicalPlans#canPushJoinFilterPast}.
-     */
-    private int transitiveSourceSafety(JoinPlan join, int source) {
-        final int last = join.getOrderedInputs().size() - 1;
-        if (!LogicalPlans.hasBarrierInput(join)) {
-            return LogicalPlans.canPushJoinFilter(join, source, last) ? 1 : 0;
-        }
-        final JoinInput input = join.getInputs().getQuick(source);
-        if (join.getOrderedInputs().indexOf(input) > 0 && input.getJoinType().isBarrier()) {
-            return 0;
-        }
-        if (LogicalPlans.lastMasterNullingStep(join) >= 0) {
-            return NULL_REJECTION_UNDECIDED;
-        }
-        return LogicalPlans.canPushJoinFilter(join, source, last) ? 1 : 0;
     }
 
 

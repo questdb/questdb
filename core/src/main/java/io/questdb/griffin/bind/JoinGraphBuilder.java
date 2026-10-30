@@ -472,20 +472,15 @@ public final class JoinGraphBuilder implements Mutable {
     private void reduceOrderingConstraints() {
         final IntList constraints = graph.getOrderingConstraints();
         final int count = dependencies.size();
-        final int words = (count + 63) >>> 6;
-        final int descendantsBase = count * words;
         JoinGraph.sortTopologically(constraints, count, children, inCounts, ready, semanticEdges);
         JoinGraph.setReachableInputs(semanticEdges, children, count, reachableInputs);
         int kept = 0;
         for (int i = 0, n = constraints.size(); i < n; i += 2) {
             final int parent = constraints.getQuick(i);
             final int child = constraints.getQuick(i + 1);
-            final long bit = 1L << child;
-            final boolean isImplied = (reachableInputs.getQuick(parent * words + (child >>> 6)) & bit) != 0;
-            final int word = descendantsBase + parent * words + (child >>> 6);
-            final long descendantWord = reachableInputs.getQuick(word);
-            if (!isImplied && (descendantWord & bit) != 0) {
-                reachableInputs.setQuick(word, descendantWord & ~bit);
+            if (!JoinGraph.isIndirectlyReachable(reachableInputs, count, parent, child)
+                    && JoinGraph.isReachable(reachableInputs, count, parent, child)) {
+                JoinGraph.unsetReachable(reachableInputs, count, parent, child);
                 constraints.setQuick(kept++, parent);
                 constraints.setQuick(kept++, child);
             }

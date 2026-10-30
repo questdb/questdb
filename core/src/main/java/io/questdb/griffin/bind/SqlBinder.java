@@ -38,8 +38,8 @@ import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.CompilerTemporaries;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.LogicalPlans;
-import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
+import io.questdb.griffin.PlanReadIds;
 import io.questdb.griffin.PlanTable;
 import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
@@ -136,7 +136,7 @@ public final class SqlBinder implements Mutable {
             UpdateTarget updateTarget,
             OutputSchema emptySchema,
             PostOrderTreeTraversalAlgo traversalAlgo,
-            OuterColumnReads outerColumnReads,
+            PlanReadIds planReadIds,
             CompilerTemporaries temporaries
     ) {
         this.configuration = configuration;
@@ -147,7 +147,7 @@ public final class SqlBinder implements Mutable {
         this.tmpIds = temporaries.ids;
         this.referencedColumns = new ReferencedColumns(temporaries.idMap);
         this.ctx = new BindContext(compiler, functionParser, scopes, sqlNodePool, characterStore, emptySchema, planNodePools, planTables,
-                preparedFunctions, functionSources, expressionRewriter, functionInstantiator, traversalAlgo, outerColumnReads, temporaries);
+                preparedFunctions, functionSources, expressionRewriter, functionInstantiator, traversalAlgo, planReadIds, temporaries);
         this.windowBinder = new WindowBinder(ctx, temporaries);
         this.lateralBinder = new LateralBinder(ctx, this, configuration.getSqlModelPoolCapacity());
         this.joinBinder = new JoinBinder(ctx, this, configuration, lateralBinder, joinGraphBuilder, temporaries);
@@ -1101,17 +1101,14 @@ public final class SqlBinder implements Mutable {
             }
             return;
         }
-        final int outerId = FunctionBinder.qualifierEnd(node, source) < 0 && FunctionBinder.findColumn(node, source, sourceAlias) == -1
-                ? ctx.functionBinder.outerScopeColumnId(node) : -1;
+        final int outerId = FunctionBinder.qualifierEnd(node, source) < 0 ? ctx.functionBinder.outerColumnId(node, source, sourceAlias) : -1;
         if (outerId < 0) {
             return;
         }
         final CharSequence name = GenericLexer.unquote(node.token);
         for (int i = 0, n = columns.size(); i < n; i++) {
             if (i != columnIndex && Chars.equalsIgnoreCase(columns.getQuick(i).getName(), name)) {
-                final ExpressionNode aliased = columns.getQuick(i).getAst();
-                if (i > columnIndex && (aliased.type != ExpressionNode.LITERAL || FunctionBinder.findColumn(aliased, source, sourceAlias) != -1
-                        || ctx.functionBinder.outerScopeColumnId(aliased) != outerId)) {
+                if (i > columnIndex && ctx.functionBinder.outerColumnId(columns.getQuick(i).getAst(), source, sourceAlias) != outerId) {
                     throw SqlException.invalidColumn(node.position, node.token);
                 }
                 return;
@@ -1338,7 +1335,7 @@ public final class SqlBinder implements Mutable {
     ScanPlan bindScan(QueryModel source, ExpressionNode tableName, TableToken token, long metadataVersion) {
         final ScanPlan scan = ctx.planNodes.scans.next().of(token, metadataVersion, tableName.position, source.isUpdate());
         if (updateBinder.isSequenced()) {
-            scan.markWalClientUpdate();
+            scan.markSequencedUpdate();
         }
         scan.setHints(scanHints(source));
         final ExpressionNode view = source.getViewNameExpr();

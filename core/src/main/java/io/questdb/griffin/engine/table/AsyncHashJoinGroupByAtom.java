@@ -114,8 +114,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private final HashJoinBuildFrames buildFrames;
     // The INT layout's only build key column, -1 when the key sinks stage the key instead.
     private final int buildKeyColumn;
-    // An outer join's ON conditions on build columns alone, which drop build rows; null without them.
-    private final Function buildOnFilter;
+    // An outer join's ON conditions on build columns alone, which drop build rows, and each worker's
+    // copy of them; the function is null without them.
+    private final ClonedFunction buildOnFilter;
     // The payload copy's byte bound, and its probe to build row ratios for a copy on the owner and
     // a copy on the workers; see maybeCopyPayload().
     private final long copyMaxSize;
@@ -150,9 +151,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private final ObjList<SymbolKeyTranslator> symbolKeyCaches = new ObjList<>();
     private final IntList symbolKeyBuildColumns = new IntList();
     private final IntList symbolKeyProbeColumns = new IntList();
-    // Each worker's copy of the build ON filter, or null when the owner's is thread safe or absent.
-    @Nullable
-    private final ObjList<Function> workerBuildOnFilters;
     // Read by the tasks of a parallel build's key row count: the consecutive partitions each counts.
     private int countTaskPartitionCount;
     // The frozen build of the open cursor, whichever of the two builds produced it.
@@ -201,8 +199,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             CairoEngine engine,
             RecordCursorFactory buildFactory,
             AsyncFilterContext buildFilterContext,
-            Function buildOnFilter,
-            @Nullable ObjList<Function> workerBuildOnFilters,
+            ClonedFunction buildOnFilter,
             HashJoinGroupByMetadata metadata,
             HashJoinGroupByFunctions functions,
             AsyncFilterContext filterContext,
@@ -212,7 +209,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         this.buildFactory = buildFactory;
         this.buildFilterContext = buildFilterContext;
         this.buildOnFilter = buildOnFilter;
-        this.workerBuildOnFilters = workerBuildOnFilters;
         this.functions = functions;
         this.filterContext = filterContext;
         this.isOuter = isOuter;
@@ -244,9 +240,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         this.parallelBuildMinRows = configuration.getSqlParallelHashJoinGroupByBuildParallelMinRows();
         this.rowsPerPartition = configuration.getSqlParallelHashJoinGroupByBuildRowsPerPartition();
         final Function buildFilter = buildFilterContext.getFilter(-1);
+        final Function onFilter = buildOnFilter.getFunction();
         this.isParallelBuildCapable = buildFilterContext.getPerWorkerMemoryPools().size() >= workerCount
                 && (buildFilter == null || buildFilter.isThreadSafe() || buildFilterContext.getFilter(0) != buildFilter)
-                && (buildOnFilter == null || buildOnFilter.isThreadSafe() || workerBuildOnFilters != null);
+                && (onFilter == null || onFilter.isThreadSafe() || buildOnFilter.get(0) != onFilter);
         perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
         try {
             // Sinks read the borrowed input metadatas when they are instantiated, so every sink
@@ -332,8 +329,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         }
         if (isBuildFiltersInitialized) {
             isBuildFiltersInitialized = false;
-            failure = Function.cursorClosed(failure, buildOnFilter);
-            failure = Function.cursorClosed(failure, workerBuildOnFilters);
+            failure = buildOnFilter.cursorClosed(failure);
         }
         for (int i = 0; i < slots.size(); i++) {
             try {
@@ -404,6 +400,14 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     /**
+     * The filter context of the build scan's WHERE filter.
+     */
+    @TestOnly
+    public AsyncFilterContext getBuildFilterContext() {
+        return buildFilterContext;
+    }
+
+    /**
      * Page frames of the open cursor's build input, zero until the cursor builds.
      */
     @TestOnly
@@ -425,6 +429,14 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             }
         }
         return size;
+    }
+
+    /**
+     * The build ON filter and its worker copies.
+     */
+    @TestOnly
+    public ClonedFunction getBuildOnFilter() {
+        return buildOnFilter;
     }
 
     /**
@@ -547,18 +559,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             final SymbolTableSource buildSymbols = buildFrames.getSymbolTableSource();
             isBuildFiltersInitialized = true;
             buildFilterContext.initFilters(buildSymbols, executionContext);
-            if (buildOnFilter != null) {
-                buildOnFilter.init(buildSymbols, executionContext);
-                if (workerBuildOnFilters != null) {
-                    final boolean isCloneSymbolTables = executionContext.getCloneSymbolTables();
-                    executionContext.setCloneSymbolTables(true);
-                    try {
-                        Function.init(workerBuildOnFilters, buildSymbols, executionContext, buildOnFilter);
-                    } finally {
-                        executionContext.setCloneSymbolTables(isCloneSymbolTables);
-                    }
-                }
-            }
+            buildOnFilter.init(buildSymbols, executionContext);
             // Join fanout is not bounded by a frame, so reducers check once per page frame of matched pairs.
             pairsPerCheck = Math.max(1, executionContext.getPageFrameMaxRows());
             if (shardingContext != null) {
@@ -963,7 +964,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 );
             }
         }
-        final Function onFilter = slotId == -1 || workerBuildOnFilters == null ? buildOnFilter : workerBuildOnFilters.getQuick(slotId);
+        final Function onFilter = buildOnFilter.get(slotId);
         if (onFilter != null) {
             if (filter == null) {
                 AsyncFilterUtils.applyFilter(onFilter, rows, record, rowCount);
@@ -1081,7 +1082,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         buildFrames.loadFrames();
         final SymbolTableSource buildSymbols = buildFrames.getSymbolTableSource();
         buildFilterContext.initMemoryPools(buildFrames.getAddressCache(), memoryTracker);
-        final boolean isFiltered = buildFilterContext.getFilter(-1) != null || buildOnFilter != null;
+        final boolean isFiltered = buildFilterContext.getFilter(-1) != null || buildOnFilter.getFunction() != null;
         final int frameCount = buildFrames.getFrameCount();
         if (isParallelBuildCapable && frameCount > 0 && buildFrames.getRowCount() >= parallelBuildMinRows) {
             buildInRounds(memoryTracker, circuitBreaker, buildSymbols, isFiltered);

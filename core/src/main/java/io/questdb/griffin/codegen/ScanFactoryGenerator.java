@@ -494,7 +494,7 @@ final class ScanFactoryGenerator {
             throw new IllegalStateException("scan access path is not planned");
         }
         return switch (accessPath) {
-            case EMPTY, UPDATE_STUB -> new EmptyTableRecordCursorFactory(metadata);
+            case EMPTY -> new EmptyTableRecordCursorFactory(metadata);
             case PAGE_FRAMES -> generatePageFrameScan(frame, scan, executionContext, scanIntervals, metadata, table,
                     indexes, shifts, stolenFilter);
             case SORTED_SYMBOL_INDEX -> {
@@ -515,7 +515,7 @@ final class ScanFactoryGenerator {
                  LATEST_BY_SYMBOLS,
                  LATEST_BY_ALL -> generateLatestByScan(frame, scan, executionContext, scanIntervals, latest, metadata,
                     table, indexes, shifts);
-            case POSTING_DISTINCT ->
+            case UPDATE_STUB, POSTING_DISTINCT ->
                     throw new IllegalStateException("access path does not read the table through a reader scan");
         };
     }
@@ -615,10 +615,13 @@ final class ScanFactoryGenerator {
 
     private RecordCursorFactory generateTableScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, IntervalExtractor scanIntervals,
                                                   LatestByPlan latest, @Nullable PreparedFilter stolenFilter) throws SqlException {
-        final boolean isOverridden = executionContext.isOverriddenIntrinsics(scan.getTableToken()) && !scan.isWalClientUpdate();
+        if (scan.getAccessPath() == ScanPlan.AccessPath.UPDATE_STUB) {
+            return generateUpdateStub(scan, executionContext);
+        }
+        final boolean isOverridden = executionContext.isOverriddenIntrinsics(scan.getTableToken());
         final WindowJoinStep step = scan.getJoinIntervalStep();
         if (!isOverridden && step == null) {
-            return generateTableScan0(frame, scan, executionContext, scanIntervals, latest, stolenFilter);
+            return generateReaderScan(frame, scan, executionContext, scanIntervals, latest, planTables.of(scan), stolenFilter);
         }
         final int timestampType = scan.getNativeTimestampType();
         final IntervalExtractor rangeIntervals = frame.intervals;
@@ -635,7 +638,7 @@ final class ScanFactoryGenerator {
                 final long lo = step.getIntervalLo(timestampType);
                 rangeIntervals.merge(scan.getJoinIntervals(), lo, hi);
             }
-            factory = generateTableScan0(frame, scan, executionContext, rangeIntervals, latest, stolenFilter);
+            factory = generateReaderScan(frame, scan, executionContext, rangeIntervals, latest, planTables.of(scan), stolenFilter);
         } catch (Throwable th) {
             Misc.clear(rangeIntervals, th);
             throw th;
@@ -643,28 +646,37 @@ final class ScanFactoryGenerator {
         return SqlCodeGenerator.clearAfter(rangeIntervals, factory);
     }
 
-    private RecordCursorFactory generateTableScan0(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, IntervalExtractor scanIntervals,
-                                                   LatestByPlan latest, @Nullable PreparedFilter stolenFilter) throws SqlException {
-        if (scan.isWalClientUpdate() && scan.isUpdate()) {
-            // Client-side WAL UPDATE validates against sequencer metadata. The data
-            // reader may still have an older schema; rows are read only during WAL apply.
-            final TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(scan.getTableToken(), scan.getMetadataVersion());
-            final RecordCursorFactory factory;
-            try {
-                final GenericRecordMetadata metadata = new GenericRecordMetadata();
-                for (int i = 0, n = scan.getOutput().getColumnCount(); i < n; i++) {
-                    final int index = tableMetadata.getColumnIndex(scan.getOutput().getColumnName(i));
-                    metadata.add(TableColumnMetadata.copyOf(tableMetadata, index, tableMetadata.getColumnName(index)));
-                }
-                metadata.setTimestampIndex(PhysicalProperties.timestampIndex(scan));
-                factory = new EmptyTableRecordCursorFactory(metadata, tableMetadata.getTableToken());
-            } catch (Throwable th) {
-                Misc.free(tableMetadata, th);
-                throw th;
+    /**
+     * Builds the scan of a sequenced UPDATE, which reads no rows and takes no reader. The UPDATE target's columns carry
+     * the sequencer metadata the statement validates against, which the table's reader may not have caught up with;
+     * the columns of any other scan carry its table's metadata.
+     */
+    private RecordCursorFactory generateUpdateStub(ScanPlan scan, SqlExecutionContext executionContext) throws SqlException {
+        final OutputSchema output = scan.getOutput();
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        if (!scan.isUpdate()) {
+            final PlanTable table = planTables.of(scan);
+            for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+                final int index = scan.getSourceColumnIndexes().getQuick(i);
+                metadata.add(table.newColumnMetadata(index, table.getColumnName(index)));
             }
-            return SqlCodeGenerator.closeAfter(tableMetadata, factory);
+            metadata.setTimestampIndex(PhysicalProperties.timestampIndex(scan));
+            return new EmptyTableRecordCursorFactory(metadata);
         }
-        return generateReaderScan(frame, scan, executionContext, scanIntervals, latest, planTables.of(scan), stolenFilter);
+        final TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(scan.getTableToken(), scan.getMetadataVersion());
+        final RecordCursorFactory factory;
+        try {
+            for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+                final int index = tableMetadata.getColumnIndex(output.getColumnName(i));
+                metadata.add(TableColumnMetadata.copyOf(tableMetadata, index, tableMetadata.getColumnName(index)));
+            }
+            metadata.setTimestampIndex(PhysicalProperties.timestampIndex(scan));
+            factory = new EmptyTableRecordCursorFactory(metadata, tableMetadata.getTableToken());
+        } catch (Throwable th) {
+            Misc.free(tableMetadata, th);
+            throw th;
+        }
+        return SqlCodeGenerator.closeAfter(tableMetadata, factory);
     }
 
     private void instantiateKeys(ObjList<BoundExpression> values, ObjList<Function> keys, ScanPlan scan,

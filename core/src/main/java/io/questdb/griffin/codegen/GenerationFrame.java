@@ -126,8 +126,6 @@ final class GenerationFrame implements Closeable, Mutable {
      * input, the head of each set operation and each decorrelation domain with readers.
      */
     private final ObjList<LogicalPlan> sharedPlans = new ObjList<>();
-    Function limitHi;
-    Function limitLo;
     /**
      * The LIMIT count the parallel filter of {@link #masterSuffixScan} applies, which the LIMIT over the scan's join
      * sets.
@@ -176,8 +174,6 @@ final class GenerationFrame implements Closeable, Mutable {
         functions.clear();
         symbolAsString.clear();
         joinKeys.clear();
-        limitHi = null;
-        limitLo = null;
         masterSuffixLimit = null;
         masterSuffixScan = null;
         expressions.clear();

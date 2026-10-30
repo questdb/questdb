@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -72,6 +73,22 @@ public class DistinctTest extends AbstractCairoTest {
                         -1	2	2
                         -1	3	3
                         """);
+    }
+
+    @Test
+    public void testDistinctEarlyExitFollowsResolvedLimitBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x % 40 k FROM long_sequence(100))");
+            final String distinct = "SELECT DISTINCT k, max(k) OVER () m FROM x";
+            printSql(distinct);
+            final String[] rows = sink.toString().split("\n");
+            assertDistinctLimitSlice(distinct + " LIMIT 28, 20", "earlyExit: 28", rows, 20, 28);
+            assertDistinctLimitSlice(distinct + " LIMIT 0, 5", "earlyExit: 5", rows, 0, 5);
+            assertDistinctLimitSlice(distinct + " LIMIT NULL::LONG, 5", "earlyExit: 5", rows, 0, 5);
+            bindVariableService.setLong(0, Numbers.LONG_NULL);
+            bindVariableService.setLong(1, 5);
+            assertDistinctLimitSlice(distinct + " LIMIT $1, $2", "earlyExit: 5", rows, 0, 5);
+        });
     }
 
     @Test
@@ -496,6 +513,19 @@ public class DistinctTest extends AbstractCairoTest {
     @Test
     public void testInnerJoinAliases2_columnAliasExprDisabled() throws Exception {
         testInnerJoinAliases2(false);
+    }
+
+    private void assertDistinctLimitSlice(String query, String earlyExit, String[] rows, int lo, int hi) throws Exception {
+        final StringBuilder expected = new StringBuilder(rows[0]).append('\n');
+        for (int i = lo; i < hi; i++) {
+            expected.append(rows[i + 1]).append('\n');
+        }
+        assertQuery(query)
+                .noLeakCheck()
+                .withPlanContaining(earlyExit)
+                .noRandomAccess()
+                .expectSize()
+                .returns(expected);
     }
 
     private void testColumnPrefixes(boolean columnAliasExprEnabled) throws Exception {

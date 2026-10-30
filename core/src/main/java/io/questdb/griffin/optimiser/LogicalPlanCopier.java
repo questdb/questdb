@@ -154,7 +154,6 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         final AggregatePlan clone = planNodes.aggregates.next().of(aggregate.getChild(), aggregate.getPosition());
         cloneGrouping(aggregate, clone);
         clone.setAlgorithm(aggregate.getAlgorithm());
-        clone.setSampleByTimezone(aggregate.getSampleByTimezone());
         clone.setSharedConsumerCount(aggregate.getSharedConsumerCount());
         clone.getSharedInputIds().addAll(aggregate.getSharedInputIds());
         clone.getSharedSourceIds().addAll(aggregate.getSharedSourceIds());
@@ -193,7 +192,12 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         clone.setDirectTableInput(grouping.hasDirectTableInput());
         clone.setExplicitGrouping(grouping.hasExplicitGrouping());
         clone.setKeySpellingKept(grouping.hasKeySpellingKept());
-        clone.setSampleByBucket(grouping.hasSampleByBucket());
+        clone.setBucketKeyIndex(grouping.getBucketKeyIndex());
+        clone.setOffset(grouping.getOffset());
+        clone.setTimezone(grouping.getTimezone());
+        clone.setPeriod(grouping.getPeriodToken(), grouping.getStride(), grouping.getPeriodPosition(),
+                grouping.getPeriodUnit(), grouping.getPeriodUnitPosition());
+        clone.setTimestampColumnId(grouping.getTimestampColumnId());
     }
 
     private HorizonJoinPlan cloneHorizonJoin(HorizonJoinPlan horizon) {
@@ -343,11 +347,6 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         clone.getFillValues().addAll(sampleBy.getFillValues());
         clone.setFrom(sampleBy.getFrom());
         clone.setTo(sampleBy.getTo());
-        clone.setOffset(sampleBy.getOffset());
-        clone.setTimezone(sampleBy.getTimezone());
-        clone.setPeriod(sampleBy.getPeriodToken(), sampleBy.getStride(), sampleBy.getPeriodPosition(),
-                sampleBy.getPeriodUnit(), sampleBy.getPeriodUnitPosition());
-        clone.setTimestampColumnId(sampleBy.getTimestampColumnId());
         clone.setFillInput(sampleBy.isFillInput());
         clone.setJoinInput(sampleBy.isJoinInput());
         clone.setTimestampRequired(sampleBy.isTimestampRequired());
@@ -363,8 +362,8 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         clone.getReferencedColumnPositions().addAll(scan.getReferencedColumnPositions());
         clone.getSourceColumnIndexes().addAll(scan.getSourceColumnIndexes());
         clone.setHints(scan.getHints());
-        if (scan.isWalClientUpdate()) {
-            clone.markWalClientUpdate();
+        if (scan.isSequencedUpdate()) {
+            clone.markSequencedUpdate();
         }
         clone.setRandomAccess(scan.isRandomAccess());
         clone.setNativeTimestamp(scan.getNativeTimestampColumnId(), scan.getNativeTimestampType());

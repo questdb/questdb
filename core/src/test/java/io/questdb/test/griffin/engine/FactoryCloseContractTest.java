@@ -53,6 +53,7 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PriorityMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
+import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
@@ -330,8 +331,7 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
             final CloseTrackingBooleanFunction limitHiFunction = new CloseTrackingBooleanFunction(null);
             final DistinctRecordCursorFactory factory = allocate(DistinctRecordCursorFactory.class);
             setField(DistinctRecordCursorFactory.class, factory, "base", base);
-            setField(DistinctRecordCursorFactory.class, factory, "limitLoFunction", limitLoFunction);
-            setField(DistinctRecordCursorFactory.class, factory, "limitHiFunction", limitHiFunction);
+            setField(DistinctRecordCursorFactory.class, factory, "limit", new LimitBounds(limitLoFunction, limitHiFunction, 0));
 
             try {
                 factory.close();

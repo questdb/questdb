@@ -27,10 +27,10 @@ package io.questdb.griffin.optimiser;
 import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.BoundExpressionRewriter.ConjunctTest;
 import io.questdb.griffin.LogicalPlans;
-import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
+import io.questdb.griffin.PlanReadIds;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.engine.LimitRecordCursorFactory;
+import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -74,11 +74,11 @@ import static io.questdb.griffin.optimiser.DecorrelationContext.pairIndex;
 final class ScalarCompensation implements Mutable {
     private static final String CARRIER_PREFIX = "__qdb_count_carrier__";
     private static final String NEGATIVE_LIMIT_OVER_NON_CONSTANT = "negative LIMIT with a non-constant upper bound is not supported in a correlated lateral sub-query";
-    private static final String NEGATIVE_POSITIVE_LIMIT = "LIMIT <negative>, <positive> is not allowed";
     private final IntList compensatedIds = new IntList();
     private final ObjList<CharSequence> compensatedNames = new ObjList<>();
     private final ObjList<ProjectPlan> compensatedScalars = new ObjList<>();
     private final ObjList<BoundExpression> compensations = new ObjList<>();
+    private final LimitBounds constantLimit = new LimitBounds();
     private final IntIntHashMap consumerRemap;
     private final ObjList<JoinInput> drivenInputs = new ObjList<>();
     private final ObjList<ProjectPlan> drivenScalars = new ObjList<>();
@@ -91,7 +91,7 @@ final class ScalarCompensation implements Mutable {
     private final ObjList<LogicalPlan> chain;
     private final IntList tmpColumnIds;
     private final IntIntHashMap substitution;
-    private final OuterColumnReads outerColumnReads;
+    private final PlanReadIds planReadIds;
     private final DecorrelationContext ctx;
     private final DecorrelationDomains domains;
     private final ObjList<JoinInput> markedInputs = new ObjList<>();
@@ -111,7 +111,7 @@ final class ScalarCompensation implements Mutable {
             ObjList<LogicalPlan> chain,
             IntList tmpColumnIds,
             IntIntHashMap substitution,
-            OuterColumnReads outerColumnReads,
+            PlanReadIds planReadIds,
             IntIntHashMap consumerRemap
     ) {
         this.ctx = ctx;
@@ -121,7 +121,7 @@ final class ScalarCompensation implements Mutable {
         this.chain = chain;
         this.tmpColumnIds = tmpColumnIds;
         this.substitution = substitution;
-        this.outerColumnReads = outerColumnReads;
+        this.planReadIds = planReadIds;
         this.domains = domains;
         this.consumerRemap = consumerRemap;
     }
@@ -438,7 +438,7 @@ final class ScalarCompensation implements Mutable {
      * when NULL, and two non-negative bounds that are not NULL apply in ascending order: the planner orders them when
      * it knows both, and execution through {@code least} and {@code greatest}, which skip a NULL second bound,
      * otherwise. A negative constant bound counts from the end of the rows, and so does the second bound after a
-     * negative first one, which must then be a constant of at most 0; two negative bounds apply in ascending order.
+     * negative first one, which must then be a constant: the two resolve as {@link LimitBounds#of} resolves them.
      * Reads {@code size} only when {@link #isTailLimit} holds; {@code reading} reads any other bound with its
      * NULL substitute.
      */
@@ -458,32 +458,28 @@ final class ScalarCompensation implements Mutable {
                 return context.getRewriter().combineConjunction(lower, upper, position);
             }
             final boolean isDescending = lo instanceof ConstantExpression first && hi instanceof ConstantExpression second
-                    && LimitRecordCursorFactory.isDescending(LogicalPlans.limitValue(first), LogicalPlans.limitValue(second));
+                    && LimitBounds.isDescending(LogicalPlans.limitValue(first), LogicalPlans.limitValue(second));
             final BoundExpression upper = isNegativeConstant(hi) ? tailComparison(">=", hi, rank, size, input)
                     : limitComparison(">=", reading, isDescending ? lo : hi, 0, rank, input);
             return context.getRewriter().combineConjunction(limitComparison("<", reading, isDescending ? hi : lo, 0, rank, input), upper, position);
         }
-        final long first = LogicalPlans.limitValue((ConstantExpression) lo);
         long second = 0;
         if (hi != null) {
             if (!(hi instanceof ConstantExpression constant)) {
                 throw SqlException.$(hi.getPosition(), NEGATIVE_LIMIT_OVER_NON_CONSTANT);
             }
             second = LogicalPlans.limitValue(constant);
-            if (second == Numbers.LONG_NULL) {
-                second = 0;
-            } else if (second > 0) {
-                throw SqlException.$(position, NEGATIVE_POSITIVE_LIMIT);
-            }
         }
-        final boolean isDescending = LimitRecordCursorFactory.isDescending(first, second);
-        final long upperLimit = isDescending ? first : second;
-        final BoundExpression lower = tailComparison("<", planNodes.constants.next().ofLong(isDescending ? second : first, position), rank, size, input);
-        if (upperLimit == 0) {
-            return lower;
+        constantLimit.of(LogicalPlans.limitValue((ConstantExpression) lo), second, hi != null, position);
+        final long lowerLimit = constantLimit.getLo();
+        final long upperLimit = constantLimit.getHi();
+        final BoundExpression upper = upperLimit == 0 ? null
+                : tailComparison(">=", planNodes.constants.next().ofLong(upperLimit, position), rank, size, input);
+        if (lowerLimit == Numbers.LONG_NULL) {
+            return upper;
         }
-        final BoundExpression upper = tailComparison(">=", planNodes.constants.next().ofLong(upperLimit, position), rank, size, input);
-        return context.getRewriter().combineConjunction(lower, upper, position);
+        final BoundExpression lower = tailComparison("<", planNodes.constants.next().ofLong(lowerLimit, position), rank, size, input);
+        return upper == null ? lower : context.getRewriter().combineConjunction(lower, upper, position);
     }
 
     /**
@@ -585,7 +581,7 @@ final class ScalarCompensation implements Mutable {
 
 
     static boolean isImplicitlyKeyedByOuterColumns(AggregatePlan aggregate) {
-        if (aggregate.hasExplicitGrouping() || aggregate.hasSampleByBucket()) {
+        if (aggregate.hasExplicitGrouping() || aggregate.getBucketKeyIndex() >= 0) {
             return false;
         }
         for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
@@ -1043,7 +1039,7 @@ final class ScalarCompensation implements Mutable {
      */
     boolean isScalarProjection(ProjectPlan project) {
         if (!(project.getChild() instanceof AggregatePlan aggregate) || !isImplicitlyKeyedByOuterColumns(aggregate)
-                || !outerColumnReads.isReadBy(project, tmpColumnIds)) {
+                || !planReadIds.isOuterReadBy(project, tmpColumnIds)) {
             return false;
         }
         final int keyCount = aggregate.getGroupingExpressions().size();

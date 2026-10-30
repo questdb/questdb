@@ -31,6 +31,7 @@ import io.questdb.griffin.PreparedFunctions;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.JoinEquality;
@@ -160,8 +161,8 @@ final class BindScope implements Mutable {
     int preferredTimestampColumnId = -1;
     ObjList<? extends BoundExpression> replacementColumns;
     ObjList<ExpressionNode> replacementNodes;
+    AggregatePlan sampleByAggregate;
     int sampleByTimestampColumnId = -1;
-    BoundExpression sampleByTimezone;
     QueryModel timestampFromSubquery;
     int timestampSubqueryType;
     QueryModel timestampToSubquery;
@@ -260,8 +261,8 @@ final class BindScope implements Mutable {
         nestedWindowPosition = 0;
         replacementColumns = null;
         replacementNodes = null;
+        sampleByAggregate = null;
         sampleByTimestampColumnId = -1;
-        sampleByTimezone = null;
         timestampFromSubquery = null;
         timestampSubqueryType = 0;
         timestampToSubquery = null;

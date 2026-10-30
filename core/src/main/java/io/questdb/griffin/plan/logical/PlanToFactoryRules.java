@@ -112,7 +112,7 @@ public final class PlanToFactoryRules {
      * The table scan the generator builds the filter into, or null when it filters the factory of its input.
      */
     public static ScanPlan fusedScan(FilterPlan filter) {
-        return filter.getChild() instanceof ScanPlan scan && !scan.isWalClientUpdate() ? scan : null;
+        return filter.getChild() instanceof ScanPlan scan && !scan.isSequencedUpdate() ? scan : null;
     }
 
     /**

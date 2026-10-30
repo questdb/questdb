@@ -34,7 +34,6 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -45,11 +44,13 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * This operator handles cases of selecting distinct values on projections, that
@@ -62,31 +63,28 @@ import org.jetbrains.annotations.NotNull;
  */
 public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
 
+    private final @Nullable LimitBounds limit;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
     private RecordCursorFactory base;
     private DistinctRecordCursor cursor;
-    private Function limitHiFunction;
-    private Function limitLoFunction;
 
     public DistinctRecordCursorFactory(
             CairoConfiguration configuration,
             RecordCursorFactory base,
             @Transient @NotNull EntityColumnFilter columnFilter,
             @Transient @NotNull BytecodeAssembler asm,
-            Function limitLoFunction,
-            Function limitHiFunction
+            @Nullable LimitBounds limit
     ) {
         super(base.getMetadata());
         this.base = base;
-        this.limitLoFunction = limitLoFunction;
-        this.limitHiFunction = limitHiFunction;
+        this.limit = limit;
         try {
             final RecordMetadata metadata = base.getMetadata();
             // sink will be storing record columns to map key
             columnFilter.of(metadata.getColumnCount());
             mapSink = RecordSinkFactory.getInstance(configuration, asm, metadata, columnFilter);
-            cursor = new DistinctRecordCursor(configuration, metadata, limitLoFunction, limitHiFunction);
+            cursor = new DistinctRecordCursor(configuration, metadata, limit);
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
@@ -119,9 +117,11 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
     public void toPlan(PlanSink sink) {
         sink.type("Distinct");
         sink.attr("keys").val(getMetadata());
-        long earlyExit = computeEarlyExit(limitLoFunction, limitHiFunction);
-        if (earlyExit != Long.MAX_VALUE) {
-            sink.attr("earlyExit").val(earlyExit);
+        if (limit != null && limit.resolve()) {
+            final long earlyExit = earlyExit(limit);
+            if (earlyExit != Long.MAX_VALUE) {
+                sink.attr("earlyExit").val(earlyExit);
+            }
         }
         sink.child(base);
     }
@@ -136,21 +136,11 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.usesIndex();
     }
 
-    private static long computeEarlyExit(Function limitLoFunction, Function limitHiFunction) {
-        long earlyExit = Long.MAX_VALUE;
-        long limitLo;
-        long limitHi;
-        if (limitLoFunction != null && (limitLo = limitLoFunction.getLong(null)) > 0) {
-            if (limitHiFunction != null) {
-                limitHi = limitHiFunction.getLong(null);
-                if (limitHi > 0) {
-                    earlyExit = limitHi;
-                }
-            } else {
-                earlyExit = limitLo;
-            }
-        }
-        return earlyExit;
+    /**
+     * The distinct keys the LIMIT reads at most: the hi bound where the LIMIT keeps the first rows, otherwise all.
+     */
+    private static long earlyExit(LimitBounds limit) {
+        return limit.isFirstN() ? limit.getHi() : Long.MAX_VALUE;
     }
 
     @Override
@@ -159,16 +149,11 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         this.base = null;
         final DistinctRecordCursor cursor = this.cursor;
         this.cursor = null;
-        final Function limitHiFunction = this.limitHiFunction;
-        this.limitHiFunction = null;
-        final Function limitLoFunction = this.limitLoFunction;
-        this.limitLoFunction = null;
 
         Throwable failure = Misc.freeBestEffort(null, base);
         failure = Misc.freeBestEffort(failure, cursor);
-        failure = Misc.freeBestEffort(failure, limitLoFunction);
-        if (limitHiFunction != limitLoFunction) {
-            failure = Misc.freeBestEffort(failure, limitHiFunction);
+        if (limit != null) {
+            failure = limit.close(failure);
         }
         CairoException.rethrowCleanupFailure(failure);
     }
@@ -176,10 +161,10 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
     private static class DistinctRecordCursor implements NoRandomAccessRecordCursor {
         private final IntList columnIndex = new IntList();
         private final Map dataMap;
-        private final Function limitHiFunction;
-        private final Function limitLoFunction;
+        private final @Nullable LimitBounds limit;
         private RecordCursor baseCursor;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private long earlyExit;
         private boolean isMapBuilt;
         private boolean isOpen;
         private RecordCursor mapCursor;
@@ -189,8 +174,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         public DistinctRecordCursor(
                 CairoConfiguration configuration,
                 RecordMetadata metadata,
-                Function limitLoFunction,
-                Function limitHiFunction
+                @Nullable LimitBounds limit
         ) {
             // Lazy variant: the map skeleton is constructed but the native heap and
             // hash directory are not allocated until the first cursor's of() binds a
@@ -202,8 +186,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 columnIndex.add(i);
             }
-            this.limitLoFunction = limitLoFunction;
-            this.limitHiFunction = limitHiFunction;
+            this.limit = limit;
         }
 
         @Override
@@ -236,7 +219,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             return baseCursor.newSymbolTable(columnIndex);
         }
 
-        public void of(RecordCursor baseCursor, RecordSink recordSink, SqlExecutionContext executionContext) {
+        public void of(RecordCursor baseCursor, RecordSink recordSink, SqlExecutionContext executionContext) throws SqlException {
             this.baseCursor = baseCursor;
             if (!isOpen) {
                 isOpen = true;
@@ -248,6 +231,12 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             this.recordA.setSymbolTableResolver(baseCursor, columnIndex);
             this.recordSink = recordSink;
             this.circuitBreaker = executionContext.getCircuitBreaker();
+            if (limit != null) {
+                limit.init(baseCursor, executionContext);
+                earlyExit = earlyExit(limit);
+            } else {
+                earlyExit = Long.MAX_VALUE;
+            }
         }
 
         @Override
@@ -275,7 +264,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void buildMapSlow() {
-            long earlyExit = computeEarlyExit(limitLoFunction, limitHiFunction);
+            long earlyExit = this.earlyExit;
             Record record = baseCursor.getRecord();
             while (baseCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();

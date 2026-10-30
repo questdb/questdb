@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
@@ -143,7 +144,7 @@ public class LimitPlanningTest extends AbstractCairoTest {
         try (
                 LimitRecordCursorFactory factory = new LimitRecordCursorFactory(
                         new CrossJoinRecordCursorFactory(new GenericRecordMetadata(), countingFactory(calls, 0), countingFactory(calls, 1), 0),
-                        lo, null, 0, null
+                        new LimitBounds(lo, null, 0), null
                 )
         ) {
             factory.getCursor(sqlExecutionContext).close();
@@ -202,7 +203,7 @@ public class LimitPlanningTest extends AbstractCairoTest {
                 return 2;
             }
         };
-        final LimitRecordCursorFactory factory = new LimitRecordCursorFactory(base, lo, hi, 0, null);
+        final LimitRecordCursorFactory factory = new LimitRecordCursorFactory(base, new LimitBounds(lo, hi, 0), null);
         try {
             factory.close();
             Assert.fail("expected close failure");

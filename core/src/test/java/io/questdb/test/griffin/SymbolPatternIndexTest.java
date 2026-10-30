@@ -4254,7 +4254,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             case AsyncGroupByNotKeyedAtom atom -> atom.getFilterContext()::getFilter;
             case AsyncTopKAtom atom -> atom.getFilterContext()::getFilter;
             case BaseAsyncHorizonJoinAtom atom -> atom.getFilterContext()::getFilter;
-            case AsyncWindowJoinAtom atom -> atom::getMasterFilter;
+            case AsyncWindowJoinAtom atom -> atom.getMasterFilterContext()::getFilter;
             case StatefulAtom atom -> throw new AssertionError(atom.getClass().getName());
         };
     }

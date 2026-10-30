@@ -32,12 +32,12 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.EncodedSortLightRecordCursorFactory;
@@ -95,13 +95,9 @@ final class SortFactoryGenerator {
         this.recordComparatorCompiler = recordComparatorCompiler;
     }
 
-    // Consumes the input and limit functions.
-    private static RecordCursorFactory applyLimit(RecordCursorFactory base, @Nullable LimitPlan limit, @Nullable Function lo, @Nullable Function hi) {
-        if (lo == null) {
-            return base;
-        }
-        assert limit != null;
-        return new LimitRecordCursorFactory(base, lo, hi, limit.getPosition(), null);
+    // Consumes the input and limit bounds.
+    private static RecordCursorFactory applyLimit(RecordCursorFactory base, @Nullable LimitBounds bounds) {
+        return bounds == null ? base : new LimitRecordCursorFactory(base, bounds, null);
     }
 
     private static int sourceIndex(@Nullable ProjectPlan projection, OutputSchema sorted, OutputSchema source, int sortedIndex) {
@@ -110,8 +106,8 @@ final class SortFactoryGenerator {
         return source.getColumnIndexById(columnId);
     }
 
-    // Consumes the input and optional limit functions on entry, including failure.
-    RecordCursorFactory generate(GenerationFrame frame, SortPlan sort, RecordCursorFactory base, @Nullable LimitPlan limit, Function lo, Function hi)
+    // Consumes the input and optional limit bounds on entry, including failure.
+    RecordCursorFactory generate(GenerationFrame frame, SortPlan sort, RecordCursorFactory base, @Nullable LimitPlan limit, @Nullable LimitBounds bounds)
             throws SqlException {
         boolean isInputTransferred = false;
         boolean isLimitTransferred = false;
@@ -120,7 +116,7 @@ final class SortFactoryGenerator {
             if (algorithm == SortPlan.Algorithm.INPUT_ORDER) {
                 isInputTransferred = true;
                 isLimitTransferred = true;
-                return applyLimit(base, limit, lo, hi);
+                return applyLimit(base, bounds);
             }
             final OutputSchema input = sort.getChild().getOutput();
             final ListColumnFilter keys = frame.listColumnFilterB;
@@ -142,19 +138,19 @@ final class SortFactoryGenerator {
                 case PARALLEL_FILTERED_TOP_K, PARALLEL_TOP_K ->
                         throw new IllegalStateException("parallel top-K generates its own input");
                 case LIMITED, PRESORTED_LIMITED -> {
-                    assert limit != null;
+                    assert bounds != null;
                     isInputTransferred = true;
                     isLimitTransferred = true;
-                    return generateSort(metadata, base, keys, lo, hi, limit.getPosition(),
+                    return generateSort(metadata, base, keys, bounds,
                             algorithm == SortPlan.Algorithm.PRESORTED_LIMITED ? Math.abs(firstKey) - 1 : -1,
                             configuration.isSqlOrderBySortEnabled(), false);
                 }
                 default -> {
                     isInputTransferred = true;
-                    final RecordCursorFactory sorted = generateSort(metadata, base, keys, null, null, 0, -1, configuration.isSqlOrderBySortEnabled(),
+                    final RecordCursorFactory sorted = generateSort(metadata, base, keys, null, -1, configuration.isSqlOrderBySortEnabled(),
                             algorithm == SortPlan.Algorithm.MATERIALIZED);
                     isLimitTransferred = true;
-                    return applyLimit(sorted, limit, lo, hi);
+                    return applyLimit(sorted, bounds);
                 }
             }
         } catch (Throwable th) {
@@ -162,8 +158,7 @@ final class SortFactoryGenerator {
                 Misc.free(base, th);
             }
             if (!isLimitTransferred) {
-                Misc.free(lo, th);
-                Misc.free(hi, th);
+                Misc.free(bounds, th);
             }
             throw th;
         }
@@ -222,19 +217,16 @@ final class SortFactoryGenerator {
     }
 
     /**
-     * Consumes the input and optional LIMIT functions. A non-null lo selects the bounded sort of a random-access
-     * input, which reports the errors of its LIMIT at {@code limitPosition}; without one, the sort copies the rows of
-     * the input when {@code isMaterialized}. The sort compares encoded keys when {@code isEncodingEnabled} and the
-     * encoder supports the keys.
+     * Consumes the input and optional LIMIT bounds. The bounds select the bounded sort of a random-access input;
+     * without them, the sort copies the rows of the input when {@code isMaterialized}. The sort compares encoded keys
+     * when {@code isEncodingEnabled} and the encoder supports the keys.
      * The column filter is borrowed; retained factories receive a private copy.
      */
     RecordCursorFactory generateSort(
             RecordMetadata orderedMetadata,
             RecordCursorFactory base,
             ListColumnFilter keys,
-            @Nullable Function lo,
-            @Nullable Function hi,
-            int limitPosition,
+            @Nullable LimitBounds bounds,
             int preSortedTimestampIndex,
             boolean isEncodingEnabled,
             boolean isMaterialized
@@ -249,8 +241,7 @@ final class SortFactoryGenerator {
             final RecordMetadata metadata = base.getMetadata();
             retainedKeys = keys.copy();
             isEncoded = isEncodingEnabled && SortKeyEncoder.isSupported(metadata, keys);
-            if (lo == null) {
-                assert hi == null;
+            if (bounds == null) {
                 if (isMaterialized) {
                     entityColumnFilter.of(orderedMetadata.getColumnCount());
                     sink = RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter);
@@ -278,16 +269,13 @@ final class SortFactoryGenerator {
             }
         } catch (Throwable th) {
             Misc.free(base, th);
-            Misc.free(lo, th);
-            if (hi != lo) {
-                Misc.free(hi, th);
-            }
+            Misc.free(bounds, th);
             throw th;
         }
-        if (lo != null) {
+        if (bounds != null) {
             return isEncoded
-                    ? new EncodedSortLimitedLightRecordCursorFactory(configuration, orderedMetadata, base, lo, hi, limitPosition, retainedKeys, preSortedTimestampIndex)
-                    : new LimitedSizeSortedLightRecordCursorFactory(configuration, orderedMetadata, base, comparator, lo, hi, limitPosition, retainedKeys, preSortedTimestampIndex);
+                    ? new EncodedSortLimitedLightRecordCursorFactory(configuration, orderedMetadata, base, bounds, retainedKeys, preSortedTimestampIndex)
+                    : new LimitedSizeSortedLightRecordCursorFactory(configuration, orderedMetadata, base, comparator, bounds, retainedKeys, preSortedTimestampIndex);
         }
         if (sink != null) {
             return isEncoded
@@ -315,13 +303,12 @@ final class SortFactoryGenerator {
         }
         final RecordCursorFactory base = codeGenerator.generate(frame, sort.getChild(), executionContext);
         if (limit.getApplication() == LimitPlan.Application.INPUT) {
-            return generate(frame, sort, base, null, null, null);
+            return generate(frame, sort, base, null, null);
         }
         if (sort.getAlgorithm() == SortPlan.Algorithm.LONG_TOP_K) {
-            return generate(frame, sort, base, limit, null, null);
+            return generate(frame, sort, base, limit, null);
         }
-        codeGenerator.instantiateLimit(frame, limit, base, executionContext);
-        return generate(frame, sort, base, limit, frame.limitLo, frame.limitHi);
+        return generate(frame, sort, base, limit, codeGenerator.instantiateLimit(limit, base, executionContext));
     }
 
 }
