@@ -37,7 +37,10 @@ import io.questdb.griffin.engine.window.AsyncWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.AsyncWindowSplitPlan;
 import io.questdb.griffin.engine.window.AsyncWindowStage;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -365,6 +368,50 @@ public class WindowChainProofTest extends AbstractCairoTest {
         });
     }
 
+    // assertMatchesSerial() compares raw values without printing them: it must still tell apart
+    // every value, row count and column type that differs, -0.0 from 0.0 and NULL from ''
+    @Test
+    public void testRawRowsTellRowsApart() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table r (ts timestamp, s symbol, d double, f float, i int, l long) timestamp(ts) partition by DAY");
+            execute("insert into r values (1, 'a', 0.0, 1.5, 1, 10), (2, null, 2.0, 2.5, 2, 20), (3, '', 3.0, 3.5, 3, 30)");
+            final String rows = "select ts, s, d, f, i, l from r";
+            final RawRows expected = new RawRows();
+            try (RecordCursorFactory factory = select(rows)) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    expected.of(cursor, factory.getMetadata());
+                }
+            }
+            final String[][] queriesAndMismatches = {
+                    {rows, null},
+                    {"select ts, s, case when i = 1 then -0.0 else d end d, f, i, l from r", "row 0, column d: expected 0.0 (bits 0x0) but was -0.0 (bits 0x8000000000000000)"},
+                    {"select ts, s, d, (case when i = 2 then 2.25 else f end)::float4 f, i, l from r", "row 1, column f: expected 2.5 (bits 0x40200000) but was 2.25 (bits 0x40100000)"},
+                    {"select ts, s, d, f, case when i = 3 then 4 else i end i, l from r", "row 2, column i: expected 3 but was 4"},
+                    {"select ts, s, d, f, i, l + 1 l from r", "row 0, column l: expected 10 but was 11"},
+                    {"select dateadd('s', 1, ts) ts, s, d, f, i, l from r", "row 0, column ts: expected 1 but was 1000001"},
+                    {"select ts, case when i = 1 then 'b' else s end::symbol s, d, f, i, l from r", "row 0, column s: expected 'a' but was 'b'"},
+                    {"select ts, case when i = 2 then '' else s end::symbol s, d, f, i, l from r", "row 1, column s: expected NULL but was ''"},
+                    {"select ts, case when i = 3 then null else s end::symbol s, d, f, i, l from r", "row 2, column s: expected '' but was NULL"},
+                    {rows + " where i < 3", "rows expected:<3> but was:<2>"},
+                    {rows + " union all " + rows + " where i = 1", "more rows than the 3 expected"},
+                    {"select ts, s, d, f, i from r", "columns expected:<6> but was:<5>"},
+                    {"select ts, s, d, f, i::long i, l from r", "type of column i expected:<[INT]> but was:<[LONG]>"},
+            };
+            for (String[] queryAndMismatch : queriesAndMismatches) {
+                final String query = queryAndMismatch[0];
+                String mismatch = null;
+                try (RecordCursorFactory factory = select(query)) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        expected.assertSame(query, cursor, factory.getMetadata());
+                    }
+                } catch (AssertionError e) {
+                    mismatch = e.getMessage();
+                }
+                Assert.assertEquals(query, queryAndMismatch[1] == null ? null : query + '\n' + queryAndMismatch[1], mismatch);
+            }
+        });
+    }
+
     // the sort over the query's GROUP BY is elided: the Async Window is the plan's top
     private static boolean isSortElided(String query) throws Exception {
         return plan(query).startsWith("QUERY PLAN\nAsync Window");
@@ -392,19 +439,19 @@ public class WindowChainProofTest extends AbstractCairoTest {
     // Serial, then parallel twice (toTop() between) and once more with a second cursor: all equal, bit for bit.
     static void assertMatchesSerial(CairoEngine engine, SqlExecutionContext ctx, String query) throws Exception {
         ctx.setParallelWindowEnabled(false);
-        final String expected;
+        final RawRows expected = new RawRows();
         try (RecordCursorFactory factory = engine.select(query, ctx)) {
             try (RecordCursor cursor = factory.getCursor(ctx)) {
-                expected = rawRows(cursor, factory.getMetadata());
+                expected.of(cursor, factory.getMetadata());
             }
         }
         ctx.setParallelWindowEnabled(true);
         try (RecordCursorFactory factory = engine.select(query, ctx)) {
             for (int pass = 0; pass < 2; pass++) {
                 try (RecordCursor cursor = factory.getCursor(ctx)) {
-                    TestUtils.assertEquals(query, expected, rawRows(cursor, factory.getMetadata()));
+                    expected.assertSame(query, cursor, factory.getMetadata());
                     cursor.toTop();
-                    TestUtils.assertEquals(query, expected, rawRows(cursor, factory.getMetadata()));
+                    expected.assertSame(query, cursor, factory.getMetadata());
                 }
             }
         } finally {
@@ -503,31 +550,6 @@ public class WindowChainProofTest extends AbstractCairoTest {
         }
     }
 
-    // Every value of every row as raw bits: doubles by their bits, symbols by value.
-    static String rawRows(RecordCursor cursor, RecordMetadata metadata) {
-        final StringSink sink = new StringSink();
-        final Record record = cursor.getRecord();
-        final int n = metadata.getColumnCount();
-        while (cursor.hasNext()) {
-            for (int c = 0; c < n; c++) {
-                if (c > 0) {
-                    sink.put('\t');
-                }
-                switch (ColumnType.tagOf(metadata.getColumnType(c))) {
-                    case ColumnType.DOUBLE -> sink.put(Double.doubleToRawLongBits(record.getDouble(c)));
-                    case ColumnType.FLOAT -> sink.put(Float.floatToRawIntBits(record.getFloat(c)));
-                    case ColumnType.INT -> sink.put(record.getInt(c));
-                    case ColumnType.LONG -> sink.put(record.getLong(c));
-                    case ColumnType.TIMESTAMP -> sink.put(record.getTimestamp(c));
-                    case ColumnType.SYMBOL -> sink.put(record.getSymA(c));
-                    default -> throw new AssertionError("type " + ColumnType.nameOf(metadata.getColumnType(c)));
-                }
-            }
-            sink.put('\n');
-        }
-        return sink.toString();
-    }
-
     private static void smallConfig() {
         // keys longer than a task, tasks of 50 rows, a prefix of 100
         sqlExecutionContext.changePageFrameSizes(1, 64);
@@ -542,5 +564,115 @@ public class WindowChainProofTest extends AbstractCairoTest {
     @FunctionalInterface
     private interface PoolTest {
         void run(CairoEngine engine, SqlExecutionContextImpl ctx) throws Exception;
+    }
+
+    /**
+     * Every value of every row as raw bits: doubles and floats by their bits, symbols by value.
+     * {@link #of} takes one cursor's rows; {@link #assertSame} then checks another cursor against
+     * them value by value. Neither side is printed: the default-config queries return hundreds of
+     * thousands of rows, which as text cost more than the queries themselves.
+     */
+    static final class RawRows {
+        private static final long NULL_SYMBOL = -1;
+        // a symbol's id is its position in keys(), which keeps the order of insertion
+        private final CharSequenceIntHashMap symbolIds = new CharSequenceIntHashMap();
+        private final IntList types = new IntList();
+        private final LongList values = new LongList();
+        private long rowCount;
+
+        void assertSame(String query, RecordCursor cursor, RecordMetadata metadata) {
+            final int columnCount = types.size();
+            Assert.assertEquals(query + "\ncolumns", columnCount, metadata.getColumnCount());
+            for (int c = 0; c < columnCount; c++) {
+                Assert.assertEquals(
+                        query + "\ntype of column " + metadata.getColumnName(c),
+                        ColumnType.nameOf(types.getQuick(c)),
+                        ColumnType.nameOf(ColumnType.tagOf(metadata.getColumnType(c)))
+                );
+            }
+            final Record record = cursor.getRecord();
+            long row = 0;
+            int index = 0;
+            while (cursor.hasNext()) {
+                if (row == rowCount) {
+                    Assert.fail(query + "\nmore rows than the " + rowCount + " expected");
+                }
+                for (int c = 0; c < columnCount; c++, index++) {
+                    final long expected = values.getQuick(index);
+                    if (valueOf(record, c, false) != expected) {
+                        Assert.fail(query + "\nrow " + row + ", column " + metadata.getColumnName(c)
+                                + ": expected " + describe(c, expected) + " but was " + describe(record, c));
+                    }
+                }
+                row++;
+            }
+            Assert.assertEquals(query + "\nrows", rowCount, row);
+        }
+
+        void of(RecordCursor cursor, RecordMetadata metadata) {
+            final int columnCount = metadata.getColumnCount();
+            for (int c = 0; c < columnCount; c++) {
+                final int type = ColumnType.tagOf(metadata.getColumnType(c));
+                switch (type) {
+                    case ColumnType.DOUBLE, ColumnType.FLOAT, ColumnType.INT, ColumnType.LONG, ColumnType.TIMESTAMP,
+                         ColumnType.SYMBOL -> types.add(type);
+                    default -> throw new AssertionError("type " + ColumnType.nameOf(metadata.getColumnType(c)));
+                }
+            }
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                for (int c = 0; c < columnCount; c++) {
+                    values.add(valueOf(record, c, true));
+                }
+                rowCount++;
+            }
+        }
+
+        private String describe(int c, long value) {
+            return switch (types.getQuick(c)) {
+                case ColumnType.DOUBLE -> Double.longBitsToDouble(value) + " (bits 0x" + Long.toHexString(value) + ')';
+                case ColumnType.FLOAT -> Float.intBitsToFloat((int) value) + " (bits 0x" + Integer.toHexString((int) value) + ')';
+                case ColumnType.SYMBOL -> value == NULL_SYMBOL ? "NULL" : "'" + symbolIds.keys().getQuick((int) value) + '\'';
+                default -> Long.toString(value);
+            };
+        }
+
+        private String describe(Record record, int c) {
+            if (types.getQuick(c) == ColumnType.SYMBOL) {
+                final CharSequence value = record.getSymA(c);
+                return value == null ? "NULL" : "'" + value + '\'';
+            }
+            return describe(c, valueOf(record, c, false));
+        }
+
+        // A symbol's index among the distinct values taken, NULL_SYMBOL for NULL; a value the
+        // expected rows do not hold has none, and gets Long.MIN_VALUE, which no index equals.
+        private long symbolId(CharSequence value, boolean isTaking) {
+            if (value == null) {
+                return NULL_SYMBOL;
+            }
+            final int keyIndex = symbolIds.keyIndex(value);
+            if (keyIndex < 0) {
+                return symbolIds.valueAt(keyIndex);
+            }
+            if (!isTaking) {
+                return Long.MIN_VALUE;
+            }
+            // putAt() keeps a copy of the key
+            final int id = symbolIds.size();
+            symbolIds.putAt(keyIndex, value, id);
+            return id;
+        }
+
+        private long valueOf(Record record, int c, boolean isTaking) {
+            return switch (types.getQuick(c)) {
+                case ColumnType.DOUBLE -> Double.doubleToRawLongBits(record.getDouble(c));
+                case ColumnType.FLOAT -> Float.floatToRawIntBits(record.getFloat(c));
+                case ColumnType.INT -> record.getInt(c);
+                case ColumnType.LONG -> record.getLong(c);
+                case ColumnType.TIMESTAMP -> record.getTimestamp(c);
+                default -> symbolId(record.getSymA(c), isTaking);
+            };
+        }
     }
 }

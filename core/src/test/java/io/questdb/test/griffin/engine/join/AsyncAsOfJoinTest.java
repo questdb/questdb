@@ -590,8 +590,10 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
         // the parallel way with more joinable keys than the per-key array takes: each slot's state is
         // then hashed, in the span scan and in the walk
         AsyncAsOfJoinAtom.KEYS_MODE = AsyncAsOfJoinAtom.KEYS_PARALLEL;
-        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
-        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 10_000);
+        // the forced walk reads a frame's span back for nearly every master row, as few keys repeat
+        // within a frame: its cost grows with the frame's rows squared, so the frames stay small
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 1_000);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4);
             TestUtils.execute(
@@ -599,7 +601,7 @@ public class AsyncAsOfJoinTest extends AbstractCairoTest {
                     (engine, compiler, ctx) -> {
                         engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL CAPACITY 131072, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
                         // 80k symbols, two rows each; every 7th row a NULL key. A quote every 1.5s against a trade
-                        // every 0.7s keeps a master frame's span to about 4.7k slave rows, which bounds what
+                        // every 0.7s keeps a master frame's span to about 470 slave rows, which bounds what
                         // the forced walk (WALK_ALWAYS) reads back per key
                         engine.execute("INSERT INTO quotes SELECT '2024-01-01'::timestamp + x * 1_500_000L, CASE WHEN x % 7 = 0 THEN NULL ELSE 's' || (x % 80000) END, x "
                                 + "FROM long_sequence(160_000)", ctx);

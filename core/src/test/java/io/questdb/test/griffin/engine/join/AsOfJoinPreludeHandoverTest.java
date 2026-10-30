@@ -59,27 +59,29 @@ public class AsOfJoinPreludeHandoverTest extends AbstractCairoTest {
             for (int round = 0; round < 2; round++) {
                 sqlExecutionContext.setRandom(new Rnd(rnd.nextLong(), rnd.nextLong()));
                 createTables(rnd, rnd.nextBoolean());
-                for (int bp : new int[]{1, 2, 5, 40, 10000}) {
-                    for (int pct : new int[]{1, 3, 25, 100}) {
-                        setProperty(PropertyKey.CAIRO_SQL_ASOF_MULTIKEY_FAST_MAX_MASTER_BP, bp);
-                        setProperty(PropertyKey.CAIRO_SQL_ASOF_MULTIKEY_FAST_MAX_BACKSCAN_PCT, pct);
-                        for (String keys : KEYS) {
-                            for (String master : MASTERS) {
-                                for (String tolerance : new String[]{"", " TOLERANCE 20m"}) {
-                                    final String sql = "SELECT t.ts, t.sym, t.ex, t.k, q.bid, q.ts qts FROM " + master + " t ASOF JOIN quotes q ON (" + keys + ")" + tolerance;
+                for (String keys : KEYS) {
+                    for (String master : MASTERS) {
+                        for (String tolerance : new String[]{"", " TOLERANCE 20m"}) {
+                            final String sql = "SELECT t.ts, t.sym, t.ex, t.k, q.bid, q.ts qts FROM " + master + " t ASOF JOIN quotes q ON (" + keys + ")" + tolerance;
+                            // only the plan without a hint reads the budgets: the hinted linear and
+                            // Dense rows are the same under every budget, so they run once per query
+                            final StringSink linear = new StringSink();
+                            printSql(sql.replaceFirst("SELECT ", "SELECT /*+ asof_linear(t q) */ "), linear);
+                            final String expected = linear.toString();
+                            final StringSink dense = new StringSink();
+                            printSql(sql.replaceFirst("SELECT ", "SELECT /*+ asof_dense(t q) */ "), dense);
+                            TestUtils.assertEquals("dense vs linear\n" + sql, expected, dense);
+                            // an unfiltered master knows its size, and so does the join
+                            final boolean isSized = "trades".equals(master);
+                            for (int bp : new int[]{1, 2, 5, 40, 10000}) {
+                                for (int pct : new int[]{1, 3, 25, 100}) {
+                                    setProperty(PropertyKey.CAIRO_SQL_ASOF_MULTIKEY_FAST_MAX_MASTER_BP, bp);
+                                    setProperty(PropertyKey.CAIRO_SQL_ASOF_MULTIKEY_FAST_MAX_BACKSCAN_PCT, pct);
                                     final StringSink plan = new StringSink();
                                     printSql("EXPLAIN " + sql, plan);
                                     if (plan.toString().contains("prelude")) {
                                         withPrelude++;
                                     }
-                                    final StringSink linear = new StringSink();
-                                    printSql(sql.replaceFirst("SELECT ", "SELECT /*+ asof_linear(t q) */ "), linear);
-                                    final String expected = linear.toString();
-                                    // an unfiltered master knows its size, and so does the join
-                                    final boolean isSized = "trades".equals(master);
-                                    final StringSink dense = new StringSink();
-                                    printSql(sql.replaceFirst("SELECT ", "SELECT /*+ asof_dense(t q) */ "), dense);
-                                    TestUtils.assertEquals("dense vs linear\n" + sql, expected, dense);
                                     try {
                                         if (keys.equals(KEYS[0])) {
                                             // the whole cursor contract, on a share of the queries

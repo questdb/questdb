@@ -286,7 +286,10 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
                 // the scan plan whatever the selectivity, so that its fallback is what runs
                 setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY, "0.0");
                 int fallbacks = 0;
-                for (long limit = 2L << 20; limit <= 48L << 20; limit += 1L << 20) {
+                // MB by MB up to the first limit that falls back, so that a narrow band of such
+                // limits is not stepped over; past it, every third MB: each further limit repeats
+                // the fallback, the scan plan only failing later in its run
+                for (long limit = 2L << 20; limit <= 48L << 20; limit += fallbacks > 0 ? 3L << 20 : 1L << 20) {
                     setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
                     // limits at which the index plan, which the fallback opens, completes
                     setFeatures(true, false);
@@ -685,6 +688,7 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
                 boolean gatherRetried = false;
                 boolean choiceFellBack = false;
                 for (long limit = 2L << 20; limit <= 48L << 20; limit += 1L << 20) {
+                    boolean hasFallenBack = false;
                     setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
                     setFeatures(false, false);
                     final String serial;
@@ -702,13 +706,20 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
                             if (choice) {
                                 final IndexScanChoiceRecordCursorFactory chooser = findChoice(factory);
                                 Assert.assertNotNull(chooser);
+                                hasFallenBack |= chooser.getMemoryLimitFallbacks() > 0;
                                 choiceFellBack |= chooser.getMemoryLimitFallbacks() > 0;
                             } else {
                                 final AsyncGroupByRecordCursorFactory async = findAsyncGather(factory);
                                 Assert.assertNotNull(async);
+                                hasFallenBack |= async.getSerialRetries() > 0;
                                 gatherRetried |= async.getSerialRetries() > 0;
                             }
                         }
+                    }
+                    if (gatherRetried && choiceFellBack && !hasFallenBack) {
+                        // both fallbacks seen, and this limit needs neither: the larger limits run
+                        // as this one did
+                        break;
                     }
                 }
                 setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
