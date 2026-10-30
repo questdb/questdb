@@ -54,8 +54,68 @@ import static org.junit.Assert.fail;
  * fall back to requiring explicit per-column SELECT on the base table, rather than dereferencing
  * the null set and aborting the read with a {@link NullPointerException}. These tests simulate
  * the missing entry by removing it from the live dependency map after the view is created.
+ * <p>
+ * The {@code LATEST ON} cases cover the other way the view branch can be missed: the optimiser's
+ * hoist drops the layer a pass-through view expanded into, so the view name has to travel up with
+ * the table read for {@code authorizeSelect} to know a view is in play at all.
  */
 public class ViewDependencyGapAuthorizationTest extends AbstractViewTest {
+    private static final String LATEST_ON_VIEW1 = "SELECT * FROM " + VIEW1 + " LATEST ON ts PARTITION BY k";
+
+    @Test
+    public void testLatestOnOverFilteringViewAuthorizesAgainstTheView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createView(VIEW1, "SELECT * FROM " + TABLE1 + " WHERE v > 4", TABLE1);
+
+            // The view's own WHERE rides along with the hoisted table read, and so must the view name.
+            try (SqlExecutionContext denyContext = denyBaseTableSelectContext()) {
+                assertEquals(4, readRowCount(LATEST_ON_VIEW1, denyContext));
+            }
+        });
+    }
+
+    @Test
+    public void testLatestOnOverViewAuthorizesAgainstTheView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createView(VIEW1, "SELECT * FROM " + TABLE1, TABLE1);
+
+            // LATEST ON over a pass-through view hoists the table read up into the LATEST ON model,
+            // dropping the layer the view expanded into. The view name travels with the read, so
+            // authorizeSelect still takes the view branch and this caller - allowed on the view,
+            // denied on the base table - reads the rows it is entitled to.
+            try (SqlExecutionContext denyContext = denyBaseTableSelectContext()) {
+                assertEquals(9, readRowCount(LATEST_ON_VIEW1, denyContext));
+            }
+        });
+    }
+
+    @Test
+    public void testLatestOnOverViewWithMissingDependencyEntryRequiresBaseTableSelect() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createView(VIEW1, "SELECT * FROM " + TABLE1, TABLE1);
+            removeDependencyEntry(VIEW1, TABLE1);
+
+            // The dependency gap makes the view branch fall back to the per-column base-table check,
+            // which this caller fails. Proves the hoisted read runs the view branch rather than
+            // skipping authorization altogether.
+            try (SqlExecutionContext denyContext = denyBaseTableSelectContext()) {
+                try (RecordCursorFactory factory = engine.select(LATEST_ON_VIEW1, denyContext)) {
+                    try (RecordCursor cursor = factory.getCursor(denyContext)) {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                            // drain
+                        }
+                        fail("expected the read to be denied");
+                    }
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "permission denied");
+                }
+            }
+        });
+    }
 
     @Test
     public void testMissingDependencyEntryDoesNotThrowUnderAllowAll() throws Exception {
@@ -66,7 +126,7 @@ public class ViewDependencyGapAuthorizationTest extends AbstractViewTest {
 
             // Allow-all caller: the fallback requires per-column SELECT on the base table, which is
             // granted, so the read completes. Before the guard, the null lookup tripped an NPE here.
-            assertEquals(9, readViewRowCount(sqlExecutionContext));
+            assertEquals(9, readRowCount("SELECT * FROM " + VIEW1, sqlExecutionContext));
         });
     }
 
@@ -104,7 +164,7 @@ public class ViewDependencyGapAuthorizationTest extends AbstractViewTest {
             // per-column base-table check. The deny-base-table caller therefore still reads cleanly.
 
             try (SqlExecutionContext denyContext = denyBaseTableSelectContext()) {
-                assertEquals(9, readViewRowCount(denyContext));
+                assertEquals(9, readRowCount("SELECT * FROM " + VIEW1, denyContext));
             }
         });
     }
@@ -119,9 +179,9 @@ public class ViewDependencyGapAuthorizationTest extends AbstractViewTest {
         );
     }
 
-    private static long readViewRowCount(SqlExecutionContext context) throws SqlException {
+    private static long readRowCount(String sql, SqlExecutionContext context) throws SqlException {
         long count = 0;
-        try (RecordCursorFactory factory = engine.select("SELECT * FROM " + VIEW1, context)) {
+        try (RecordCursorFactory factory = engine.select(sql, context)) {
             try (RecordCursor cursor = factory.getCursor(context)) {
                 while (cursor.hasNext()) {
                     count++;
