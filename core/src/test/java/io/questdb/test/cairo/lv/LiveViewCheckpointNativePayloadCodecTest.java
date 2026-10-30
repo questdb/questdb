@@ -54,14 +54,17 @@ import java.lang.reflect.Method;
 
 /**
  * The native payload codecs must write and read exactly the bytes the heap codecs they
- * replaced did, because those bytes are persisted into checkpoint roots and no on-disk format
- * change is allowed. Three encoders are held to that here: the accumulator component codec
- * (freeze, reset and restore), the fused payload's anchor value, and the RANGE ring's scalar
- * continuation state.
+ * replaced did, because those bytes are persisted into checkpoint roots, and a format change
+ * may only add a layout, never move the bytes of one already written. Three encoders are held
+ * to that here: the accumulator component codec (freeze, reset and restore), the fused
+ * payload's anchor value, and the RANGE ring's scalar continuation state.
  * <p>
  * Each native form answers to a test-side oracle: a literal copy of the heap encoders as
  * they stood when the native forms were introduced. The production heap forms are gone, so
- * the oracle is what pins the byte format to something that is not the code under test.
+ * the oracle is what pins the byte format to something that is not the code under test. The
+ * ring scalar oracle has one arm the heap encoder never had, the five-word width the
+ * covariance/correlation family carries its five running sums in; it extends the positional
+ * layout of the other widths, whose arms stay as they were.
  * <p>
  * Every encoder writes into a buffer pre-filled with random bytes, so the comparison also
  * proves each writes exactly its own slice and nothing beside it. Bounds violations must
@@ -96,7 +99,7 @@ public class LiveViewCheckpointNativePayloadCodecTest extends AbstractCairoTest 
                     "encodeAnchorValue", long.class, long.class));
             ENCODE_RING_SCALAR_NATIVE = accessible(LiveViewCheckpointRangeRingStateReader.class.getDeclaredMethod(
                     "encodeScalar", long.class, int.class, int.class, int.class, long.class, long.class, long.class,
-                    long.class, long.class, long.class, long.class));
+                    long.class, long.class, long.class, long.class, long.class));
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -274,7 +277,7 @@ public class LiveViewCheckpointNativePayloadCodecTest extends AbstractCairoTest 
                     LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DEQUE_DECIMAL256,
                     LiveViewCheckpointRangeRingStateReader.VALUE_KIND_NONE
             };
-            final int[] scalarWordCounts = {1, 2, 4};
+            final int[] scalarWordCounts = {1, 2, 4, 5};
             try (MemoryCARW buffer = newBuffer()) {
                 for (int scalarWords : scalarWordCounts) {
                     final int scalarBytes = LiveViewCheckpointRangeRingStateReader.scalarStateBytes(scalarWords);
@@ -286,11 +289,12 @@ public class LiveViewCheckpointNativePayloadCodecTest extends AbstractCairoTest 
                         final long w1 = randomLongBits(rnd);
                         final long w2 = randomLongBits(rnd);
                         final long w3 = randomLongBits(rnd);
+                        final long w4 = randomLongBits(rnd);
                         final long frameSize = randomLongBits(rnd);
                         final long lastTimestamp = randomLongBits(rnd);
 
                         final byte[] oracle = Oracle.encodeScalar(valueKind, scalarWords, headOffset,
-                                rowCount, w0, w1, w2, w3, frameSize, lastTimestamp);
+                                rowCount, w0, w1, w2, w3, w4, frameSize, lastTimestamp);
                         Assert.assertEquals(scalarBytes, oracle.length);
 
                         // Guard bytes on both sides prove the native form writes exactly the
@@ -299,16 +303,38 @@ public class LiveViewCheckpointNativePayloadCodecTest extends AbstractCairoTest 
                         final long address = buffer.addressOf(0);
                         copyIn(garbage, address);
                         invokeStatic(ENCODE_RING_SCALAR_NATIVE, address + PAYLOAD_SLACK, valueKind, scalarWords, headOffset,
-                                rowCount, w0, w1, w2, w3, frameSize, lastTimestamp);
+                                rowCount, w0, w1, w2, w3, w4, frameSize, lastTimestamp);
                         final byte[] expected = garbage.clone();
                         System.arraycopy(oracle, 0, expected, PAYLOAD_SLACK, scalarBytes);
                         Assert.assertArrayEquals("native ring scalar against the oracle", expected, copyOut(address, garbage.length));
                     }
                 }
 
+                // The five-word width is the four-word layout with one more scalar word ahead of
+                // the frame size: nine words, each field at a fixed offset, pinned here against
+                // literals rather than against the oracle alone.
+                Assert.assertEquals(9 * Long.BYTES, LiveViewCheckpointRangeRingStateReader.scalarStateBytes(5));
+                final byte[] fiveWords = Oracle.encodeScalar(
+                        LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128, 5, 7,
+                        11L, 21L, 22L, 23L, 24L, 25L, 31L, 41L
+                );
+                Assert.assertEquals(
+                        "header",
+                        (7L << 32) | (5L << 24) | ((long) LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DECIMAL128 << 16)
+                                | LiveViewCheckpointRangeRingStateReader.FORMAT_VERSION,
+                        Oracle.getLongLE(fiveWords, 0)
+                );
+                final String[] fiveWordFieldNames = {
+                        "rowCount", "word0", "word1", "word2", "word3", "word4", "frameSize", "lastTimestamp"
+                };
+                final long[] fiveWordFields = {11L, 21L, 22L, 23L, 24L, 25L, 31L, 41L};
+                for (int i = 0; i < fiveWordFields.length; i++) {
+                    Assert.assertEquals(fiveWordFieldNames[i], fiveWordFields[i], Oracle.getLongLE(fiveWords, (i + 1) * Long.BYTES));
+                }
+
                 // A width the format has no layout for fails as the format's own width check
                 // does, and writes nothing.
-                for (int scalarWords : new int[]{0, 3, 5, -1}) {
+                for (int scalarWords : new int[]{0, 3, 6, 8, -1}) {
                     final byte[] garbage = randomBytes(rnd, 128);
                     final long address = buffer.addressOf(0);
                     copyIn(garbage, address);
@@ -318,7 +344,7 @@ public class LiveViewCheckpointNativePayloadCodecTest extends AbstractCairoTest 
                     final CairoException nativeException = Assert.assertThrows(CairoException.class,
                             () -> invokeStatic(ENCODE_RING_SCALAR_NATIVE, address,
                                     LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, scalarWords,
-                                    0, 1L, 2L, 3L, 4L, 5L, 6L, 7L));
+                                    0, 1L, 2L, 3L, 4L, 5L, 6L, 7L, 8L));
                     assertSameFailure(expected, nativeException);
                     Assert.assertArrayEquals(garbage, copyOut(address, garbage.length));
                 }
@@ -468,6 +494,7 @@ public class LiveViewCheckpointNativePayloadCodecTest extends AbstractCairoTest 
                 long scalarWord1,
                 long scalarWord2,
                 long scalarWord3,
+                long scalarWord4,
                 long frameSize,
                 long lastTimestamp
         ) {
@@ -484,6 +511,9 @@ public class LiveViewCheckpointNativePayloadCodecTest extends AbstractCairoTest 
             if (scalarWords > 2) {
                 putLong(scalar, 4 * Long.BYTES, scalarWord2);
                 putLong(scalar, 5 * Long.BYTES, scalarWord3);
+            }
+            if (scalarWords > 4) {
+                putLong(scalar, 6 * Long.BYTES, scalarWord4);
             }
             putLong(scalar, (2 + scalarWords) * Long.BYTES, frameSize);
             putLong(scalar, (3 + scalarWords) * Long.BYTES, lastTimestamp);

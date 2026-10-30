@@ -77,8 +77,8 @@ import java.util.Arrays;
 public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
 
     private static final LiveViewCheckpointStatePageRef[] EMPTY_REFS = new LiveViewCheckpointStatePageRef[0];
-    // The widest scalar the format has: four scalar words beside the fixed ones.
-    private static final long SCALAR_SCRATCH_BYTES = LiveViewCheckpointRangeRingStateReader.scalarStateBytes(4);
+    // The widest scalar the format has: five scalar words beside the fixed ones.
+    private static final long SCALAR_SCRATCH_BYTES = LiveViewCheckpointRangeRingStateReader.scalarStateBytes(5);
     private final LiveViewCheckpointRangeRingStateReader previousReader;
     // Lazy: nothing is allocated until the first freeze. Untracked, as the frozen entry's own
     // scalar buffer is: it holds one scalar, not state that grows with the view.
@@ -255,6 +255,7 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
             long scalarWord1,
             long scalarWord2,
             long scalarWord3,
+            long scalarWord4,
             long frameSize,
             @NotNull LiveViewCheckpointPartitionMapEntry out
     ) {
@@ -273,6 +274,7 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
                 scalarWord1,
                 scalarWord2,
                 scalarWord3,
+                scalarWord4,
                 frameSize,
                 lastTimestamp
         );
@@ -314,7 +316,7 @@ public class LiveViewCheckpointRangeRingStateBuilder implements Closeable {
      * @param valueKind   one of the
      *                    {@link LiveViewCheckpointRangeRingStateReader} {@code VALUE_KIND_*}
      *                    constants
-     * @param scalarWords the words the scalar continuation state occupies: 1, 2 or 4
+     * @param scalarWords the words the scalar continuation state occupies: 1, 2, 4 or 5
      */
     public void of(@NotNull LiveViewCheckpointPartitionMapEntry previous, int valueKind, int scalarWords) {
         previousReader.ofMetadata(previous);
