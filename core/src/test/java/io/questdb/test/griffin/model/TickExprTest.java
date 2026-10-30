@@ -60,6 +60,8 @@ import static io.questdb.test.griffin.GriffinParserTestUtils.intervalToString;
 
 @RunWith(Parameterized.class)
 public class TickExprTest {
+    // durations with a unit that TimestampDriver.add() does not know
+    private static final String[] FUZZ_BAD_UNIT_DURATIONS = {";1x", ";1h1x", ";1H", ";1U", ";1D", ";0X"};
     private static final String[] FUZZ_DAY_FILTERS = {"", "#Tue", "#workday", "#weekend"};
     private static final String[] FUZZ_DURATIONS = {"", ";1h", ";30m"};
     // time parts that the grammar rejects
@@ -854,6 +856,18 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprDurationErrorOrder() {
+        // The parser checks each part of a duration in turn, the number before the unit, then the
+        // number, then the unit, and finally that a unit follows the last number. The compiled form
+        // reports the error that the parser reports, also where the unit is invalid as well.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertParsedAndCompiledRejectedWithNow("$today;x", now, "Expected number before unit 'x'");
+        assertParsedAndCompiledRejectedWithNow("$today;1hx", now, "Expected number before unit 'x'");
+        assertParsedAndCompiledRejectedWithNow("$today;2147483648x", now, "Duration not a number: 2147483648");
+        assertParsedAndCompiledRejectedWithNow("$today;1h5", now, "Missing unit at end of duration");
+    }
+
+    @Test
     public void testCompiledTickExprDurationManyParts() throws SqlException {
         // 65 duration parts to trigger ir[] growth beyond initial capacity of 64
         assertCompiledTickExpr("$today;" + "1s".repeat(65));
@@ -1043,6 +1057,21 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprEveryDurationUnit() throws SqlException {
+        // Every unit that TimestampDriver.add() knows compiles, and evaluates to the intervals of the
+        // parser, for a bare date variable and for a date list with a time part
+        final String now = "2024-01-02T10:00:00.000000Z";
+        for (char unit : new char[]{'u', 'T', 's', 'm', 'h', 'd', 'w', 'M', 'y', 'n'}) {
+            assertCompiledTickExprWithNow("$today;2" + unit, now);
+            assertCompiledTickExprWithNow("[$today, $tomorrow]T09:00;2" + unit, now);
+        }
+        // $today is 2024-01-02, and the duration ends one tick before the anchor plus the duration
+        assertParsedAndCompiledWithNow("[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T01:59:59.999999Z}]", "$today;2h", now);
+        assertParsedAndCompiledWithNow("[{lo=2024-01-02T00:00:00.000000Z, hi=2024-03-01T23:59:59.999999Z}]", "$today;2M", now);
+        assertParsedAndCompiledWithNow("[{lo=2024-01-02T00:00:00.000000Z, hi=2026-01-01T23:59:59.999999Z}]", "$today;2y", now);
+    }
+
+    @Test
     public void testCompiledTickExprIntervalLimit() throws SqlException {
         // A literal with a date variable evaluates through its IR, which must stop at the
         // interval limit where the parser stops, with the same error. The parser checks the
@@ -1085,6 +1114,29 @@ public class TickExprTest {
         assertParsedAndCompiledRejectedWithNow("$now;1h1x", now, "Invalid duration unit: x");
         assertParsedAndCompiledRejectedWithNow("$today..$tomorrow;1x", now, "Invalid duration unit: x");
         assertParsedAndCompiledRejectedWithNow("[$today, $tomorrow]T09:00;1h1x", now, "Invalid duration unit: x");
+    }
+
+    @Test
+    public void testCompiledTickExprInvalidDurationUnitValues() {
+        // TimestampDriver.add() knows the units u, T, s, m, h, d, w, M, y and n, and the parser rejects
+        // any other: H and U, which SAMPLE BY takes, D, which the offset of a date variable takes, the
+        // other letter case of a unit, and a non-ASCII character, of which the parser reports the first
+        // UTF-16 unit. The compiled form must reject them too.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        for (String unit : new String[]{"x", "X", "t", "Y", "H", "U", "D", "b", "\u00e9", "\uD83D\uDE00"}) {
+            assertParsedAndCompiledRejectedWithNow("$today;1" + unit, now, "Invalid duration unit: " + unit.charAt(0));
+        }
+        // whatever the number before the unit
+        for (String number : new String[]{"0", "-1", "+1", "1_0", "2147483647", "-2147483648"}) {
+            assertParsedAndCompiledRejectedWithNow("$today;" + number + "x", now, "Invalid duration unit: x");
+        }
+        // and wherever it is in a duration of several parts, which the parser checks from the left
+        assertParsedAndCompiledRejectedWithNow("$today;1x1h", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedWithNow("$today;1h1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedWithNow("$today;1x5", now, "Invalid duration unit: x");
+        // testDateVariablePointInTimeRangeWithMalformedDurationFails covers a range between two points
+        // in time, whose duration the parser skips. The unit of a date variable offset, as in $now + 1x,
+        // is not a duration unit, and an empty duration, as in $today;, has no unit.
     }
 
     @Test
@@ -3194,14 +3246,17 @@ public class TickExprTest {
                 for (String zone : FUZZ_ZONES) {
                     for (String dayFilter : FUZZ_DAY_FILTERS) {
                         for (String duration : FUZZ_DURATIONS) {
-                            checker.check(variable + time + zone + dayFilter + duration, false);
+                            checker.check(variable + time + zone + dayFilter + duration, TickExprKind.WELL_FORMED);
+                        }
+                        for (String duration : FUZZ_BAD_UNIT_DURATIONS) {
+                            checker.check(variable + time + zone + dayFilter + duration, TickExprKind.BAD_DURATION_UNIT);
                         }
                     }
                 }
             }
             for (String time : FUZZ_MALFORMED_TIMES) {
                 for (String zone : FUZZ_ZONES) {
-                    checker.check(variable + time + zone, true);
+                    checker.check(variable + time + zone, TickExprKind.MALFORMED);
                 }
             }
         }
@@ -3210,8 +3265,8 @@ public class TickExprTest {
         final StringSink expression = new StringSink();
         for (int i = 0; i < 10_000; i++) {
             expression.clear();
-            final boolean isMalformed = appendRandomTickExpr(rnd, expression);
-            checker.check(expression.toString(), isMalformed);
+            final TickExprKind kind = appendRandomTickExpr(rnd, expression);
+            checker.check(expression.toString(), kind);
         }
         checker.assertNoFailures();
     }
@@ -7162,9 +7217,9 @@ public class TickExprTest {
 
     /**
      * Appends a random tick expression with date variables, either bare or in a date list, and
-     * returns whether the expression holds a part that the grammar rejects.
+     * returns what the grammar makes of it.
      */
-    private static boolean appendRandomTickExpr(Rnd rnd, StringSink sink) {
+    private static TickExprKind appendRandomTickExpr(Rnd rnd, StringSink sink) {
         boolean isMalformed = false;
         if (rnd.nextInt(8) == 0) {
             sink.put("  ");
@@ -7206,6 +7261,10 @@ public class TickExprTest {
         }
         sink.put(pick(rnd, FUZZ_ZONES));
         final String dayFilter = pick(rnd, FUZZ_DAY_FILTERS);
+        if (!isMalformed && rnd.nextInt(10) == 0) {
+            sink.put(dayFilter).put(pick(rnd, FUZZ_BAD_UNIT_DURATIONS));
+            return TickExprKind.BAD_DURATION_UNIT;
+        }
         final String duration = pick(rnd, FUZZ_DURATIONS);
         if (rnd.nextInt(10) == 0) {
             // the day filter goes before the duration
@@ -7214,7 +7273,7 @@ public class TickExprTest {
         } else {
             sink.put(dayFilter).put(duration);
         }
-        return isMalformed;
+        return isMalformed ? TickExprKind.MALFORMED : TickExprKind.WELL_FORMED;
     }
 
     /**
@@ -7691,6 +7750,11 @@ public class TickExprTest {
      * and the compiled form ignores the time part of a static element in a date list with a time of
      * its own, which the parser rejects. The checker therefore only requires a detected date variable
      * of a malformed expression.
+     * <p>
+     * The parser rejects a duration unit that TimestampDriver.add() does not know wherever it applies
+     * the duration, so the compiled form must fail, when it compiles or when it evaluates, at every
+     * "now" at which the parser fails: SQL must not select rows for a literal where it fails a bind
+     * variable.
      */
     private static class DateVariableDetectionChecker {
         private static final String ERROR = "error";
@@ -7701,6 +7765,8 @@ public class TickExprTest {
         private final StringSink parseSink = new StringSink();
         private final String[] parsed = new String[FUZZ_NOWS.length];
         private final TimestampDriver timestampDriver;
+        private int badDurationUnitCount;
+        private int badDurationUnitRejectedCount;
         private int checkCount;
         private int compiledCount;
         private int failureCount;
@@ -7717,6 +7783,8 @@ public class TickExprTest {
             LOG.info().$("date variable detection fuzz done [expressions=").$(checkCount)
                     .$(", nowDependent=").$(nowDependentCount)
                     .$(", compiled=").$(compiledCount)
+                    .$(", badDurationUnit=").$(badDurationUnitCount)
+                    .$(", badDurationUnitRejected=").$(badDurationUnitRejectedCount)
                     .$(", failures=").$(failureCount)
                     .I$();
             if (failureCount > 0) {
@@ -7725,21 +7793,23 @@ public class TickExprTest {
             }
             Assert.assertTrue("no expression depended on now", nowDependentCount > 0);
             Assert.assertTrue("no expression compiled", compiledCount > 0);
+            Assert.assertTrue("no expression with a date variable had a bad duration unit", badDurationUnitCount > 0);
+            Assert.assertTrue("no expression with a bad duration unit failed to compile", badDurationUnitRejectedCount > 0);
         }
 
         /**
-         * @param isMalformed whether the expression holds a part that the grammar rejects
+         * @param kind what the grammar makes of the expression
          */
-        void check(String expression, boolean isMalformed) {
+        void check(String expression, TickExprKind kind) {
             checkCount++;
             try {
-                check0(expression, isMalformed);
+                check0(expression, kind);
             } catch (AssertionError | RuntimeException e) {
                 throw new AssertionError("tick expression: " + expression, e);
             }
         }
 
-        private void check0(String expression, boolean isMalformed) {
+        private void check0(String expression, TickExprKind kind) {
             boolean isNowDependent = false;
             for (int i = 0; i < nows.length; i++) {
                 parsed[i] = parse(expression, nows[i]);
@@ -7760,7 +7830,11 @@ public class TickExprTest {
                 }
                 return;
             }
-            if (isMalformed) {
+            if (kind == TickExprKind.MALFORMED) {
+                return;
+            }
+            if (kind == TickExprKind.BAD_DURATION_UNIT) {
+                checkBadDurationUnit(expression);
                 return;
             }
             final CompiledTickExpression compiled;
@@ -7795,6 +7869,32 @@ public class TickExprTest {
             }
         }
 
+        private void checkBadDurationUnit(String expression) {
+            badDurationUnitCount++;
+            final CompiledTickExpression compiled;
+            try {
+                compiled = IntervalUtils.compileTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0);
+            } catch (SqlException | CairoException e) {
+                badDurationUnitRejectedCount++;
+                return;
+            }
+            try (compiled) {
+                for (int i = 0; i < nows.length; i++) {
+                    if (ERROR.equals(parsed[i])) {
+                        intervals.clear();
+                        try {
+                            compiled.evaluate(intervals, nows[i]);
+                        } catch (CairoException e) {
+                            continue;
+                        }
+                        fail(expression, "evaluates to " + intervalToString(timestampDriver, intervals)
+                                + ", but does not parse at " + FUZZ_NOWS[i]);
+                        return;
+                    }
+                }
+            }
+        }
+
         private void fail(String expression, String reason) {
             if (failureCount++ < MAX_REPORTED_FAILURES) {
                 failures.put(expression).put(": ").put(reason).put('\n');
@@ -7811,5 +7911,17 @@ public class TickExprTest {
                 return ERROR;
             }
         }
+    }
+
+    /**
+     * What the grammar makes of a tick expression that {@link #testDateVariableDetectionFuzz} generates.
+     */
+    private enum TickExprKind {
+        WELL_FORMED,
+        // holds a part that the grammar rejects, which the parser and the compiled form validate in
+        // different ways
+        MALFORMED,
+        // well-formed but for a duration unit that TimestampDriver.add() does not know
+        BAD_DURATION_UNIT
     }
 }

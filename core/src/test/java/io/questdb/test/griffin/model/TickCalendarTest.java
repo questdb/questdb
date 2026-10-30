@@ -168,6 +168,24 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testCompiledTickExprInvalidDurationUnitWithCalendar() {
+        // The parser rejects a duration unit that TimestampDriver.add() does not know when it extends
+        // the trading sessions of 2025-01-07, a Tuesday. The compiled form, which SQL uses for a literal
+        // with a date variable, must reject it too, rather than end each session at the start of time.
+        // It rejects it when it compiles, so on every day, also on Saturday 2025-01-04, which has no
+        // session to extend.
+        final String[] expressions = {"$today#XNYS;1x", "[$today]#XNYS;1x", "$today..$today+1d#XNYS;1x"};
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final long now = driver.parseFloorLiteral("2025-01-07T10:00:00.000000Z");
+            for (String expression : expressions) {
+                assertTickExprErrorWithNow(driver, expression, now, "Invalid duration unit: x");
+                assertCompileTickExprError(driver, expression, "Invalid duration unit: x");
+            }
+        }
+    }
+
+    @Test
     public void testDateListBracketExpansionWithPerElementExchangeFilter() throws SqlException {
         // Bracket expansion inside element WITH per-element exchange filter
         // [2025-01-[24..28]#XNYS,2025-02-03] - the #XNYS applies to all expanded dates from 24..28
@@ -1248,6 +1266,26 @@ public class TickCalendarTest {
         }
         sink.put(']');
         return sink.toString();
+    }
+
+    private void assertCompileTickExprError(TimestampDriver driver, String expression, String expectedError) {
+        try {
+            IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 42).close();
+            Assert.fail("compileTickExpr() should fail: " + expression);
+        } catch (SqlException e) {
+            Assert.assertEquals(expression, expectedError, e.getFlyweightMessage().toString());
+            Assert.assertEquals(expression, 42, e.getPosition());
+        }
+    }
+
+    private void assertTickExprErrorWithNow(TimestampDriver driver, String expression, long now, String expectedError) {
+        try {
+            IntervalUtils.parseTickExpr(driver, configuration, expression, 0, expression.length(), 42, new LongList(), IntervalOperation.INTERSECT, sink, true, now);
+            Assert.fail("parseTickExpr() should fail: " + expression);
+        } catch (SqlException e) {
+            Assert.assertEquals(expression, expectedError, e.getFlyweightMessage().toString());
+            Assert.assertEquals(expression, 42, e.getPosition());
+        }
     }
 
     private void assertTickInterval(String expected, String interval) throws SqlException {

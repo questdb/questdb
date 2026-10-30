@@ -288,7 +288,7 @@ public final class IntervalUtils {
         // 3c: Duration parts
         int durationPartCount = 0;
         if (durationSemicolon >= 0) {
-            durationPartCount = compileDurationParts(effectiveSeq, durationSemicolon + 1, durationHi, position, irList);
+            durationPartCount = compileDurationParts(timestampDriver, effectiveSeq, durationSemicolon + 1, durationHi, position, irList);
         }
         boolean hasDurationWithExchange = exchangeSchedule != null && durationPartCount > 0;
 
@@ -2101,11 +2101,13 @@ public final class IntervalUtils {
 
     /**
      * Parses duration parts (e.g. "6h30m") and appends each (unit, value) encoded
-     * long to irList.
+     * long to irList. Rejects a unit that {@link TimestampDriver#add} does not know,
+     * with the error of {@link #addDuration}.
      *
      * @return number of duration parts parsed
      */
     private static int compileDurationParts(
+            TimestampDriver timestampDriver,
             CharSequence seq,
             int durationLo,
             int durationHi,
@@ -2130,6 +2132,11 @@ public final class IntervalUtils {
                 value = Numbers.parseInt(seq, numStart, i);
             } catch (NumericException e) {
                 throw SqlException.$(position, "Duration not a number: ").put(seq, numStart, i);
+            }
+            // addDuration() rejects a unit that TimestampDriver.add() does not know, which returns LONG_NULL
+            // for it; CompiledTickExpression.applyDuration() would add that LONG_NULL instead
+            if (timestampDriver.add(0, c, 0) == Numbers.LONG_NULL) {
+                throw SqlException.$(position, "Invalid duration unit: ").put(c);
             }
             irList.add(CompiledTickExpression.encodeDuration(c, value));
             durationPartCount++;
