@@ -24,10 +24,14 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -50,6 +54,11 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
             2024-01-02T08:00:00.000000Z\t4\t4
             2024-01-03T08:00:00.000000Z\t7\t7
             """;
+
+    @Test
+    public void testCancelStopsAfterCurrentPartition() throws Exception {
+        assertInterruptedAfterFirstPartition(SqlExecutionCircuitBreaker.STATE_CANCELLED, "cancelled by user");
+    }
 
     @Test
     public void testColdPartitionsAreSkipped() throws Exception {
@@ -101,6 +110,11 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
             Assert.assertEquals(before[3], after[3]);
             assertIndexQueries(K1_ROWS);
         });
+    }
+
+    @Test
+    public void testDroppedConnectionStopsAfterCurrentPartition() throws Exception {
+        assertInterruptedAfterFirstPartition(SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION, "remote disconnected, query aborted");
     }
 
     @Test
@@ -210,6 +224,35 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
+    private void assertInterruptedAfterFirstPartition(int state, String message) throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(false);
+            final String[] before = partitionDirs();
+            final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+            final SqlExecutionCircuitBreaker original = context.getCircuitBreaker();
+            // a timeout never stops it, a cancel or a dropped connection does, once the partition at hand is done
+            try (InterruptingCircuitBreaker breaker = new InterruptingCircuitBreaker(state)) {
+                context.with(breaker);
+                try {
+                    execute("alter table t force reindex", context);
+                    Assert.fail();
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), message);
+                } finally {
+                    context.with(original);
+                }
+            }
+            releaseSavePointHolds("t");
+            final String[] after = partitionDirs();
+            Assert.assertEquals(4, after.length);
+            Assert.assertNotEquals("the first partition must be committed", before[0], after[0]);
+            for (int i = 1; i < 4; i++) {
+                Assert.assertEquals(before[i], after[i]);
+            }
+            assertIndexQueries(K1_ROWS);
+        });
+    }
+
     private void assertRebuildsAllPartitions(boolean isWal) throws Exception {
         assertMemoryLeak(() -> {
             createTable(isWal);
@@ -250,5 +293,22 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
                 from long_sequence(9)
                 """);
         drainWalQueue();
+    }
+
+    // Reports state from the second check on: the first one runs before the first partition, the second after it
+    private static class InterruptingCircuitBreaker extends NetworkSqlExecutionCircuitBreaker {
+        private final int state;
+        private int stateCheckCount;
+
+        InterruptingCircuitBreaker(int state) {
+            super(engine, configuration.getCircuitBreakerConfiguration());
+            this.state = state;
+        }
+
+        @Override
+        public int getState(long millis, long fd) {
+            Assert.assertEquals("a reindex must not time out", Long.MAX_VALUE, millis);
+            return ++stateCheckCount > 1 ? state : STATE_OK;
+        }
     }
 }

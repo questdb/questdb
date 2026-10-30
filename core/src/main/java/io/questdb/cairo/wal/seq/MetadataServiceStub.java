@@ -28,6 +28,7 @@ import io.questdb.cairo.AttachDetachStatus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.UpdateOperator;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.wal.MetadataService;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
@@ -91,7 +92,12 @@ public interface MetadataServiceStub extends MetadataService {
     }
 
     @Override
-    default void forceReindex(@Nullable CharSequence columnName, LongList partitions, int tableNamePosition) {
+    default void forceReindex(
+            @Nullable CharSequence columnName,
+            LongList partitions,
+            int tableNamePosition,
+            @Nullable SqlExecutionCircuitBreaker circuitBreaker
+    ) {
         throw CairoException.critical(0).put("force reindex does not update sequencer metadata");
     }
 

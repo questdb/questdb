@@ -46,6 +46,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -3034,12 +3035,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * node-local transaction per partition, so it runs on a replica as well.
      * <p>
      * Cold partitions have no local data and are skipped; the command fails when every selected partition is cold.
+     * As INSERT AS SELECT, it has no timeout: a cancel or a dropped connection stops it once the partition at hand
+     * is committed.
      * No WAL replay redoes it, so on an adaptive table it ends with a best-effort save point: without one, a recovery
      * to an earlier save point would bring stale column tops back. The replaced directories are removed after that
      * save point, see {@link #finishPartitionReindexes}.
      */
     @Override
-    public void forceReindex(@Nullable CharSequence columnName, LongList partitions, int tableNamePosition) {
+    public void forceReindex(
+            @Nullable CharSequence columnName,
+            LongList partitions,
+            int tableNamePosition,
+            @Nullable SqlExecutionCircuitBreaker circuitBreaker
+    ) {
         checkDistressed();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             throw CairoException.nonCritical().position(tableNamePosition)
@@ -3111,6 +3119,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (!isSelected[i]) {
                     continue;
                 }
+                // Between partitions, each of them is committed on its own
+                throwIfReindexInterrupted(circuitBreaker);
                 if (txWriter.isPartitionRemotelyServed(i)) {
                     LOG.info().$("skipping cold partition in reindex [table=").$(tableToken)
                             .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(i))
@@ -5782,6 +5792,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$("could not remove [errno=").$(ff.errno())
                     .$(", file=").$(name)
                     .I$();
+        }
+    }
+
+    // As INSERT AS SELECT, FORCE REINDEX has no timeout: only a cancel or a dropped connection stops it
+    private static void throwIfReindexInterrupted(@Nullable SqlExecutionCircuitBreaker circuitBreaker) {
+        if (circuitBreaker == null) {
+            return;
+        }
+        final long fd = circuitBreaker.getFd();
+        switch (circuitBreaker.getState(Long.MAX_VALUE, fd)) {
+            case SqlExecutionCircuitBreaker.STATE_CANCELLED -> throw CairoException.queryCancelled(fd);
+            case SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION -> throw CairoException.queryDisconnected(fd);
+            default -> {
+            }
         }
     }
 

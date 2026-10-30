@@ -649,7 +649,12 @@ public class AlterOperation extends AbstractOperation implements Mutable {
 
     private void applyForceReindex(MetadataService svc) {
         // extraInfo: (partition timestamp, partition name position) pairs, none for every partition
-        svc.forceReindex(activeExtraStrInfo.size() > 0 ? activeExtraStrInfo.getStrA(0) : null, extraInfo, tableNamePosition);
+        svc.forceReindex(
+                activeExtraStrInfo.size() > 0 ? activeExtraStrInfo.getStrA(0) : null,
+                extraInfo,
+                tableNamePosition,
+                sqlExecutionContext != null ? sqlExecutionContext.getCircuitBreaker() : null
+        );
     }
 
     private void applyParamO3MaxLag(MetadataService svc) {
