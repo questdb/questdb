@@ -38,6 +38,8 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableMetadata;
@@ -84,6 +86,7 @@ import org.junit.Assert;
 import org.junit.Before;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
@@ -120,6 +123,8 @@ public class FuzzRunner {
     private double notSetProb;
     private double nullSetProb;
     private int parallelWalCount;
+    private long parquetConversionRequestHint = Long.MIN_VALUE;
+    private double parquetConversionRequestProb;
     private double partitionDropProb;
     private double partitionToNativeProb;
     private double partitionToParquetProb;
@@ -838,6 +843,24 @@ public class FuzzRunner {
         this.addCoveringIndexProb = addCoveringIndexProb;
     }
 
+    /**
+     * Per WAL apply step of {@link #applyWal}, the probability of asking {@link PartitionCompactionScanJob} to convert
+     * a random partition to parquet, with WAL apply landing between the conversion's build and its swap - see
+     * {@link #requestParquetConversionDuringApply}. 0, the default, draws nothing from the apply seed.
+     */
+    /**
+     * A timestamp whose partition {@link #requestParquetConversionDuringApply} converts half the time instead of a
+     * random one: a test that knows where its next commit lands points the conversion there.
+     * {@link Long#MIN_VALUE}, the default, leaves every pick random.
+     */
+    public void setParquetConversionRequestHint(long timestamp) {
+        this.parquetConversionRequestHint = timestamp;
+    }
+
+    public void setParquetConversionRequestProb(double parquetConversionRequestProb) {
+        this.parquetConversionRequestProb = parquetConversionRequestProb;
+    }
+
     public void withDb(CairoEngine engine, SqlExecutionContext sqlExecutionContext) {
         this.engine = engine;
         this.sqlExecutionContext = sqlExecutionContext;
@@ -1460,7 +1483,13 @@ public class FuzzRunner {
             CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine);
             final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
             long committedAtRelease = -1;
-            while (walApplyJob.run() || checkWalTransactionsJob.run()) {
+            while (true) {
+                if (parquetConversionRequestProb > 0 && applyRnd.nextDouble() < parquetConversionRequestProb) {
+                    requestParquetConversionDuringApply(applyRnd, tableName, walApplyJob, compactionJob, rdr1, rdr2);
+                }
+                if (!walApplyJob.run() && !checkWalTransactionsJob.run()) {
+                    break;
+                }
                 committedAtRelease = forceReleaseTableWriter(applyRnd, tableTokenBucket, committedAtRelease);
                 purgeAndReloadReaders(applyRnd, rdr1, rdr2, purgeJob, 0.25);
             }
@@ -1534,6 +1563,104 @@ public class FuzzRunner {
             return "TYPE POSTING DELTA";
         }
         return "TYPE POSTING EF";
+    }
+
+    /**
+     * Asks the compaction job to convert a random partition of {@code tableName} to parquet, and runs WAL apply in
+     * the window between the conversion's build, off a reader snapshot, and its swap: the moment the build's reader
+     * goes back to the pool, a pool listener applies up to three WAL apply steps before the job publishes the swap.
+     * The swap must then refuse a partition the apply changed, or it installs data the apply has overwritten - a
+     * DEDUP upsert whose O3 split was squashed back in place keeps the name txn and the row count. Half the time
+     * the drain's readers are released first, since a reader pinning the partition keeps the squash off it, and
+     * half the time the partition is the one {@link #setParquetConversionRequestHint} names.
+     */
+    private void requestParquetConversionDuringApply(
+            Rnd applyRnd,
+            String tableName,
+            ApplyWal2TableJob walApplyJob,
+            PartitionCompactionScanJob compactionJob,
+            TableReader rdr1,
+            TableReader rdr2
+    ) {
+        final TableToken tableToken = engine.verifyTableName(tableName);
+        final long logicalPartitionTimestamp;
+        try (TableReader reader = getReaderWithRetries(tableName, null)) {
+            assert reader != null;
+            final TxReader txFile = reader.getTxFile();
+            final int partitionCount = txFile.getPartitionCount();
+            if (partitionCount < 2) {
+                return;
+            }
+            // The last partition is active, and the job never converts it.
+            final long partitionTimestamp = txFile.getPartitionTimestampByIndex(applyRnd.nextInt(partitionCount - 1));
+            if (parquetConversionRequestHint != Long.MIN_VALUE && applyRnd.nextBoolean()) {
+                logicalPartitionTimestamp = txFile.getLogicalPartitionTimestamp(parquetConversionRequestHint);
+            } else {
+                logicalPartitionTimestamp = txFile.getLogicalPartitionTimestamp(partitionTimestamp);
+            }
+        }
+        final int applySteps = 1 + applyRnd.nextInt(3);
+        if (applyRnd.nextBoolean()) {
+            rdr1.goPassive();
+            rdr2.goPassive();
+        }
+        if (!engine.getPartitionCompactionRequestQueue().tryRequestParquetConversion(tableToken, logicalPartitionTimestamp)) {
+            return;
+        }
+        LOG.info().$("fuzz parquet conversion request during WAL apply [table=").$(tableToken)
+                .$(", logicalPartitionTimestamp=").$(logicalPartitionTimestamp)
+                .$(", applySteps=").$(applySteps)
+                .I$();
+
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final AtomicBoolean isApplied = new AtomicBoolean();
+        final Thread compactor = new Thread(() -> {
+            try {
+                compactionJob.run();
+            } catch (Throwable th) {
+                errors.add(th);
+            } finally {
+                Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+                Path.clearThreadLocals();
+            }
+        }, "fuzz-parquet-conversion");
+        final long compactorThreadId = compactor.threadId();
+        final PoolListener previousListener = engine.getPoolListener();
+        engine.setPoolListener((factoryType, thread, token, event, segment, position) -> {
+            if (previousListener != null) {
+                previousListener.onEvent(factoryType, thread, token, event, segment, position);
+            }
+            if (factoryType == PoolListener.SRC_READER
+                    && event == PoolListener.EV_RETURN
+                    && thread == compactorThreadId
+                    && tableToken.equals(token)
+                    && isApplied.compareAndSet(false, true)) {
+                // The build's reader just went passive and the swap is not published yet.
+                final Thread applier = new Thread(() -> {
+                    try {
+                        for (int i = 0; i < applySteps; i++) {
+                            walApplyJob.run();
+                        }
+                    } catch (Throwable th) {
+                        errors.add(th);
+                    } finally {
+                        Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+                        Path.clearThreadLocals();
+                    }
+                }, "fuzz-parquet-conversion-apply");
+                applier.start();
+                TestUtils.unchecked(() -> applier.join());
+            }
+        });
+        try {
+            compactor.start();
+            TestUtils.unchecked(() -> compactor.join());
+        } finally {
+            engine.setPoolListener(previousListener);
+        }
+        for (Throwable e : errors) {
+            throw new RuntimeException(e);
+        }
     }
 
     private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors, Rnd applyRnd) {
