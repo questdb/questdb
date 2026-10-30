@@ -24,7 +24,11 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.idx.PostingIndexChainEntry;
+import io.questdb.cairo.idx.PostingIndexChainHeader;
+import io.questdb.cairo.idx.PostingIndexChainPicker;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.vm.MemoryCMRImpl;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -42,15 +46,21 @@ import java.io.Closeable;
  * when the table's {@link TxnScoreboard} confirms no reader is still in the
  * visibility window of the superseded sealed version.
  * <p>
- * Stateless aside from the reused {@link Path} buffer and {@link TxReader};
+ * Stateless aside from the reused {@link Path} buffer, {@link TxReader},
+ * and the .pk mapping and chain scratch of the visibility check;
  * {@link PostingSealPurgeJob} owns one instance and feeds it tasks
  * sequentially.
  */
 public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.SealedFileVisitor {
 
     private static final Log LOG = LogFactory.getLog(PostingSealPurgeOperator.class);
+    // A writer that publishes an entry between the length read and the walk leaves the header past the mapping
+    private static final int CHAIN_READ_ATTEMPTS = 3;
+    private final PostingIndexChainEntry.Snapshot chainEntryScratch = new PostingIndexChainEntry.Snapshot();
+    private final PostingIndexChainHeader.Snapshot chainHeaderScratch = new PostingIndexChainHeader.Snapshot();
     private final CairoEngine engine;
     private final FilesFacade ff;
+    private final MemoryCMRImpl keyMem = new MemoryCMRImpl();
     private final Path path;
     private final int pathRootLen;
     private boolean scanAllCoversRemoved;
@@ -80,6 +90,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
 
     @Override
     public void close() {
+        Misc.free(keyMem);
         Misc.free(path);
         Misc.free(txReader);
         txnScoreboard = Misc.free(txnScoreboard);
@@ -237,6 +248,25 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
                     .I$();
             return true;
         }
+        // The head re-read sees a reused sealTxn only while it is the head. A later seal supersedes the reused
+        // generation, which stays in the chain for the readers of the txns it was the head for, but an orphan purge
+        // queued before the reuse carries a reader window that ends where it was queued: the scoreboard check above
+        // passes with those readers open, and the purge would delete their files. A purge is safe only when no
+        // reader at or above the end of the window it checked can see the generation. A superseded generation that
+        // is visible there is a reused one, whose supersession queued a purge of its own with its reader window, or
+        // one that became the head again and was superseded once more, which queued another purge too: abandoning
+        // this purge loses nothing.
+        if (isVisibleAtOrAbove(task, toTxn, pathPartitionLen)) {
+            LOG.critical().$("posting seal purge: a reader above the reader window of the purge can see the target sealTxn, abandoning purge to avoid deleting a live file [table=")
+                    .$(liveToken.getTableName())
+                    .$(", column=").$(task.getIndexColumnName())
+                    .$(", postingColumnNameTxn=").$(task.getPostingColumnNameTxn())
+                    .$(", sealTxn=").$(task.getSealTxn())
+                    .$(", txnAtSeal=").$(chainEntryScratch.txnAtSeal)
+                    .$(", toTableTxn=").$(toTxn)
+                    .I$();
+            return true;
+        }
 
         boolean allRemoved = true;
         path.trimTo(pathPartitionLen);
@@ -347,8 +377,40 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         return done;
     }
 
+    /**
+     * Whether a reader pinned at or above {@code toTxn}, which the scoreboard check of the purge does not cover, can
+     * see a chain entry that names the sealTxn of {@code task}. A .pk that cannot be read proves nothing, as for the
+     * head re-read: the purge goes on, so that a genuine orphan stays reclaimable, and the re-reads after the unlink
+     * report a live file it removed. The walk maps the file again when a writer published an entry past the mapping.
+     */
+    private boolean isVisibleAtOrAbove(PostingSealPurgeTask task, long toTxn, int pathPartitionLen) {
+        try {
+            for (int attempt = 0; attempt < CHAIN_READ_ATTEMPTS; attempt++) {
+                path.trimTo(pathPartitionLen);
+                final LPSZ keyFile = PostingIndexUtils.keyFileName(path, task.getIndexColumnName(), task.getPostingColumnNameTxn());
+                if (ff.length(keyFile) < PostingIndexUtils.KEY_FILE_RESERVED) {
+                    return false;
+                }
+                try {
+                    keyMem.of(ff, keyFile, ff.getMapPageSize(), -1, MemoryTag.MMAP_INDEX_READER, CairoConfiguration.O_NONE, -1);
+                    final int result = PostingIndexChainPicker.findVisibleBySealTxn(keyMem, task.getSealTxn(), toTxn, chainHeaderScratch, chainEntryScratch);
+                    if (result != PostingIndexChainPicker.RESULT_HEADER_UNREADABLE) {
+                        return result == PostingIndexChainPicker.RESULT_OK;
+                    }
+                } catch (CairoException e) {
+                    return false;
+                } finally {
+                    keyMem.close();
+                }
+            }
+            return false;
+        } finally {
+            path.trimTo(pathPartitionLen);
+        }
+    }
+
     // Readers open at the committed txn or later, so checking readers up to it is enough. Whether the file is still
-    // needed at the committed txn is for the pin and the live chain head check.
+    // needed at the committed txn is for the pin and the checks of the chain.
     private long readCommittedTxn(TableToken token, PostingSealPurgeTask task) {
         if (txReader == null) {
             txReader = new TxReader(ff);
