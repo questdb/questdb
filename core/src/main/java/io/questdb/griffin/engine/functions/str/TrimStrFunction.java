@@ -73,7 +73,9 @@ public class TrimStrFunction extends StrFunction implements UnaryFunction {
 
     @Override
     public CharSequence getStrB(final Record rec) {
-        final CharSequence charSequence = getArg().getStrA(rec);
+        // Slot B. Slot A would overwrite the other side of a comparison when both
+        // arguments resolve through one non-cached symbol view.
+        final CharSequence charSequence = getArg().getStrB(rec);
         if (charSequence == null) {
             return null;
         }
