@@ -167,6 +167,9 @@ public class WalTxnRangeLoader implements QuietCloseable {
                             minTimestamp1 = dataInfo.getReplaceRangeTsLow();
                             // Replace range high is exclusive, so we subtract 1 to make it maximum inclusive.
                             maxTimestamp1 = dataInfo.getReplaceRangeTsHi() - 1;
+                        } else if (dataInfo.getEndRowID() == dataInfo.getStartRowID()) {
+                            // No rows, e.g. a REBASE WAL seed: nothing to refresh.
+                            continue;
                         }
                         intervals.add(minTimestamp1, maxTimestamp1);
                         IntervalUtils.unionInPlace(intervals, intervals.size() - 2);

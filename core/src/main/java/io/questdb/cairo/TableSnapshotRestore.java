@@ -40,6 +40,7 @@ import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
+import io.questdb.cairo.wal.seq.TableTransactionLogV2;
 import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
@@ -350,7 +351,14 @@ public class TableSnapshotRestore implements QuietCloseable {
                     openSmallFile(ff, dstPath, dstSeqLen, memFile, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
                     long oldMaxTxn = memFile.getLong(TableTransactionLogFile.MAX_TXN_OFFSET_64);
                     if (newMaxTxn < oldMaxTxn) {
-                        memFile.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, newMaxTxn);
+                        if (memFile.getInt(0L) == WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V2) {
+                            // The flushed-through field and the slot next to it go down with the max txn, in the
+                            // same sector, so the records an older binary appends afterwards are trusted.
+                            TableTransactionLogV2.lowerMaxTxn(memFile, newMaxTxn);
+                        } else {
+                            // A V1 log clamps its hint to the max txn at its next open.
+                            memFile.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, newMaxTxn);
+                        }
                         LOG.info()
                                 .$("updated ").$(TXNLOG_FILE_NAME).$(" file [path=").$(dstPath)
                                 .$(", oldMaxTxn=").$(oldMaxTxn)
@@ -416,6 +424,9 @@ public class TableSnapshotRestore implements QuietCloseable {
                 txWriter = new TxWriter(configuration.getFilesFacade(), configuration);
             }
             txWriter.ofRW(tablePath.trimTo(pathTableLen).concat(TableUtils.TXN_FILE_NAME).$(), tableMetadata.getTimestampType(), tableMetadata.getPartitionBy());
+            // Nothing commits through this TxWriter: the lag reset below writes the mapped _txn in place, so the
+            // grade set here does not apply to it.
+            txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
             txWriter.unsafeLoadAll();
 
             if (columnVersionReader == null) {
@@ -544,6 +555,13 @@ public class TableSnapshotRestore implements QuietCloseable {
         if (isView) {
             copyViewMetadataFiles(srcPath, dstPath, recoveredMetaFiles);
         } else {
+            // Remove any adaptive save point at the destination before laying down the restored _txn and _cv.
+            // A checkpoint does not capture the save point files (_epoch.manifest.0/1), so the destination's
+            // own save point would survive the restore, and RecoveryCoordinator, which runs next in
+            // CairoEngine.completeInit, could rewind the restored _txn and _cv to it. Only tables and mat
+            // views reach this branch; plain views have no _cv and no data.
+            RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, dstPath, dstPathLen);
+
             // Copy metadata files from source to the destination table location
             copyMetadataFiles(srcPath, dstPath, recoveredMetaFiles);
 
@@ -999,7 +1017,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             boolean isPartitioned,
             AtomicInteger cursor,
             LongList nativeIndexWork,
-            LongList nativeIndexColumnTops
+            LongList nativeIndexColumnTops,
+            LongList partitionFileRows
     ) {
         final Path path = new Path();
         try {
@@ -1014,17 +1033,18 @@ public class TableSnapshotRestore implements QuietCloseable {
                 // a worker's items across partitions, so a per-partition cache
                 // mostly misses, and the by-index getters are O(1) array reads.
                 final long partitionTimestamp;
-                final long partitionRowCount;
                 final long partitionNameTxn;
                 if (isPartitioned) {
                     partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                    partitionRowCount = txWriter.getPartitionSize(partitionIndex);
                     partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
                 } else {
                     partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
-                    partitionRowCount = txWriter.getTransientRowCount();
                     partitionNameTxn = -1L;
                 }
+                // The directory's whole file extent, resolved against the geometry when
+                // the work list was built - a COMPOSITE partition's files reach past its
+                // live row count.
+                final long partitionRowCount = partitionFileRows.getQuick(partitionIndex);
 
                 final int writerIndex = tableMetadata.getWriterIndex(colIdx);
                 final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
@@ -1295,39 +1315,51 @@ public class TableSnapshotRestore implements QuietCloseable {
         // Index-aligned with nativeIndexWork: entry j holds the columnTop for work
         // item j, so the worker reads it back instead of re-running getColumnTop.
         final LongList nativeIndexColumnTops = new LongList();
-        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-            final long partitionTimestamp;
-            final long partitionRowCount;
-            if (isPartitioned) {
-                partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                // Read by index (O(1)), not by timestamp (O(log P)).
-                partitionRowCount = txWriter.getPartitionSize(partitionIndex);
-            } else {
-                partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
-                partitionRowCount = txWriter.getTransientRowCount();
-            }
-            if (partitionRowCount <= 0) {
-                continue;
-            }
-            if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
-                // Handled by prepareParquetPartitions.
-                continue;
-            }
-            for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-                // Skip non-indexed and non-symbol columns (deleted columns may
-                // still carry the indexed flag).
-                if (!tableMetadata.isColumnIndexed(colIdx) || !ColumnType.isSymbol(tableMetadata.getColumnType(colIdx))) {
+        // Indexed by partitionIndex: the file rows the rebuild has to cover.
+        final LongList partitionFileRows = new LongList(partitionCount);
+        try (PartitionGeometry geometry = isPartitioned
+                ? new PartitionGeometry().of(ff, txWriter, tablePathStr, timestampType, partitionBy, MemoryTag.NATIVE_TABLE_WRITER)
+                : null
+        ) {
+            for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                final long partitionTimestamp;
+                final long liveRows;
+                if (isPartitioned) {
+                    partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+                    // Read by index (O(1)), not by timestamp (O(log P)).
+                    liveRows = txWriter.getPartitionSize(partitionIndex);
+                } else {
+                    partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
+                    liveRows = txWriter.getTransientRowCount();
+                }
+                final long partitionRowCount = isPartitioned && txWriter.isPartitionComposite(partitionIndex)
+                        ? Math.max(liveRows, geometry.getE(partitionIndex))
+                        : liveRows;
+                // Append before any continue below, so entry i really is partition i.
+                partitionFileRows.add(partitionRowCount);
+                if (partitionRowCount <= 0) {
                     continue;
                 }
-                final int writerIndex = tableMetadata.getWriterIndex(colIdx);
-                final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
-                // -1 means the column is absent in this partition,
-                // see ColumnVersionReader.getColumnTop().
-                if (columnTop < 0 || columnTop >= partitionRowCount) {
+                if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
+                    // Handled by prepareParquetPartitions.
                     continue;
                 }
-                nativeIndexWork.add(Numbers.encodeLowHighInts(partitionIndex, colIdx));
-                nativeIndexColumnTops.add(columnTop);
+                for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                    // Skip non-indexed and non-symbol columns (deleted columns may
+                    // still carry the indexed flag).
+                    if (!tableMetadata.isColumnIndexed(colIdx) || !ColumnType.isSymbol(tableMetadata.getColumnType(colIdx))) {
+                        continue;
+                    }
+                    final int writerIndex = tableMetadata.getWriterIndex(colIdx);
+                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
+                    // -1 means the column is absent in this partition,
+                    // see ColumnVersionReader.getColumnTop().
+                    if (columnTop < 0 || columnTop >= partitionRowCount) {
+                        continue;
+                    }
+                    nativeIndexWork.add(Numbers.encodeLowHighInts(partitionIndex, colIdx));
+                    nativeIndexColumnTops.add(columnTop);
+                }
             }
         }
 
@@ -1347,7 +1379,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                     isPartitioned,
                     cursor,
                     nativeIndexWork,
-                    nativeIndexColumnTops
+                    nativeIndexColumnTops,
+                    partitionFileRows
             )));
         }
     }

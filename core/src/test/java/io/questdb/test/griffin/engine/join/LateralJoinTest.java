@@ -1168,6 +1168,219 @@ public class LateralJoinTest extends AbstractCairoTest {
         Assert.assertEquals(0, oldModel.getLateralCountTemplates().size());
     }
 
+    @Test
+    public void testLateralLatestOnSampleByFillLeftJoinKeepsOuterRowWithEmptyBody() throws Exception {
+        // Outer row 2 starts after every lt row, so its lateral body is empty. LEFT JOIN
+        // LATERAL must keep that outer row with NULLs while row 1 still gets its gap row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z'), (2, '2024-01-02T00:00:00Z', '2024-01-01T00:00:00Z')");
+            execute("CREATE TABLE lt (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO lt VALUES ('a', 1.0, '2024-01-01T00:10:00Z'), ('b', 2.0, '2024-01-01T02:10:00Z')");
+
+            assertQuery("""
+                    SELECT o.id, x.ts, x.val FROM o LEFT JOIN LATERAL (
+                      SELECT ts, avg(val) AS val FROM lt WHERE ts > o.start_ts
+                      LATEST ON ts PARTITION BY k SAMPLE BY 1h FILL(NULL)) x
+                    ORDER BY o.id, x.ts
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Sample By Fill", "Filter filter: _latest_rn=1")
+                    .returns("""
+                            id\tts\tval
+                            1\t2024-01-01T00:00:00.000000Z\t1.0
+                            1\t2024-01-01T01:00:00.000000Z\tnull
+                            1\t2024-01-01T02:00:00.000000Z\t2.0
+                            2\t\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralLatestOnSampleByFillNoneLeavesRowsUnfilled() throws Exception {
+        // FILL(NONE) under the same LATEST ON fallback: the group-by output carries the
+        // bucket node, so the ownership check passes, and the NONE token then skips the
+        // fill as it does outside LATERAL. No gap row, no fill node.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z')");
+            execute("CREATE TABLE lt (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO lt VALUES ('a', 1.0, '2024-01-01T00:10:00Z'), ('b', 2.0, '2024-01-01T02:10:00Z')");
+
+            assertQuery("""
+                    SELECT o.id, x.ts, x.val FROM o JOIN LATERAL (
+                      SELECT ts, avg(val) AS val FROM lt WHERE ts > o.start_ts
+                      LATEST ON ts PARTITION BY k SAMPLE BY 1h FILL(NONE)) x
+                    ORDER BY o.id, x.ts
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Filter filter: _latest_rn=1")
+                    .withPlanNotContaining("Sample By Fill")
+                    .returns("""
+                            id\tts\tval
+                            1\t2024-01-01T00:00:00.000000Z\t1.0
+                            1\t2024-01-01T02:00:00.000000Z\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralLatestOnSampleByFillNullKeepsGapRows() throws Exception {
+        // LATEST ON with a non-equality correlation takes LateralJoinRewriter's row_number
+        // fallback, which inserts a filter model and a window model between the SAMPLE BY
+        // select and the table model that holds the fill. The group-by must still own the
+        // fill, otherwise every gap row disappears.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z')");
+            execute("CREATE TABLE lt (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO lt VALUES ('a', 1.0, '2024-01-01T00:10:00Z'), ('b', 2.0, '2024-01-01T02:10:00Z')");
+
+            assertQuery("""
+                    SELECT o.id, x.ts, x.val FROM o JOIN LATERAL (
+                      SELECT ts, avg(val) AS val FROM lt WHERE ts > o.start_ts
+                      LATEST ON ts PARTITION BY k SAMPLE BY 1h FILL(NULL)) x
+                    ORDER BY o.id, x.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Sample By Fill", "Filter filter: _latest_rn=1")
+                    .returns("""
+                            id\tts\tval
+                            1\t2024-01-01T00:00:00.000000Z\t1.0
+                            1\t2024-01-01T01:00:00.000000Z\tnull
+                            1\t2024-01-01T02:00:00.000000Z\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralLatestOnSampleByFillSkipsOuterRowWithEmptyBody() throws Exception {
+        // Outer row 2 starts after every lt row, so its lateral body is empty and the
+        // inner join drops it. Row 1 must still get its gap row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z'), (2, '2024-01-02T00:00:00Z', '2024-01-01T00:00:00Z')");
+            execute("CREATE TABLE lt (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO lt VALUES ('a', 1.0, '2024-01-01T00:10:00Z'), ('b', 2.0, '2024-01-01T02:10:00Z')");
+
+            assertQuery("""
+                    SELECT o.id, x.ts, x.val FROM o JOIN LATERAL (
+                      SELECT ts, avg(val) AS val FROM lt WHERE ts > o.start_ts
+                      LATEST ON ts PARTITION BY k SAMPLE BY 1h FILL(NULL)) x
+                    ORDER BY o.id, x.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Sample By Fill", "Filter filter: _latest_rn=1")
+                    .returns("""
+                            id\tts\tval
+                            1\t2024-01-01T00:00:00.000000Z\t1.0
+                            1\t2024-01-01T01:00:00.000000Z\tnull
+                            1\t2024-01-01T02:00:00.000000Z\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralLatestOnSampleByFillUnderOuterGroupBy() throws Exception {
+        // An outer GROUP BY over the lateral join must still see the inner gap row
+        // (3 rows for id 1, not 2). The fill-holding model sits under join model x, so
+        // generateFill's nested-model walk from the outer group-by never reaches it;
+        // this test pins that the fill survives under an outer aggregate. The outer
+        // GROUP BY ownership shapes are pinned by the SampleByFill*Test classes.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z')");
+            execute("CREATE TABLE lt (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO lt VALUES ('a', 1.0, '2024-01-01T00:10:00Z'), ('b', 2.0, '2024-01-01T02:10:00Z')");
+
+            assertQuery("""
+                    SELECT id, count() AS n FROM (
+                      SELECT o.id, x.ts, x.val FROM o JOIN LATERAL (
+                        SELECT ts, avg(val) AS val FROM lt WHERE ts > o.start_ts
+                        LATEST ON ts PARTITION BY k SAMPLE BY 1h FILL(NULL)) x)
+                    GROUP BY id ORDER BY id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Sample By Fill", "Filter filter: _latest_rn=1")
+                    .returns("""
+                            id\tn
+                            1\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralLatestOnSampleByFillValueAndPrevTwoOuterRows() throws Exception {
+        // Same fallback as testLateralLatestOnSampleByFillNullKeepsGapRows, with two outer
+        // rows and the value and PREV fill modes. Each fill must match the rows the same
+        // LATERAL body returns without LATEST ON. Those rows follow the keyed fill grid
+        // of the decorrelated query: the outer row is a group key, so every key gets
+        // every bucket between the global first and last bucket, which is why outer row
+        // 2 also gets the 00:00 and 01:00 buckets that precede its own start_ts. That is
+        // master's behaviour for the body without LATEST ON too; this test pins only
+        // that the fallback matches it, not that a per-outer-row grid would be wrong.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z'), (2, '2024-01-01T01:00:00Z', '2024-01-01T00:00:00Z')");
+            execute("CREATE TABLE lt (k SYMBOL, val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO lt VALUES
+                    ('a', 1.0, '2024-01-01T00:10:00Z'),
+                    ('b', 2.0, '2024-01-01T02:10:00Z'),
+                    ('c', 3.0, '2024-01-01T04:10:00Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, x.ts, x.val FROM o JOIN LATERAL (
+                      SELECT ts, avg(val) AS val FROM lt WHERE ts > o.start_ts
+                      LATEST ON ts PARTITION BY k SAMPLE BY 1h FILL(0)) x
+                    ORDER BY o.id, x.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Sample By Fill", "Filter filter: _latest_rn=1")
+                    .returns("""
+                            id\tts\tval
+                            1\t2024-01-01T00:00:00.000000Z\t1.0
+                            1\t2024-01-01T01:00:00.000000Z\t0.0
+                            1\t2024-01-01T02:00:00.000000Z\t2.0
+                            1\t2024-01-01T03:00:00.000000Z\t0.0
+                            1\t2024-01-01T04:00:00.000000Z\t3.0
+                            2\t2024-01-01T00:00:00.000000Z\t0.0
+                            2\t2024-01-01T01:00:00.000000Z\t0.0
+                            2\t2024-01-01T02:00:00.000000Z\t2.0
+                            2\t2024-01-01T03:00:00.000000Z\t0.0
+                            2\t2024-01-01T04:00:00.000000Z\t3.0
+                            """);
+
+            assertQuery("""
+                    SELECT o.id, x.ts, x.val FROM o JOIN LATERAL (
+                      SELECT ts, avg(val) AS val FROM lt WHERE ts > o.start_ts
+                      LATEST ON ts PARTITION BY k SAMPLE BY 1h FILL(PREV)) x
+                    ORDER BY o.id, x.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Sample By Fill", "Filter filter: _latest_rn=1")
+                    .returns("""
+                            id\tts\tval
+                            1\t2024-01-01T00:00:00.000000Z\t1.0
+                            1\t2024-01-01T01:00:00.000000Z\t1.0
+                            1\t2024-01-01T02:00:00.000000Z\t2.0
+                            1\t2024-01-01T03:00:00.000000Z\t2.0
+                            1\t2024-01-01T04:00:00.000000Z\t3.0
+                            2\t2024-01-01T00:00:00.000000Z\tnull
+                            2\t2024-01-01T01:00:00.000000Z\tnull
+                            2\t2024-01-01T02:00:00.000000Z\t2.0
+                            2\t2024-01-01T03:00:00.000000Z\t2.0
+                            2\t2024-01-01T04:00:00.000000Z\t3.0
+                            """);
+        });
+    }
+
     // QuestDB's negative LIMIT means "last |N| rows", which compensateLimit cannot
     // express (it emits `__lateral_rn <= limit`, a contradiction for N < 0). It used
     // to silently empty the lateral body; it must now be rejected.
@@ -11471,6 +11684,76 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // T28f: ORDER BY + LIMIT over a body that selects one column twice. compensateLimit() places
+    // row_number() in that projection, ordered by the duplicated column.
+    @Test
+    public void testT28fLimitWithDuplicatedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createT28fBucketTables();
+
+            assertQuery("""
+                    SELECT o.id, t.id, t.id2, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT id, id AS id2, qty
+                        FROM trades
+                        WHERE order_id = o.id
+                        ORDER BY id
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tid1\tid2\tqty
+                            1\t1\t1\t10.0
+                            1\t2\t2\t20.0
+                            2\t7\t7\t100.0
+                            2\t8\t8\t200.0
+                            """);
+            assertQuery("""
+                    SELECT o.id, t.qty, t.q2
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT qty, qty AS q2
+                        FROM trades
+                        WHERE order_id = o.id
+                        ORDER BY qty DESC
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.qty
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tqty\tq2
+                            1\t40.0\t40.0
+                            1\t50.0\t50.0
+                            2\t300.0\t300.0
+                            2\t400.0\t400.0
+                            """);
+            assertQuery("""
+                    SELECT o.id, t.ts, t.ts2, t.qty
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, ts AS ts2, qty
+                        FROM trades
+                        WHERE order_id = o.id
+                        ORDER BY ts DESC
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tts\tts2\tqty
+                            1\t2024-01-01T01:50:00.000000Z\t2024-01-01T01:50:00.000000Z\t40.0
+                            1\t2024-01-01T02:20:00.000000Z\t2024-01-01T02:20:00.000000Z\t50.0
+                            2\t2024-01-01T02:05:00.000000Z\t2024-01-01T02:05:00.000000Z\t300.0
+                            2\t2024-01-01T02:35:00.000000Z\t2024-01-01T02:35:00.000000Z\t400.0
+                            """);
+        });
+    }
+
     // T28f: SAMPLE BY + LIMIT — combined wrappers: rewriteSampleBy then compensateLimit
     @Test
     public void testT28fSampleByWithLimit() throws Exception {
@@ -11508,6 +11791,269 @@ public class LateralJoinTest extends AbstractCairoTest {
                             1\t2024-01-01T00:30:00.000000Z\t20.0
                             2\t2024-01-01T01:00:00.000000Z\t40.0
                             2\t2024-01-01T01:30:00.000000Z\t50.0
+                            """);
+        });
+    }
+
+    // T28f: SAMPLE BY + copy of the timestamp + LIMIT. rewriteSampleBy() moves the copy, the ORDER BY
+    // and the LIMIT to a wrapper model, so compensateLimit() places row_number() in a projection
+    // that selects the bucket column twice.
+    @Test
+    public void testT28fSampleByWithTimestampCopyAndLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createT28fBucketTables();
+
+            final String expected = """
+                    id\tts\tts2\ttotal
+                    1\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t10.0
+                    1\t2024-01-01T00:30:00.000000Z\t2024-01-01T00:30:00.000000Z\t20.0
+                    2\t2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t100.0
+                    2\t2024-01-01T01:30:00.000000Z\t2024-01-01T01:30:00.000000Z\t200.0
+                    """;
+            assertQuery("""
+                    SELECT o.id, t.ts, t.ts2, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, ts AS ts2, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, t.*
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, ts AS ts2, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, t.ts, t.ts2, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts AS ts2, ts, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, t.ts, t.ts2, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, ts AS ts2, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m
+                        ORDER BY ts
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+            // the bucket column is selected only under the two copy names
+            assertQuery("""
+                    SELECT o.id, t.a ts, t.b ts2, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts AS a, ts AS b, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.a
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+            // two-sided LIMIT skips the first bucket of each order
+            assertQuery("""
+                    SELECT o.id, t.ts, t.ts2, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, ts AS ts2, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m
+                        LIMIT 1, 3
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tts\tts2\ttotal
+                            1\t2024-01-01T00:30:00.000000Z\t2024-01-01T00:30:00.000000Z\t20.0
+                            1\t2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t35.0
+                            2\t2024-01-01T01:30:00.000000Z\t2024-01-01T01:30:00.000000Z\t200.0
+                            2\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\t300.0
+                            """);
+            // FILL runs over the bucket grid that all orders share, as in testT23bKeyedSampleByInner,
+            // so order 2 starts with the two empty buckets before its first trade
+            assertQuery("""
+                    SELECT o.id, t.ts, t.ts2, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, ts AS ts2, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m FILL(NULL)
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tts\tts2\ttotal
+                            1\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t10.0
+                            1\t2024-01-01T00:30:00.000000Z\t2024-01-01T00:30:00.000000Z\t20.0
+                            2\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\tnull
+                            2\t2024-01-01T00:30:00.000000Z\t2024-01-01T00:30:00.000000Z\tnull
+                            """);
+        });
+    }
+
+    // T28f: SAMPLE BY + copy of the timestamp + ORDER BY + LIMIT. The bodies ordered by ts DESC or ts2 DESC
+    // take the last buckets of each order, with a plain copy and with a dateadd() copy of the timestamp. The
+    // keyed body orders by ts, side ascending and takes the first (bucket, side) groups of each order.
+    @Test
+    public void testT28fSampleByWithTimestampCopyAndLimitDesc() throws Exception {
+        assertMemoryLeak(() -> {
+            createT28fBucketTables();
+
+            assertQuery("""
+                    SELECT o.id, t.ts, t.ts2, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, ts AS ts2, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m
+                        ORDER BY ts DESC
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tts\tts2\ttotal
+                            1\t2024-01-01T01:30:00.000000Z\t2024-01-01T01:30:00.000000Z\t40.0
+                            1\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\t50.0
+                            2\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\t300.0
+                            2\t2024-01-01T02:30:00.000000Z\t2024-01-01T02:30:00.000000Z\t400.0
+                            """);
+            // the body sorts by the copy name
+            assertQuery("""
+                    SELECT o.id, t.ts, t.ts2, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, ts AS ts2, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m
+                        ORDER BY ts2 DESC
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tts\tts2\ttotal
+                            1\t2024-01-01T01:30:00.000000Z\t2024-01-01T01:30:00.000000Z\t40.0
+                            1\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\t50.0
+                            2\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\t300.0
+                            2\t2024-01-01T02:30:00.000000Z\t2024-01-01T02:30:00.000000Z\t400.0
+                            """);
+            assertQuery("""
+                    SELECT o.id, t.ts, t.ts2, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, dateadd('m', 1, ts) AS ts2, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m
+                        ORDER BY ts DESC
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tts\tts2\ttotal
+                            1\t2024-01-01T01:30:00.000000Z\t2024-01-01T01:31:00.000000Z\t40.0
+                            1\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:01:00.000000Z\t50.0
+                            2\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:01:00.000000Z\t300.0
+                            2\t2024-01-01T02:30:00.000000Z\t2024-01-01T02:31:00.000000Z\t400.0
+                            """);
+            // keyed: the first three (bucket, side) groups of each order
+            assertQuery("""
+                    SELECT o.id, t.ts, t.side, t.ts2, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, side, ts AS ts2, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m
+                        ORDER BY ts, side
+                        LIMIT 3
+                    ) t
+                    ORDER BY o.id, t.ts, t.side
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tts\tside\tts2\ttotal
+                            1\t2024-01-01T00:00:00.000000Z\tbuy\t2024-01-01T00:00:00.000000Z\t10.0
+                            1\t2024-01-01T00:30:00.000000Z\tsell\t2024-01-01T00:30:00.000000Z\t20.0
+                            1\t2024-01-01T01:00:00.000000Z\tbuy\t2024-01-01T01:00:00.000000Z\t30.0
+                            2\t2024-01-01T01:00:00.000000Z\tbuy\t2024-01-01T01:00:00.000000Z\t100.0
+                            2\t2024-01-01T01:30:00.000000Z\tsell\t2024-01-01T01:30:00.000000Z\t200.0
+                            2\t2024-01-01T02:00:00.000000Z\tbuy\t2024-01-01T02:00:00.000000Z\t300.0
+                            """);
+        });
+    }
+
+    // T28f: LEFT JOIN LATERAL + SAMPLE BY + copy of the timestamp + LIMIT keeps the order without trades
+    @Test
+    public void testT28fSampleByWithTimestampCopyAndLimitLeft() throws Exception {
+        assertMemoryLeak(() -> {
+            createT28fBucketTables();
+
+            assertQuery("""
+                    SELECT o.id, t.ts, t.ts2, t.total
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT ts, ts AS ts2, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tts\tts2\ttotal
+                            1\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t10.0
+                            1\t2024-01-01T00:30:00.000000Z\t2024-01-01T00:30:00.000000Z\t20.0
+                            2\t2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t100.0
+                            2\t2024-01-01T01:30:00.000000Z\t2024-01-01T01:30:00.000000Z\t200.0
+                            3\t\t\tnull
                             """);
         });
     }
@@ -16383,6 +16929,32 @@ public class LateralJoinTest extends AbstractCairoTest {
                 (3, 2, 30.0, 300.0, '2024-01-01T01:30:00.000000Z'),
                 (4, 3, 40.0, 400.0, '2024-01-01T02:30:00.000000Z'),
                 (5, 3, 50.0, 500.0, '2024-01-01T02:45:00.000000Z')
+                """);
+    }
+
+    // 30m buckets per order: 1 -> 00:00 10, 00:30 20, 01:00 35, 01:30 40, 02:00 50;
+    // 2 -> 01:00 100, 01:30 200, 02:00 300, 02:30 400; 3 -> no trades
+    private void createT28fBucketTables() throws Exception {
+        execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE trades (id INT, order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO orders VALUES
+                (1, '2024-01-01T00:00:00.000000Z'),
+                (2, '2024-01-01T01:00:00.000000Z'),
+                (3, '2024-01-01T02:00:00.000000Z')
+                """);
+        execute("""
+                INSERT INTO trades VALUES
+                (1, 1, 'buy', 10.0, '2024-01-01T00:10:00.000000Z'),
+                (2, 1, 'sell', 20.0, '2024-01-01T00:40:00.000000Z'),
+                (3, 1, 'buy', 30.0, '2024-01-01T01:10:00.000000Z'),
+                (4, 1, 'sell', 5.0, '2024-01-01T01:20:00.000000Z'),
+                (5, 1, 'buy', 40.0, '2024-01-01T01:50:00.000000Z'),
+                (6, 1, 'sell', 50.0, '2024-01-01T02:20:00.000000Z'),
+                (7, 2, 'buy', 100.0, '2024-01-01T01:05:00.000000Z'),
+                (8, 2, 'sell', 200.0, '2024-01-01T01:35:00.000000Z'),
+                (9, 2, 'buy', 300.0, '2024-01-01T02:05:00.000000Z'),
+                (10, 2, 'sell', 400.0, '2024-01-01T02:35:00.000000Z')
                 """);
     }
 }

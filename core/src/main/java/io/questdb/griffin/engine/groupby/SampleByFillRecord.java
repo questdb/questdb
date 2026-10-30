@@ -280,6 +280,12 @@ public class SampleByFillRecord implements Record {
         }
     }
 
+    public void setInterpolationTimestamp(long timestamp) {
+        for (int i = 0, n = interpolations.size(); i < n; i++) {
+            interpolations.get(i).setBucketTimestamp(timestamp);
+        }
+    }
+
     private Function getFunction(int columnIndex) {
         return current.getQuick(columnIndex);
     }

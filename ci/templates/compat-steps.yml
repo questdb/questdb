@@ -81,13 +81,17 @@ steps:
     condition: |
       eq(variables['SOURCE_CODE_CHANGED'], 'true')
   - bash: |
-      find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
+      echo "##vso[task.setvariable variable=HAS_CRASH_DUMP]false"
+      find . -type f -name 'hs_*.log' -exec sh -c 'mv "$1" "$2"' _ {} "$(ARCHIVED_CRASH_LOG)" \;
+      if [ -f "$(ARCHIVED_CRASH_LOG)" ]; then
+        echo "##vso[task.setvariable variable=HAS_CRASH_DUMP]true"
+      fi
     displayName: "Tests failed -- rename crash dump"
     workingDirectory: $(Build.SourcesDirectory)/compat/
     condition: failed()
   - task: PublishBuildArtifacts@1
     displayName: "Tests failed -- Upload crash logs"
-    condition: failed()
+    condition: and(failed(), eq(variables['HAS_CRASH_DUMP'], 'true'))
     inputs:
       pathToPublish: $(ARCHIVED_CRASH_LOG)
       artifactName: CrashDump

@@ -370,6 +370,49 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsync(JNIEnv *e, jclass cl, jin
     return -1;
 }
 
+/* Windows has no ordering-only barrier; FlushFileBuffers is the durable one, so the split is a no-op. */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_barrierFsync0(JNIEnv *e, jclass cl, jint fd) {
+    if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
+/* FlushFileBuffers already flushes the device write cache, so fsync's contract is met as-is here. */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fsyncDurable0(JNIEnv *e, jclass cl, jint fd) {
+    if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_fdatasync0(JNIEnv *e, jclass cl, jint fd) {
+    /* Windows has no fdatasync; FlushFileBuffers is the equivalent primitive */
+    if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncfs0(JNIEnv *e, jclass cl, jint fd) {
+    /* Windows has no syncfs; FlushFileBuffers on this fd is the closest single-file equivalent. The
+     * batched flush is Linux-only. */
+    if (FlushFileBuffers(FD_TO_HANDLE(fd))) {
+        return 0;
+    }
+    SaveLastError();
+    return -1;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_syncFileRange0(JNIEnv *e, jclass cl, jint fd, jlong offset, jlong nbytes, jint flags) {
+    /* Windows has no sync_file_range: a no-op returning 0. Callers must not rely on it for durability. */
+    (void) e; (void) cl; (void) fd; (void) offset; (void) nbytes; (void) flags;
+    return 0;
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_sync(JNIEnv *e, jclass cl) {
     // Windows does not seem to have sync.
     return -1;
@@ -614,6 +657,17 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRWOpts
     ));
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRWExisting0
+        (JNIEnv *e, jclass cl, jlong lpszName) {
+    // OPEN_EXISTING: a missing file fails with ERROR_FILE_NOT_FOUND instead of coming back empty.
+    return HANDLE_TO_FD(openUtf8(
+            lpszName,
+            GENERIC_WRITE | GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            OPEN_EXISTING
+    ));
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openAppend
         (JNIEnv *e, jclass cl, jlong lpszName) {
     HANDLE handle = openUtf8(
@@ -686,6 +740,16 @@ JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocate
         (JNIEnv *e, jclass cl, jint fd, jlong size) {
     /* On Windows truncate does the allocation */
     return Java_io_questdb_std_Files_truncate(e, cl, fd, size);
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Files_allocateRange
+        (JNIEnv *e, jclass cl, jint fd, jlong offset, jlong len) {
+    if (len <= offset) {
+        // Never a shrink: allocate() below sets the file's size to len.
+        return JNI_TRUE;
+    }
+    // There is no range to allocate on Windows: setting the file's size is the allocation.
+    return Java_io_questdb_std_Files_allocate(e, cl, fd, len);
 }
 
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_munmap0
@@ -964,7 +1028,7 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openCleanRW
     return -1;
 }
 
-JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
+static jint rename0(jlong lpszOld, jlong lpszNew, DWORD flags) {
     int len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (LPCCH) lpszOld, -1, NULL, 0);
     if (len > 0) {
         wchar_t buf1[len];
@@ -976,13 +1040,30 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl, jl
             wchar_t buf2[len];
             MultiByteToWideChar(CP_UTF8, 0, (LPCCH) lpszNew, -1, buf2, len);
 
-            if (MoveFileW(buf1, buf2)) {
+            /* Without MOVEFILE_REPLACE_EXISTING, MoveFileExW fails with ERROR_ALREADY_EXISTS when the destination
+             * is present, as MoveFileW does. Callers depend on that (see TableWriter's
+             * Files.WINDOWS_ERROR_FILE_EXISTS branch), so the flag must never be added here. Unlike MoveFileW, it
+             * does not copy and delete a file moved to another volume, as MOVEFILE_COPY_ALLOWED is not set: that
+             * move fails with ERROR_NOT_SAME_DEVICE, reported as FILES_RENAME_ERR_EXDEV. */
+            if (MoveFileExW(buf1, buf2, flags)) {
                 return FILES_RENAME_ERR_OK;
             }
         }
     }
     SaveLastError();
     return ERROR_NOT_SAME_DEVICE == GetLastError() ? FILES_RENAME_ERR_EXDEV : FILES_RENAME_ERR_OTHER;
+}
+
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_rename(JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
+    return rename0(lpszOld, lpszNew, 0);
+}
+
+/* The durable publish-by-rename. POSIX makes a rename durable by fsyncing the parent directory; Windows has
+ * no directory handle to flush (FlushFileBuffers takes files only), so a power cut could keep the _txn commit
+ * that names the new file while losing the name. MOVEFILE_WRITE_THROUGH does not return until the move is
+ * flushed to disk, the barrier the POSIX directory fsync buys. */
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_renameDurable0(JNIEnv *e, jclass cl, jlong lpszOld, jlong lpszNew) {
+    return rename0(lpszOld, lpszNew, MOVEFILE_WRITE_THROUGH);
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDiskSize(JNIEnv *e, jclass cl, jlong lpszPath) {

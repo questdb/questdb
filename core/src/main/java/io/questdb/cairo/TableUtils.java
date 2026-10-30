@@ -90,11 +90,13 @@ import io.questdb.tasks.O3PartitionPurgeTask;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.ParanoiaState.VM_PARANOIA_MODE;
 import static io.questdb.cairo.MapWriter.createSymbolMapFiles;
-import static io.questdb.cairo.pool.AbstractMultiTenantPool.NO_LOCK_REASON;
 import static io.questdb.cairo.wal.WalUtils.CONVERT_FILE_NAME;
+import static io.questdb.tasks.TableWriterTask.CMD_COMPOSITE_PARTITION_SWAP;
+import static io.questdb.tasks.TableWriterTask.CMD_PARQUET_PARTITION_SWAP;
 import static io.questdb.tasks.TableWriterTask.CMD_STORAGE_POLICY;
 import static io.questdb.tasks.TableWriterTask.getCommandName;
 
@@ -108,8 +110,15 @@ public final class TableUtils {
     public static final String CHECKPOINT_SEQ_TXN_FILE_NAME = "_txn";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
+    /**
+     * Marks a composite-partition REWRITE built off a {@link io.questdb.cairo.TableReader} snapshot, staged next to the
+     * source directory before the writer has agreed to swap it in - see {@code PartitionCompactionScanJob}.
+     */
+    public static final String COMPACTING_DIR_MARKER = ".compacting";
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
+    // A DETACH's temporary name, <partition>.<txn of its commit>.detaching, until the commit is final.
+    public static final String DETACHING_DIR_MARKER = ".detaching";
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
     public static final String FILE_SUFFIX_D = ".d";
     public static final String FILE_SUFFIX_I = ".i";
@@ -124,6 +133,12 @@ public final class TableUtils {
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
+    /**
+     * Marks a whole LOGICAL partition's merge - every folder of one period, the main directory and all its splits,
+     * copied into one - staged next to the source directories before the writer has agreed to swap it in. Named
+     * {@code <logicalPartition>.<firstFolderNameTxn>.merging<folderCount>}; see {@code PartitionCompactionScanJob}.
+     */
+    public static final String MERGING_DIR_MARKER = ".merging";
     public static final long META_OFFSET_COLUMN_TYPES = 128;
     public static final long META_OFFSET_COUNT = 0;
     public static final long META_OFFSET_MAX_UNCOMMITTED_ROWS = 20; // INT
@@ -149,6 +164,7 @@ public final class TableUtils {
     public static final String PARQUET_METADATA_STAGING_FILE_NAME = "_pm.staging";
     public static final String PARQUET_PARTITION_NAME = "data.parquet";
     public static final String PARQUET_PARTITION_STAGING_NAME = "data.parquet.staging";
+    public static final String PARTITION_GEOMETRY_FILE_NAME = "_geometry";
     public static final String PARTITION_LAST_SQUASH_TIMESTAMP_FILE = ".squash_ts";
     public static final String RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME = "_restore";
     public static final String SYMBOL_KEY_REMAP_FILE_SUFFIX = ".r";
@@ -195,6 +211,9 @@ public final class TableUtils {
      */
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
+    // Magic of the save point file header (_epoch.manifest.0/1), at its start and again before the header
+    // checksum. Spells "EPOCHKSM" in little-endian order.
+    public static final long SNAPSHOT_CHECKSUM_MAGIC = 0x4D534B4843504F45L;
     // transaction file structure
     // @formatter:off
     public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
@@ -202,9 +221,15 @@ public final class TableUtils {
     public static final long TX_BASE_OFFSET_A_32 = TX_BASE_OFFSET_VERSION_64 + 8;
     public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 = TX_BASE_OFFSET_A_32 + 4;
     public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_A_32 + 4;
+    // geometryVersion moved into the per-slot base-header padding when the record-body checksum claimed
+    // bytes [116,128). The txn-derived stamp distinguishes this layout from files written by older binaries.
+    public static final long TX_BASE_OFFSET_GEOMETRY_VERSION_A_32 = TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 + 4;
+    public static final long TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32 = TX_BASE_OFFSET_GEOMETRY_VERSION_A_32 + 4;
     public static final long TX_BASE_OFFSET_B_32 = TX_BASE_OFFSET_PARTITIONS_SIZE_A_32 + 4 + TX_BASE_HEADER_SECTION_PADDING;
     public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 = TX_BASE_OFFSET_B_32 + 4;
     public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 + 4;
+    public static final long TX_BASE_OFFSET_GEOMETRY_VERSION_B_32 = TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4;
+    public static final long TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32 = TX_BASE_OFFSET_GEOMETRY_VERSION_B_32 + 4;
     public static final int TX_BASE_HEADER_SIZE = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);
     public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
     public static final long TX_OFFSET_TXN_64 = 0;
@@ -223,8 +248,23 @@ public final class TableUtils {
     public static final long TX_OFFSET_LAG_ROW_COUNT_32 = TX_OFFSET_LAG_TXN_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64 = TX_OFFSET_LAG_ROW_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64 = TX_OFFSET_LAG_MIN_TIMESTAMP_64 + 8;
+    // Legacy location used by binaries that introduced composite geometry before body checksums. A merged writer
+    // stores geometryVersion in the per-slot base-header padding and uses this range for checksum data instead.
+    // Releases before 10.1.0 never write [116,128), so a released record can hold stale bytes of an older record
+    // here; TxReader folds a negative value to 0 instead of reading it as tearing.
+    public static final long TX_OFFSET_GEOMETRY_VERSION_32 = TX_OFFSET_LAG_MAX_TIMESTAMP_64 + 8;
+    public static final long TX_OFFSET_BODY_CHECKSUM_64 = TX_OFFSET_GEOMETRY_VERSION_32;
+    public static final long TX_OFFSET_BODY_CHECKSUM_STAMP_32 = TX_OFFSET_BODY_CHECKSUM_64 + Long.BYTES;
+    // The pre-geometry adaptive branch used the legacy XOR. New records use a distinct stamp so a missing
+    // base-header geometry slot is detectable rather than being mistaken for a pre-merge record.
+    public static final int TX_BODY_CHECKSUM_LEGACY_STAMP_XOR = 0x8000_0000;
+    public static final int TX_BODY_CHECKSUM_STAMP_XOR = 0xA13F_7C29;
+    public static final int TX_GEOMETRY_VERSION_STAMP_XOR = 0x4745_4F4D;
     // @formatter:on
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
+    // Magic of the 16-byte checksum trailer after each _cv area; spells " CVCHKSM" little-endian.
+    public static final long CV_CHECKSUM_MAGIC = 0x4D534B4843564320L;
+    public static final int CV_CHECKSUM_TRAILER_SIZE = 2 * Long.BYTES;
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
     public static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
@@ -257,9 +297,17 @@ public final class TableUtils {
     static final int META_FLAG_BIT_POSTING_VARIANT_HI = 1 << 5;
     static final int META_FLAG_BIT_COVERING = 1 << 6;
     static final int META_FLAG_POSTING_VARIANT_MASK = META_FLAG_BIT_POSTING_VARIANT_LO | META_FLAG_BIT_POSTING_VARIANT_HI;
+    // Offset of the _meta.prev index in a TODO_RESTORE_META _todo_ entry, see TableWriter.writeRestoreMetaTodo().
+    static final int TODO_META_INDEX_OFFSET = 48;
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
+    // Polynomial multiplier for the _txn and _cv checksums, copied from Hash.hashMem64 so that the on-disk
+    // checksum stays stable whatever happens to the std Hash helpers.
+    private static final long HASH_MEM_M2 = 0x517cc1b727220a95L;
+    private static final long HASH_MEM_M2_POW2 = HASH_MEM_M2 * HASH_MEM_M2;
+    private static final long HASH_MEM_M2_POW3 = HASH_MEM_M2_POW2 * HASH_MEM_M2;
+    private static final long HASH_MEM_M2_POW4 = HASH_MEM_M2_POW2 * HASH_MEM_M2_POW2;
     private static final Log LOG = LogFactory.getLog(TableUtils.class);
     private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
@@ -274,6 +322,13 @@ public final class TableUtils {
     private static final int PARQUET_CONFIG_EXPLICIT_FLAG = 1 << 24;
     private static final int PARQUET_CONFIG_LEVEL_MASK = 0xFF;
     private static final int PARQUET_CONFIG_LEVEL_SHIFT = 16;
+    private static final long XXH3_PRIME_MX1 = 0x165667919E3779F9L;
+    // Counts _txn partition-table hash terms; TxnBodyChecksumCacheTest relies on it. It lives in TableUtils
+    // because every partition-table hash passes through this class, whatever the caller: a full hash through
+    // hashTxnBodyPartitionTableRange(), a changed int through txnBodyPartitionTableIntDelta(). So the test sees
+    // a full hash on the commit path even from code that bypasses TxWriter.
+    @TestOnly
+    private static long txnBodyPartitionTableHashTermCount;
 
     private TableUtils() {
     }
@@ -291,9 +346,21 @@ public final class TableUtils {
      * Use it for files that are appended to later.
      */
     public static void allocateDiskSpaceAligned(FilesFacade ff, long fd, long size) {
-        if (ff.length(fd) < size && !ff.allocate(fd, alignedSize(size))) {
-            throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
-        }
+        allocateDiskSpaceAlignedFromLength(ff, fd, size, ff.length(fd));
+    }
+
+    /**
+     * Like {@link #allocateDiskSpaceAligned(FilesFacade, long, long)}, for a caller that grows the same
+     * file repeatedly: backs only from {@code min(allocatedHi, length)}, where {@code allocatedHi} is how
+     * far this caller's own earlier calls on this fd backed the file, 0 for none. The first growth thus
+     * backs the whole file from offset 0, holes below its length included, exactly as the plain variant
+     * does; later ones back only the new range. Re-backing from 0 costs time in proportion to the whole
+     * file: tmpfs walks every page, XFS opens a transaction per extent.
+     *
+     * @return the new {@code allocatedHi} for the next call
+     */
+    public static long allocateDiskSpaceAligned(FilesFacade ff, long fd, long allocatedHi, long size) {
+        return allocateDiskSpace(ff, fd, allocatedHi, size, alignedSize(size));
     }
 
     /**
@@ -303,6 +370,13 @@ public final class TableUtils {
         if (ff.length(fd) < size && !ff.allocate(fd, size)) {
             throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
+    }
+
+    /**
+     * {@link #allocateDiskSpaceAligned(FilesFacade, long, long, long)} for exact sizes.
+     */
+    public static long allocateDiskSpaceUnaligned(FilesFacade ff, long fd, long allocatedHi, long size) {
+        return allocateDiskSpace(ff, fd, allocatedHi, size, size);
     }
 
     public static int calculateMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
@@ -323,6 +397,166 @@ public final class TableUtils {
         return TX_RECORD_HEADER_SIZE + bytesSymbols + Integer.BYTES + bytesPartitions;
     }
 
+    /**
+     * Computes a 64-bit checksum over the bytes of a committed {@code _txn} record that only a
+     * version-bumped commit changes, so a lock-free reader that re-reads the version after loading can
+     * verify every load without false positives. Covered:
+     * <ul>
+     *   <li>{@code [0, 40)} and {@code [48, 80)}: txn, row counts, min/max timestamp, and the data,
+     *       partition-table, column and truncate versions;</li>
+     *   <li>{@code [partitionTableStart, recordSize)}: the partition-table length int and the partition
+     *       records.</li>
+     * </ul>
+     * Excluded, because they change in place under a stable version:
+     * <ul>
+     *   <li>{@code [40, 48)}: structureVersion, reset by released converters and REBASE WAL;</li>
+     *   <li>{@code [80, 116)}: seqTxn, the lag fields and the lag checksum, overwritten by
+     *       {@link TxWriter#resetLagAppliedRows()} and {@link TxWriter#resetLagValuesUnsafe()};</li>
+     *   <li>{@code [116, 128)}: the body checksum and its stamp;</li>
+     *   <li>{@code [128, partitionTableStart)}: the symbol counts, whose transient halves
+     *       {@link TxWriter#writeTransientSymbolCount} overwrites per new distinct symbol.</li>
+     * </ul>
+     * The writer and the reader derive both bounds from the same helpers
+     * ({@link #calculateTxRecordSize(int, int)}, {@link #getPartitionTableSizeOffset(int)}). The hash is a
+     * polynomial over little-endian 8-byte words with an avalanche finish. A result of {@code 0} is
+     * remapped to {@code 1}, so a zeroed slot with a matching stamp always reads as torn.
+     *
+     * @param recordBaseAddr      native address of the record body (offset 0 of the active A/B area)
+     * @param recordSize          full committed record length in bytes
+     * @param partitionTableStart offset of the partition-table length int ({@code 132 + symbolCount*8})
+     * @return a non-zero 64-bit checksum
+     */
+    public static long calculateTxnBodyChecksum(long recordBaseAddr, long recordSize, long partitionTableStart) {
+        long h = hashTxnBodyRange(recordBaseAddr, 0, TX_OFFSET_STRUCT_VERSION_64, 0);
+        h = hashTxnBodyRange(recordBaseAddr, TX_OFFSET_DATA_VERSION_64, TX_OFFSET_SEQ_TXN_64, h);
+        // A record that ends at the partition table's start has no partition table to hash.
+        if (partitionTableStart < recordSize) {
+            h = hashTxnBodyPartitionTableRange(recordBaseAddr, recordSize, partitionTableStart, h);
+        }
+        h = xxh3Avalanche64(h);
+        // 0 is the "absent" sentinel; never emit it for a real record.
+        return h != 0 ? h : 1L;
+    }
+
+    /**
+     * Assembles {@link #calculateTxnBodyChecksum(long, long, long)} from its two independently computed
+     * parts. The pre-avalanche hash is a polynomial over the covered terms, so hashing the header and then
+     * the partition table equals {@code headerHash * m^K + partitionTableHash}, where {@code K} is the number
+     * of partition-table terms. For a record at {@code a} of size {@code s} whose partition table starts at
+     * {@code p}, combining {@code hashTxnBodyHeader(a)}, {@code txnBodyPartitionTablePower(s, p)} and
+     * {@code hashTxnBodyPartitionTable(a, s, p)} gives {@code calculateTxnBodyChecksum(a, s, p)} bit for bit.
+     * <p>
+     * The split lets {@code TxWriter} cache the partition-table part, which a fast-path commit leaves
+     * untouched, and pay only for the header on each commit.
+     *
+     * @param headerHash          {@link #hashTxnBodyHeader(long)} of the record
+     * @param partitionTablePower {@link #txnBodyPartitionTablePower(long, long)} of the record
+     * @param partitionTableHash  {@link #hashTxnBodyPartitionTable(long, long, long)} of the record
+     * @return the same non-zero checksum {@link #calculateTxnBodyChecksum(long, long, long)} returns
+     */
+    public static long combineTxnBodyChecksum(long headerHash, long partitionTablePower, long partitionTableHash) {
+        final long h = xxh3Avalanche64(headerHash * partitionTablePower + partitionTableHash);
+        return h != 0 ? h : 1L;
+    }
+
+    /**
+     * How many partition-table hash terms the {@code _txn} body checksum has folded in this process, by any
+     * caller: every term of a full partition-table hash, whether {@link #calculateTxnBodyChecksum(long, long, long)}
+     * or {@link #hashTxnBodyPartitionTable(long, long, long)} computes it, and one per changed int
+     * {@link #txnBodyPartitionTableIntDelta(int, long, int, int)} folds. Capture it before an operation and
+     * assert on the delta afterwards.
+     */
+    @TestOnly
+    public static long getTxnBodyPartitionTableHashTermCount() {
+        return txnBodyPartitionTableHashTermCount;
+    }
+
+    /**
+     * The pre-avalanche hash of the covered header ranges {@code [0, 40)} and {@code [48, 80)} of a
+     * {@code _txn} record, folded from 0. See {@link #combineTxnBodyChecksum(long, long, long)}.
+     */
+    public static long hashTxnBodyHeader(long recordBaseAddr) {
+        final long h = hashTxnBodyRange(recordBaseAddr, 0, TX_OFFSET_STRUCT_VERSION_64, 0);
+        return hashTxnBodyRange(recordBaseAddr, TX_OFFSET_DATA_VERSION_64, TX_OFFSET_SEQ_TXN_64, h);
+    }
+
+    /**
+     * The pre-avalanche hash of the partition-table range {@code [partitionTableStart, recordSize)} of a
+     * {@code _txn} record, folded from 0, or 0 when the range is empty. See
+     * {@link #combineTxnBodyChecksum(long, long, long)}.
+     */
+    public static long hashTxnBodyPartitionTable(long recordBaseAddr, long recordSize, long partitionTableStart) {
+        return partitionTableStart < recordSize ? hashTxnBodyPartitionTableRange(recordBaseAddr, recordSize, partitionTableStart, 0) : 0;
+    }
+
+    /**
+     * The change to {@link #hashTxnBodyPartitionTable(long, long, long)} of a {@code _txn} partition table when
+     * the 4-byte int at {@code offset} from the table's start changes from {@code oldValue} to {@code newValue}.
+     * The table is the size int followed by {@code longCount} longs, so the hash folds {@code longCount}
+     * 8-byte words, word {@code t} weighted {@code m^(longCount - t)}, then the last long's high int as a
+     * trailing term weighted 1. A word's low int enters unsigned and its high int shifted up by 32 bits; the
+     * trailing int enters sign-extended, as {@code Unsafe.getInt} reads it. Changes to different ints add up,
+     * so a long's change is the sum of the changes of its low int (at {@code 4 + 8i}) and its high int
+     * (at {@code 8 + 8i}).
+     */
+    public static long txnBodyPartitionTableIntDelta(int longCount, long offset, int oldValue, int newValue) {
+        assert (offset & (Integer.BYTES - 1)) == 0 && offset <= (long) longCount * Long.BYTES;
+        txnBodyPartitionTableHashTermCount++;
+        final long word = offset >>> 3;
+        if (word == longCount) {
+            return (long) newValue - oldValue;
+        }
+        final long delta = (offset & (Long.BYTES - 1)) == 0
+                ? Integer.toUnsignedLong(newValue) - Integer.toUnsignedLong(oldValue)
+                : ((long) newValue << 32) - ((long) oldValue << 32);
+        return delta * txnBodyHashPower(longCount - word);
+    }
+
+    /**
+     * {@code m^K}, where {@code K} is the number of terms {@code hashTxnBodyRange} folds over the
+     * partition-table range {@code [partitionTableStart, recordSize)}, or 1 when the range is empty. See
+     * {@link #combineTxnBodyChecksum(long, long, long)}.
+     */
+    public static long txnBodyPartitionTablePower(long recordSize, long partitionTableStart) {
+        return txnBodyHashPower(txnBodyPartitionTableTermCount(recordSize, partitionTableStart));
+    }
+
+    /**
+     * The number of terms {@code hashTxnBodyRange} folds over the partition-table range
+     * {@code [partitionTableStart, recordSize)}, 0 when the range is empty: the work one
+     * {@link #hashTxnBodyPartitionTable(long, long, long)} does.
+     */
+    public static long txnBodyPartitionTableTermCount(long recordSize, long partitionTableStart) {
+        if (partitionTableStart >= recordSize) {
+            return 0;
+        }
+        // hashTxnBodyRange folds one term per 8-byte word, then one for a trailing 4-byte int, then one per
+        // trailing byte.
+        final long len = recordSize - partitionTableStart;
+        final long tail = len & (Long.BYTES - 1);
+        return (len >>> 3) + (tail >= Integer.BYTES ? 1 + tail - Integer.BYTES : tail);
+    }
+
+    /**
+     * Computes a 64-bit checksum over a whole committed {@code _cv} area {@code [0, size)}, to detect a torn
+     * area that the A/B version protocol alone cannot catch. {@link ColumnVersionWriter#doCommit()} writes
+     * the whole area at a fresh offset on each commit and never changes a published area in place, so the
+     * checksum covers the area with no exclusions. It is stored in the trailer after the area (see
+     * {@link #CV_CHECKSUM_MAGIC}), and {@code OFFSET_SIZE_{A,B}} keeps recording the data size only. The hash
+     * is the one {@link #calculateTxnBodyChecksum(long, long, long)} uses. The trailer's magic, not the
+     * checksum value, decides presence; the {@code 0} to {@code 1} remap only keeps the two contracts alike.
+     *
+     * @param areaBaseAddr native address of the area body (offset 0 of the active A/B area, i.e. the
+     *                     mapped address of the on-disk {@code offset})
+     * @param size         the committed area length in bytes ({@code OFFSET_SIZE_{A,B}}; a multiple of 32)
+     * @return a non-zero 64-bit checksum
+     */
+    public static long calculateCvAreaChecksum(long areaBaseAddr, long size) {
+        long h = hashTxnBodyRange(areaBaseAddr, 0, size, 0);
+        h = xxh3Avalanche64(h);
+        return h != 0 ? h : 1L;
+    }
+
     // the mig methods are deliberately standalone so that between old versions
     // does not regress if the main code changes
     public static int calculateTxnLagChecksum(long txn, long seqTxn, int lagRowCount, long lagMinTimestamp, long lagMaxTimestamp, int lagTxnCount) {
@@ -334,6 +568,66 @@ public final class TableUtils {
         checkSum = checkSum * 31 + lagTxnCount;
         //noinspection UseHashCodeMethodInspection
         return (int) (checkSum ^ (checkSum >>> 32));
+    }
+
+    // Folds the non-empty partition-table range [partitionTableStart, recordSize) of a _txn record into h. Every
+    // full partition-table hash passes here.
+    private static long hashTxnBodyPartitionTableRange(long recordBaseAddr, long recordSize, long partitionTableStart, long h) {
+        txnBodyPartitionTableHashTermCount += txnBodyPartitionTableTermCount(recordSize, partitionTableStart);
+        return hashTxnBodyRange(recordBaseAddr, partitionTableStart, recordSize, h);
+    }
+
+    /**
+     * Folds the byte range {@code [lo, hi)} at {@code addr} into the running polynomial hash {@code h}:
+     * 8-byte words, then a trailing 4-byte int, then trailing bytes. The result depends only on the content
+     * of the range, not on the alignment of {@code lo}.
+     */
+    private static long hashTxnBodyRange(long addr, long lo, long hi, long h) {
+        final long m = HASH_MEM_M2;
+        long i = lo;
+        // Four words per step: h * m^4 + (w0 * m^3 + w1 * m^2) + (w2 * m + w3) is the same polynomial as four
+        // one-word steps, exactly, in wrapping arithmetic. The chain through h then carries one multiply-add
+        // per 32 bytes instead of four, so a long range hashes at multiply throughput, not multiply latency.
+        for (; i + 4 * Long.BYTES <= hi; i += 4 * Long.BYTES) {
+            final long p = addr + i;
+            h = h * HASH_MEM_M2_POW4 + ((Unsafe.getLong(p) * HASH_MEM_M2_POW3 + Unsafe.getLong(p + 8) * HASH_MEM_M2_POW2)
+                    + (Unsafe.getLong(p + 16) * m + Unsafe.getLong(p + 24)));
+        }
+        for (; i + Long.BYTES <= hi; i += Long.BYTES) {
+            h = h * m + Unsafe.getLong(addr + i);
+        }
+        if (i + Integer.BYTES <= hi) {
+            h = h * m + Unsafe.getInt(addr + i);
+            i += Integer.BYTES;
+        }
+        for (; i < hi; i++) {
+            h = h * m + Unsafe.getByte(addr + i);
+        }
+        return h;
+    }
+
+    // m^terms, the weight hashTxnBodyRange gives a term followed by `terms` more.
+    private static long txnBodyHashPower(long terms) {
+        long base = HASH_MEM_M2;
+        long power = 1L;
+        while (terms != 0) {
+            if ((terms & 1) != 0) {
+                power *= base;
+            }
+            base *= base;
+            terms >>>= 1;
+        }
+        return power;
+    }
+
+    /**
+     * xxh3 64-bit avalanche finalizer, copied from {@code Hash} so the on-disk checksums stay stable
+     * whatever happens to the std Hash helpers.
+     */
+    private static long xxh3Avalanche64(long h) {
+        h ^= h >>> 37;
+        h *= XXH3_PRIME_MX1;
+        return h ^ (h >>> 32);
     }
 
     public static int changeColumnTypeInMetadata(
@@ -420,6 +714,42 @@ public final class TableUtils {
         // older than the TTL.
         final long partitionCeiling = txReader.getNextLogicalPartitionTimestamp(partitionTimestamp);
         return isOlderThanTtl(timestampDriver, partitionCeiling, maxTimestamp, ttl);
+    }
+
+    /**
+     * Rewrites {@code _meta}'s metadataVersion in place and re-stamps the checksum in the meta-format
+     * minor-version field to match. Use this rather than writing {@link #META_OFFSET_METADATA_VERSION}
+     * directly: the two fields are coupled, and breaking the coupling fails silently.
+     *
+     * <p>{@link #isMetaFormatAtLeast} trusts the stored minor version only while the low short of
+     * {@link #META_OFFSET_META_FORMAT_MINOR_VERSION} matches a checksum over (metadataVersion, columnCount).
+     * A caller that resets the metadataVersion of a table it clones or converts ({@code REBASE WAL},
+     * {@code SET TYPE WAL}) would otherwise invalidate that checksum, and every version-gated tail field
+     * would read as absent: TTL becomes 0 and the table format falls back to NATIVE.
+     *
+     * <p>The stored minor version is kept, never raised to {@link #META_FORMAT_MINOR_VERSION_LATEST}:
+     * claiming a newer format than the bytes carry would make the reader interpret never-written tail bytes
+     * as values (a zero would read as {@link CommitMode#ASYNC}, not "unset").
+     *
+     * <p>If the source's checksum does not match, its tail fields are already ignored, and the field is
+     * left as it is: recomputing it would turn whatever those bytes hold into a valid claim.
+     */
+    public static void resetMetadataVersion(MemoryMARW metaMem, long metadataVersion) {
+        final long previousMetadataVersion = metaMem.getLong(META_OFFSET_METADATA_VERSION);
+        final int minorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
+        final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
+        metaMem.putLong(META_OFFSET_METADATA_VERSION, metadataVersion);
+        if (Numbers.decodeLowShort(minorVersionField)
+                != checksumForMetaFormatMinorVersionField(previousMetadataVersion, columnCount)) {
+            return;
+        }
+        metaMem.putInt(
+                META_OFFSET_META_FORMAT_MINOR_VERSION,
+                Numbers.encodeLowHighShorts(
+                        checksumForMetaFormatMinorVersionField(metadataVersion, columnCount),
+                        Numbers.decodeHighShort(minorVersionField)
+                )
+        );
     }
 
     public static short checksumForMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
@@ -585,10 +915,14 @@ public final class TableUtils {
     }
 
     public static void createTableNameFile(MemoryMAR mem, CharSequence charSequence) {
-        mem.putStr(charSequence);
-        mem.putByte((byte) 0);
-        mem.sync(false);
-        mem.close(true, Vm.TRUNCATE_TO_POINTER);
+        try {
+            mem.putStr(charSequence);
+            mem.putByte((byte) 0);
+            mem.sync(false);
+        } finally {
+            // The memory can be a long-lived one, a SQL compiler's: a failed flush must not leave the file open in it.
+            mem.close(true, Vm.TRUNCATE_TO_POINTER);
+        }
     }
 
     public static void createTableOrMatViewInVolume(
@@ -838,6 +1172,10 @@ public final class TableUtils {
         txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);
         txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);
         txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);
+        txMem.putInt(TX_BASE_OFFSET_GEOMETRY_VERSION_A_32, 0);
+        txMem.putInt(TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_A_32, 0);
+        txMem.putInt(TX_BASE_OFFSET_GEOMETRY_VERSION_B_32, 0);
+        txMem.putInt(TX_BASE_OFFSET_GEOMETRY_VERSION_STAMP_B_32, 0);
         resetTxn(
                 txMem,
                 TX_BASE_HEADER_SIZE,
@@ -846,6 +1184,7 @@ public final class TableUtils {
                 seqTxn,
                 dataVersion,
                 partitionTableVersion,
+                0,
                 structureVersion,
                 columnVersion,
                 truncateVersion
@@ -1047,6 +1386,7 @@ public final class TableUtils {
             }
         };
     }
+
 
     public static long getO3MaxLag(TableRecordMetadata metadata, CairoEngine engine) {
         if (!metadata.isWalEnabled()) {
@@ -1359,12 +1699,18 @@ public final class TableUtils {
         return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_SYMBOL_CACHE) != 0;
     }
 
+    /**
+     * A lock reason the WAL apply machinery did not arrange itself is unsolicited - including {@link
+     * io.questdb.cairo.pool.WriterPool#OWNERSHIP_REASON_UNKNOWN}, reported while a holder is still constructing the
+     * writer and has not stamped its reason yet.
+     */
     public static boolean isUnsolicitedTableLock(String lockReason) {
-        //noinspection StringEquality
-        return lockReason != NO_LOCK_REASON
-                && !WAL_2_TABLE_WRITE_REASON.equals(lockReason)
+        return !WAL_2_TABLE_WRITE_REASON.equals(lockReason)
                 && !WAL_2_TABLE_RESUME_REASON.equals(lockReason)
-                && !getCommandName(CMD_STORAGE_POLICY).equals(lockReason);
+                && !getCommandName(CMD_STORAGE_POLICY).equals(lockReason)
+                // The compaction sweep holds the writer to land its swap the same way STORAGE POLICY does.
+                && !getCommandName(CMD_COMPOSITE_PARTITION_SWAP).equals(lockReason)
+                && !getCommandName(CMD_PARQUET_PARTITION_SWAP).equals(lockReason);
     }
 
     public static boolean isValidColumnName(CharSequence columnName, int fsFileNameLimit) {
@@ -1646,9 +1992,13 @@ public final class TableUtils {
      * @return read-write memory address
      */
     public static long mapRW(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
+        return mapRW(ff, fd, size, offset, memoryTag, ff.length(fd));
+    }
+
+    public static long mapRW(FilesFacade ff, long fd, long size, long offset, int memoryTag, long existingSize) {
         assert fd != -1;
         assert offset % Files.PAGE_SIZE == 0;
-        allocateDiskSpaceAligned(ff, fd, size + offset);
+        allocateDiskSpaceAlignedFromLength(ff, fd, size + offset, existingSize);
         return mapRWNoAlloc(ff, fd, size, offset, memoryTag);
     }
 
@@ -1802,6 +2152,52 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * Fsyncs a directory so the names created or removed in it are durable.
+     * <p>
+     * On POSIX a rename or unlink survives a power loss only after the directory itself is fsynced;
+     * fsyncing the files inside it does not do that. Call this between publishing a new name and anything
+     * that makes a pointer to it durable, or that removes the name it replaced.
+     * <p>
+     * Fail-stop: an unopenable directory or a failed fsync throws ({@link #openRONoCache} and
+     * {@link FilesFacade#fsyncAndClose} both throw), because a silently skipped barrier cannot be told
+     * apart from a missing one. Skipped on a restricted (Windows) file system, which cannot open a
+     * directory for fsync.
+     */
+    public static void fsyncDirDurable(FilesFacade ff, LPSZ dirPath) {
+        if (ff.isRestrictedFileSystem()) {
+            return;
+        }
+        ff.fsyncAndClose(openRONoCache(ff, dirPath, LOG));
+    }
+
+    /**
+     * Fsyncs a file that a durable pointer is about to name, opening it only for the barrier.
+     * <p>
+     * The handle is opened read-write because Windows requires it: {@code fsync} there is
+     * {@code FlushFileBuffers}, which needs {@code GENERIC_WRITE} on the handle and returns
+     * {@code ERROR_ACCESS_DENIED} (errno 5) for the read-only handle {@link #openRONoCache} produces. A
+     * POSIX read-only fd fsyncs fine, so a read-only barrier would work on Linux and fail on Windows.
+     * <p>
+     * Unlike {@link #fsyncDirDurable} this runs on a restricted file system too: a directory barrier is
+     * impossible on Windows, a file barrier is not.
+     * <p>
+     * Fail-stop: a missing file, an unopenable one, or a failed fsync throws, because a silently skipped
+     * barrier cannot be told apart from a missing one. The open never creates the file, so a vanished data file
+     * fails here instead of coming back empty.
+     */
+    public static void fsyncFileDurable(FilesFacade ff, LPSZ path) {
+        final long fd = ff.openRWExisting(path);
+        if (fd < 0) {
+            final int errno = ff.errno();
+            if (Files.isErrnoFileDoesNotExist(errno)) {
+                throw CairoException.critical(errno).put("could not open, file does not exist: ").put(path).put(']');
+            }
+            throw CairoException.critical(errno).put("could not open read-write for fsync [file=").put(path).put(']');
+        }
+        ff.fsyncAndClose(fd);
+    }
+
     public static long openRONoCache(FilesFacade ff, LPSZ path, Log log) {
         final long fd = ff.openRONoCache(path);
         if (fd > -1) {
@@ -1839,9 +2235,12 @@ public final class TableUtils {
         // so very limited circumstances.
         Path nameFilePath = tablePath.concat(TABLE_NAME_FILE);
         memory.smallFile(ff, nameFilePath.$(), MemoryTag.MMAP_TABLE_WRITER);
-        memory.jumpTo(0);
-        createTableNameFile(memory, tableName);
-        memory.close(true, Vm.TRUNCATE_TO_POINTER);
+        try {
+            memory.jumpTo(0);
+            createTableNameFile(memory, tableName);
+        } finally {
+            memory.close(true, Vm.TRUNCATE_TO_POINTER);
+        }
     }
 
     /**
@@ -1927,6 +2326,7 @@ public final class TableUtils {
      * @param columnVersionReader Column version reader (or writer, which extends reader)
      * @param symbolTableProvider Symbol table provider
      * @param configuration       Cairo configuration for parquet encoder options
+     * @param commitMode          effective commit mode of the owning table
      * @param bloomFilterColumns  Comma-separated column names for bloom filters, or null
      * @param bloomFilterFpp      Bloom filter false-positive probability, or NaN for default
      * @param bloomFilterIndexes  Reusable DirectIntList for bloom filter column indexes. Must be non-null;
@@ -1948,6 +2348,7 @@ public final class TableUtils {
             ColumnVersionReader columnVersionReader,
             SymbolTableProvider symbolTableProvider,
             CairoConfiguration configuration,
+            int commitMode,
             @Nullable CharSequence bloomFilterColumns,
             double bloomFilterFpp,
             DirectIntList bloomFilterIndexes,
@@ -2174,8 +2575,12 @@ public final class TableUtils {
                 // a parquet_meta_file_size that resolves only if the _pm bytes survive a
                 // crash. fsync the parent dir too because _pm is a brand-new file in a
                 // brand-new partition directory.
-                final int commitMode = configuration.getCommitMode();
                 if (commitMode != CommitMode.NOSYNC) {
+                    if (CommitMode.isPowerLossDurable(commitMode)) {
+                        // fsync data.parquet before _pm (data before metadata, mirrors syncColumns0 ordering)
+                        setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                        fsyncFileDurable(ff, other.$());
+                    }
                     ff.fsync(parquetMetaFd);
                     if (!Os.isWindows()) {
                         setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
@@ -2242,6 +2647,7 @@ public final class TableUtils {
             SymbolTableProvider symbolTableProvider,
             CairoConfiguration configuration,
             ParquetConversionContext conversionContext,
+            int flushCommitMode,
             long seqTxn
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
@@ -2375,7 +2781,7 @@ public final class TableUtils {
             }
 
             final long resultParquetSize = partitionUpdater.updateFileMetadata();
-            partitionUpdater.commitParquetMeta(configuration.getCommitMode() != CommitMode.NOSYNC);
+            partitionUpdater.commitParquetMeta(flushCommitMode != CommitMode.NOSYNC);
             return resultParquetSize;
         } catch (Throwable th) {
             // Close Rust-owned descriptors before removing candidates, especially on Windows.
@@ -2534,6 +2940,85 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * {@link FilesFacade#renameDurable(LPSZ, LPSZ)} under a commit mode that asks for durability, a plain rename
+     * under {@link CommitMode#NOSYNC}. Each publish site pairs its rename with a {@link #fsyncDirDurable} of the
+     * parent, which makes the new name durable on POSIX but is skipped on a restricted (Windows) file system; there
+     * the durable rename makes the move itself durable. Use at publish sites whose companion directory fsync is
+     * itself mode-conditional, so NOSYNC keeps costing nothing.
+     */
+    public static int renamePublish(FilesFacade ff, LPSZ src, LPSZ dst, int commitMode) {
+        return commitMode == CommitMode.NOSYNC ? ff.rename(src, dst) : ff.renameDurable(src, dst);
+    }
+
+    /**
+     * Replaces {@code dst}'s content with {@code src}'s. On POSIX this happens in place, so the destination
+     * keeps its identity: anything holding it open or mapped sees the new bytes, and it never stops
+     * existing. Windows takes an unlink-then-copy route instead (see the branch at the top of the method).
+     * <p>
+     * {@link FilesFacade#copy(LPSZ, LPSZ)} cannot do this portably: on POSIX it is {@code creat(O_TRUNC)}
+     * and replaces the destination, while on Windows it is {@code CopyFileW(.., bFailIfExists=TRUE)} and
+     * fails with {@link Files#WINDOWS_ERROR_FILE_EXISTS} when the destination exists.
+     * <p>
+     * Deleting the destination first (as {@code TableWriter#copyOverwrite} does) would open a window in
+     * which the file is absent, a crash state no recovery here handles. Truncate-then-transfer adds no new
+     * state: a crash mid-transfer leaves the destination short or torn, as the POSIX {@code creat(O_TRUNC)}
+     * copy does, and every caller re-derives it from its immutable source when it runs again.
+     * <p>
+     * Fail-stop throughout: a failed open, truncate or transfer throws, and both fds are closed on the way
+     * out.
+     */
+    @TestOnly
+    public static void replaceFileContent(FilesFacade ff, LPSZ src, LPSZ dst, int fileOpenOpts) {
+        if (Os.isWindows()) {
+            // Windows takes the unlink-then-copy route, because the in-place variant below is not safe there:
+            // a file cannot be shrunk while a mapping of it is live, and touching such a mapping afterwards is
+            // an access violation that kills the process rather than throwing. This loses the destination's
+            // identity, so a live mapping keeps the old bytes, and the file is absent for a moment.
+            // removeQuiet fails on an open or mapped file, so a destination someone holds fail-stops here
+            // rather than being replaced.
+            //
+            // Absence is checked with exists() rather than with errno, which a fault-injecting facade may pin
+            // to any value: an open, mapped or locked destination still exists after the failed remove, so it
+            // still throws.
+            if (!ff.removeQuiet(dst) && ff.exists(dst)) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not remove copy destination [dst=").put(dst).put(']');
+            }
+            if (ff.copy(src, dst) < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not copy file [src=").put(src).put(", dst=").put(dst).put(']');
+            }
+            return;
+        }
+        final long srcFd = openRO(ff, src, LOG);
+        try {
+            final long size = ff.length(srcFd);
+            if (size < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not read size of copy source [src=").put(src).put(']');
+            }
+            final long dstFd = openRW(ff, dst, LOG, fileOpenOpts);
+            try {
+                // Truncate first so a stale tail cannot survive a shorter replacement, as O_TRUNC does.
+                if (!ff.truncate(dstFd, 0)) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not truncate copy destination [dst=").put(dst).put(']');
+                }
+                final long copied = size > 0 ? ff.copyData(srcFd, dstFd, 0, size) : 0;
+                if (copied != size) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not copy file content [src=").put(src).put(", dst=").put(dst)
+                            .put(", size=").put(size).put(", copied=").put(copied).put(']');
+                }
+            } finally {
+                ff.close(dstFd);
+            }
+        } finally {
+            ff.close(srcFd);
+        }
+    }
+
     public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MemoryMARW mem) {
         mem.smallFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
         mem.jumpTo(0);
@@ -2556,6 +3041,7 @@ public final class TableUtils {
             long seqTxn,
             long dataVersion,
             long partitionTableVersion,
+            int geometryVersion,
             long structureVersion,
             long columnVersion,
             long truncateVersion
@@ -2583,6 +3069,7 @@ public final class TableUtils {
         txMem.putLong(baseOffset + TX_OFFSET_TRUNCATE_VERSION_64, truncateVersion);
         // sequencer txn
         txMem.putLong(baseOffset + TX_OFFSET_SEQ_TXN_64, seqTxn);
+        txMem.putInt(baseOffset + TX_OFFSET_GEOMETRY_VERSION_32, geometryVersion);
 
         txMem.putInt(baseOffset + TX_OFFSET_MAP_WRITER_COUNT_32, symbolMapCount);
 
@@ -2591,6 +3078,11 @@ public final class TableUtils {
         txMem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
         txMem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
         txMem.putInt(baseOffset + TX_OFFSET_CHECKSUM_32, EMPTY_TABLE_LAG_CHECKSUM);
+
+        // This reset record uses the legacy in-body geometry field until finishABHeader() publishes the
+        // base-header geometry slot and a body checksum. Clear the body-checksum stamp so readers do not
+        // interpret the geometry bytes as a checksum.
+        txMem.putInt(baseOffset + TX_OFFSET_BODY_CHECKSUM_STAMP_32, 0);
 
         for (int i = 0; i < symbolMapCount; i++) {
             long offset = getSymbolWriterIndexOffset(i);
@@ -2857,7 +3349,7 @@ public final class TableUtils {
     ) {
         try {
             final long memSize = checkMemSize(metaMem, META_OFFSET_COLUMN_TYPES);
-            validateMetaVersion(metaPath, metaMem, META_OFFSET_VERSION, expectedVersion);
+            validateMetaVersion(metaPath, metaMem, META_OFFSET_VERSION, expectedVersion, ColumnType.MAX_STORAGE_VERSION);
             final int columnCount = getColumnCount(metaPath, metaMem, META_OFFSET_COUNT);
 
             long offset = getColumnNameOffset(columnCount);
@@ -2936,8 +3428,20 @@ public final class TableUtils {
     }
 
     public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion) {
+        // Exact-version check for metadata whose version has a single supported value, such as the
+        // sequencer WAL format version. Table metadata that may carry the composite storage marker
+        // must use the range overload below; do not widen this one, it also guards the WAL format.
+        validateMetaVersion(metaPath, metaMem, metaVersionOffset, expectedVersion, expectedVersion);
+    }
+
+    public static void validateMetaVersion(Utf8Sequence metaPath, MemoryMR metaMem, long metaVersionOffset, int expectedVersion, int maxVersion) {
         final int metaVersion = metaMem.getInt(metaVersionOffset);
-        if (expectedVersion != metaVersion) {
+        // A table that currently holds composite partitions carries ColumnType.MAX_STORAGE_VERSION
+        // rather than ColumnType.VERSION; both are readable by this binary, so accept the whole
+        // [expectedVersion, maxVersion] range. A version below expectedVersion is a table
+        // that predates a migration (migrations bring it up before it is opened), and a version
+        // above maxVersion comes from a newer binary this one cannot read.
+        if (metaVersion < expectedVersion || metaVersion > maxVersion) {
             throw CairoException.metadataVersionMismatch(metaPath, expectedVersion, metaVersion);
         }
     }
@@ -3085,6 +3589,30 @@ public final class TableUtils {
                     mem.putInt(coveringIndices.getQuick(ci));
                 }
             }
+        }
+    }
+
+    private static long allocateDiskSpace(FilesFacade ff, long fd, long allocatedHi, long size, long allocateTo) {
+        final long length = ff.length(fd);
+        if (length < 0) {
+            throw CairoException.critical(ff.errno()).put("could not read file size [fd=").put(fd).put(']');
+        }
+        if (length >= size) {
+            return allocatedHi;
+        }
+        // Below min(allocatedHi, length) the file was backed by this caller; a shrink since leaves no holes.
+        if (!ff.allocate(fd, Math.min(allocatedHi, length), allocateTo)) {
+            throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
+        }
+        return allocateTo;
+    }
+
+    /**
+     * Like {@link #allocateDiskSpaceAligned(FilesFacade, long, long)}, with the file length the caller already sampled.
+     */
+    private static void allocateDiskSpaceAlignedFromLength(FilesFacade ff, long fd, long size, long existingSize) {
+        if (existingSize < size && !ff.allocate(fd, alignedSize(size))) {
+            throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
     }
 

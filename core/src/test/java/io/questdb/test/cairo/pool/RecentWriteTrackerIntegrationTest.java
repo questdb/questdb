@@ -124,6 +124,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     public void testDedupCountNotInflatedBySkippedReplaceRange() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 1);
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 1);
             execute("CREATE TABLE wa_dedup (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
             engine.getRecentWriteTracker().clear();
 
@@ -342,6 +343,51 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
             Assert.assertEquals("third_table should be first (most recent)", "third_table", recent.get(0).getTableName());
             Assert.assertEquals("second_table should be second", "second_table", recent.get(1).getTableName());
             Assert.assertEquals("first_table should be third (oldest)", "first_table", recent.get(2).getTableName());
+        });
+    }
+
+    /**
+     * A writer that drops a WAL lag applies its transactions again: after it reopens, and before a change outside
+     * the WAL. Their rows leave wal_pending_row_count once, when they first enter the lag.
+     */
+    @Test
+    public void testPendingWalRowCountAfterReplay() throws Exception {
+        assertMemoryLeak(() -> {
+            // A merge-append table keeps no WAL lag, and the suite turns merge-append on.
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+            // Only a one-txn block keeps lag. With cairo.wal.apply.block.size on, the block row limit dwarfs the
+            // 1,000-row txn, so the out-of-order txn would join it in one block and commit it in full.
+            setProperty(PropertyKey.DEBUG_WAL_APPLY_MAX_TXN_BLOCK_SIZE, 1);
+            for (String table : new String[]{"lag_reopen", "lag_outside_wal"}) {
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+                execute("CREATE TABLE " + table + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL WITH maxUncommittedRows=50");
+                execute("INSERT INTO " + table + " VALUES ('2022-02-24', 1), ('2022-02-25', 2)");
+                drainWalQueue();
+                // the 1,000 rows fill the lag; the out-of-order row, through a second WAL, keeps them there
+                execute("INSERT INTO " + table + " SELECT timestamp_sequence('2022-02-25T01:00', 1_000_000L), x FROM long_sequence(1_000)");
+                try (WalWriter ignore = engine.getWalWriter(engine.verifyTableName(table))) {
+                    execute("INSERT INTO " + table + " VALUES ('2022-02-25T00:30', -1)");
+                }
+                tickWalQueue(1);
+                assertQuery("SELECT wal_pending_row_count FROM tables() WHERE table_name = '" + table + "'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("wal_pending_row_count\n1\n");
+                if (table.equals("lag_reopen")) {
+                    engine.releaseAllWriters();
+                } else {
+                    execute("ALTER TABLE " + table + " FORCE DROP PARTITION LIST '2022-02-24'");
+                }
+                setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, -1);
+                drainWalQueue();
+            }
+            assertQuery("SELECT table_name, table_row_count, wal_pending_row_count FROM tables() WHERE table_name IN ('lag_reopen', 'lag_outside_wal') ORDER BY table_name")
+                    .noLeakCheck()
+                    .returns("""
+                            table_name\ttable_row_count\twal_pending_row_count
+                            lag_outside_wal\t1002\t0
+                            lag_reopen\t1003\t0
+                            """);
         });
     }
 
@@ -818,6 +864,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     public void testWriteAmpNotInflatedBySkippedReplaceRange() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 1);
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 1);
             execute("CREATE TABLE wa_skip (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
             engine.getRecentWriteTracker().clear();
 
@@ -894,6 +941,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     public void testWriteAmpNotInflatedBySkippedTruncate() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_WAL_MAX_LAG_SIZE, 1);
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 1);
             execute("CREATE TABLE wa_truncate_skip (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             TableToken tt = engine.verifyTableName("wa_truncate_skip");
