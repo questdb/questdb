@@ -14,6 +14,9 @@ no-default-features = false
 ignore = [
     { id = "RUSTSEC-2024-0375", reason = "atty is a transitive dev-dependency of criterion, not shipped" },
     { id = "RUSTSEC-2024-0436", reason = "paste is a transitive dev-dependency of parquet, not shipped" },
+    { id = "RUSTSEC-2026-0391", reason = "zstd 0.13 is a transitive dev-dependency of parquet, not shipped" },
+    { id = "RUSTSEC-2026-0398", reason = "zstd-safe 7 is a transitive dev-dependency of parquet, not shipped" },
+    { id = "RUSTSEC-2026-0403", reason = "zstd-safe 7 is a transitive dev-dependency of parquet, not shipped" },
 ]
 
 [licenses]
