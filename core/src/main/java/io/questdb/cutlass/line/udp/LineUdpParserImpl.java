@@ -637,6 +637,9 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
         this.metadata = null;
 
         if (entry.writer == null) {
+            // The previous table's writer is on the commit list. A table left without a writer must not take the
+            // same-table shortcut into it on its next line.
+            writer = null;
             initCacheEntry(tableName, entry);
         } else {
             createState(entry);

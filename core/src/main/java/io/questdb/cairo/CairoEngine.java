@@ -96,12 +96,15 @@ import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cairo.wal.DefaultDurableAckRegistry;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
+import io.questdb.cairo.wal.LocalDurableAckRegistry;
 import io.questdb.cairo.wal.DefaultWalListener;
 import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cairo.wal.QdbrWalLocker;
 import io.questdb.cairo.wal.UnsupportedWalTxnTypeHandler;
 import io.questdb.cairo.wal.ViewWalWriter;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
+import io.questdb.cairo.wal.WalGroupCommitFlushQueue;
 import io.questdb.cairo.wal.WalEventReader;
 import io.questdb.cairo.wal.WalListener;
 import io.questdb.cairo.wal.WalLocker;
@@ -188,19 +191,70 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.Lock;
 import java.util.function.LongConsumer;
 
 import static io.questdb.griffin.CompiledQuery.*;
 
 public class CairoEngine implements Closeable, WriterSource {
+    /**
+     * Runs once, on the first fatal flush failure of the engine, after the engine has fenced further writes,
+     * acknowledgements, purge and CHECKPOINT CREATE, and before the failure site throws. Entry points guarded by
+     * {@link #throwIfDurabilityFailed()} refuse further work with {@link CairoError}. Production
+     * ({@code ServerMain}) halts the process here, without closing writers. The default handler returns: an
+     * embedded engine or a test JVM keeps the fence as its stop, and the embedder closes the engine, fixes the
+     * cause and constructs a new one; nothing past the failure was acknowledged, and the new engine recovers as a
+     * restart does. The engine never closes itself from here, since the callback runs inside a flush, under writer
+     * monitors or the sequencer lock, and a library never halts its host.
+     */
+    @FunctionalInterface
+    public interface DurabilityFailureHandler {
+        void onFailure(DurabilityFailure failure);
+    }
+
+    public static final class DurabilityFailure {
+        private final int errno;
+        private final String message;
+        private final String operation;
+
+        private DurabilityFailure(int errno, String operation, String message) {
+            this.errno = errno;
+            this.operation = operation;
+            this.message = message;
+        }
+
+        @TestOnly
+        public int getErrno() {
+            return errno;
+        }
+
+        @TestOnly
+        public String getMessage() {
+            return message;
+        }
+
+        @TestOnly
+        public String getOperation() {
+            return operation;
+        }
+
+        @Override
+        public String toString() {
+            return "operation=" + operation + ", errno=" + errno + ", message=" + message;
+        }
+    }
+
     public static final String REASON_BUSY_READER = "busyReader";
     public static final String REASON_BUSY_SEQUENCER_METADATA_POOL = "busySequencerMetaPool";
     public static final String REASON_BUSY_TABLE_READER_METADATA_POOL = "busyTableReaderMetaPool";
     public static final String REASON_CHECKPOINT_IN_PROGRESS = "checkpointInProgress";
     private static final Log LOG = LogFactory.getLog(CairoEngine.class);
+    // Every engine between construction and close: a failed flush is told to the engines whose files facade ran it.
+    private static final CopyOnWriteArrayList<CairoEngine> LIVE_ENGINES = new CopyOnWriteArrayList<>();
     // Hard cap on TableReferenceOutOfDateException recompile retries in execute(). A
     // healthy table converges in 1-2 retries; an unbounded loop here turns a permanent
     // metadata/token mismatch into a silent infinite hang (see PR #7031 CI timeout).
@@ -248,13 +302,20 @@ public class CairoEngine implements Closeable, WriterSource {
     private final ConcurrentHashMap<TableToken> createTableLock = new ConcurrentHashMap<>();
     private final DataID dataID;
     private final DependentViewGraph dependentViewGraph;
+    private final AtomicReference<DurabilityFailure> durabilityFailure = new AtomicReference<>();
     private final FunctionFactoryCache ffCache;
     private final LiveViewRegistry liveViewRegistry = new LiveViewRegistry();
+    // Bumped by every setLocalDurabilityPolicy(), after the new policy is published. A TableWriter compares it
+    // with the version it last reconciled its adaptive durable-epoch anchor against, so it re-checks the anchor
+    // after any role change, including a demote and promote that both land between two of its apply batches.
+    private final AtomicLong localDurabilityPolicyVersion = new AtomicLong();
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
     private final Metrics metrics;
     private final PartitionCompactionRequestQueue partitionCompactionRequestQueue = new PartitionCompactionRequestQueue(PARTITION_COMPACTION_REQUEST_QUEUE_CAPACITY);
     private final PartitionOverwriteControl partitionOverwriteControl = new PartitionOverwriteControl();
+    // Tables, by directory name, that a writer has opened in this process; see isPartitionPurgeSafe().
+    private final ConcurrentHashMap<TableToken> partitionPurgeSafeTables = new ConcurrentHashMap<>();
     private final QueryRegistry queryRegistry;
     private final ReaderPool readerPool;
     private final RecentWriteTracker recentWriteTracker;
@@ -306,11 +367,21 @@ public class CairoEngine implements Closeable, WriterSource {
     // (DefaultDdlListener.INSTANCE on REPLICA, EntDdlListener instance on PRIMARY) and read by
     // SqlCompilerImpl on worker threads. Matches the sibling volatile durableAckRegistry.
     private volatile @NotNull DdlListener ddlListener = DefaultDdlListener.INSTANCE;
-    private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
+    // The standalone/test-engine default only fences the engine; handleDataSyncFailure still throws a
+    // CairoError if this callback returns. ServerMain installs the production hard-halt callback.
+    private volatile @NotNull DurabilityFailureHandler durabilityFailureHandler = failure -> {
+    };
+    // The constructor sets it to a LocalDurableAckRegistry, which needs `this`; Enterprise replaces it through
+    // setDurableAckRegistry.
+    private volatile @NotNull DurableAckRegistry durableAckRegistry;
     private FrameFactory frameFactory;
     private volatile boolean isCompleteInitDone;
     private boolean isSqlExecutionCooperativePollingEnabled;
     private @NotNull LiveViewStateStore liveViewStateStore = NoOpLiveViewStateStore.INSTANCE;
+    // Governs the adaptive durable epoch on the apply side (ApplyWal2TableJob.maybeAdvanceDurableEpoch).
+    // ALWAYS_ON unless Enterprise installs REPLICA_SKIP while the node is a live replica. Role changes swap it on
+    // the lifecycle thread and apply workers read it, hence volatile.
+    private volatile @NotNull LocalDurabilityPolicy localDurabilityPolicy = LocalDurabilityPolicy.ALWAYS_ON;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     // Lazily initialized on first call to getMemoryTrackerProvider(), because the
     // FactoryProvider that produces it is not bound until config.init(engine, ...)
@@ -333,6 +404,10 @@ public class CairoEngine implements Closeable, WriterSource {
     // implicit fence between writer and readers.
     private volatile @NotNull WalListener walListener = DefaultWalListener.INSTANCE;
     private @NotNull WalLocker walLocker;
+    // WAL writers whose last commit still awaits its device flush, under a group-commit window above 0. The
+    // WalPurgeJob flusher sweeps it, so an idle writer's last commit becomes durable within the window. Empty
+    // when the window is 0.
+    private final WalGroupCommitFlushQueue walGroupCommitFlushQueue = new WalGroupCommitFlushQueue();
 
     public CairoEngine(CairoConfiguration configuration) {
         this(configuration, new QdbrWalLocker());
@@ -359,14 +434,27 @@ public class CairoEngine implements Closeable, WriterSource {
      * {@code completeInit=true} so all existing call sites are unaffected.
      */
     public CairoEngine(CairoConfiguration configuration, @NotNull WalLocker walLocker, boolean completeInit) {
+        this(configuration, walLocker, completeInit, failure -> {
+        });
+    }
+
+    public CairoEngine(
+            CairoConfiguration configuration,
+            @NotNull WalLocker walLocker,
+            boolean completeInit,
+            @NotNull DurabilityFailureHandler durabilityFailureHandler
+    ) {
+        this.durabilityFailureHandler = durabilityFailureHandler;
         try {
             this.walLocker = walLocker;
             this.ffCache = new FunctionFactoryCache(configuration, getFunctionFactories());
             this.tableFlagResolver = newTableFlagResolver(configuration);
             this.configuration = configuration;
+            LIVE_ENGINES.add(this);
             this.copyImportContext = new CopyImportContext(this, configuration);
             this.copyExportContext = new CopyExportContext(this);
             this.tableSequencerAPI = new TableSequencerAPI(this, configuration);
+            this.durableAckRegistry = new LocalDurableAckRegistry(this);
             // Timer waits run independently of worker pools.
             this.timerShards = new TimerShards(
                     configuration.getTimerShardCount(),
@@ -379,7 +467,8 @@ public class CairoEngine implements Closeable, WriterSource {
             // Message bus and metrics must be initialized before the pools.
             this.recentWriteTracker = new RecentWriteTracker(configuration.getRecentWriteTrackerCapacity());
             this.writerPool = new WriterPool(configuration, this, recentWriteTracker);
-            this.scoreboardPool = new TxnScoreboardPoolV2(configuration);
+            // The adaptive durable-epoch pin outlives any pooled scoreboard instance: see restoreEpochPin().
+            this.scoreboardPool = new TxnScoreboardPoolV2(configuration, this::restoreEpochPin);
             this.readerPool = new ReaderPool(configuration, scoreboardPool, messageBus, partitionOverwriteControl);
             this.sequencerMetadataPool = new SequencerMetadataPool(configuration, this);
             this.tableMetadataPool = new TableMetadataPool(configuration);
@@ -520,6 +609,34 @@ public class CairoEngine implements Closeable, WriterSource {
         if (f.checkpointFunctionIdentity() == null || f.checkpointDependency() == null) {
             throw SqlException.$(position, "live view checkpoint compiler metadata is missing for window function ")
                     .put(f.getName()).put("()");
+        }
+    }
+
+    /**
+     * Tells the engine that owns a failed flush the moment {@link CairoException#dataSyncFailure} creates it; it
+     * decides by its own commit mode ({@link #isDataSyncFailureFatal(Throwable)}). The owner is an engine whose files
+     * facade is {@code ff} and whose roots hold {@code path}, so engines that share one facade object (a primary and
+     * a replica in one JVM) hear only their own failures. When the path is not known, or no such engine holds it,
+     * every engine on {@code ff} is told, so a stop is never lost. In production the stop halts the process here,
+     * before any caller can retry the flush or lose the error.
+     */
+    static void recordDataSyncFailure(FilesFacade ff, @Nullable CharSequence path, CairoException failure) {
+        // The snapshot iterators and the root lookups allocate, on a failure only.
+        boolean isOwned = false;
+        if (path != null) {
+            for (CairoEngine engine : LIVE_ENGINES) {
+                if (engine.configuration.getFilesFacade() == ff && engine.holdsPath(path)) {
+                    isOwned = true;
+                    break;
+                }
+            }
+        }
+        for (CairoEngine engine : LIVE_ENGINES) {
+            if (engine.configuration.getFilesFacade() == ff
+                    && (!isOwned || engine.holdsPath(path))
+                    && engine.isDataSyncFailureFatal(failure)) {
+                engine.poisonEngine(failure);
+            }
         }
     }
 
@@ -1203,6 +1320,9 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, boolean isIncrementalBackup) throws SqlException {
+        // A checkpoint copies the tables' state, and an Enterprise incremental backup takes one without the final
+        // sync(): neither may copy a state whose flush failed. checkpointRelease stays open, it only releases.
+        throwIfDurabilityFailed();
         checkpointAgent.checkpointCreate(circuitBreaker, false, isIncrementalBackup);
     }
 
@@ -1210,7 +1330,19 @@ public class CairoEngine implements Closeable, WriterSource {
      * Recovers database from checkpoint after restoring data from a snapshot.
      */
     public final void checkpointRecover() {
-        checkpointAgent.recover();
+        try {
+            checkpointAgent.recover();
+            // Startup calls this before completeInit is done, and completeInit completes the restore only after
+            // adaptive recovery. A later call completes it here.
+            if (isCompleteInitDone) {
+                tableNameRegistry.reload();
+                new RecoveryCoordinator(this).recover();
+                checkpointAgent.completeRecovery();
+            }
+        } catch (Throwable th) {
+            handleDataSyncFailure(th);
+            throw th;
+        }
     }
 
     public void checkpointRelease() throws SqlException {
@@ -1258,49 +1390,70 @@ public class CairoEngine implements Closeable, WriterSource {
 
     @Override
     public void close() {
-        if (timerShards != null) {
-            assert closing || timerShards.size() == 0
-                    : "close() reached with parked continuations but without a prior signalClose(); they will be stranded";
-            timerShards.halt();
+        // Every step runs even when an earlier one throws (a pooled writer's close can raise a fatal flush
+        // failure): the first failure is thrown last, later ones are attached to it as suppressed.
+        Throwable failure = null;
+        try {
+            if (timerShards != null) {
+                assert closing || timerShards.size() == 0
+                        : "close() reached with parked continuations but without a prior signalClose(); they will be stranded";
+                try {
+                    timerShards.halt();
+                } catch (Throwable th) {
+                    failure = Misc.foldCleanupFailure(failure, th);
+                }
+            }
+            // Return any base-table readers pinned by an in-flight seed sweep to the
+            // reader pool before it is freed below, so the pool teardown does not report
+            // a still-borrowed reader as left behind. Safe here: close() runs after the
+            // refresh workers have stopped, so no sweep turn is reading from them.
+            // Same for a localized out-of-order repair that yielded between refresh
+            // turns: it holds a pinned base reader, a live-view WAL writer carrying an
+            // uncommitted replacement, and a staged temporary data segment, none of
+            // which can outlive the pools below.
+            try {
+                liveViewRegistry.discardSuspendedRepairs();
+            } catch (Throwable th) {
+                failure = Misc.foldCleanupFailure(failure, th);
+            }
+            try {
+                liveViewRegistry.freeSeedBaseReaders();
+            } catch (Throwable th) {
+                failure = Misc.foldCleanupFailure(failure, th);
+            }
+            // Free the live-view state ABOVE the pools rather than below them. Every pooled handle a
+            // live view can hold - base readers, live-view WAL writers - is returned by this free, so
+            // ordering it here makes the teardown correct by construction instead of resting on the
+            // hand-maintained pre-release calls above. clear() already sequences it this way; adding
+            // one pooled handle to LiveViewInstance would otherwise turn the old order into a
+            // use-after-free that no test catches.
+            failure = Misc.freeBestEffort(failure, liveViewRegistry);
+            failure = Misc.freeBestEffort(failure, liveViewStateStore);
+            failure = Misc.freeBestEffort(failure, sqlCompilerPool);
+            failure = Misc.freeBestEffort(failure, writerPool);
+            failure = Misc.freeBestEffort(failure, readerPool);
+            failure = Misc.freeBestEffort(failure, sequencerMetadataPool);
+            failure = Misc.freeBestEffort(failure, tableMetadataPool);
+            failure = Misc.freeBestEffort(failure, walWriterPool);
+            failure = Misc.freeBestEffort(failure, viewWalWriterPool);
+            failure = Misc.freeBestEffort(failure, tableIdGenerator);
+            failure = Misc.freeBestEffort(failure, messageBus);
+            failure = Misc.freeBestEffort(failure, tableSequencerAPI);
+            failure = Misc.freeObjListBestEffort(failure, telemetries);
+            failure = Misc.freeBestEffort(failure, tableNameRegistry);
+            failure = Misc.freeBestEffort(failure, checkpointAgent);
+            failure = Misc.freeBestEffort(failure, metadataCache);
+            failure = Misc.freeBestEffort(failure, scoreboardPool);
+            failure = Misc.freeBestEffort(failure, matViewStateStore);
+            failure = Misc.freeBestEffort(failure, settingsStore);
+            failure = Misc.freeBestEffort(failure, frameFactory);
+            failure = Misc.freeBestEffort(failure, walLocker);
+            failure = Misc.freeBestEffort(failure, memoryTrackerProvider);
+        } finally {
+            // also when a free above throws, so a closed engine never hears a failure
+            LIVE_ENGINES.remove(this);
         }
-        // Return any base-table readers pinned by an in-flight seed sweep to the
-        // reader pool before it is freed below, so the pool teardown does not report
-        // a still-borrowed reader as left behind. Safe here: close() runs after the
-        // refresh workers have stopped, so no sweep turn is reading from them.
-        // Same for a localized out-of-order repair that yielded between refresh
-        // turns: it holds a pinned base reader, a live-view WAL writer carrying an
-        // uncommitted replacement, and a staged temporary data segment, none of
-        // which can outlive the pools below.
-        liveViewRegistry.discardSuspendedRepairs();
-        liveViewRegistry.freeSeedBaseReaders();
-        // Free the live-view state ABOVE the pools rather than below them. Every pooled handle a
-        // live view can hold - base readers, live-view WAL writers - is returned by this free, so
-        // ordering it here makes the teardown correct by construction instead of resting on the
-        // hand-maintained pre-release calls above. clear() already sequences it this way; adding
-        // one pooled handle to LiveViewInstance would otherwise turn the old order into a
-        // use-after-free that no test catches.
-        Misc.free(liveViewRegistry);
-        Misc.free(liveViewStateStore);
-        Misc.free(sqlCompilerPool);
-        Misc.free(writerPool);
-        Misc.free(readerPool);
-        Misc.free(sequencerMetadataPool);
-        Misc.free(tableMetadataPool);
-        Misc.free(walWriterPool);
-        Misc.free(viewWalWriterPool);
-        Misc.free(tableIdGenerator);
-        Misc.free(messageBus);
-        Misc.free(tableSequencerAPI);
-        Misc.freeObjList(telemetries);
-        Misc.free(tableNameRegistry);
-        Misc.free(checkpointAgent);
-        Misc.free(metadataCache);
-        Misc.free(scoreboardPool);
-        Misc.free(matViewStateStore);
-        Misc.free(settingsStore);
-        Misc.free(frameFactory);
-        Misc.free(walLocker);
-        Misc.free(memoryTrackerProvider);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @TestOnly
@@ -1331,6 +1484,17 @@ public class CairoEngine implements Closeable, WriterSource {
         EngineMigration.migrateEngineTo(this, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
         tableNameRegistry = createTableNameRegistry(configuration, tableFlagResolver);
         tableNameRegistry.reload();
+        // Adaptive recovery runs after the table registry loads, so tables are enumerable, and before any WAL
+        // apply or table open. For each WAL table with a save point it restores _txn, _cv and _meta from it, and
+        // WAL apply then replays (epoch.seqTxn, frontier]. Outside adaptive it removes the save point.
+        new RecoveryCoordinator(this).recover();
+        // Remove the restore trigger and checkpoint only after recovery: a crash before this repeats the restore.
+        try {
+            checkpointAgent.completeRecovery();
+        } catch (Throwable th) {
+            handleDataSyncFailure(th);
+            throw th;
+        }
         this.sqlCompilerPool = new SqlCompilerPool(this);
         if (configuration.isPartitionO3OverwriteControlEnabled()) {
             enablePartitionOverwriteControl();
@@ -2170,7 +2334,12 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public @NotNull DurableAckRegistry getDurableAckRegistry() {
-        return durableAckRegistry;
+        return isDurabilityFailed() ? DefaultDurableAckRegistry.INSTANCE : durableAckRegistry;
+    }
+
+    @TestOnly
+    public @Nullable DurabilityFailure getDurabilityFailure() {
+        return durabilityFailure.get();
     }
 
     public FrameFactory getFrameFactory() {
@@ -2206,6 +2375,19 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public LiveViewStateStore getLiveViewStateStore() {
         return liveViewStateStore;
+    }
+
+    public @NotNull LocalDurabilityPolicy getLocalDurabilityPolicy() {
+        return localDurabilityPolicy;
+    }
+
+    /**
+     * Changes on every {@link #setLocalDurabilityPolicy} call. Read it before {@link #getLocalDurabilityPolicy()}:
+     * the version is bumped after the policy is published, so a reader that sees a version also sees a policy at
+     * least as new as the one that version stands for.
+     */
+    public long getLocalDurabilityPolicyVersion() {
+        return localDurabilityPolicyVersion.get();
     }
 
     public @NotNull MatViewStateStore getMatViewStateStore() {
@@ -2270,22 +2452,44 @@ public class CairoEngine implements Closeable, WriterSource {
     public TableReader getReader(CharSequence tableName) {
         TableToken tableToken = verifyTableNameForRead(tableName);
         // Do not call getReader(TableToken tableToken), it will do unnecessary token verification
+        try {
+            return readerPool.get(tableToken);
+        } catch (CairoException e) {
+            repairTornFilesOrRethrow(tableToken, e);
+        }
         return readerPool.get(tableToken);
     }
 
     public TableReader getReader(TableToken tableToken) {
         verifyTableToken(tableToken);
+        try {
+            return readerPool.get(tableToken);
+        } catch (CairoException e) {
+            repairTornFilesOrRethrow(tableToken, e);
+        }
         return readerPool.get(tableToken);
     }
 
     public TableReader getReader(TableToken tableToken, @Nullable ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
         verifyTableToken(tableToken);
+        try {
+            return readerPool.get(tableToken, readerPoolSupervisor);
+        } catch (CairoException e) {
+            repairTornFilesOrRethrow(tableToken, e);
+        }
         return readerPool.get(tableToken, readerPoolSupervisor);
     }
 
     public TableReader getReader(TableToken tableToken, long metadataVersion, @Nullable ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
         verifyTableToken(tableToken);
-        return checkReaderVersion(tableToken, metadataVersion, readerPool.get(tableToken, readerPoolSupervisor));
+        TableReader reader;
+        try {
+            reader = readerPool.get(tableToken, readerPoolSupervisor);
+        } catch (CairoException e) {
+            repairTornFilesOrRethrow(tableToken, e);
+            reader = readerPool.get(tableToken, readerPoolSupervisor);
+        }
+        return checkReaderVersion(tableToken, metadataVersion, reader);
     }
 
     /**
@@ -2336,6 +2540,13 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public RecentWriteTracker getRecentWriteTracker() {
         return recentWriteTracker;
+    }
+
+    /**
+     * The configured grade resolved through the live role policy, never cached.
+     */
+    public int getResolvedCommitMode() {
+        return LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), localDurabilityPolicy);
     }
 
     public Lock getRoleSwitchReadLock() {
@@ -2588,6 +2799,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public @NotNull ViewWalWriter getViewWalWriter(TableToken viewToken) {
+        throwIfDurabilityFailed();
         verifyTableToken(viewToken);
         try {
             return viewWalWriterPool.get(viewToken);
@@ -2611,6 +2823,13 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public @NotNull WalListener getWalListener() {
         return walListener;
+    }
+
+    /**
+     * Returns the WAL writers whose last commit awaits its device flush under a group-commit window above 0.
+     */
+    public @NotNull WalGroupCommitFlushQueue getWalGroupCommitFlushQueue() {
+        return walGroupCommitFlushQueue;
     }
 
     public @NotNull WalLocker getWalLocker() {
@@ -2650,6 +2869,7 @@ public class CairoEngine implements Closeable, WriterSource {
      * read-only/role gating themselves (e.g. rebaseWalTable0's assertRebaseRole + variant check).
      */
     public @NotNull WalWriter getWalWriterUnsafe(TableToken tableToken) {
+        throwIfDurabilityFailed();
         verifyTableToken(tableToken);
         if (configuration.isWalApplySuspendedWriteDenied() && isWalApplySuspended(tableToken)) {
             throw CairoException.tableSuspended(tableToken);
@@ -2664,6 +2884,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableWriter getWriter(TableToken tableToken, @NotNull String lockReason) {
+        throwIfDurabilityFailed();
         verifyTableToken(tableToken);
         return writerPool.get(tableToken, lockReason);
     }
@@ -2673,6 +2894,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableWriter getWriterOrPublishCommand(TableToken tableToken, @NotNull AsyncWriterCommand asyncWriterCommand) {
+        throwIfDurabilityFailed();
         verifyTableToken(tableToken);
         return writerPool.getWriterOrPublishCommand(tableToken, asyncWriterCommand.getCommandName(), asyncWriterCommand);
     }
@@ -2700,6 +2922,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     public TableWriter getWriterUnsafe(TableToken tableToken, @NotNull String lockReason) {
+        throwIfDurabilityFailed();
         return writerPool.get(tableToken, lockReason);
     }
 
@@ -3007,6 +3230,18 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
+     * Whether the partition purge job may remove a table's superseded partition versions under SYNC or ADAPTIVE.
+     * After a failed flush and a restart, the page cache may hold a {@code _txn} (SYNC) or a save point header
+     * (ADAPTIVE) the device never got, so a version it no longer names may be the one the device still names. A
+     * writer open makes that state durable before it removes such versions. A writer surviving promotion can
+     * also establish that state by reconciling its durable baseline. The job waits for either boundary in this
+     * process, and stops after a failed data sync.
+     */
+    public boolean isPartitionPurgeSafe(TableToken tableToken) {
+        return !isDurabilityFailed() && partitionPurgeSafeTables.containsKey(tableToken.getDirName());
+    }
+
+    /**
      * Reports whether this engine currently refuses writes. Reads the LIVE state on every
      * call so callers can re-check it per write batch rather than trusting a value captured
      * earlier (for example, a SecurityContext cached at connection time). The base engine
@@ -3084,7 +3319,14 @@ public class CairoEngine implements Closeable, WriterSource {
         String lockedReason;
         if (tableMetadataPool.lock(tableToken)) {
             if (sequencerMetadataPool.lock(tableToken)) {
-                lockedReason = writerPool.lock(tableToken, lockReason);
+                try {
+                    lockedReason = writerPool.lock(tableToken, lockReason);
+                } catch (Throwable th) {
+                    // A writer close inside lock() can throw: release the metadata locks taken above.
+                    sequencerMetadataPool.unlock(tableToken);
+                    tableMetadataPool.unlock(tableToken);
+                    throw th;
+                }
                 if (lockedReason == null) {
                     // not locked
                     if (readerPool.lock(tableToken)) {
@@ -3171,6 +3413,14 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public boolean lockWalWriters(TableToken tableToken) {
         return walWriterPool.lock(tableToken);
+    }
+
+    /**
+     * Called by a writer open once the table's partition versions agree with a durable {@code _txn} or save point;
+     * see {@link #isPartitionPurgeSafe(TableToken)}.
+     */
+    public void markPartitionPurgeSafe(TableToken tableToken) {
+        partitionPurgeSafeTables.putIfAbsent(tableToken.getDirName(), tableToken);
     }
 
     /**
@@ -3361,6 +3611,23 @@ public class CairoEngine implements Closeable, WriterSource {
         tableNameRegistry.registerName(tableToken);
     }
 
+    /**
+     * Evicts pooled {@link TableMetadata} for a table whose {@code _meta} adaptive recovery replaced. Recovery
+     * reads metadata itself, so the pool can hold entries of the schema before recovery, which WAL replay must
+     * not see.
+     * <p>
+     * Leaves {@link #metadataCache} alone: it serves SQL metadata queries only, and at startup this runs from
+     * {@link #completeInit()} before that cache exists, so the cache loads the restored {@code _meta}.
+     */
+    void resetTableMetadataForRecovery(TableToken tableToken) {
+        if (!tableMetadataPool.lock(tableToken)) {
+            throw CairoException.critical(0)
+                    .put("could not evict stale metadata during adaptive recovery [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+        tableMetadataPool.unlock(tableToken);
+    }
+
     @TestOnly
     public boolean releaseAllReaders() {
         boolean b1 = sequencerMetadataPool.releaseAll();
@@ -3374,8 +3641,30 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     @TestOnly
+    public void releaseAllViewWalWriters() {
+        viewWalWriterPool.releaseAll();
+    }
+
+    @TestOnly
     public void releaseAllWriters() {
         writerPool.releaseAll();
+    }
+
+    /**
+     * Force-reclaims writers the calling thread left checked out or locked. No-op on a healthy engine.
+     */
+    @TestOnly
+    public int releaseCrashOrphanedWriters() {
+        return writerPool.releaseCrashOrphanedWriters();
+    }
+
+    /**
+     * Force-reclaims WAL writers the calling thread left checked out, in the view WAL pool too. No-op on a
+     * healthy engine.
+     */
+    @TestOnly
+    public int releaseCrashOrphanedWalWriters() {
+        return walWriterPool.releaseCrashOrphanedTenants() + viewWalWriterPool.releaseCrashOrphanedTenants();
     }
 
     public boolean releaseInactive() {
@@ -3551,6 +3840,19 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * Un-poisons the engine after a test injected a durability failure, and restores the default handler,
+     * which only fences the engine. Production never un-poisons: ServerMain halts on the first failure. The test
+     * stands for a restart, so no table is purge-safe until a writer opens it again.
+     */
+    @TestOnly
+    public void resetDurabilityFailure() {
+        partitionPurgeSafeTables.clear();
+        durabilityFailure.set(null);
+        durabilityFailureHandler = failure -> {
+        };
+    }
+
     @TestOnly
     public void resetFrameFactory() {
         frameFactory.close();
@@ -3581,8 +3883,17 @@ public class CairoEngine implements Closeable, WriterSource {
         this.ddlListener = ddlListener;
     }
 
+    public void setDurabilityFailureHandler(@NotNull DurabilityFailureHandler durabilityFailureHandler) {
+        this.durabilityFailureHandler = durabilityFailureHandler;
+    }
+
     public void setDurableAckRegistry(@NotNull DurableAckRegistry durableAckRegistry) {
         this.durableAckRegistry = durableAckRegistry;
+    }
+
+    public void setLocalDurabilityPolicy(@NotNull LocalDurabilityPolicy localDurabilityPolicy) {
+        this.localDurabilityPolicy = localDurabilityPolicy;
+        localDurabilityPolicyVersion.incrementAndGet();
     }
 
     @TestOnly
@@ -3688,6 +3999,64 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void unlockWalPurgeJob() {
         walPurgeJobLock.unlock();
+    }
+
+    /**
+     * True when a failed flush must stop this engine: the failure carries the data-sync flag and the commit mode
+     * resolved for this engine's role promises power-loss durability (SYNC, ADAPTIVE; a replica resolves ADAPTIVE
+     * to NOSYNC, the object store holding the durable copy). NOSYNC and ASYNC promise nothing on a power loss:
+     * there a failed flush fails only the operation that ran it, as before adaptive commit. This is the one rule;
+     * the failure is decided here when it is created ({@link CairoException#dataSyncFailure}) and again by any
+     * handler it reaches. A caller that does more than stop the engine, such as distressing its writer, keys it on
+     * this.
+     */
+    public boolean isDataSyncFailureFatal(Throwable failure) {
+        return CommitMode.isPowerLossDurable(getResolvedCommitMode())
+                && CairoException.isDataSyncFailure(failure);
+    }
+
+    public boolean isDurabilityFailed() {
+        return durabilityFailure.get() != null;
+    }
+
+    /**
+     * Permanently poisons this engine after a failed flush when {@link #isDataSyncFailureFatal(Throwable)} says the
+     * commit mode requires it; otherwise returns, and the caller fails the operation as before adaptive commit.
+     * The commit-mode rule lives here, not at the call sites. The first failure wins. The callback is invoked only
+     * by the first failing thread. It must hard-stop production; standalone and test callbacks may return, in which
+     * case this method throws a CairoError and every later write acquire is rejected by
+     * {@link #throwIfDurabilityFailed()}.
+     */
+    public void handleDataSyncFailure(Throwable failure) {
+        if (isDataSyncFailureFatal(failure)) {
+            throw poisonEngine(failure);
+        }
+    }
+
+    /**
+     * {@link #handleDataSyncFailure(Throwable)} in every commit mode. Only for a stop decided for every mode: the
+     * flush after the WAL replay before a conversion to non-WAL, and the Enterprise promote flush.
+     */
+    public void handleDataSyncFailureInEveryMode(Throwable failure) {
+        throw poisonEngine(failure);
+    }
+
+    /**
+     * {@link #handleDataSyncFailure(Throwable)} for a cleanup path. When the failure is fatal it poisons the engine
+     * and invokes the callback exactly as that method does, but returns the CairoError instead of throwing it, so
+     * the caller can finish releasing resources and throw it last. Fail-stop is in force from this call on: every
+     * later write acquire is rejected whether or not the caller has thrown yet. Returns null when the failure is
+     * not fatal under the commit mode.
+     */
+    public @Nullable CairoError poisonOnDataSyncFailure(Throwable failure) {
+        return isDataSyncFailureFatal(failure) ? poisonEngine(failure) : null;
+    }
+
+    public void throwIfDurabilityFailed() {
+        final DurabilityFailure failure = durabilityFailure.get();
+        if (failure != null) {
+            throw new CairoError("engine is poisoned by a failed durability barrier [" + failure + "]");
+        }
     }
 
     public void unlockWalWriters(TableToken tableToken) {
@@ -3840,6 +4209,22 @@ public class CairoEngine implements Closeable, WriterSource {
             default:
                 throw SqlException.$(0, "use ddl()");
         }
+    }
+
+    private static boolean isUnderRoot(CharSequence path, @Nullable CharSequence root) {
+        if (root == null || root.isEmpty()) {
+            return false;
+        }
+        // The OS names a file by its real path; the configured root may go through a link.
+        String dir;
+        try {
+            dir = java.nio.file.Path.of(root.toString()).toRealPath().toString();
+        } catch (Throwable th) {
+            dir = root.toString();
+        }
+        final int len = dir.length() > 1 && dir.charAt(dir.length() - 1) == Files.SEPARATOR ? dir.length() - 1 : dir.length();
+        return Chars.startsWith(path, dir.substring(0, len))
+                && (path.length() == len || path.charAt(len) == Files.SEPARATOR);
     }
 
     /**
@@ -4116,6 +4501,27 @@ public class CairoEngine implements Closeable, WriterSource {
             int tableKind,
             boolean deferRegisterName
     ) {
+        try {
+            return createTableOrViewOrMatViewUnsecure0(securityContext, mem, blockFileWriter, path, ifNotExists, struct, keepLock, inVolume, tableKind, deferRegisterName);
+        } catch (Throwable th) {
+            // The statement wraps the error without its cause: a failed data sync stops the engine here
+            handleDataSyncFailure(th);
+            throw th;
+        }
+    }
+
+    private TableToken createTableOrViewOrMatViewUnsecure0(
+            SecurityContext securityContext,
+            MemoryMARW mem,
+            @Nullable BlockFileWriter blockFileWriter,
+            Path path,
+            boolean ifNotExists,
+            TableStructure struct,
+            boolean keepLock,
+            boolean inVolume,
+            int tableKind,
+            boolean deferRegisterName
+    ) {
         assert !struct.isWalEnabled() || PartitionBy.isPartitioned(struct.getPartitionBy()) : "WAL is only supported for partitioned tables";
         final CharSequence tableName = struct.getTableName();
         validNameOrThrow(tableName);
@@ -4162,6 +4568,30 @@ public class CairoEngine implements Closeable, WriterSource {
                             createTableOrViewOrMatViewUnsafe(mem, blockFileWriter, path, struct, tableToken);
                         }
                         filesystemCreated = true;
+                        // The new table's entry in the database root: the modes that promise power-loss durability
+                        // acknowledge its commits, and nothing else flushes the root.
+                        if (CommitMode.isPowerLossDurable(configuration.getCommitMode())) {
+                            TableUtils.fsyncDirDurable(configuration.getFilesFacade(), path.of(configuration.getDbRoot()).$());
+                        }
+
+                        if (struct.isWalEnabled() && !struct.isView()) {
+                            // A replica keeps no save point: it would go stale behind WAL its purge does not keep.
+                            if (configuration.getCommitMode() == CommitMode.ADAPTIVE && localDurabilityPolicy.isLocalDurabilityEnabled()) {
+                                try {
+                                    final int timestampIndex = struct.getTimestampIndex();
+                                    final int timestampType = timestampIndex < 0 ? ColumnType.TIMESTAMP : struct.getColumnType(timestampIndex);
+                                    DurableEpochManifest.publishInitial(
+                                            configuration,
+                                            tableToken,
+                                            timestampType,
+                                            struct.getPartitionBy()
+                                    );
+                                } catch (Throwable e) {
+                                    handleDataSyncFailure(e);
+                                    CairoException.rethrowCleanupFailure(e);
+                                }
+                            }
+                        }
 
                         if (struct.isWalEnabled()) {
                             tableSequencerAPI.registerTable(tableToken.getTableId(), struct, tableToken);
@@ -4198,7 +4628,13 @@ public class CairoEngine implements Closeable, WriterSource {
             } catch (Throwable th) {
                 if (struct.isWalEnabled()) {
                     // tableToken.getLoggingName() === tableName, table cannot be renamed while creation hasn't finished
-                    tableSequencerAPI.dropTable(tableToken, true);
+                    try {
+                        tableSequencerAPI.dropTable(tableToken, true);
+                    } catch (Throwable cleanupEx) {
+                        // A failed flush of the log stops the engine; its error carries the create's own.
+                        cleanupEx.addSuppressed(th);
+                        throw cleanupEx;
+                    }
                 } else if (filesystemCreated) {
                     final FilesFacade ff = configuration.getFilesFacade();
                     try {
@@ -4287,6 +4723,21 @@ public class CairoEngine implements Closeable, WriterSource {
                     .I$();
             return false;
         }
+    }
+
+    private boolean holdsPath(CharSequence path) {
+        return isUnderRoot(path, configuration.getDbRoot())
+                || isUnderRoot(path, configuration.getCheckpointRoot())
+                || isUnderRoot(path, configuration.getLegacyCheckpointRoot())
+                || isUnderRoot(path, configuration.getSqlCopyInputWorkRoot())
+                || holdsVolumePath(path);
+    }
+
+    // A table created IN VOLUME is a soft link into the volume, so the OS names its files by the volume's path.
+    private boolean holdsVolumePath(CharSequence path) {
+        final boolean[] held = {false};
+        configuration.getVolumeDefinitions().forEach((alias, volumeRoot) -> held[0] |= isUnderRoot(path, volumeRoot));
+        return held[0];
     }
 
     private void invalidateLiveViewsForBaseTable0(
@@ -4503,6 +4954,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     private void notifyPoolsTableDropped(TableToken tableToken, boolean fullDropped) {
+        partitionPurgeSafeTables.remove(tableToken.getDirName());
         readerPool.notifyDropped(tableToken, fullDropped);
         walWriterPool.notifyDropped(tableToken, fullDropped);
         viewWalWriterPool.notifyDropped(tableToken, fullDropped);
@@ -4558,6 +5010,35 @@ public class CairoEngine implements Closeable, WriterSource {
             writer.of(p.$());
             LiveViewState.append(state, writer);
         }
+    }
+
+    private CairoError poisonEngine(Throwable failure) {
+        CairoException syncFailure = null;
+        Throwable cursor = failure;
+        while (cursor != null) {
+            if (cursor instanceof CairoException cairoException && cairoException.isDataSyncFailure()) {
+                syncFailure = cairoException;
+                break;
+            }
+            cursor = cursor.getCause();
+        }
+        if (syncFailure == null) {
+            return new CairoError(failure);
+        }
+
+        final DurabilityFailure detail = new DurabilityFailure(
+                syncFailure.getErrno(),
+                syncFailure.getDataSyncOperation(),
+                syncFailure.getFlyweightMessage().toString()
+        );
+        if (durabilityFailure.compareAndSet(null, detail)) {
+            // the message names the failed file: built before the LOG chain
+            final String detailText = detail.toString();
+            LOG.critical().$("fatal durability barrier failure [").$(detailText).$(']').$();
+            durabilityFailureHandler.onFailure(detail);
+        }
+        // A handler further up gets the stop error a handler below threw: keep it, with what it carries
+        return failure instanceof CairoError stopError ? stopError : new CairoError(syncFailure);
     }
 
     private TableToken rebaseWalTable0(TableToken oldToken, String suppliedDir, boolean replicaVariant) {
@@ -4658,52 +5139,60 @@ public class CairoEngine implements Closeable, WriterSource {
                 // table-root files, exclude txn_seq/wal*), reset _txn/_meta for a fresh table, create the
                 // sequencer files, and (primary only) write the _rebase_new marker. The atomic rename below
                 // then carries the complete table into place.
-                WalUtils.cloneTableDirForRebase(
+                final long baselineTxn = WalUtils.cloneTableDirForRebase(
                         configuration,
                         getWalDirectoryPolicy(),
                         src.of(root).concat(oldToken),
                         dst.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newDirName),
                         newToken, newTableId,
                         !replicaVariant,
+                        localDurabilityPolicy.isLocalDurabilityEnabled(),
                         Misc.getThreadLocalSink()
                 );
+                if (baselineTxn > -1) {
+                    RecoveryCoordinator.pinPublishedBaseline(this, newToken, baselineTxn);
+                }
 
                 // Atomically move the completed clone into its final location.
-                if (ff.rename(src.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newToken).$(), dst.of(root).concat(newToken).$()) != Files.FILES_RENAME_OK) {
+                // renameDurable: the fsyncDirDurable below is the covering barrier on POSIX, but it is a
+                // no-op on a restricted (Windows) file system, where a durable move is the only barrier
+                // available for this publish.
+                if (ff.renameDurable(src.of(root).concat(TableUtils.REBASE_TMP_DIR).concat(newToken).$(), dst.of(root).concat(newToken).$()) != Files.FILES_RENAME_OK) {
                     throw CairoException.critical(ff.errno()).put("could not move rebased table into place [from=").put(src).put(", to=").put(dst).put(']');
                 }
                 renamed = true;
 
-                // Commit the swap in the registry: drop the old table (logs DROP to tables.d, marks the old
-                // dir dropped, evicts its metadata-cache entry), then register the rebuilt dir as the live
-                // table (logs ADD to tables.d, repoints the name, marks the new dir live, hydrates the cache).
-                // lockTableName reserves the now-free name so registerName can commit it. The drop and the
-                // register are NOT atomic: a crash between them leaves the new dir on disk but absent from
-                // tables.d, so startup's reloadFromRootDirectory adopts it (without the empty seeds below).
-                // Acceptable for this rare admin op - the table comes back, just unseeded.
-                if (!tableNameRegistry.dropTable(oldToken)) {
-                    throw CairoException.nonCritical()
-                            .put("could not drop old table from registry [table=").put(oldToken.getTableName()).put(']');
-                }
-                oldTableDropped = true;
-                final TableToken lockedToken = tableNameRegistry.lockTableName(
+                // Data before pointer. The rename publishes the table's directory entry in the db root, and on
+                // POSIX a new entry is durable only once its parent directory is fsynced. The registry swap below
+                // is durable in every commit mode (GrowOnlyTableNameRegistryStore.logSwapTable syncs tables.d), so
+                // without this fsync a power loss between the two leaves a durable registry entry naming a lost
+                // directory: the table disappears, and an ADAPTIVE start refuses because
+                // RecoveryCoordinator.recover() reads _meta of every registered WAL table. The fsync is
+                // unconditional because the swap's durability is. A crash before it leaves the old table live,
+                // with the new directory as a duplicate-name orphan.
+                TableUtils.fsyncDirDurable(ff, dst.of(root).$());
+
+                // Drop the old table and register the rebuilt directory in one durable step (one tables.d sync in
+                // logSwapTable), so a power loss cannot leave the old table dropped and the new one unregistered.
+                // A crash after the swap publishes the new table, unseeded until commitRebaseSeed below. swapTable
+                // drops the old directory, evicts its metadata-cache entry, repoints the name to the new directory
+                // and hydrates its cache.
+                final TableToken swapped = tableNameRegistry.swapTable(
+                        oldToken,
                         tableName,
                         newDirName,
                         newTableId,
-                        oldToken.isView(),
-                        oldToken.isMatView(),
+                        oldToken.getType(),
                         true
                 );
-                if (lockedToken == null) {
+                if (swapped == null) {
                     throw CairoException.nonCritical()
                             .put("rebase target name was taken concurrently [table=").put(tableName).put(']');
                 }
-                newToken = lockedToken;
-                try {
-                    tableNameRegistry.registerName(newToken);
-                } finally {
-                    tableNameRegistry.unlockTableName(newToken);
-                }
+                // The swap is the point of no return: from here the new directory is the table (its hard links
+                // are the only surviving copy of the data), so the catch below must leave it on disk.
+                oldTableDropped = true;
+                newToken = swapped;
 
                 // Seed two empty transactions so real data starts at seqTxn 3 (the uploader skips seqTxn 1
                 // and records seqTxn 2 as first_txn=2). The second seed is what stops an idle rebased table
@@ -4737,6 +5226,10 @@ public class CairoEngine implements Closeable, WriterSource {
                                 ff.rmdir(p, true);
                             }
                         }
+                        // The clone's baseline pin and its txn tracker belong to a directory that is gone and was
+                        // never registered, so nothing else would ever release them.
+                        RecoveryCoordinator.unpinEpoch(this, newToken);
+                        tableSequencerAPI.purgeTxnTracker(newToken.getDirName());
                     }
                 } catch (Throwable cleanupEx) {
                     th.addSuppressed(cleanupEx);
@@ -4893,6 +5386,52 @@ public class CairoEngine implements Closeable, WriterSource {
         } finally {
             tableNameRegistry.unlockTableName(toTableToken);
             unlockTableCreate(toTableToken);
+        }
+    }
+
+    /**
+     * Rethrows {@code e} unless it reports a torn file that the table writer repairs on open by continuing from
+     * the intact previous transaction: a torn {@code _txn} of a non-WAL table, or a {@code _cv} that cannot serve
+     * the column version {@code _txn} names. Nothing else opens a non-WAL table's writer before its next write,
+     * so this opens it to repair the table, as {@link #getTableMetadata} does on failure, and rethrows {@code e}
+     * when that fails too.
+     * <p>
+     * WAL apply opens a WAL table's writer only when the table lags its sequencer. A torn {@code _txn} reads as
+     * that lag, but a torn {@code _cv} does not, so the read repairs the table too. It then notifies WAL apply,
+     * which replays the transaction the repair rolled back or, when the writer refused to open, opens it again
+     * and suspends the table with the writer's error. A suspended table is not repaired on read.
+     */
+    private void repairTornFilesOrRethrow(TableToken tableToken, CairoException e) {
+        if (e.isCvTorn()) {
+            if (!tableToken.isWal()) {
+                tryRepairTable(tableToken, e);
+                return;
+            }
+            if (tableSequencerAPI.isSuspended(tableToken)) {
+                throw e;
+            }
+            try {
+                tryRepairTable(tableToken, e);
+            } finally {
+                notifyWalTxnCommitted(tableToken);
+            }
+            return;
+        }
+        if (tableToken.isWal() || !e.isTxnLiveAreaTorn()) {
+            throw e;
+        }
+        tryRepairTable(tableToken, e);
+    }
+
+    // Scoreboard pool hook: an ADAPTIVE table's epoch pin keeps the files its durable epoch names until the
+    // next epoch supersedes it, however long the table sits idle. Idle eviction frees the pooled scoreboard
+    // that carried the pin, so every replacement is seeded from the table's SeqTxnTracker, which is not
+    // evicted. Without the seed, the next O3 rewrite, UPDATE, squash, DROP PARTITION or TTL would delete
+    // files a restart rewinds to.
+    private void restoreEpochPin(CharSequence tableDirName, TxnScoreboard scoreboard) {
+        final SeqTxnTracker tracker = tableSequencerAPI.getTxnTrackerIfExists(tableDirName);
+        if (tracker != null) {
+            tracker.restoreEpochPin(scoreboard);
         }
     }
 

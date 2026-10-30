@@ -214,10 +214,9 @@ public class PostingIndexWriter implements IndexWriter {
     private final ObjList<PendingSealPurge> pendingPurges = new ObjList<>();
     // Reusable scratch list for sealTxns that recoveryDropAbandoned dropped
     // out of the chain on writer-open. Populated by of(...) when
-    // currentTableTxn was supplied via setCurrentTableTxn; the orphan
-    // sealTxns are then forwarded to the seal-purge outbox so the
-    // background job removes the .pv.{N} / .pc{i}.{N} files. Cleared on
-    // every of() call to avoid leaking entries across reopens.
+    // currentTableTxn was supplied via setCurrentTableTxn; the walk then
+    // unlinks the .pv.{N} / .pc{i}.{N} files of the orphan sealTxns. Cleared
+    // on every of() call to avoid leaking entries across reopens.
     private final LongList recoveryOrphanScratch = new LongList();
     private final byte rowIdEncoding;
     private final MemoryMARW sealValueMem = Vm.getCMARWInstance();
@@ -279,6 +278,9 @@ public class PostingIndexWriter implements IndexWriter {
     private boolean isPoisoned;
     private int keyCapacity;
     private int keyCount;
+    // The commit mode this indexer flushes under. Seeded from the instance-global cairo.commit.mode and
+    // overridden via setCommitMode() while the owning table is not yet enrolled in adaptive.
+    private int indexCommitMode;
     // In-memory mirror of the head entry's MAX_VALUE field. setMaxValue
     // updates it directly; flush/seal callsites read it back without going
     // to mmap. Persisted to the head entry on every chain publish (or via
@@ -344,6 +346,7 @@ public class PostingIndexWriter implements IndexWriter {
     public PostingIndexWriter(CairoConfiguration configuration, byte rowIdEncoding) {
         this.alignedBitWidthThreshold = configuration.getPostingIndexAlignedBitWidthThreshold();
         this.configuration = configuration;
+        this.indexCommitMode = configuration.getCommitMode();
         this.ff = configuration.getFilesFacade();
         this.indexerSpillBytesMax = configuration.getPostingIndexerSpillBytesMax();
         this.rowIdEncoding = rowIdEncoding;
@@ -726,10 +729,20 @@ public class PostingIndexWriter implements IndexWriter {
     @Override
     public void commit() {
         checkNotPoisoned();
+        // flushAllPending() runs in every mode: it publishes buffered native-memory postings into the mapped
+        // .pk/.pv files, and without it readers see keyCount=0 until the writer closes. Only the flush below
+        // depends on the mode.
         flushAllPending();
-        if (configuration.getCommitMode() != CommitMode.NOSYNC) {
-            sync(configuration.getCommitMode() == CommitMode.ASYNC);
+        // SYNC and ASYNC only; see IndexWriter.setCommitMode.
+        final int commitMode = indexCommitMode;
+        if (CommitMode.appliesColumnSync(commitMode)) {
+            sync(commitMode == CommitMode.ASYNC);
         }
+    }
+
+    @Override
+    public void setCommitMode(int commitMode) {
+        this.indexCommitMode = commitMode;
     }
 
     // Sync order is .pv and covering sidecars before .pk: a torn write must
@@ -769,8 +782,9 @@ public class PostingIndexWriter implements IndexWriter {
         } else {
             flushAllPendingDense();
         }
-        int commitMode = configuration.getCommitMode();
-        if (commitMode != CommitMode.NOSYNC) {
+        // Same gate as commit(); see IndexWriter.setCommitMode.
+        final int commitMode = indexCommitMode;
+        if (CommitMode.appliesColumnSync(commitMode)) {
             boolean async = commitMode == CommitMode.ASYNC;
             if (valueMem.isOpen()) {
                 valueMem.sync(async);
@@ -1421,7 +1435,7 @@ public class PostingIndexWriter implements IndexWriter {
                 this.valueMemSize = 0;
             } else {
                 chain.openExisting(keyMem);
-                runRecoveryWalkIfRequested();
+                runRecoveryWalkIfRequested(path, plen);
                 if (chain.hasHead()) {
                     PostingIndexChainEntry.Snapshot head = new PostingIndexChainEntry.Snapshot();
                     chain.loadHeadEntry(keyMem, head);
@@ -1440,6 +1454,15 @@ public class PostingIndexWriter implements IndexWriter {
                 }
             }
 
+            if (!isInit && valueMemSize > 0) {
+                LPSZ pvName = PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn);
+                long pvActual = ff.length(pvName);
+                if (valueMemSize > pvActual) {
+                    throw CairoException.critical(0)
+                            .put("posting index value file too short [expected=").put(valueMemSize)
+                            .put(", actual=").put(pvActual).put(", path=").put(pvName).put(']');
+                }
+            }
             valueMem.of(
                     ff,
                     PostingIndexUtils.valueFileName(path.trimTo(plen), name, postingColumnNameTxn, this.sealTxn),
@@ -5974,8 +5997,8 @@ public class PostingIndexWriter implements IndexWriter {
      * Run the v2 chain recovery walk if {@link #setCurrentTableTxn} was
      * called with a non-negative value before this {@code of(...)}. Drops
      * chain entries with {@code txnAtSeal > currentTableTxn} (abandoned by
-     * a previous distressed writer) and queues their {@code sealTxn} files
-     * for purge.
+     * a previous distressed writer, or by a crash recovery that rewound the
+     * table) and unlinks their {@code sealTxn} files.
      * <p>
      * The setter's value is consumed: {@code currentTableTxn} is reset to
      * {@code -1} so a stale value can't accidentally drive a future open's
@@ -5983,7 +6006,7 @@ public class PostingIndexWriter implements IndexWriter {
      * scratch list is cleared on entry so a previous open's residue is
      * never reused.
      */
-    private void runRecoveryWalkIfRequested() {
+    private void runRecoveryWalkIfRequested(Path path, int plen) {
         if (currentTableTxn < 0) {
             return;
         }
@@ -6001,22 +6024,28 @@ public class PostingIndexWriter implements IndexWriter {
         if (dropped <= 0 && !isHeadTrimmed) {
             return;
         }
+        // An entry above the committed txn is named by no reader: a reader
+        // pins a committed txn and picks the newest entry at or below it. No
+        // save point names it either, a save point is never above the
+        // committed txn, and its sealTxn is never reused, the generation
+        // counter does not go back. So its files go now; nothing else would
+        // ever remove them. A dropped entry at or below the committed txn
+        // (every generation in flight) can have a reader, and a file that
+        // fails to unlink stays: both go to the purge job, under its
+        // scoreboard check, with the widest window.
+        if (chain.isVisibleEntryDroppedOnLastRecovery()) {
+            final int last = recoveryOrphanScratch.size() - 1;
+            scheduleOrphanPurge(recoveryOrphanScratch.getQuick(last));
+            recoveryOrphanScratch.removeIndex(last);
+        }
+        final int unlinked = unlinkAbandonedSealFiles(path, plen);
         LOG.info().$("posting index recovery [")
                 .$("indexName=").$(indexName)
                 .$(", postingColumnNameTxn=").$(postingColumnNameTxn)
                 .$(", dropped=").$(dropped)
                 .$(", isHeadTrimmed=").$(isHeadTrimmed)
+                .$(", unlinked=").$(unlinked)
                 .$(']').$();
-        // Conservatively schedule each orphan .pv.{N} (and .pc{i}.{N}) for
-        // purge with the widest possible reader window. Orphans were
-        // published by a distressed attempt that never committed, so no
-        // reader could ever have pinned at their txnAtSeal — but the
-        // scoreboard check inside the purge job is the safety net we rely
-        // on, not the [fromTxn, toTxn) interval. Using [0, MAX) is safe.
-        for (int i = 0, n = recoveryOrphanScratch.size(); i < n; i++) {
-            long orphanSealTxn = recoveryOrphanScratch.getQuick(i);
-            scheduleOrphanPurge(orphanSealTxn);
-        }
         recoveryOrphanScratch.clear();
     }
 
@@ -6909,6 +6938,50 @@ public class PostingIndexWriter implements IndexWriter {
             }
             Unsafe.free(sampleLensAddr, sampleLensSize, MemoryTag.NATIVE_INDEX_READER);
         }
+    }
+
+    /**
+     * Unlinks the {@code .pv} and every {@code .pc} file of each sealTxn in
+     * {@link #recoveryOrphanScratch}; a sealTxn with a file left on disk goes
+     * to the purge job instead. Returns the number of sealTxns fully removed.
+     */
+    private int unlinkAbandonedSealFiles(Path path, int plen) {
+        final LongList sealTxns = recoveryOrphanScratch;
+        if (sealTxns.size() == 0) {
+            return 0;
+        }
+        for (int i = 0, n = sealTxns.size(); i < n; i++) {
+            final long sealTxn = sealTxns.getQuick(i);
+            if (!ff.removeQuiet(PostingIndexUtils.valueFileName(path.trimTo(plen), indexName, postingColumnNameTxn, sealTxn))) {
+                scheduleOrphanPurge(sealTxn);
+                sealTxns.setQuick(i, -1L);
+            }
+        }
+        PostingIndexUtils.scanSealedFiles(ff, path, plen, indexName, new PostingIndexUtils.SealedFileVisitor() {
+            @Override
+            public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+                final int i;
+                if (filePostingColumnNameTxn != postingColumnNameTxn || (i = sealTxns.indexOf(sealTxn)) < 0) {
+                    return;
+                }
+                if (!ff.removeQuiet(PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn))) {
+                    scheduleOrphanPurge(sealTxn);
+                    sealTxns.setQuick(i, -1L);
+                }
+            }
+
+            @Override
+            public void onValueFile(long filePostingColumnNameTxn, long sealTxn) {
+            }
+        });
+        path.trimTo(plen);
+        int unlinked = 0;
+        for (int i = 0, n = sealTxns.size(); i < n; i++) {
+            if (sealTxns.getQuick(i) > -1) {
+                unlinked++;
+            }
+        }
+        return unlinked;
     }
 
     /**
