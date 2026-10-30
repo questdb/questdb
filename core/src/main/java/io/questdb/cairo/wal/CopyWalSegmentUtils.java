@@ -80,6 +80,7 @@ public class CopyWalSegmentUtils {
         columnRollSink.setDestSecondaryFd(secondaryFd);
 
         boolean success;
+        Throwable failure = null;
         if (columnType == newColumnType) {
             if (ColumnType.isVarSize(columnType)) {
                 success = copyVarSizeFiles(
@@ -156,20 +157,31 @@ public class CopyWalSegmentUtils {
                         columnRollSink
                 );
                 if (commitMode != CommitMode.NOSYNC) {
-                    ff.fsync(srcFixFd);
-                    ff.fsync(srcVarFd);
-                    ff.fsync(dstFixFd);
-                    ff.fsync(dstVarFd);
+                    // A fixed-size (non-var) source or destination column has no var file, so its var fd
+                    // is the -1 sentinel (set above); fsync(-1) would throw "could not fsync [fd=-1]".
+                    if (srcFixFd != -1) {
+                        ff.fsync(srcFixFd);
+                    }
+                    if (srcVarFd != -1) {
+                        ff.fsync(srcVarFd);
+                    }
+                    if (dstFixFd != -1) {
+                        ff.fsync(dstFixFd);
+                    }
+                    if (dstVarFd != -1) {
+                        ff.fsync(dstVarFd);
+                    }
                 }
 
             } catch (Throwable th) {
                 LOG.critical().$("Failed to convert column [name=").$(newSegPath).$(", error=").$(th).I$();
+                failure = th;
                 success = false;
             }
         }
 
         if (!success) {
-            throw CairoException.critical(ff.errno()).put("failed to copy column file to new segment" +
+            final CairoException exception = CairoException.critical(ff.errno()).put("failed to copy column file to new segment" +
                             " [path=").put(newSegPath)
                     .put(", column=").put(columnName)
                     .put(", errno=").put(ff.errno())
@@ -177,6 +189,12 @@ public class CopyWalSegmentUtils {
                     .put(", rowCount=").put(rowCount)
                     .put(", columnType=").put(columnType)
                     .put(", newColumnType=").put(newColumnType).put("]");
+            if (failure != null) {
+                // A failed flush inside the conversion keeps its flag through the cause: the writer's handler
+                // decides the stop on it, with or without a process halt installed.
+                exception.initCause(failure);
+            }
+            throw exception;
         }
     }
 
