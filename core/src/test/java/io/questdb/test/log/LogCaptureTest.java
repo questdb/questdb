@@ -39,6 +39,7 @@ import java.util.concurrent.TimeUnit;
 
 public class LogCaptureTest {
     private static final Log LOG = LogFactory.getLog(LogCaptureTest.class);
+    private static final String MARKER = "log-capture-test-stop-marker";
     private static final String POISON = "log-capture-test-poison-marker";
     private static final long RELEASE_DELAY_MS = 100;
 
@@ -89,6 +90,57 @@ public class LogCaptureTest {
             } finally {
                 capture.stop();
             }
+        } finally {
+            release.countDown();
+            if (releaser != null) {
+                releaser.join();
+            }
+            consoleWriter.setInterceptor(null);
+        }
+    }
+
+    /**
+     * A record logged before stop() must be captured even when the logging worker
+     * has not delivered it yet: the worker is parked until stop() is already
+     * waiting, so without the drain in stop() MARKER reaches the console instead.
+     */
+    @Test
+    public void testStopDrainsRecordsEnqueuedBeforeIt() throws Exception {
+        final LogConsoleWriter consoleWriter = getFirstConsoleWriter();
+        final CountDownLatch parked = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        final LogCapture capture = new LogCapture();
+        Thread releaser = null;
+        try {
+            consoleWriter.setInterceptor(_ -> {
+                parked.countDown();
+                try {
+                    release.await();
+                } catch (InterruptedException ignore) {
+                    Thread.currentThread().interrupt();
+                }
+            });
+
+            LOG.advisory().$("log-capture-test-park-trigger").$();
+            Assert.assertTrue(
+                    "test setup: the logging worker must be parked inside the interceptor",
+                    parked.await(30, TimeUnit.SECONDS)
+            );
+
+            // start() drains against the parked worker and gives up after
+            // DRAIN_TIMEOUT_MS. The release is scheduled only after that, so it
+            // lands while stop() below is draining.
+            capture.start();
+            LOG.advisory().$(MARKER).$();
+
+            releaser = new Thread(() -> {
+                Os.sleep(RELEASE_DELAY_MS);
+                release.countDown();
+            }, "log-capture-test-releaser");
+            releaser.start();
+
+            capture.stop();
+            capture.assertLogged(MARKER);
         } finally {
             release.countDown();
             if (releaser != null) {
