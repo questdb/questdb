@@ -63,6 +63,7 @@ import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.InsertOperation;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -1805,6 +1806,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             case PartitionAction.FORCE_DROP:
                 alterOperationBuilder = this.alterOperationBuilder.ofForceDropPartition(pos, tableToken, tableMetadata.getTableId());
                 break;
+            case PartitionAction.FORCE_REINDEX:
+                // the caller set the builder up, with the column to reindex
+                alterOperationBuilder = this.alterOperationBuilder;
+                break;
             case PartitionAction.DETACH:
                 alterOperationBuilder = this.alterOperationBuilder.ofDetachPartition(pos, tableToken, tableMetadata.getTableId());
                 break;
@@ -1876,6 +1881,64 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } while (true);
 
         compiledQuery.ofAlter(alterOperationBuilder.build());
+    }
+
+    /**
+     * {@code ALTER TABLE t FORCE REINDEX [COLUMN c] [PARTITION LIST 'p1', ...]}: rebuilds the indexes of the
+     * partitions, every partition when there is no list, into new partition directory versions through the table
+     * writer. FORCE: it bypasses the WAL and is a node-local maintenance command, so it runs at parse time, like
+     * REINDEX, and on a replica too.
+     */
+    private void alterTableForceReindex(
+            SqlExecutionContext executionContext,
+            @Transient CharSequence sqlText,
+            int tableNamePosition,
+            TableToken tableToken,
+            TableRecordMetadata tableMetadata
+    ) throws SqlException {
+        CharSequence tok = SqlUtil.fetchNext(lexer);
+        String columnName = null;
+        if (tok != null && isColumnKeyword(tok)) {
+            tok = expectToken(lexer, "column name");
+            final int columnNamePosition = lexer.lastTokenPosition();
+            columnName = Chars.toString(unquote(tok));
+            final int columnIndex = tableMetadata.getColumnIndexQuiet(columnName);
+            if (columnIndex < 0) {
+                throw SqlException.invalidColumn(columnNamePosition, columnName);
+            }
+            if (!tableMetadata.isColumnIndexed(columnIndex)) {
+                throw SqlException.$(columnNamePosition, "column is not indexed [column=").put(columnName).put(']');
+            }
+            tok = SqlUtil.fetchNext(lexer);
+        }
+
+        columnNames.clear();
+        if (columnName != null) {
+            columnNames.add(columnName);
+        }
+        executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
+
+        alterOperationBuilder.ofForceReindex(tableNamePosition, tableToken, tableMetadata.getTableId(), columnName);
+        if (tok != null && isPartitionKeyword(tok)) {
+            tok = expectToken(lexer, "'list'");
+            if (!isListKeyword(tok)) {
+                throw SqlException.$(lexer.lastTokenPosition(), "'list' expected");
+            }
+            alterTableDropConvertDetachOrAttachPartitionByList(tableMetadata, tableToken, null, lexer.lastTokenPosition(), PartitionAction.FORCE_REINDEX);
+        } else if (tok == null || isSemicolon(tok)) {
+            compiledQuery.ofAlter(alterOperationBuilder.build());
+        } else {
+            throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
+        }
+
+        if (!executionContext.isValidationOnly()) {
+            compiledQuery.withSqlText(Chars.toString(sqlText));
+            // Without an event sequence a busy writer fails the statement, as the writer lock of REINDEX does
+            try (OperationFuture future = compiledQuery.execute(executionContext, null, true)) {
+                future.await();
+            }
+        }
+        compiledQuery.ofRepair();
     }
 
     private void alterTableRenameColumn(
@@ -2283,7 +2346,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         if (isTableKeyword(tok)) {
-            compileAlterTable(executionContext);
+            compileAlterTable(executionContext, sqlText);
         } else if (isMaterializedKeyword(tok)) {
             compileAlterMatView(executionContext);
         } else if (isLiveKeyword(tok)) {
@@ -2677,7 +2740,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private void compileAlterTable(SqlExecutionContext executionContext) throws SqlException {
+    private void compileAlterTable(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         final int tableNamePosition = lexer.getPosition();
         CharSequence tok = expectToken(lexer, "table name");
         assertNameIsQuotedOrNotAKeyword(tok, tableNamePosition);
@@ -2751,8 +2814,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                 }
             } else if (isForceKeyword(tok)) {
-                tok = expectToken(lexer, "'drop'");
-                if (isDropKeyword(tok)) {
+                tok = expectToken(lexer, "'drop' or 'reindex'");
+                if (isReindexKeyword(tok)) {
+                    alterTableForceReindex(executionContext, sqlText, tableNamePosition, tableToken, tableMetadata);
+                } else if (isDropKeyword(tok)) {
                     tok = expectToken(lexer, "'partition'");
                     if (isPartitionKeyword(tok)) {
                         tok = expectToken(lexer, "'list'");
@@ -2766,7 +2831,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                     }
                 } else {
-                    throw SqlException.$(lexer.lastTokenPosition(), "'drop' expected");
+                    throw SqlException.$(lexer.lastTokenPosition(), "'drop' or 'reindex' expected");
                 }
             } else if (isAlterKeyword(tok)) {
                 tok = expectToken(lexer, "'column'");
@@ -4121,73 +4186,55 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         checkViewModification(tableToken);
 
-        tok = SqlUtil.fetchNext(lexer);
-        CharSequence columnName = null;
+        try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
+            indexBuilder.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()));
 
-        if (tok != null && isColumnKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || isSemicolon(tok)) {
-                throw SqlException.$(lexer.getPosition(), "column name expected");
+            CharSequence columnName = null;
+
+            if (tok != null && isColumnKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+                if (Chars.isQuoted(tok)) {
+                    tok = unquote(tok);
+                }
+                if (tok == null || TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
+                    columnName = GenericLexer.immutableOf(tok);
+                    tok = SqlUtil.fetchNext(lexer);
+                }
             }
-            if (Chars.isQuoted(tok)) {
-                tok = unquote(tok);
-            }
-            if (TableUtils.isValidColumnName(tok, configuration.getMaxFileNameLength())) {
-                columnName = GenericLexer.immutableOf(tok);
+
+            CharSequence partition = null;
+            if (tok != null && isPartitionKeyword(tok)) {
+                tok = SqlUtil.fetchNext(lexer);
+
+                if (Chars.isQuoted(tok)) {
+                    tok = unquote(tok);
+                }
+                partition = tok;
                 tok = SqlUtil.fetchNext(lexer);
             }
-        }
 
-        CharSequence partition = null;
-        if (tok != null && isPartitionKeyword(tok)) {
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || isSemicolon(tok)) {
-                throw SqlException.$(lexer.getPosition(), "partition name expected");
+            if (tok == null || !isLockKeyword(tok)) {
+                throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
             }
-            if (Chars.isQuoted(tok)) {
-                tok = unquote(tok);
-            }
-            partition = GenericLexer.immutableOf(tok);
-            tok = SqlUtil.fetchNext(lexer);
-        }
 
-        // Without LOCK EXCLUSIVE, REINDEX runs online through the table writer and rebuilds the indexes of parquet
-        // partitions, repairing their column tops. It is a direct, node-local maintenance command, not sent through
-        // WAL, so it works on a replica too.
-        boolean exclusive = false;
-        if (tok != null && isLockKeyword(tok)) {
             tok = SqlUtil.fetchNext(lexer);
             if (tok == null || !isExclusiveKeyword(tok)) {
                 throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
             }
-            exclusive = true;
+
             tok = SqlUtil.fetchNext(lexer);
-        }
+            if (tok != null && !isSemicolon(tok)) {
+                throw SqlException.$(lexer.getPosition(), "EOF expected");
+            }
 
-        if (tok != null && !isSemicolon(tok)) {
-            throw SqlException.$(lexer.getPosition(), exclusive ? "EOF expected" : "LOCK EXCLUSIVE expected");
-        }
-
-        if (!exclusive && columnName != null) {
-            // online REINDEX rebuilds every index of a partition
-            throw SqlException.$(lexer.getPosition(), "LOCK EXCLUSIVE expected");
-        }
-
-        columnNames.clear();
-        if (columnName != null) {
-            columnNames.add(columnName);
-        }
-        executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
-        if (!executionContext.isValidationOnly()) {
-            if (exclusive) {
-                try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
-                    indexBuilder.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()));
-                    indexBuilder.reindex(partition, columnName);
-                }
-            } else {
-                try (TableWriter writer = engine.getWriter(tableToken, TableUtils.REINDEX_WRITER_LOCK_REASON)) {
-                    writer.reindexParquetPartitions(partition);
-                }
+            columnNames.clear();
+            if (columnName != null) {
+                columnNames.add(columnName);
+            }
+            executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
+            if (!executionContext.isValidationOnly()) {
+                indexBuilder.reindex(partition, columnName);
             }
         }
         compiledQuery.ofRepair();
@@ -6423,6 +6470,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         public static final int DETACH = 3;
         public static final int DROP = 1;
         public static final int FORCE_DROP = 6;
+        public static final int FORCE_REINDEX = 7;
     }
 
     private static class TimestampValueRecord implements Record {

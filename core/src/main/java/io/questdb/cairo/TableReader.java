@@ -966,9 +966,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                 if (staleColumnIndex > -1) {
                     if (i == columnIndex) {
                         final CairoException e = CairoException.critical(0)
-                                .put("index does not cover parquet partition data, rebuild it with REINDEX TABLE ")
+                                .put("index does not cover parquet partition data, rebuild it with ALTER TABLE ")
                                 .put(tableToken.getTableName())
-                                .put(" PARTITION '");
+                                .put(" FORCE REINDEX PARTITION LIST '");
                         formatErrorPartitionDirName(partitionIndex, e.message);
                         e.put("' [table=")
                                 .put(tableToken.getTableName())

@@ -90,6 +90,11 @@ public interface MetadataServiceStub extends MetadataService {
         return false;
     }
 
+    @Override
+    default void forceReindex(@Nullable CharSequence columnName, LongList partitions, int tableNamePosition) {
+        throw CairoException.critical(0).put("force reindex does not update sequencer metadata");
+    }
+
     default void forceRemovePartitions(LongList partitionTimestamps) {
         throw CairoException.critical(0).put("recover partitions does not update sequencer metadata");
     }

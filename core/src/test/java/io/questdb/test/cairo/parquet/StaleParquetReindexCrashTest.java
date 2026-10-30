@@ -33,6 +33,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.cairo.crash.AbstractAdaptiveCrashTest;
 import io.questdb.test.cairo.crash.FsyncFailureFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -46,10 +47,10 @@ import java.util.Arrays;
 
 /**
  * Durability of the parquet partition reindex that repairs stale {@code _cv} column tops: the one an
- * {@code ADD INDEX} runs in its transaction, and online {@code REINDEX TABLE}, which commits outside the WAL so no
- * WAL replay redoes it.
+ * {@code ADD INDEX} runs in its transaction, and {@code ALTER TABLE ... FORCE REINDEX}, which commits outside the WAL
+ * so no WAL replay redoes it.
  * <ul>
- *     <li>Under ADAPTIVE, online REINDEX must end with a save point: otherwise a power loss rewinds the table to
+ *     <li>Under ADAPTIVE, FORCE REINDEX must end with a save point: otherwise a power loss rewinds the table to
  *     the save point before it, and the stale tops come back.</li>
  *     <li>Under SYNC, the new partition directory must survive a power loss right after the statement returns, and
  *     a failed barrier around it poisons the engine, as every failed barrier does.</li>
@@ -63,7 +64,7 @@ public class StaleParquetReindexCrashTest extends AbstractAdaptiveCrashTest {
     private static final String STALE_DIR = "2024-01-01.4";
 
     @Test
-    public void testOnlineReindexSurvivesPowerLoss() throws Exception {
+    public void testForceReindexSurvivesPowerLoss() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         // Only the save points the test asks for
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1_000_000_000L);
@@ -80,7 +81,7 @@ public class StaleParquetReindexCrashTest extends AbstractAdaptiveCrashTest {
             markDurableBaseline();
             assertExceptionNoLeakCheck(INDEX_QUERY, -1, "index does not cover parquet partition data");
 
-            execute("reindex table bitmap_top");
+            execute("alter table bitmap_top force reindex");
             assertQuery(INDEX_QUERY).timestamp("ts").returns(ROW_A);
 
             recoverAfterCrash(new TableToken[]{token});
@@ -108,7 +109,7 @@ public class StaleParquetReindexCrashTest extends AbstractAdaptiveCrashTest {
             ff.isArmed = true;
             Throwable failure = null;
             try {
-                execute("reindex table x");
+                execute("alter table x force reindex");
             } catch (Throwable th) {
                 failure = th;
             } finally {
@@ -138,7 +139,7 @@ public class StaleParquetReindexCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Two parquet partitions; the second one's hard link fails with a plain error. The first partition stays
+     * Two parquet partitions; a hard link of the second one fails with a plain error. The first partition stays
      * committed at its new version, with its save point and its replaced directory removed; the second keeps its
      * old version, and the directory the failed attempt created is gone. The writer stays usable.
      */
@@ -155,12 +156,11 @@ public class StaleParquetReindexCrashTest extends AbstractAdaptiveCrashTest {
             final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
             final long pinnedTxnBefore = tracker.getPinnedEpochTxn();
 
-            // the first partition takes two links, the third is the second partition's
-            ff.failAtCall = 3;
+            ff.isArmed = true;
             try {
-                assertExceptionNoLeakCheck("reindex table x", -1, "injected hard link failure");
+                assertExceptionNoLeakCheck("alter table x force reindex", -1, "injected hard link failure");
             } finally {
-                ff.failAtCall = -1;
+                ff.isArmed = false;
             }
             Assert.assertFalse(engine.isDurabilityFailed());
             Assert.assertEquals("the committed partition must get its save point", pinnedTxnBefore + 1, tracker.getPinnedEpochTxn());
@@ -227,29 +227,29 @@ public class StaleParquetReindexCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
-    public void testSyncOnlineReindexFailedDirFsyncIsFailStop() throws Exception {
+    public void testSyncForceReindexFailedDirFsyncIsFailStop() throws Exception {
         assertSyncReindexFsyncFailureIsFailStop(
-                () -> execute("reindex table bitmap_top"),
+                () -> execute("alter table bitmap_top force reindex"),
                 new FsyncFailureFacade("fsyncConvertedPartitionDir", 0, false),
                 true
         );
     }
 
     @Test
-    public void testSyncOnlineReindexFailedTxnMsyncIsFailStop() throws Exception {
+    public void testSyncForceReindexFailedTxnMsyncIsFailStop() throws Exception {
         assertSyncReindexFsyncFailureIsFailStop(
-                () -> execute("reindex table bitmap_top"),
+                () -> execute("alter table bitmap_top force reindex"),
                 new FsyncFailureFacade("commitTxWriter", 0, true),
                 true
         );
     }
 
     /**
-     * Online REINDEX returns under SYNC, then the power fails. The new partition directory and the index files
+     * FORCE REINDEX returns under SYNC, then the power fails. The new partition directory and the index files
      * in it must survive: the durable {@code _txn} names them.
      */
     @Test
-    public void testSyncOnlineReindexSurvivesPowerLoss() throws Exception {
+    public void testSyncForceReindexSurvivesPowerLoss() throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         runWithCrashFacade(() -> {
             StaleParquetColumnTopTest.loadFixture("bitmap_top~10");
@@ -258,7 +258,7 @@ public class StaleParquetReindexCrashTest extends AbstractAdaptiveCrashTest {
             markDurableBaseline();
             assertExceptionNoLeakCheck(INDEX_QUERY, -1, "index does not cover parquet partition data");
 
-            execute("reindex table bitmap_top");
+            execute("alter table bitmap_top force reindex");
             assertQuery(INDEX_QUERY).timestamp("ts").returns(ROW_A);
 
             recoverAfterCrash(new TableToken[]{token});
@@ -381,15 +381,14 @@ public class StaleParquetReindexCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
-     * Fails the n-th hard link a parquet reindex takes with a plain, non-durability error.
+     * Fails the hard links a reindex takes of the second partition, 2024-01-02, with a plain, non-durability error.
      */
     private static final class HardLinkFailureFacade extends TestFilesFacadeImpl {
-        int failAtCall = -1;
-        private int callCount;
+        boolean isArmed;
 
         @Override
         public int hardLink(LPSZ src, LPSZ hardLink) {
-            if (failAtCall > 0 && FsyncFailureFacade.isCalledFrom("prepareParquetPartitionReindex") && ++callCount == failAtCall) {
+            if (isArmed && Utf8s.containsAscii(hardLink, "2024-01-02") && FsyncFailureFacade.isCalledFrom("forceReindexPartition")) {
                 throw CairoException.critical(5).put("injected hard link failure");
             }
             return super.hardLink(src, hardLink);

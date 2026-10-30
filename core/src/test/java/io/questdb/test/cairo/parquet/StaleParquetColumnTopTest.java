@@ -84,7 +84,7 @@ import java.util.zip.ZipInputStream;
  */
 public class StaleParquetColumnTopTest extends AbstractCairoTest {
     private static final String ROW_A = "ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n";
-    private static final String STALE_INDEX_ERROR = "index does not cover parquet partition data, rebuild it with REINDEX TABLE ";
+    private static final String STALE_INDEX_ERROR = "index does not cover parquet partition data, rebuild it with ALTER TABLE ";
 
     static void loadFixture(String tableDirName) throws Exception {
         final byte[] buffer = new byte[1024 * 1024];
@@ -261,7 +261,7 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
             for (int pass = 0; pass < 2; pass++) {
                 if (pass == 1) {
                     // a reindex of sound partitions changes no result
-                    execute("reindex table t");
+                    execute("alter table t force reindex");
                 }
                 final String expected = """
                         ts\tx\tv
@@ -300,13 +300,16 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
                 Assert.assertEquals(-1, reader.getColumnVersionReader().getColumnTop(day1, reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("b"))));
             }
 
-            assertExceptionNoLeakCheck(
-                    "reindex table t partition '2024-01-03'",
-                    -1,
-                    "partition is not parquet, use REINDEX ... LOCK EXCLUSIVE",
-                    sqlExecutionContext
-            );
-            assertExceptionNoLeakCheck("reindex table t column b", "reindex table t column b".length(), "LOCK EXCLUSIVE expected", sqlExecutionContext);
+            // the native partition and a single index reindex too
+            execute("alter table t force reindex column b partition list '2024-01-02', '2024-01-03'");
+            assertQuery("select ts, x, v from t where b = 'a'")
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: b")
+                    .returns("""
+                            ts\tx\tv
+                            2024-01-02T08:00:00.000000Z\t100\t7
+                            2024-01-03T00:00:00.000000Z\t102\t9
+                            """);
         });
     }
 
@@ -372,7 +375,7 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
 
             try (RecordCursorFactory factory = select("select ts, x, v, s from bitmap_top where ts in '2024-01-01T05:00;10m'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    execute("reindex table bitmap_top");
+                    execute("alter table bitmap_top force reindex");
                     // the open cursor's reader still holds the replaced version
                     Assert.assertTrue(oldDir.exists());
                     println(factory, cursor);
@@ -404,7 +407,7 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             loadFixture("stale_top~10");
 
-            execute("reindex table stale_top");
+            execute("alter table stale_top force reindex");
             execute("alter table stale_top convert partition to native list '2024-01-01'");
             drainWalQueue();
 
@@ -429,7 +432,7 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             loadFixture("stale_top~10");
 
-            execute("reindex table stale_top");
+            execute("alter table stale_top force reindex");
             execute("insert into stale_top (ts, x, v, s) values ('2024-01-01T05:05:00.000000Z', -10, 99, 'a')");
             drainWalQueue();
 
@@ -491,7 +494,7 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
 
     /**
      * The index query on the broken day 1 fails, a scan still sees the merged row and the native day 2 index still
-     * answers. REINDEX then repairs day 1.
+     * answers. FORCE REINDEX then repairs day 1.
      */
     private void assertIndexQueryFails(
             String fixture,
@@ -512,7 +515,7 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
             assertExceptionNoLeakCheck(
                     indexQuery,
                     -1,
-                    STALE_INDEX_ERROR + table + " PARTITION '2024-01-01' [table=" + table
+                    STALE_INDEX_ERROR + table + " FORCE REINDEX PARTITION LIST '2024-01-01' [table=" + table
                             + ", partition=2024-01-01, index=s, column=" + staleColumn + ']',
                     sqlExecutionContext
             );
@@ -523,12 +526,12 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
             // the native partition's index still answers
             assertIndexQuery(indexQuery + " and ts in '2024-01-02'", covering, day2Result);
 
-            execute("reindex table " + table);
+            execute("alter table " + table + " force reindex");
 
             assertIndexQuery(indexQuery + " and ts in '2024-01-01T05'", covering, day1Hour5Result);
             assertIndexQuery(indexQuery + " and ts in '2024-01-02'", covering, day2Result);
             // a second run finds nothing to repair and rebuilds the same indexes
-            execute("reindex table " + table + " partition '2024-01-01'");
+            execute("alter table " + table + " force reindex partition list '2024-01-01'");
             assertIndexQuery(indexQuery + " and ts in '2024-01-01T05'", covering, day1Hour5Result);
             // each run writes a new partition directory version and removes the replaced one
             final File tableDir = new File(configuration.getDbRoot().toString(), fixture);

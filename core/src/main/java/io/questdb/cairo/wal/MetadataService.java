@@ -166,6 +166,15 @@ public interface MetadataService {
      */
     boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
 
+    /**
+     * {@code ALTER TABLE ... FORCE REINDEX}: rebuilds the indexes of the given partitions outside the WAL.
+     *
+     * @param columnName        the indexed column to rebuild, or null for every index
+     * @param partitions        (partition timestamp, partition name position in SQL) pairs, empty for every partition
+     * @param tableNamePosition SQL position of the table name, for errors without a partition of their own
+     */
+    void forceReindex(@Nullable CharSequence columnName, LongList partitions, int tableNamePosition);
+
     void forceRemovePartitions(LongList partitionTimestamps);
 
     int getMetaMaxUncommittedRows();
