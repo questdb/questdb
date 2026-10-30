@@ -373,30 +373,27 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     @Test
     public void testDateVariableRangeElementDayFilterBindVariable() throws Exception {
         // the range's own day filter keeps the Mondays: 2024-01-01 and 2024-01-08
-        assertMemoryLeak(() -> {
-            // hourly rows from 2024-01-01T00:00 to 2024-01-14T23:00
-            execute("""
-                    CREATE TABLE t AS (
-                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts
-                        FROM long_sequence(336)
-                    ) TIMESTAMP(ts) PARTITION BY DAY
-                    """);
-            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-01T12:00:00.000000Z"));
-            final ObjList<BindVarTuple> cases = new ObjList<>();
-            cases.add(BindVarTuple.ok(
-                    "range with its own day filter",
-                    """
-                            count\tmin\tmax
-                            48\t2024-01-01T00:00:00.000000Z\t2024-01-08T23:00:00.000000Z
-                            """,
-                    bindVariableService -> bindVariableService.setStr(0, "[$today..$today+7d#Mon]")
-            ));
-            assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .assertBinds(cases);
-        });
+        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-01T12:00:00.000000Z"));
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
+                "range with its own day filter",
+                """
+                        count\tmin\tmax
+                        48\t2024-01-01T00:00:00.000000Z\t2024-01-08T23:00:00.000000Z
+                        """,
+                bindVariableService -> bindVariableService.setStr(0, "[$today..$today+7d#Mon]")
+        ));
+        assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1")
+                .noRandomAccess()
+                .expectSize()
+                // hourly rows from 2024-01-01T00:00 to 2024-01-14T23:00
+                .ddl("""
+                        CREATE TABLE t AS (
+                            SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts
+                            FROM long_sequence(336)
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """)
+                .assertBinds(cases);
     }
 
     @Test
@@ -526,25 +523,22 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         // London springs forward from 01:00 GMT to 02:00 BST on 2024-03-31, so local times from
         // 01:00 to 01:59 do not exist: the interval starts at the transition, 01:00 UTC, and keeps
         // the five minutes from 02:00 BST that exist
-        assertMemoryLeak(() -> {
-            execute("""
-                    CREATE TABLE t AS (
-                        SELECT timestamp_sequence('2024-03-31T00:00:00.000000Z', 60_000_000L) ts
-                        FROM long_sequence(180)
-                    ) TIMESTAMP(ts) PARTITION BY DAY
-                    """);
-            final ObjList<BindVarTuple> cases = new ObjList<>();
-            cases.add(BindVarTuple.ok(
-                    "starts in the gap",
-                    "count\tmin\tmax\n5\t2024-03-31T01:00:00.000000Z\t2024-03-31T01:04:00.000000Z\n",
-                    bindVariableService -> bindVariableService.setStr(0, "2024-03-31T01:10@Europe/London;55m")
-            ));
-            assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .assertBinds(cases);
-        });
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
+                "starts in the gap",
+                "count\tmin\tmax\n5\t2024-03-31T01:00:00.000000Z\t2024-03-31T01:04:00.000000Z\n",
+                bindVariableService -> bindVariableService.setStr(0, "2024-03-31T01:10@Europe/London;55m")
+        ));
+        assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1")
+                .noRandomAccess()
+                .expectSize()
+                .ddl("""
+                        CREATE TABLE t AS (
+                            SELECT timestamp_sequence('2024-03-31T00:00:00.000000Z', 60_000_000L) ts
+                            FROM long_sequence(180)
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """)
+                .assertBinds(cases);
     }
 
     @Test
@@ -580,71 +574,70 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testIntervalBindVariable() throws Exception {
-        execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(10000))");
+        assertMemoryLeak(() -> {
+            execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(10000))");
 
-        // baseline
-        assertQuery("select timestamp_floor('1s', ts), count() from test where ts in '1970-01-01T00:00:02'")
-                .noLeakCheck()
-                .expectSize()
-                .returns("""
-                        timestamp_floor\tcount
-                        1970-01-01T00:00:02.000000Z\t1000
-                        """);
+            // baseline
+            assertQuery("select timestamp_floor('1s', ts), count() from test where ts in '1970-01-01T00:00:02'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            timestamp_floor\tcount
+                            1970-01-01T00:00:02.000000Z\t1000
+                            """);
 
-        final ObjList<BindVarTuple> cases = new ObjList<>();
-        cases.add(BindVarTuple.ok(
-                "2s",
-                """
-                        timestamp_floor\tcount
-                        1970-01-01T00:00:02.000000Z\t1000
-                        """,
-                bindVariableService -> bindVariableService.setStr(0, "1970-01-01T00:00:02")
-        ));
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(BindVarTuple.ok(
+                    "2s",
+                    """
+                            timestamp_floor\tcount
+                            1970-01-01T00:00:02.000000Z\t1000
+                            """,
+                    bindVariableService -> bindVariableService.setStr(0, "1970-01-01T00:00:02")
+            ));
 
-        cases.add(BindVarTuple.fails(
-                "int interval",
-                64,
-                "unsupported bind variable type [INT] expected one of [STRING or VARCHAR]",
-                bindVariableService -> bindVariableService.setInt(0, 10)
-        ));
+            cases.add(BindVarTuple.fails(
+                    "int interval",
+                    64,
+                    "unsupported bind variable type [INT] expected one of [STRING or VARCHAR]",
+                    bindVariableService -> bindVariableService.setInt(0, 10)
+            ));
 
-        cases.add(BindVarTuple.ok(
-                "2s",
-                """
-                        timestamp_floor\tcount
-                        1970-01-01T00:00:03.000000Z\t1000
-                        """,
-                bindVariableService -> bindVariableService.setStr(0, "1970-01-01T00:00:03")
-        ));
+            cases.add(BindVarTuple.ok(
+                    "2s",
+                    """
+                            timestamp_floor\tcount
+                            1970-01-01T00:00:03.000000Z\t1000
+                            """,
+                    bindVariableService -> bindVariableService.setStr(0, "1970-01-01T00:00:03")
+            ));
 
-        assertQuery("select timestamp_floor('1s', ts), count() from test where ts in $1")
-                .noLeakCheck()
-                .expectSize()
-                .assertBinds(cases);
+            assertQuery("select timestamp_floor('1s', ts), count() from test where ts in $1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .assertBinds(cases);
+        });
     }
 
     @Test
     public void testIntervalLiteralCompilesToOver255Elements() throws Exception {
         // The literal compiles to 481 elements: $today and 480 half-hourly intervals that do not
         // merge, more than the compiled expression could once count
-        assertMemoryLeak(() -> {
-            // rows every 30 minutes from 2024-01-01T00:00 to 2024-01-10T23:30
-            execute("""
-                    CREATE TABLE t AS (
-                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 1_800_000_000L) ts
-                        FROM long_sequence(480)
-                    ) TIMESTAMP(ts) PARTITION BY DAY
-                    """);
-            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-03-01T12:00:00.000000Z"));
-            assertQuery("SELECT count() FROM t WHERE ts IN '[$today,2024-01-[01..10]T[00..23]:[00,30]]'")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("""
-                            count
-                            480
-                            """);
-        });
+        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-03-01T12:00:00.000000Z"));
+        assertQuery("SELECT count() FROM t WHERE ts IN '[$today,2024-01-[01..10]T[00..23]:[00,30]]'")
+                .noRandomAccess()
+                .expectSize()
+                // rows every 30 minutes from 2024-01-01T00:00 to 2024-01-10T23:30
+                .ddl("""
+                        CREATE TABLE t AS (
+                            SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 1_800_000_000L) ts
+                            FROM long_sequence(480)
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """)
+                .returns("""
+                        count
+                        480
+                        """);
     }
 
     @Test
@@ -655,10 +648,8 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testListOfTimestamps() throws Exception {
-        execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
-
         assertQuery("test where ts in ('1970-01-01T00:00:00.070000Z', 77000, '1970-01-01'::date)")
-                .noLeakCheck()
+                .ddl("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))")
                 .returns("""
                         a\tts
                         -1148479920\t1970-01-01T00:00:00.000000Z
