@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.parquet;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -31,11 +32,17 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Tests stale _pm detection and writer-side regeneration.
@@ -46,6 +53,66 @@ import org.junit.Test;
  * regenerates the _pm from data.parquet.
  */
 public class ParquetMetaStalePmTest extends AbstractCairoTest {
+
+    @Test
+    public void testReaderUsesOneParquetLengthCheck() throws Exception {
+        final AtomicInteger exists = new AtomicInteger();
+        final AtomicInteger lengths = new AtomicInteger();
+        final AtomicReference<String> parquetPath = new AtomicReference<>();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, "data.parquet")) {
+                    exists.incrementAndGet();
+                }
+                return super.exists(name);
+            }
+
+            @Override
+            public long length(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, "data.parquet")) {
+                    lengths.incrementAndGet();
+                    parquetPath.set(Utf8s.stringFromUtf8Bytes(name));
+                }
+                return super.length(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE t (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES (1, '2024-06-10'), (2, '2024-06-11')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
+            engine.releaseAllReaders();
+            exists.set(0);
+            lengths.set(0);
+            try (TableReader reader = getReader("t")) {
+                Assert.assertEquals(1, reader.openPartition(0));
+            }
+            Assert.assertEquals("one extent check also determines existence", 0, exists.get());
+            Assert.assertEquals(1, lengths.get());
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            try (Path path = new Path().of(parquetPath.get())) {
+                Assert.assertTrue(ff.exists(path.$()));
+                Assert.assertTrue(ff.length(path.$()) > 1);
+                final long fd = ff.openRW(path.$(), 0);
+                Assert.assertTrue(fd > -1);
+                try {
+                    Assert.assertTrue(ff.truncate(fd, 1));
+                    Assert.assertEquals(1, ff.length(fd));
+                } finally {
+                    ff.close(fd);
+                }
+            }
+            try (TableReader reader = getReader("t")) {
+                try {
+                    reader.openPartition(0);
+                    Assert.fail("truncated Parquet data must be refused before mapping");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "parquet partition file too short");
+                }
+            }
+        });
+    }
 
     @Test
     public void testReaderDoesNotCrashOnStalePm() throws Exception {

@@ -26,11 +26,13 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.MemorySerializer;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.MemoryFCRImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
@@ -51,6 +53,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Supplier;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
@@ -59,7 +62,9 @@ public class TableTransactionLog implements Closeable {
     private static final Log LOG = LogFactory.getLog(TableTransactionLog.class);
     private static final CarrierLocal<AlterOperation> tlAlterOperation = new CarrierLocal<>();
     private static final CarrierLocal<TableMetadataChangeLogImpl> tlStructChangeCursor = new CarrierLocal<>();
+    private final Supplier<long[]> committedTableTxn;
     private final CairoConfiguration configuration;
+    private final LocalDurabilityPolicy durabilityPolicy;
     private final FilesFacade ff;
     private final AtomicLong maxMetadataVersion = new AtomicLong();
     private final Utf8StringSink rootPath = new Utf8StringSink();
@@ -69,15 +74,68 @@ public class TableTransactionLog implements Closeable {
     private volatile long lastTxn = -1;
     private TableTransactionLogFile txnLogFile;
 
-    TableTransactionLog(CairoConfiguration configuration, @NotNull WalDirectoryPolicy walDirectoryPolicy) {
+    /**
+     * @param committedTableTxn one read of the table's {@code _txn}, asked only when an open finds a torn record: its
+     *                          committed txn, below which the open never cuts the log, and its structure version, which
+     *                          an open that keeps a torn last record takes. Null when it is not known
+     */
+    TableTransactionLog(
+            CairoConfiguration configuration,
+            @NotNull WalDirectoryPolicy walDirectoryPolicy,
+            @NotNull LocalDurabilityPolicy durabilityPolicy,
+            @NotNull Supplier<long[]> committedTableTxn
+    ) {
         this.configuration = configuration;
+        this.durabilityPolicy = durabilityPolicy;
         this.ff = configuration.getFilesFacade();
         this.walDirectoryPolicy = walDirectoryPolicy;
+        this.committedTableTxn = committedTableTxn;
+    }
+
+    /**
+     * Whether a log that this process has not opened ends, once opened, at the max txn its header names: an open in
+     * the current commit mode and durability policy would cut no record. Applies the open's own rule for the log's
+     * format; for a V1 log that reads the records the open would check. An unknown format answers true: its open
+     * fails whatever the header says.
+     *
+     * @param fd            the log's {@code _txnlog}, open for reading
+     * @param formatVersion the header's format version
+     * @param maxTxn        the header's max txn
+     * @param unsyncedFrom  the header's flushed-through txn, at the same offset in both formats
+     * @param commitMode    the configured commit mode
+     * @param policy        the engine's current local durability policy
+     */
+    public static boolean isTailCertain(
+            FilesFacade ff,
+            long fd,
+            int formatVersion,
+            long maxTxn,
+            long unsyncedFrom,
+            int commitMode,
+            LocalDurabilityPolicy policy
+    ) {
+        final int mode = LocalDurabilityPolicy.resolveCommitMode(commitMode, policy);
+        return switch (formatVersion) {
+            case WAL_SEQUENCER_FORMAT_VERSION_V1 -> TableTransactionLogV1.isTailIntact(
+                    ff,
+                    fd,
+                    maxTxn,
+                    unsyncedFrom,
+                    mode == CommitMode.ADAPTIVE || mode == CommitMode.SYNC
+            );
+            case WAL_SEQUENCER_FORMAT_VERSION_V2 -> TableTransactionLogV2.isTailCertain(
+                    maxTxn,
+                    unsyncedFrom,
+                    policy.isLocalDurabilityEnabled(),
+                    mode == CommitMode.ADAPTIVE
+            );
+            default -> true;
+        };
     }
 
     public static long readMaxStructureVersion(FilesFacade ff, Path path) {
         int pathLen = path.size();
-        long logFileFd = TableUtils.openRW(ff, path.concat(TXNLOG_FILE_NAME).$(), LOG, CairoConfiguration.O_NONE);
+        long logFileFd = openExistingTxnLog(ff, path);
         try {
             int formatVersion = ff.readNonNegativeInt(logFileFd, 0);
             if (formatVersion < 0) {
@@ -105,6 +163,27 @@ public class TableTransactionLog implements Closeable {
         rootPath.clear();
     }
 
+    /**
+     * Flushes the transaction log files to the device, parts before the header, for the adaptive group commit's
+     * batched flush. The metadata change log holds structural changes only, not data commits, and is not part of
+     * the per-commit deferred flush, so this method leaves it alone.
+     *
+     * @param fromTxn the first txn whose part file a log kept in parts flushes too, see
+     *                {@link TableTransactionLogFile#fdatasyncTxnLog(long)}
+     */
+    public void fdatasyncTxnLog(long fromTxn) {
+        txnLogFile.fdatasyncTxnLog(fromTxn);
+    }
+
+    /**
+     * See {@link TableTransactionLogFile#flushOnCleanClose()}. A no-op when the log was not opened.
+     */
+    public void flushOnCleanClose() {
+        if (txnLogFile != null) {
+            txnLogFile.flushOnCleanClose();
+        }
+    }
+
     public void fullSync() {
         txnMetaMemIndex.sync(false);
         txnMetaMem.sync(false);
@@ -116,7 +195,7 @@ public class TableTransactionLog implements Closeable {
             assert txnLogFile == null;
             rootPath.put(path);
 
-            txnLogFile = openTxnFile(path, configuration, walDirectoryPolicy);
+            txnLogFile = openTxnFile(path, configuration, walDirectoryPolicy, durabilityPolicy, committedTableTxn);
             long maxStructureVersion = txnLogFile.open(path);
 
             openFiles(path);
@@ -139,7 +218,7 @@ public class TableTransactionLog implements Closeable {
 
     private static int getFormatVersion(Path path, FilesFacade ff) {
         int pathLen = path.size();
-        long logFileFd = TableUtils.openRW(ff, path.concat(TXNLOG_FILE_NAME).$(), LOG, CairoConfiguration.O_NONE);
+        long logFileFd = openExistingTxnLog(ff, path);
         int formatVersion;
         try {
             formatVersion = ff.readNonNegativeInt(logFileFd, 0);
@@ -153,15 +232,39 @@ public class TableTransactionLog implements Closeable {
         return formatVersion;
     }
 
+    /**
+     * Opens the log to read it. The open never creates the file: a missing log reports so, rather than coming back
+     * as an empty file that then reads as a broken one.
+     */
+    private static long openExistingTxnLog(FilesFacade ff, Path path) {
+        final long fd = ff.openRWExisting(path.concat(TXNLOG_FILE_NAME).$());
+        if (fd < 0) {
+            final int errno = ff.errno();
+            if (Files.isErrnoFileDoesNotExist(errno)) {
+                throw CairoException.critical(errno).put("could not open, file does not exist [file=").put(path).put(']');
+            }
+            throw CairoException.critical(errno).put("could not open read-write [file=").put(path).put(']');
+        }
+        return fd;
+    }
+
     private static long openFileRO(final FilesFacade ff, final Path path, final String fileName, boolean bypassFdCache) {
         return bypassFdCache ? TableUtils.openRONoCache(ff, path, fileName, LOG) : TableUtils.openRO(ff, path, fileName, LOG);
     }
 
-    private static TableTransactionLogFile openTxnFile(Path path, CairoConfiguration configuration, WalDirectoryPolicy walDirectoryPolicy) {
+    private static TableTransactionLogFile openTxnFile(
+            Path path,
+            CairoConfiguration configuration,
+            WalDirectoryPolicy walDirectoryPolicy,
+            LocalDurabilityPolicy durabilityPolicy,
+            Supplier<long[]> committedTableTxn
+    ) {
         int formatVersion = getFormatVersion(path, configuration.getFilesFacade());
         return switch (formatVersion) {
-            case WAL_SEQUENCER_FORMAT_VERSION_V1 -> new TableTransactionLogV1(configuration);
-            case WAL_SEQUENCER_FORMAT_VERSION_V2 -> new TableTransactionLogV2(configuration, -1, walDirectoryPolicy);
+            case WAL_SEQUENCER_FORMAT_VERSION_V1 ->
+                    new TableTransactionLogV1(configuration, durabilityPolicy, committedTableTxn);
+            case WAL_SEQUENCER_FORMAT_VERSION_V2 ->
+                    new TableTransactionLogV2(configuration, -1, walDirectoryPolicy, durabilityPolicy, committedTableTxn);
             default -> throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
         };
     }
@@ -169,9 +272,9 @@ public class TableTransactionLog implements Closeable {
     private void createTxnLogFileInstance() {
         if (txnLogFile == null) {
             if (configuration.getDefaultSeqPartTxnCount() > 0) {
-                txnLogFile = new TableTransactionLogV2(configuration, configuration.getDefaultSeqPartTxnCount(), walDirectoryPolicy);
+                txnLogFile = new TableTransactionLogV2(configuration, configuration.getDefaultSeqPartTxnCount(), walDirectoryPolicy, durabilityPolicy, committedTableTxn);
             } else {
-                txnLogFile = new TableTransactionLogV1(configuration);
+                txnLogFile = new TableTransactionLogV1(configuration, durabilityPolicy, committedTableTxn);
             }
         } else {
             throw new IllegalStateException("transaction log file already opened");
@@ -236,6 +339,13 @@ public class TableTransactionLog implements Closeable {
         fullSync();
         Unsafe.storeFence();
         long txn = lastTxn = txnLogFile.endMetadataChangeEntry();
+        // endMetadataChangeEntry publishes MAX_TXN after the pre-sync above. Under SYNC and ADAPTIVE flush that
+        // commit pointer too; otherwise an acknowledged idle structural ALTER can disappear on a power loss.
+        // NOSYNC and ASYNC promise nothing across a power loss.
+        // Local commits keep the configured grade, including on a replica.
+        if (CommitMode.isPowerLossDurable(configuration.getCommitMode())) {
+            txnLogFile.fullSync();
+        }
         maxMetadataVersion.incrementAndGet();
         return txn;
     }

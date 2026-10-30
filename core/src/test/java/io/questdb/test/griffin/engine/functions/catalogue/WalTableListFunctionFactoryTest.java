@@ -25,35 +25,113 @@
 package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mig.EngineMigration;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cairo.TxnCorruptionUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.TimeUnit;
 
 import static io.questdb.cairo.ErrorTag.*;
 import static io.questdb.std.Files.SEPARATOR;
+import static org.junit.Assert.assertTrue;
 
 public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        // A small supported ring makes notification overflow deterministic without thousands of tables.
+        setProperty(PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4);
+        AbstractCairoTest.setUpStatic();
+    }
 
     @Before
     public void setUp() {
         super.setUp();
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+    }
+
+    @Test
+    public void testDurabilityValuesAfterNotificationQueueOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 6; i++) {
+                execute("CREATE TABLE overflow" + i + " (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            }
+            for (int commit = 0; commit < 2; commit++) {
+                for (int i = 0; i < 6; i++) {
+                    execute("INSERT INTO overflow" + i + " VALUES (" + commit + ", '2024-01-01')");
+                }
+                drainWalQueue();
+            }
+            engine.releaseInactive();
+            final TableToken token = engine.verifyTableName("overflow5");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            // Distinguish a retained recovery counter from the uninitialized branch's fabricated zero.
+            tracker.bumpRecoveryIncarnation();
+            Assert.assertTrue(tracker.isInitialised());
+            for (int i = 0; i < 6; i++) {
+                execute("INSERT INTO overflow" + i + " VALUES (3, '2024-01-02')");
+            }
+            engine.releaseInactive();
+            Assert.assertFalse("the notification ring must actually overflow", tracker.isInitialised());
+            assertTrackerDurabilityValues("overflow5", tracker);
+            new CheckWalTransactionsJob(engine).run();
+            Assert.assertFalse("the full queue must still prevent initialization", tracker.isInitialised());
+            assertTrackerDurabilityValues("overflow5", tracker);
+            drainWalQueue();
+            Assert.assertTrue(tracker.isInitialised());
+            assertTrackerDurabilityValues("overflow5", tracker);
+        });
+    }
+
+    @Test
+    public void testDurabilityValuesAfterRecoveryBeforeApply() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // Keep a known recovery cut behind the live writer, without cadence or close replacing it.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE recovered (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO recovered VALUES (1, '2024-01-01')");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("recovered");
+            try (var writer = engine.getWriter(token, "establish recovery cut")) {
+                writer.completeDurableEpochAfter("test recovery cut");
+            }
+            execute("INSERT INTO recovered VALUES (2, '2024-01-02')");
+            drainWalQueue();
+            engine.clear();
+            try (CairoEngine restarted = new CairoEngine(configuration)) {
+                final SeqTxnTracker tracker = restarted.getTableSequencerAPI().getTxnTracker(token);
+                Assert.assertFalse(tracker.isInitialised());
+                Assert.assertTrue(tracker.getRecoveryIncarnation() > 0);
+                Assert.assertTrue(tracker.getDurableEpochSeqTxn() > 0);
+                Assert.assertEquals(0, tracker.getLastEpochTs());
+                assertTrackerDurabilityValues(restarted, "recovered", tracker);
+                restarted.clear();
+            }
+        });
     }
 
     @Test
@@ -111,6 +189,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testNotInitialized() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         assertMemoryLeak(() -> {
             createTable("B", true);
             createTable("C", true);
@@ -118,15 +197,81 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            B\tfalse\t0\t0\t0\t\t\t0
-                            C\tfalse\t0\t0\t0\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            B\tfalse\t0\t0\t0\t\t\t0\t0\t0\t-1\t
+                            C\tfalse\t0\t0\t0\t\t\t0\t0\t0\t-1\t
                             """);
         });
     }
 
     @Test
+    public void testNotInitializedSuspended() throws Exception {
+        // An apply that fails to open the writer suspends the table before anything initialises its tracker.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            createTable("A", true);
+            engine.clear();
+            try (CairoEngine restarted = new CairoEngine(configuration)) {
+                final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(restarted);
+                final TableToken token = restarted.verifyTableName("A");
+                Assert.assertFalse(restarted.getTableSequencerAPI().getTxnTracker(token).isInitialised());
+                restarted.getTableSequencerAPI().suspendTable(token, DISK_FULL, "could not open the writer");
+                assertQuery("select name, suspended, writerTxn, errorTag, errorMessage from wal_tables()")
+                        .withEngine(restarted)
+                        .withContext(ctx)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                name\tsuspended\twriterTxn\terrorTag\terrorMessage
+                                A\ttrue\t0\tDISK FULL\tcould not open the writer
+                                """);
+                restarted.clear();
+            }
+        });
+    }
+
+    @Test
+    public void testNotInitializedUnreadableTxn() throws Exception {
+        // A table whose _txn cannot be read is listed with the error rather than failing every other row.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        assertMemoryLeak(() -> {
+            createTable("A", true);
+            createTable("B", true);
+            execute("insert into A values (1, 'A', '2022-12-05T01', 'A')");
+            execute("insert into B values (2, 'A', '2022-12-05T01', 'B')");
+            drainWalQueue();
+            // A second commit, so both A/B areas of B's _txn hold a record with a checksum.
+            execute("insert into B values (3, 'A', '2022-12-05T02', 'B')");
+            drainWalQueue();
+            engine.clear();
+            // A restart of an upgraded database runs no migration. The test root starts without the upgrade marker, so
+            // record it while _txn still reads, or the restart would migrate B and stop at its torn _txn.
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+            // Neither A/B area of B's _txn verifies.
+            TxnCorruptionUtils.tearChecksumSlots(engine, "B");
+            try (CairoEngine restarted = new CairoEngine(configuration)) {
+                final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(restarted);
+                assertQuery("select name, suspended, writerTxn, errorMessage like '%checksum mismatch in both A and B areas%' torn from wal_tables() order by name")
+                        .withEngine(restarted)
+                        .withContext(ctx)
+                        .noLeakCheck()
+                        .returns("""
+                                name\tsuspended\twriterTxn\ttorn
+                                A\tfalse\t1\tfalse
+                                B\tfalse\tnull\ttrue
+                                """);
+                final SeqTxnTracker tracker = restarted.getTableSequencerAPI().getTxnTracker(restarted.verifyTableName("B"));
+                Assert.assertFalse(tracker.isInitialised());
+                Assert.assertFalse(tracker.isSuspended());
+                assertTrackerDurabilityValues(restarted, "B", tracker);
+                restarted.clear();
+            }
+        });
+    }
+
+    @Test
     public void testWalTablesQueryCache() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         assertMemoryLeak(() -> {
             createTable("A", false);
             createTable("B", true);
@@ -139,9 +284,9 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         println(factory, cursor);
                         TestUtils.assertEquals("""
-                                name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                                B\tfalse\t0\t0\t0\t\t\t0
-                                C\tfalse\t0\t0\t0\t\t\t0
+                                name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                                B\tfalse\t0\t0\t0\t\t\t0\t0\t0\t-1\t
+                                C\tfalse\t0\t0\t0\t\t\t0\t0\t0\t-1\t
                                 """, sink);
                     }
                 }
@@ -151,6 +296,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testWalTablesSelectAll() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         FilesFacade filesFacade = new TestFilesFacadeImpl() {
             private int attempt = 0;
 
@@ -189,10 +335,10 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
             assertQuery("wal_tables() order by name")
                     .noLeakCheck()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            "B\ttrue\t1\t0\t3\t\tcould not open read-write [file=" + root + SEPARATOR + "B~2" + SEPARATOR + "2022-12-05" + SEPARATOR + "x.d.1]\t0\n" +
-                            "C\tfalse\t2\t0\t2\t\t\t0\n" +
-                            "D\tfalse\t1\t0\t1\t\t\t0\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            "B\ttrue\t1\t0\t3\t\tcould not open read-write [file=" + root + SEPARATOR + "B~2" + SEPARATOR + "2022-12-05" + SEPARATOR + "x.d.1]\t0\t0\t0\t-1\t\n" +
+                            "C\tfalse\t2\t0\t2\t\t\t0\t0\t0\t-1\t\n" +
+                            "D\tfalse\t1\t0\t1\t\t\t0\t0\t0\t-1\t\n");
 
             assertQuery("select name, suspended, writerTxn from wal_tables() order by name")
                     .noLeakCheck()
@@ -215,6 +361,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testWalTablesSuspendedWithErrorCode() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         testWalTablesSuspendedWithError("alter table B suspend wal with " + (Os.isWindows() ? 112 : 28) + ", 'Out of disk space'", DISK_FULL, "Out of disk space");
         testWalTablesSuspendedWithError("alter table B suspend wal with " + (Os.isWindows() ? 8 : 12) + ", 'Out of memory'", OUT_OF_MMAP_AREAS, "Out of memory");
         testWalTablesSuspendedWithError("alter table B suspend wal with " + (Os.isWindows() ? 4 : 24) + ", 'Too many open file handlers'", TOO_MANY_OPEN_FILES, "Too many open file handlers");
@@ -222,6 +369,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testWalTablesSuspendedWithErrorTag() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // deterministic: adaptive adds a non-deterministic epoch (wall-clock lastEpochTs) / epoch-gated purge; this test asserts mode-independent behavior
         testWalTablesSuspendedWithError("alter table B suspend wal with 'DISK FULL', 'test error message 1'", DISK_FULL, "test error message 1");
         testWalTablesSuspendedWithError("alter table B suspend wal with 'OUT OF MMAP AREAS', 'test error message 2'", OUT_OF_MMAP_AREAS, "test error message 2");
         testWalTablesSuspendedWithError("alter table B suspend wal with 'OUT OF MEMORY', 'test error message 3'", OUT_OF_MEMORY, "test error message 3");
@@ -230,12 +378,124 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
         testWalTablesSuspendedWithError("alter table B suspend wal", NONE, "");
     }
 
+    /**
+     * wal_tables() exposes the adaptive observability columns with the tracker's values:
+     * <ul>
+     *   <li>{@code durableEpochSeqTxn}, read from the per-table {@link SeqTxnTracker};</li>
+     *   <li>{@code recoveryIncarnation}, which {@link io.questdb.cairo.RecoveryCoordinator} increments
+     *       on a successful epoch restore; the test bumps it through
+     *       {@link SeqTxnTracker#bumpRecoveryIncarnation()} directly.</li>
+     * </ul>
+     */
+    @Test
+    public void testAdaptiveObservabilityColumns() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1); // disable auto-epoch so durableEpochSeqTxn stays 0 until driven explicitly below
+        assertMemoryLeak(() -> {
+            // The test pins ADAPTIVE rather than rely on the suite default.
+            createTable("T1", true);
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("T1");
+
+            // --- durableEpochSeqTxn: 0 by default ---
+            assertQuery("select name, durableEpochSeqTxn from wal_tables() where name = 'T1'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tdurableEpochSeqTxn
+                            T1\t0
+                            """);
+
+            // --- recoveryIncarnation: 0 initially ---
+            assertQuery("select name, recoveryIncarnation from wal_tables() where name = 'T1'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            name\trecoveryIncarnation
+                            T1\t0
+                            """);
+
+            // Advance durableEpochSeqTxn on the tracker directly (simulates an epoch commit) and
+            // bump recoveryIncarnation (simulates a recovery restore for this table).
+            SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            tracker.setDurableEpochSeqTxn(5L);
+            tracker.bumpRecoveryIncarnation();
+
+            // --- durableEpochSeqTxn reflects the updated epoch ---
+            assertQuery("select name, durableEpochSeqTxn from wal_tables() where name = 'T1'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tdurableEpochSeqTxn
+                            T1\t5
+                            """);
+
+            // --- recoveryIncarnation = 1 after one bump ---
+            assertQuery("select name, recoveryIncarnation from wal_tables() where name = 'T1'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            name\trecoveryIncarnation
+                            T1\t1
+                            """);
+
+            // Bump again to confirm it increments correctly.
+            tracker.bumpRecoveryIncarnation();
+            assertQuery("select name, recoveryIncarnation from wal_tables() where name = 'T1'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            name\trecoveryIncarnation
+                            T1\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testWalTablesExposesLocalDurableAndLastEpochTs() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "0"); // cut an epoch every batch
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values (0, 1)");
+            drainWalQueue();
+
+            SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("x"));
+            assertTrue("adaptive frontier should advance", tracker.getLocalDurableSeqTxn() > 0);
+
+            // Both columns expose the tracker's values verbatim. lastEpochTs is a TIMESTAMP (micros),
+            // populated from the tracker's wall-clock millis value * 1000; cast back to long to assert exactly.
+            assertQuery("select localDurableSeqTxn, cast(lastEpochTs as long) as epochMicros " +
+                    "from wal_tables() where name = 'x'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("localDurableSeqTxn\tepochMicros\n" +
+                            tracker.getLocalDurableSeqTxn() + "\t" + (tracker.getLastEpochTs() * 1000) + "\n");
+        });
+    }
+
     private void assertMemoryPressureLevel(int expectedMemoryPressureLevel) throws Exception {
         assertQuery("select memoryPressure from wal_tables() where name = '" + "A" + "'")
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("memoryPressure\n" +
                         expectedMemoryPressureLevel + "\n");
+    }
+
+    private void assertTrackerDurabilityValues(String table, SeqTxnTracker tracker) throws Exception {
+        assertTrackerDurabilityValues(engine, table, tracker);
+    }
+
+    private void assertTrackerDurabilityValues(CairoEngine queryEngine, String table, SeqTxnTracker tracker) throws Exception {
+        final String expected = "durableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochMicros\n"
+                + tracker.getDurableEpochSeqTxn() + '\t' + tracker.getRecoveryIncarnation() + '\t'
+                + tracker.getLocalDurableSeqTxn() + '\t'
+                + (tracker.getLastEpochTs() > 0 ? tracker.getLastEpochTs() * 1000 : "null") + '\n';
+        assertQuery("SELECT durableEpochSeqTxn, recoveryIncarnation, localDurableSeqTxn, "
+                + "lastEpochTs::LONG lastEpochMicros FROM wal_tables() WHERE name = '" + table + "'")
+                .withEngine(queryEngine).withContext(TestUtils.createSqlExecutionCtx(queryEngine))
+                .noLeakCheck().noRandomAccess().returns(expected);
     }
 
     private void createTable(final String tableName, boolean isWal) throws SqlException {
@@ -271,8 +531,8 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             assertQuery("wal_tables()")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\n" +
-                            "B\ttrue\t1\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\t0\n");
+                    .returns("name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs\n" +
+                            "B\ttrue\t1\t0\t2\t" + expectedErrorTag.text() + "\t" + expectedErrorMessage + "\t0\t0\t0\t-1\t\n");
 
             execute("alter table B resume wal");
 
@@ -284,8 +544,8 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            B\tfalse\t2\t0\t2\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            B\tfalse\t2\t0\t2\t\t\t0\t0\t0\t-1\t
                             """);
 
             dropTable("A");

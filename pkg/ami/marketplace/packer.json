@@ -5,7 +5,9 @@
     "region": "eu-west-1",
     "ami_regions": "",
     "questdb_version": "",
-    "ami_groups": ""
+    "ami_groups": "",
+    "force_deregister": "false",
+    "force_delete_snapshot": "false"
   },
   "builders": [
     {
@@ -17,8 +19,8 @@
       "instance_type": "t3.large",
       "region": "{{user `region`}}",
       "type": "amazon-ebs",
-      "force_deregister": "true",
-      "force_delete_snapshot": "true",
+      "force_deregister": "{{user `force_deregister`}}",
+      "force_delete_snapshot": "{{user `force_delete_snapshot`}}",
       "source_ami_filter": {
         "filters": {
           "virtualization-type": "hvm",

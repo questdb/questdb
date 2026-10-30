@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.GeoHashes;
@@ -74,6 +75,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
@@ -508,6 +510,149 @@ public class TableWriterTest extends AbstractCairoTest {
                     return -1;
                 }
                 return super.openRW(name, opts);
+            }
+        });
+    }
+
+    @Test
+    public void testAddColumnActualDirectoryFsyncFailurePoisonsEngine() throws Exception {
+        // TableWriter takes no table-directory fsync on Windows (there are no directory handles to
+        // fsync), so the fault this facade arms is never reached there and addColumn succeeds.
+        // The test is POSIX-only by the shape of the product code.
+        org.junit.Assume.assumeFalse("table directory fsync seam is POSIX-only", Os.isWindows());
+        // The engine decides the stop from the instance's mode, so pin it too, not only the writer's.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            assertMemoryLeak(() -> {
+                populateTable();
+                final class TableDirSyncFailureFacade extends TestFilesFacadeImpl {
+                    private boolean isArmed;
+                    private boolean isCounting;
+                    private int syncFailureCount;
+                    private long tableDirFd = -1;
+
+                    @Override
+                    public void fsyncAndClose(long fd) {
+                        if (isCounting && fd == tableDirFd) {
+                            syncFailureCount++;
+                            if (isArmed) {
+                                isArmed = false;
+                                super.close(fd);
+                                throw CairoException.dataSyncFailure(this, 5, "fsyncAndClose", "injected metadata directory fsync failure");
+                            }
+                        }
+                        super.fsyncAndClose(fd);
+                    }
+
+                    @Override
+                    public long openRONoCache(LPSZ name) {
+                        final long fd = super.openRONoCache(name);
+                        if (isCounting && Utf8s.endsWithAscii(name, PRODUCT_FS)) {
+                            tableDirFd = fd;
+                        }
+                        return fd;
+                    }
+                }
+                final TableDirSyncFailureFacade ff = new TableDirSyncFailureFacade();
+                final CairoConfiguration testConfiguration = new DefaultTestCairoConfiguration(root) {
+                    @Override
+                    public int getCommitMode() {
+                        // The swap-time table-dir fsyncs this facade targets are skipped under NOSYNC. Pin a
+                        // mode that takes them, so the test still runs under a nosync sweep.
+                        return CommitMode.ADAPTIVE;
+                    }
+
+                    @Override
+                    public @NotNull FilesFacade getFilesFacade() {
+                        return ff;
+                    }
+                };
+
+                try (TableWriter writer = newOffPoolWriter(testConfiguration, PRODUCT)) {
+                    ff.isCounting = true;
+                    ff.isArmed = true;
+                    try {
+                        writer.addColumn("fatal_col", ColumnType.BINARY, AllowAllSecurityContext.INSTANCE);
+                        Assert.fail("actual directory fsync failure must be fatal");
+                    } catch (CairoError expected) {
+                        Assert.assertTrue(CairoException.isDataSyncFailure(expected));
+                    }
+                    Assert.assertEquals(1, ff.syncFailureCount);
+                    Assert.assertTrue(engine.isDurabilityFailed());
+                }
+            });
+        } finally {
+            engine.resetDurabilityFailure();
+        }
+    }
+
+    @Test
+    public void testAddColumnPostSwapTableDirFsyncFailureCanBeRetried() throws Exception {
+        testAddColumnTableDirFsyncFailureCanBeRetried(2);
+    }
+
+    @Test
+    public void testAddColumnPreSwapTableDirFsyncFailureCanBeRetried() throws Exception {
+        testAddColumnTableDirFsyncFailureCanBeRetried(1);
+    }
+
+    private void testAddColumnTableDirFsyncFailureCanBeRetried(int failAtDirOpen) throws Exception {
+        // Same seam as testAddColumnActualDirectoryFsyncFailurePoisonsEngine: no directory fsync on Windows.
+        org.junit.Assume.assumeFalse("table directory fsync seam is POSIX-only", Os.isWindows());
+        assertMemoryLeak(() -> {
+            populateTable();
+            final class TableDirOpenFailureFacade extends TestFilesFacadeImpl {
+                private int tableDirOpensUntilFailure;
+
+                void arm(int failAt) {
+                    tableDirOpensUntilFailure = failAt;
+                }
+
+                @Override
+                public long openRONoCache(LPSZ name) {
+                    if (tableDirOpensUntilFailure > 0
+                            && Utf8s.endsWithAscii(name, PRODUCT_FS)
+                            && --tableDirOpensUntilFailure == 0) {
+                        return -1;
+                    }
+                    return super.openRONoCache(name);
+                }
+            }
+            final TableDirOpenFailureFacade ff = new TableDirOpenFailureFacade();
+            final CairoConfiguration testConfiguration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public int getCommitMode() {
+                    // The swap-time table-dir fsyncs this facade targets are skipped under NOSYNC. Pin a mode
+                    // that takes them, so the test still runs under a nosync sweep.
+                    return CommitMode.ADAPTIVE;
+                }
+
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+
+            try (TableWriter writer = newOffPoolWriter(testConfiguration, PRODUCT)) {
+                Assert.assertEquals(20, writer.getColumnCount());
+                ff.arm(failAtDirOpen);
+                try {
+                    writer.addColumn("retry_col", ColumnType.BINARY, AllowAllSecurityContext.INSTANCE);
+                    Assert.fail("directory fsync failure expected");
+                } catch (CairoException expected) {
+                    // The failed DDL must restore the live writer before reporting the failure.
+                }
+                Assert.assertEquals(20, writer.getColumnCount());
+            }
+
+            try (TableWriter writer = newOffPoolWriter(testConfiguration, PRODUCT)) {
+                Assert.assertEquals("failed DDL must stay rolled back after reopen", 20, writer.getColumnCount());
+                writer.addColumn("retry_col", ColumnType.BINARY, AllowAllSecurityContext.INSTANCE);
+                Assert.assertEquals(22, writer.getColumnCount());
+            }
+
+            try (TableWriter writer = newOffPoolWriter(testConfiguration, PRODUCT)) {
+                Assert.assertEquals("retried DDL must survive reopen", 22, writer.getColumnCount());
             }
         });
     }
@@ -1834,13 +1979,16 @@ public class TableWriterTest extends AbstractCairoTest {
     public void testFrequentCommit() throws Exception {
         assertMemoryLeak(() -> {
             int N = 100000;
+            // SYNC flushes about 20 files on each commit, some 30 ms on a local disk: 100,000 commits would run
+            // for most of an hour, past the test timeout
+            final int commits = configuration.getCommitMode() == CommitMode.SYNC ? 1_000 : N;
             create(FF, PartitionBy.NONE, N);
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
 
                 long ts = timestampDriver.parseFloorLiteral("2013-03-04T00:00:00.000Z");
 
                 Rnd rnd = new Rnd();
-                for (int i = 0; i < N; i++) {
+                for (int i = 0; i < commits; i++) {
                     ts = populateRow(writer, rnd, ts, 60L * 60000L * 1000L);
                     writer.commit();
                 }
@@ -2925,6 +3073,30 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollbackKeepsNoPartitionMoves() throws Exception {
+        // Every rollback rescans the table directory, which finds the .attachable below each time; only the scan
+        // at writer open acts on what it finds, so the rescan must not keep it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00.000000Z', 1)");
+            final TableToken token = engine.verifyTableName("t");
+            java.nio.file.Files.createDirectories(
+                    java.nio.file.Path.of(configuration.getDbRoot(), token.getDirName(), "2024-01-01" + configuration.getAttachPartitionSuffix())
+            );
+            final long ts = MicrosTimestampDriver.floor("2024-01-02T01:00:00.000000Z");
+            try (TableWriter writer = getWriter(token)) {
+                for (int i = 0; i < 10; i++) {
+                    TableWriter.Row row = writer.newRow(ts);
+                    row.putLong(1, i);
+                    row.append();
+                    writer.rollback();
+                }
+                Assert.assertEquals(0, writer.getPartitionMovesFoundCount());
+            }
+        });
+    }
+
+    @Test
     public void testRollbackNonPartitioned() {
         final int N = 20000;
         create(FF, PartitionBy.NONE, N);
@@ -3002,14 +3174,20 @@ public class TableWriterTest extends AbstractCairoTest {
             TableToken token = engine.getTableTokenIfExists("product");
             engine.releaseAllWriters();
             engine.getTableSequencerAPI().releaseAll();
+            // Two whole structural records, which the open keeps, for changes the sequencer never saved.
             try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
                 path.of(configuration.getDbRoot()).concat(token.getDirName()).concat(SEQ_DIR);
                 openSmallFile(FF, path, path.size(), mem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
                 mem.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, 2);
                 mem.jumpTo(TableTransactionLogFile.HEADER_SIZE);
-                mem.putLong(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET, 2);
+                for (int structureVersion = 1; structureVersion <= 2; structureVersion++) {
+                    mem.putLong(structureVersion);
+                    mem.putInt(TableTransactionLogFile.STRUCTURAL_CHANGE_WAL_ID);
+                    mem.putInt(-1);
+                    mem.putInt(-1);
+                    mem.putLong(1_759_000_000_000_000L + structureVersion);
+                }
                 mem.sync(false);
-                mem.setTruncateSize(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES);
             }
             assertException("alter table " + PRODUCT + " add column abc INT;", 12, "expected to read table structure changes but there is none saved in the sequencer");
         });
@@ -3567,6 +3745,42 @@ public class TableWriterTest extends AbstractCairoTest {
             try (TableWriter writer = newOffPoolWriter(configuration, PRODUCT)) {
                 Assert.assertEquals("TableWriter{name=product}", writer.toString());
             }
+        });
+    }
+
+    @Test
+    public void testTornTxnLogTailIsDroppedOnOpen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table product (ts TIMESTAMP, i INT) timestamp(ts) partition by day wal;");
+            drainWalQueue();
+            TableToken token = engine.getTableTokenIfExists("product");
+            engine.releaseAllWriters();
+            engine.getTableSequencerAPI().releaseAll();
+            // The header publishes two txns whose records never reached the disk: record 1 is zeros, record 2
+            // holds only its structure version and the file ends inside it.
+            try (Path path = new Path(); MemoryCMARW mem = Vm.getCMARWInstance()) {
+                path.of(configuration.getDbRoot()).concat(token.getDirName()).concat(SEQ_DIR);
+                openSmallFile(FF, path, path.size(), mem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
+                mem.putLong(TableTransactionLogFile.MAX_TXN_OFFSET_64, 2);
+                mem.jumpTo(TableTransactionLogFile.HEADER_SIZE);
+                mem.putLong(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET, 2);
+                mem.sync(false);
+                mem.setTruncateSize(TableTransactionLogFile.HEADER_SIZE + TableTransactionLogV1.RECORD_SIZE + TableTransactionLogFile.TX_LOG_STRUCTURE_VERSION_OFFSET + Long.BYTES);
+            }
+            // The open drops the torn tail, so the ALTER and the insert take txns 1 and 2.
+            execute("alter table product add column abc INT");
+            execute("insert into product values ('2024-01-01T00:00:00.000000Z', 1, 2)");
+            drainWalQueue();
+            Assert.assertEquals(2, engine.getTableSequencerAPI().lastTxn(token));
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertQuery("SELECT * FROM product")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ti\tabc
+                            2024-01-01T00:00:00.000000Z\t1\t2
+                            """);
         });
     }
 
@@ -4657,6 +4871,12 @@ public class TableWriterTest extends AbstractCairoTest {
 
             final FilesFacadeImpl ff = new FilesFacadeImpl() {
                 long fd = -1;
+
+                @Override
+                public boolean allocate(long fd, long allocatedSize, long size) {
+                    // route ranged growth through the allocate(fd, size) hook below
+                    return allocate(fd, size);
+                }
 
                 @Override
                 public boolean allocate(long fd, long size) {

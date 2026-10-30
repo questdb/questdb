@@ -95,6 +95,13 @@ public class TestFilesFacadeImpl extends FilesFacadeImpl {
     }
 
     @Override
+    public long openRWExisting(LPSZ name) {
+        long fd = super.openRWExisting(name);
+        track(name, fd);
+        return fd;
+    }
+
+    @Override
     public void remove(LPSZ name) {
         if (checkRemove(name)) {
             throw CairoException.critical(0).put("removing open file [file=").put(name).put(']');

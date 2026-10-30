@@ -1,0 +1,89 @@
+# Builds the host Rust library (libquestdbr) once and publishes it as a pipeline artifact, so the
+# test legs of that platform run Maven with -DskipNative -Dqdbr.prebuilt.dir instead of compiling
+# the crate themselves (core/pom.xml prebuilt-rust-native; steps.yml prebuiltRustArtifact).
+# Compiling it inside every leg cost, before the first test: about 7 minutes per hosted Windows
+# leg, 2 per hosted macOS leg (macwin 283510) and 4 per self-hosted Linux leg (PR build 283499),
+# measured against same-day builds without the Rust compile.
+#
+# The cargo invocation matches the build-rust-library profile (rust-maven-plugin `cargo build
+# --release --target-dir core/target/rust-maven-plugin/qdbr`), minus the crate's pm_* CLI targets,
+# which that profile deletes after the build anyway.
+parameters:
+  - name: name
+    type: string
+  - name: displayName
+    type: string
+  # A job pool mapping: {vmImage, name} for hosted agents, {name} for a self-hosted pool.
+  - name: pool
+    type: object
+  - name: artifact
+    type: string
+  # questdbr.dll on Windows, libquestdbr.dylib on macOS, libquestdbr.so on Linux.
+  - name: libName
+    type: string
+  # `uname -m` of the agent. The library is published for one platform directory, so an agent
+  # of another architecture must fail instead of publishing the wrong binary.
+  - name: expectedArch
+    type: string
+  # Hosted agents only: sccache with the Azure blob backend and a cargo registry cache.
+  - name: isHosted
+    type: boolean
+    default: false
+  - name: condition
+    type: string
+    default: succeeded()
+
+jobs:
+  - job: ${{ parameters.name }}
+    displayName: ${{ parameters.displayName }}
+    condition: ${{ parameters.condition }}
+    workspace:
+      clean: all
+    pool: ${{ parameters.pool }}
+    # A cold build with the release profile's LTO; a warm hosted Windows build takes about 7 minutes.
+    timeoutInMinutes: 45
+    steps:
+      - template: checkout-source.yml
+      - bash: |
+          set -eu
+          echo "arch=$(uname -m)"
+          if [ "$(uname -m)" != "${{ parameters.expectedArch }}" ]; then
+            echo "ERROR: expected ${{ parameters.expectedArch }}, got $(uname -m)"
+            exit 1
+          fi
+        displayName: "Assert agent architecture"
+      - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
+        displayName: "Ensure Rust is installed"
+      - ${{ if eq(parameters.isHosted, true) }}:
+          - task: Cache@2
+            displayName: "Cache .cargo/registry"
+            continueOnError: true
+            inputs:
+              key: '"cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)" | core/rust/qdbr/Cargo.lock'
+              restoreKeys: |
+                "cargo-registry" | "$(RUSTC_HOST_TRIPLE)" | "$(RUSTC_RELEASE)"
+              path: $(CARGO_HOME)/registry
+          - template: install-sccache.yml
+      - bash: |
+          set -eux
+          (cd core/rust/qdbr && cargo build --release --lib --target-dir ../../target/rust-maven-plugin/qdbr)
+          rm -rf qdbr-native
+          mkdir qdbr-native
+          cp "core/target/rust-maven-plugin/qdbr/release/${{ parameters.libName }}" qdbr-native/
+          ls -la qdbr-native
+          if [ -n "${RUSTC_WRAPPER:-}" ]; then "${RUSTC_WRAPPER}" --show-stats || true; fi
+        displayName: "Build Rust library"
+        env:
+          CARGO_INCREMENTAL: 0
+          ${{ if eq(parameters.isHosted, true) }}:
+            RUSTC_WRAPPER: $(RUSTC_WRAPPER)
+            SCCACHE_AZURE_BLOB_CONTAINER: $(SCCACHE_AZURE_BLOB_CONTAINER)
+            SCCACHE_AZURE_CONNECTION_STRING: $(SCCACHE_AZURE_CONNECTION_STRING)
+            # sccache's client gives its server 10 seconds to start by default; a
+            # cold hosted macOS agent exceeded that once (macwin build 272495).
+            SCCACHE_STARTUP_TIMEOUT: "60"
+      - task: PublishPipelineArtifact@1
+        displayName: "Publish Rust library"
+        inputs:
+          targetPath: $(Build.SourcesDirectory)/qdbr-native
+          artifact: ${{ parameters.artifact }}

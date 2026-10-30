@@ -67,6 +67,11 @@ public final class Files {
     public static final int POSIX_MADV_RANDOM;
     public static final int POSIX_MADV_SEQUENTIAL;
     public static final char SEPARATOR;
+    // sync_file_range(2) flags (Linux). Values are part of the stable kernel ABI.
+    // WAIT_AFTER: wait for the range's writeback, including any already in flight, to reach the device cache.
+    public static final int SYNC_FILE_RANGE_WAIT_AFTER = 4;
+    // WRITE: start writeback of the range's dirty pages to the device and return (no device cache flush).
+    public static final int SYNC_FILE_RANGE_WRITE = 2;
     // https://github.com/torvalds/linux/blob/e2f48c48090dea172c0c571101041de64634dae5/include/uapi/linux/magic.h#L18
     public static final int TMPFS_MAGIC = 0x01021994;
     public static final Charset UTF_8;
@@ -182,14 +187,124 @@ public final class Files {
 
     public native static int findNext(long findPtr);
 
+    /**
+     * The path of the file {@code fd} is open on, or null where the OS cannot tell (Linux only). It reads
+     * {@code /proc} and allocates, so it is for failure paths.
+     */
+    public static @Nullable String findPathOfFd(long fd) {
+        if (!Os.isLinux()) {
+            return null;
+        }
+        try {
+            return stripDeleted(java.nio.file.Files.readSymbolicLink(java.nio.file.Path.of("/proc/self/fd/" + toOsFd(fd))).toString());
+        } catch (Throwable th) {
+            return null;
+        }
+    }
+
+    /**
+     * The path of the file mapped at {@code address}, or null where the OS cannot tell (Linux only). It reads
+     * {@code /proc} and allocates, so it is for failure paths.
+     */
+    public static @Nullable String findPathOfMapping(long address) {
+        if (!Os.isLinux()) {
+            return null;
+        }
+        try (java.io.BufferedReader reader = java.nio.file.Files.newBufferedReader(java.nio.file.Path.of("/proc/self/maps"))) {
+            // start-end perms offset dev inode path
+            String line;
+            while ((line = reader.readLine()) != null) {
+                final int dash = line.indexOf('-');
+                final int space = line.indexOf(' ', dash);
+                final int slash = line.indexOf('/', space);
+                if (dash < 0 || space < 0 || slash < 0) {
+                    continue;
+                }
+                final long lo = Long.parseUnsignedLong(line, 0, dash, 16);
+                final long hi = Long.parseUnsignedLong(line, dash + 1, space, 16);
+                if (Long.compareUnsigned(address, lo) >= 0 && Long.compareUnsigned(address, hi) < 0) {
+                    return stripDeleted(line.substring(slash));
+                }
+            }
+        } catch (Throwable th) {
+            return null;
+        }
+        return null;
+    }
+
     public native static int findType(long findPtr);
 
     public static long floorPageSize(long size) {
         return size - size % PAGE_SIZE;
     }
 
+    /**
+     * Device-durability barrier: once this returns 0, the file's data is on stable storage and survives a
+     * power cut. Durability claims build on this, not on {@link #fsync(long)}.
+     * <p>
+     * {@code fdatasync(2)} on Linux and FreeBSD, {@code fcntl(F_FULLFSYNC)} on macOS, {@code FlushFileBuffers}
+     * on Windows. On macOS {@code fsync(2)} pushes pages to the drive but does not flush the drive's write
+     * cache, so it only survives process death. On a filesystem that rejects {@code F_FULLFSYNC} (network
+     * mounts, some FUSE) this falls back to {@code fsync}, the strongest barrier that filesystem offers.
+     */
+    public static int fdatasync(long fd) {
+        return fdatasync0(toOsFd(fd));
+    }
+
+    /**
+     * Ordering barrier, not a durability barrier: writes issued before it reach the medium before writes
+     * issued after it, but the data may still sit in the drive's volatile cache when it returns, so a commit
+     * must not be acknowledged as durable on this call alone.
+     * <p>
+     * Use it where a commit needs ordering (WAL column data and {@code _event} before the sequencer record),
+     * and make the commit durable with {@link #fdatasync(long)} at the commit point: that flushes the device
+     * cache, so everything ordered before it becomes durable with it.
+     * <p>
+     * {@code F_BARRIERFSYNC} on macOS. Linux, FreeBSD and Windows have no cheaper barrier, so it maps to the
+     * durable primitive there.
+     */
+    public static int barrierFsync(long fd) {
+        return barrierFsync0(toOsFd(fd));
+    }
+
+    /**
+     * {@link #fsync(long)}'s contract, data and all metadata, with the device cache flushed.
+     * <p>
+     * Not interchangeable with {@link #fdatasync(long)}, which may skip metadata that reading the data back
+     * does not need. Use this where fsync semantics are required and the data must survive power loss; on
+     * macOS plain {@code fsync(2)} does not flush the drive's write cache.
+     */
+    public static int fsyncDurable(long fd) {
+        return fsyncDurable0(toOsFd(fd));
+    }
+
     public static int fsync(long fd) {
         return fsync(toOsFd(fd));
+    }
+
+    /**
+     * Linux sync_file_range(2): starts, and optionally waits for, writeback of the file's page-cache pages
+     * over {@code [offset, offset+nbytes)} to the device's cache, without a device cache flush. Takes the
+     * {@code SYNC_FILE_RANGE_*} flags. Durability needs a following device flush ({@link #fdatasync(long)},
+     * {@link #fsync(long)} or {@link #syncfs(long)}).
+     * <p>
+     * Pages dirtied through a shared mapping count: Linux tracks them as dirty from the write fault, so no
+     * {@code msync} is needed first ({@code msync(MS_ASYNC)} is a no-op there). A no-op returning 0 off Linux.
+     */
+    public static int syncFileRange(long fd, long offset, long nbytes, int flags) {
+        return syncFileRange0(toOsFd(fd), offset, nbytes, flags);
+    }
+
+    /**
+     * Linux syncfs(2): writes back all dirty data of the filesystem containing {@code fd}, journals every
+     * pending metadata change on it (including the ext4 unwritten-to-written extent conversions that make
+     * just-written column extents durable), and issues one device cache flush, in place of one
+     * {@link #fdatasync(long)} per file in a batched flush. As with {@link #syncFileRange}, that includes pages
+     * dirtied through a shared mapping, without an {@code msync} first. Off Linux it flushes {@code fd} only
+     * ({@code F_FULLFSYNC} on macOS).
+     */
+    public static int syncfs(long fd) {
+        return syncfs0(toOsFd(fd));
     }
 
     public static long getDirSize(Path path) {
@@ -474,6 +589,15 @@ public final class Files {
         return fdCache.createUniqueFdNonCached(openRWOpts(lpsz.ptr(), opts));
     }
 
+    /**
+     * Opens an existing file for reading and writing, never creating it: a missing file fails with
+     * {@link #isErrnoFileDoesNotExist does-not-exist}. For a caller that opens a file only to flush it, where
+     * {@link #openRW} would bring back a removed file as an empty one.
+     */
+    public static long openRWExisting(LPSZ lpsz) {
+        return fdCache.createUniqueFdNonCached(openRWExisting0(lpsz.ptr()));
+    }
+
     public static long read(long fd, long address, long len, long offset) {
         return read(fdCache.toOsFd(fd), address, len, offset);
     }
@@ -529,6 +653,22 @@ public final class Files {
 
     public static int rename(LPSZ oldName, LPSZ newName) {
         return fdCache.rename(oldName, newName);
+    }
+
+    /**
+     * Renames {@code oldName} to {@code newName} so that the rename is durable on return.
+     * <p>
+     * On POSIX {@code rename(2)} is atomic but not durable; the caller makes the new name durable by fsyncing
+     * the parent directory afterwards, so off Windows this is {@link #rename(LPSZ, LPSZ)}.
+     * <p>
+     * On Windows {@code FlushFileBuffers} accepts file handles only, so there is no directory to fsync and the
+     * engine's directory barriers are skipped. {@code MOVEFILE_WRITE_THROUGH} makes the move return only once
+     * it is flushed to disk.
+     * <p>
+     * Failure semantics and the destination-exists behaviour match {@link #rename(LPSZ, LPSZ)}.
+     */
+    public static int renameDurable(LPSZ oldName, LPSZ newName) {
+        return fdCache.renameDurable(oldName, newName);
     }
 
     @TestOnly
@@ -652,7 +792,17 @@ public final class Files {
     // caller must call findClose to free allocated struct
     private native static long findFirst(long lpszName);
 
+    private static native int fdatasync0(int fd);
+
+    private static native int fsyncDurable0(int fd);
+
+    private static native int barrierFsync0(int fd);
+
     private static native int fsync(int fd);
+
+    private static native int syncFileRange0(int fd, long offset, long nbytes, int flags);
+
+    private static native int syncfs0(int fd);
 
     private static native long getDiskSize(long lpszPath);
 
@@ -689,6 +839,8 @@ public final class Files {
     private native static int openAppend(long lpszName);
 
     private native static int openRW(long lpszName);
+
+    private native static int openRWExisting0(long lpszName);
 
     private native static int openRWOpts(long lpszName, int opts);
 
@@ -771,6 +923,10 @@ public final class Files {
 
     private native static boolean setLastModified(long lpszName, long millis);
 
+    private static String stripDeleted(String path) {
+        return path.endsWith(" (deleted)") ? path.substring(0, path.length() - " (deleted)".length()) : path;
+    }
+
     private native static boolean truncate(int fd, long size);
 
     private static int unlink0(Path path, int recursiveDepth) {
@@ -808,6 +964,8 @@ public final class Files {
     native static boolean remove(long lpsz);
 
     static native int rename(long lpszOld, long lpszNew);
+
+    static native int renameDurable0(long lpszOld, long lpszNew);
 
     /**
      * Removes directory recursively. When function fails the caller has to check Os.errno() for the diagnostics.

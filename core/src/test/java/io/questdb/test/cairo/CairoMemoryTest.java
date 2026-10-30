@@ -106,6 +106,12 @@ public class CairoMemoryTest extends AbstractTest {
             int count = 2;
 
             @Override
+            public boolean allocate(long fd, long allocatedSize, long size) {
+                // route ranged growth through the allocate(fd, size) hook below
+                return allocate(fd, size);
+            }
+
+            @Override
             public boolean allocate(long fd, long size) {
                 if (allClear || --count > 0) {
                     return super.allocate(fd, size);
