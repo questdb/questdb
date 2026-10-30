@@ -917,6 +917,23 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     "1d align",
                     message
             );
+            for (String zone : new String[]{"Europe/Berlin", "Europe/Helsinki"}) {
+                assertTimestampFloorRejected(
+                        TABLE1,
+                        "select ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 2h align to calendar time zone '" + zone + "') "
+                                + "sample by 1d align to calendar time zone '" + zone + "'",
+                        "2h align",
+                        message
+                );
+            }
+            // Berlin skips 02:30 on the spring-forward day, so that day starts at the shift instant, 01:00Z, inside an hour from :30.
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor_utc('1d', ts, null, '02:30', 'Europe/Berlin') ts, sum(s) s from (select ts, sum(v) s from " + TABLE1
+                            + " sample by 1h align to calendar with offset '00:30') order by ts",
+                    "1h align",
+                    message
+            );
         });
     }
 

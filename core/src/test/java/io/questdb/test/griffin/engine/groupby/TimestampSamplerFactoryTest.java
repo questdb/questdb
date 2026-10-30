@@ -337,7 +337,7 @@ public class TimestampSamplerFactoryTest {
     }
 
     @Test
-    public void testUnsupportedQualifier(){
+    public void testUnsupportedQualifier() {
         assertFailure(130, "unsupported interval qualifier", "K", 130);
     }
 

@@ -112,6 +112,7 @@ public final class SqlBinder implements Mutable {
     private final IntList tmpOutputColumns;
     private final UpdateBinder updateBinder;
     private final WindowBinder windowBinder;
+    private int consumedSubqueryDepth;
     private int modelDepth;
     private SqlParserCallback parserCallback;
     private LogicalPlan predicateSource;
@@ -200,6 +201,7 @@ public final class SqlBinder implements Mutable {
         lateralBinder.clear();
         hintScopes.clear();
         updateBinder.clear();
+        consumedSubqueryDepth = 0;
         predicateSource = null;
         parserCallback = null;
     }
@@ -209,6 +211,18 @@ public final class SqlBinder implements Mutable {
      */
     public void clearExpressions() {
         ctx.functionBinder.clear();
+    }
+
+    /**
+     * Enters a sub-query whose rows binding consumes, which the client runs while it binds the statement, so its scans
+     * read their rows even in an UPDATE the WAL sequences, see {@link #bindScan}.
+     */
+    public void enterConsumedSubquery() {
+        consumedSubqueryDepth++;
+    }
+
+    public void exitConsumedSubquery() {
+        consumedSubqueryDepth--;
     }
 
     /**
@@ -1334,7 +1348,7 @@ public final class SqlBinder implements Mutable {
      */
     ScanPlan bindScan(QueryModel source, ExpressionNode tableName, TableToken token, long metadataVersion) {
         final ScanPlan scan = ctx.planNodes.scans.next().of(token, metadataVersion, tableName.position, source.isUpdate());
-        if (updateBinder.isSequenced()) {
+        if (updateBinder.isSequenced() && consumedSubqueryDepth == 0) {
             scan.markSequencedUpdate();
         }
         scan.setHints(scanHints(source));

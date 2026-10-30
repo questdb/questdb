@@ -57,6 +57,14 @@ public interface TimeZoneRules {
     long getLocalOffset(long localEpoch, int year);
 
     /**
+     * Returns the greatest common divisor, in the rules' units, of the differences between the UTC offsets by which
+     * {@link #getFirstInstantAtOrAfter} converts a local time with the time of day of {@code localTime} at or after the
+     * instant: every wall-clock offset the zone takes from then on, and, for a forward shift that skips that time of
+     * day, the local time less the shift instant. Zero when one offset converts every such local time.
+     */
+    long getLocalTimeOffsetGcd(long utcEpoch, long localTime);
+
+    /**
      * Computes UTC epoch time for the next Daylight Saving Transition.
      *
      * @param utcEpoch arbitrary point in time, UTC epoch time
@@ -69,13 +77,6 @@ public interface TimeZoneRules {
     long getOffset(long utcEpoch);
 
     long getOffset(long utcEpoch, int year);
-
-    /**
-     * Returns the greatest common divisor of every UTC offset the zone takes at or after the instant, in the rules'
-     * units: the historic offsets in effect from then on and the offsets of the recurring transition rules; zero when
-     * every such offset is zero.
-     */
-    long getOffsetGcd(long utcEpoch);
 
     /**
      * Returns the standard (non-DST) UTC offset for this timezone. This is

@@ -10088,6 +10088,71 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampFloorOverNestedSampleByAcrossTimeZones() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[] kolkataDays = {
+                    "SELECT ts, sum(s) s FROM (SELECT ts, sum(x) s FROM t SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata') "
+                            + "SAMPLE BY 1d ALIGN TO CALENDAR WITH OFFSET '18:30'",
+                    "SELECT ts, sum(s) s FROM (SELECT ts, sum(x) s FROM t SAMPLE BY 1h ALIGN TO CALENDAR WITH OFFSET '00:30') "
+                            + "SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata'"
+            };
+            for (String query : kolkataDays) {
+                assertNestedSampleByRefresh(
+                        query,
+                        """
+                                ts\ts
+                                2024-02-29T18:30:00.000000Z\t23
+                                2024-03-01T18:30:00.000000Z\t8
+                                """,
+                        """
+                                ts\ts
+                                2024-02-29T18:30:00.000000Z\t55
+                                2024-03-01T18:30:00.000000Z\t8
+                                """
+                );
+            }
+            assertNestedSampleByRefresh(
+                    "SELECT ts, sum(s) s FROM (SELECT ts, sum(x) s FROM t SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata') "
+                            + "SAMPLE BY 1h ALIGN TO CALENDAR WITH OFFSET '00:30'",
+                    """
+                            ts\ts
+                            2024-02-29T23:30:00.000000Z\t1
+                            2024-03-01T00:30:00.000000Z\t16
+                            2024-03-01T04:30:00.000000Z\t2
+                            2024-03-01T11:30:00.000000Z\t4
+                            2024-03-02T00:30:00.000000Z\t8
+                            """,
+                    """
+                            ts\ts
+                            2024-02-29T23:30:00.000000Z\t1
+                            2024-03-01T00:30:00.000000Z\t16
+                            2024-03-01T04:30:00.000000Z\t2
+                            2024-03-01T10:30:00.000000Z\t32
+                            2024-03-01T11:30:00.000000Z\t4
+                            2024-03-02T00:30:00.000000Z\t8
+                            """
+            );
+            // Helsinki shows +03:00 in July, but its sub-day buckets floor on the standard +02:00, at even UTC hours.
+            assertNestedSampleByRefresh(
+                    "SELECT ts, sum(s) s FROM (SELECT ts, sum(x) s FROM t SAMPLE BY 2h ALIGN TO CALENDAR TIME ZONE 'Europe/Helsinki') SAMPLE BY 1d",
+                    "(1, '2024-07-01T00:10:00Z'), (2, '2024-07-01T21:30:00Z'), (4, '2024-07-02T01:00:00Z')",
+                    "(16, '2024-07-01T23:30:00Z')",
+                    """
+                            ts\ts
+                            2024-07-01T00:00:00.000000Z\t19
+                            2024-07-02T00:00:00.000000Z\t4
+                            """,
+                    "(32, '2024-07-02T00:30:00Z')",
+                    """
+                            ts\ts
+                            2024-07-01T00:00:00.000000Z\t19
+                            2024-07-02T00:00:00.000000Z\t36
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testTimestampFloorOverNestedSampleByRefreshesExistingBucket() throws Exception {
         assertMemoryLeak(() -> {
             assertNestedSampleByRefresh(
@@ -11214,16 +11279,39 @@ public class MatViewTest extends AbstractCairoTest {
      * micros and a nanos base table, and asserts after each refresh that the view holds what {@code query} returns.
      */
     private void assertNestedSampleByRefresh(String query, String earlyRowExpected, String lateRowExpected) throws Exception {
+        assertNestedSampleByRefresh(
+                query,
+                "(1, '2024-03-01T00:10:00Z'), (2, '2024-03-01T05:00:00Z'), (4, '2024-03-01T12:00:00Z'), (8, '2024-03-02T01:00:00Z')",
+                "(16, '2024-03-01T00:30:00Z')",
+                earlyRowExpected,
+                "(32, '2024-03-01T10:30:00Z')",
+                lateRowExpected
+        );
+    }
+
+    /**
+     * Refreshes a view over a nested SAMPLE BY after the {@code earlyRow} and then the {@code lateRow} land in the
+     * buckets of {@code rows}, over a micros and a nanos base table, and asserts after each refresh that the view holds
+     * what {@code query} returns.
+     */
+    private void assertNestedSampleByRefresh(
+            String query,
+            String rows,
+            String earlyRow,
+            String earlyRowExpected,
+            String lateRow,
+            String lateRowExpected
+    ) throws Exception {
         for (String type : new String[]{"TIMESTAMP", "TIMESTAMP_NS"}) {
             execute("CREATE TABLE t (x INT, ts " + type + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO t VALUES (1, '2024-03-01T00:10:00Z'), (2, '2024-03-01T05:00:00Z'), (4, '2024-03-01T12:00:00Z'), (8, '2024-03-02T01:00:00Z')");
+            execute("INSERT INTO t VALUES " + rows);
             drainWalAndMatViewQueues();
             execute("CREATE MATERIALIZED VIEW mv AS (" + query + ") PARTITION BY DAY");
             drainWalAndMatViewQueues();
-            execute("INSERT INTO t VALUES (16, '2024-03-01T00:30:00Z')");
+            execute("INSERT INTO t VALUES " + earlyRow);
             drainWalAndMatViewQueues();
             assertNestedSampleByView(query, type, earlyRowExpected);
-            execute("INSERT INTO t VALUES (32, '2024-03-01T10:30:00Z')");
+            execute("INSERT INTO t VALUES " + lateRow);
             drainWalAndMatViewQueues();
             assertNestedSampleByView(query, type, lateRowExpected);
             execute("DROP MATERIALIZED VIEW mv");

@@ -543,7 +543,8 @@ public final class ScanPlan extends LogicalPlan {
 
     /**
      * Marks the scan as part of the client-side compilation of an UPDATE of a WAL table, see
-     * {@link #isSequencedUpdate}; the binder marks every scan it binds for such a statement.
+     * {@link #isSequencedUpdate}; the binder marks every scan it binds for such a statement but the scans of a
+     * sub-query whose rows binding consumes.
      */
     public void markSequencedUpdate() {
         isSequencedUpdate = true;

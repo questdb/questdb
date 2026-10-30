@@ -295,6 +295,23 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
         });
     }
 
+    // A PIVOT IN sub-query names the pivot columns, so the client runs it while binding the statement and reads the
+    // target's rows for it even on a WAL table, whose statement scans read none.
+    @Test
+    public void testUpdateWithPivotInSubqueryPredicate() throws Exception {
+        assertMemoryLeak(() -> {
+            createTargetTable(5);
+            update("UPDATE t SET v = 99 WHERE v >= (SELECT count() + 3 FROM (t PIVOT (sum(v) FOR ts IN (SELECT ts FROM t WHERE v >= 4))))");
+            assertTable("""
+                    2020-06-01T00:00:00.000000Z\t1
+                    2020-06-02T00:00:00.000000Z\t2
+                    2020-06-03T00:00:00.000000Z\t3
+                    2020-06-04T00:00:00.000000Z\t99
+                    2020-06-05T00:00:00.000000Z\t99
+                    """);
+        });
+    }
+
     // A cursor function is the other way node-local state gets into an UPDATE, and it is invisible
     // to the model walk: parseSelectFrom's FUNCTION branch stores the call itself in tableNameExpr,
     // so there is no LITERAL to compare against the target. table_partitions resolves its argument

@@ -577,7 +577,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return generateSelectOneShot(model, compiledSubqueries.getQuick(compiled), executionContext, false);
         }
         final int first = subqueries.size();
-        final Subquery subquery = bindSubquery(model, position, executionContext);
+        final Subquery subquery;
+        binder.enterConsumedSubquery();
+        try {
+            subquery = bindSubquery(model, position, executionContext);
+        } finally {
+            binder.exitConsumedSubquery();
+        }
         for (int i = first, n = subqueries.size(); i < n; i++) {
             optimiseSubquery(subqueries.getQuick(i), executionContext);
         }

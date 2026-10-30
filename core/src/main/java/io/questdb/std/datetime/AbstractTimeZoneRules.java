@@ -194,6 +194,38 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     }
 
     @Override
+    public long getLocalTimeOffsetGcd(long utcEpoch, long localTime) {
+        if (standardOffset != Long.MIN_VALUE) {
+            return 0;
+        }
+        final long day = 86_400L * multiplier;
+        final int index = historicTransitions.binarySearch(utcEpoch, Vect.BIN_SEARCH_SCAN_UP);
+        final int first = index < 0 ? -index - 1 : index + 1;
+        final long base = wallOffsets[first] * multiplier;
+        long gcd = 0;
+        for (int i = first, n = historicTransitions.size(); i < n; i++) {
+            final long before = wallOffsets[i] * multiplier;
+            final long after = wallOffsets[i + 1] * multiplier;
+            final long skipped = skippedOffset(historicTransitions.getQuick(i) + before, before, after, localTime, day);
+            gcd = gcd(gcd(gcd, after - base), skipped - base);
+        }
+        for (int i = 0; i < ruleCount; i++) {
+            final TransitionRule rule = rules[i];
+            final long before = rule.offsetBefore * multiplier;
+            final long after = rule.offsetAfter * multiplier;
+            final long definitionShift = switch (rule.timeDef) {
+                case TransitionRule.UTC -> rule.offsetBefore;
+                case TransitionRule.STANDARD -> rule.offsetBefore - rule.standardOffset;
+                default -> 0;
+            };
+            final long localShift = ((rule.hour * 60L + rule.minute) * 60 + rule.second + definitionShift) * multiplier;
+            final long skipped = skippedOffset(localShift, before, after, localTime, day);
+            gcd = gcd(gcd(gcd(gcd, before - base), after - base), skipped - base);
+        }
+        return gcd;
+    }
+
+    @Override
     public long getNextDST(long utcEpoch, int year) {
         if (standardOffset != Long.MIN_VALUE) {
             // when we have standard offset the next DST does not exist
@@ -239,22 +271,6 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     public long getOffset(long utcEpoch) {
         final int y = getYear(utcEpoch);
         return getOffset(utcEpoch, y);
-    }
-
-    @Override
-    public long getOffsetGcd(long utcEpoch) {
-        if (standardOffset != Long.MIN_VALUE) {
-            return Math.abs(standardOffset);
-        }
-        final int index = historicTransitions.binarySearch(utcEpoch, Vect.BIN_SEARCH_SCAN_UP);
-        long gcd = 0;
-        for (int i = index < 0 ? -index - 1 : index + 1, n = wallOffsets.length; i < n; i++) {
-            gcd = gcd(gcd, wallOffsets[i]);
-        }
-        for (int i = 0; i < ruleCount; i++) {
-            gcd = gcd(gcd(gcd, rules[i].offsetBefore), rules[i].offsetAfter);
-        }
-        return gcd * multiplier;
     }
 
     @Override
@@ -310,6 +326,13 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     private static long highWater(long utcEpoch, Transition previous, long offset) {
         final long repeat = previous.offsetBefore - previous.offsetAfter;
         return repeat > 0 && utcEpoch < previous.transition + repeat ? previous.transition + previous.offsetBefore - 1 : utcEpoch + offset;
+    }
+
+    // The offset that converts a local time with the time of day of localTime to UTC around a shift at the local time
+    // localShift: offsetBefore, or, when a forward shift skips that time of day, the local time less the shift instant.
+    private static long skippedOffset(long localShift, long offsetBefore, long offsetAfter, long localTime, long day) {
+        final long skipped = Math.floorMod(localTime - localShift, day);
+        return skipped < offsetAfter - offsetBefore ? offsetBefore + skipped : offsetBefore;
     }
 
     private Transition[] computeTransitions(int year) {

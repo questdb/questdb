@@ -79,6 +79,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.FixedTimeZoneRule;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
@@ -100,6 +101,7 @@ import org.jetbrains.annotations.Nullable;
  * queries.
  */
 public class CreateMatViewOperationImpl implements CreateMatViewOperation {
+    private static final TimeZoneRules UTC_RULES = new FixedTimeZoneRule(0);
     private static final String ZERO_OFFSET = "00:00";
     private final String baseTableName;
     private final int baseTableNamePosition;
@@ -611,10 +613,15 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
     /**
      * Whether each bucket of the inner bucketing lies within one bucket of the outer one, given their strides, units,
-     * time zones and offsets in minutes. A fixed-length stride, in the driver's units, divides a fixed-length one, or a
-     * day under a week, month or year, at offsets a whole number of strides apart; across time zones it also divides
-     * every UTC offset both zones take from the epoch on, as no designated timestamp precedes it. Months divide months
-     * and years, and weeks divide weeks, in the same time zone and at the same offset.
+     * time zones and offsets in minutes, from the epoch on, as no designated timestamp precedes it. Sub-day buckets
+     * floor on the zone's standard offset, see {@link CommonUtils#floorUtcToLocal}, so they start a whole number of
+     * strides from an origin, as do the days of a zone that converts their local start by one offset. A coarser
+     * bucketing fits them when its stride is a multiple of theirs and each of its starts lies a whole number of their
+     * strides from that origin: a sub-day start by its own origin, and a start of a day or longer by each offset by
+     * which its zone converts its local time, see {@link TimeZoneRules#getLocalTimeOffsetGcd}. Days whose offsets vary,
+     * weeks, months and years fit only the local starts of the same time zone: days under a multiple of days, weeks,
+     * months or years at an offset a whole number of strides apart, weeks under weeks, and months under months and
+     * years, at the same offset.
      */
     private static boolean fits(
             long innerStride,
@@ -627,21 +634,36 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             int outerOffset,
             TimestampDriver driver
     ) {
-        final long shift = driver.fromMinutes(outerOffset - innerOffset);
+        final TimeZoneRules innerRules = timeZoneRules(innerZone, driver);
+        final TimeZoneRules outerRules = timeZoneRules(outerZone, driver);
+        if (innerRules == null || outerRules == null) {
+            return false;
+        }
+        final long innerShift = driver.fromMinutes(innerOffset);
+        final long outerShift = driver.fromMinutes(outerOffset);
+        final boolean isOuterSubDay = CommonUtils.isSubDayUnit(outerUnit);
         if (CommonUtils.isFixedAlignedUnit(innerUnit)) {
             final long length = driver.from(innerStride, innerUnit);
-            final long outerLength = CommonUtils.isFixedAlignedUnit(outerUnit) ? driver.from(outerStride, outerUnit) : driver.fromDays(1);
-            if (length <= 0 || outerLength % length != 0 || shift % length != 0) {
+            if (length <= 0) {
                 return false;
             }
-            if (isSameTimeZone(innerZone, outerZone, driver)) {
-                return true;
+            final long outerPeriod = isOuterSubDay || outerUnit == 'd' ? driver.from(outerStride, outerUnit) : driver.fromDays(1);
+            final boolean isInnerSubDay = CommonUtils.isSubDayUnit(innerUnit);
+            if (isInnerSubDay || innerRules.getLocalTimeOffsetGcd(0, innerShift) == 0) {
+                final long origin = innerShift - (isInnerSubDay ? innerRules.getStandardOffset() : innerRules.getOffset(0));
+                if (isOuterSubDay) {
+                    return outerPeriod % length == 0 && Math.floorMod(outerShift - outerRules.getStandardOffset() - origin, length) == 0;
+                }
+                return outerPeriod % length == 0
+                        && outerRules.getLocalTimeOffsetGcd(0, outerShift) % length == 0
+                        && Math.floorMod(outerShift - outerRules.getOffset(0) - origin, length) == 0;
             }
-            final long innerGcd = offsetGcd(innerZone, driver);
-            final long outerGcd = offsetGcd(outerZone, driver);
-            return innerGcd >= 0 && innerGcd % length == 0 && outerGcd >= 0 && outerGcd % length == 0;
+            return !isOuterSubDay
+                    && isSameTimeZone(innerZone, innerRules, outerZone, outerRules)
+                    && outerPeriod % length == 0
+                    && Math.floorMod(outerShift - innerShift, length) == 0;
         }
-        if (shift != 0 || !isSameTimeZone(innerZone, outerZone, driver)) {
+        if (outerShift != innerShift || !isSameTimeZone(innerZone, innerRules, outerZone, outerRules)) {
             return false;
         }
         if (innerUnit == 'w') {
@@ -683,10 +705,12 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     }
 
     /**
-     * Whether two time zones floor alike: the same name, or both UTC from the epoch on, which null stands for.
+     * Whether two time zones convert local times alike from the epoch on: the same name, or one offset that each of
+     * them keeps, which UTC, standing for a null zone, does.
      */
-    private static boolean isSameTimeZone(@Nullable CharSequence zone, @Nullable CharSequence other, TimestampDriver driver) {
-        return zone != null && other != null && Chars.equalsIgnoreCase(zone, other) || offsetGcd(zone, driver) == 0 && offsetGcd(other, driver) == 0;
+    private static boolean isSameTimeZone(@Nullable CharSequence zone, TimeZoneRules rules, @Nullable CharSequence other, TimeZoneRules otherRules) {
+        return zone != null && other != null && Chars.equalsIgnoreCase(zone, other)
+                || rules.getLocalTimeOffsetGcd(0, 0) == 0 && otherRules.getLocalTimeOffsetGcd(0, 0) == 0 && rules.getOffset(0) == otherRules.getOffset(0);
     }
 
     private static boolean isTimestampFloor(BoundExpression expression) {
@@ -706,21 +730,6 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     aggregate.hasExplicitGrouping() || aggregate.getBucketKeyIndex() >= 0 ? null : aggregate.getChild();
             default -> null;
         };
-    }
-
-    /**
-     * The greatest common divisor, in the driver's units, of every UTC offset the time zone takes from the epoch on:
-     * zero for UTC, which null stands for, and -1 for a name that is not a time zone.
-     */
-    private static long offsetGcd(@Nullable CharSequence zone, TimestampDriver driver) {
-        if (zone == null) {
-            return 0;
-        }
-        try {
-            return driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, zone).getOffsetGcd(0);
-        } catch (CairoException e) {
-            return -1;
-        }
     }
 
     /**
@@ -833,6 +842,20 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         final int keyIndex = grouping.getOutput().getColumnIndexById(column.getColumnId());
         return keyIndex >= 0 && keyIndex < grouping.getGroupingExpressions().size() && isTimestampFloor(grouping.getGroupingExpressions().getQuick(keyIndex))
                 ? (FunctionExpression) grouping.getGroupingExpressions().getQuick(keyIndex) : null;
+    }
+
+    /**
+     * The rules of the time zone, or of UTC, which null stands for; null for a name that is not a time zone.
+     */
+    private static TimeZoneRules timeZoneRules(@Nullable CharSequence zone, TimestampDriver driver) {
+        if (zone == null) {
+            return UTC_RULES;
+        }
+        try {
+            return driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, zone);
+        } catch (CairoException e) {
+            return null;
+        }
     }
 
     /**

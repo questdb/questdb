@@ -28,6 +28,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.FixedTimeZoneRule;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.microtime.TimeZoneRulesMicros;
@@ -41,7 +42,6 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.zone.ZoneOffsetTransition;
-import java.time.zone.ZoneOffsetTransitionRule;
 import java.time.zone.ZoneRules;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -193,27 +193,38 @@ public class TimeZoneRulesMicrosTest {
     }
 
     @Test
-    public void testGetOffsetGcd() {
+    public void testGetLocalTimeOffsetGcd() {
+        final long[] localTimes = {0, 30 * 60, 2 * 3_600 + 30 * 60, 23 * 3_600 + 45 * 60, -3_600};
         for (String id : ZoneId.getAvailableZoneIds()) {
             final ZoneRules zoneRules = ZoneId.of(id).getRules();
-            BigInteger expected = BigInteger.valueOf(zoneRules.getOffset(Instant.EPOCH).getTotalSeconds()).abs();
-            for (ZoneOffsetTransition transition : zoneRules.getTransitions()) {
-                if (transition.getInstant().getEpochSecond() > 0) {
-                    expected = expected.gcd(BigInteger.valueOf(transition.getOffsetAfter().getTotalSeconds()));
+            final TimeZoneRulesMicros rules = new TimeZoneRulesMicros(zoneRules);
+            for (long localTime : localTimes) {
+                final long base = zoneRules.getOffset(Instant.EPOCH).getTotalSeconds();
+                long expected = 0;
+                for (ZoneOffsetTransition tr = zoneRules.nextTransition(Instant.EPOCH);
+                     tr != null && tr.getInstant().getEpochSecond() < 7_258_118_400L;
+                     tr = zoneRules.nextTransition(tr.getInstant())) {
+                    final long before = tr.getOffsetBefore().getTotalSeconds();
+                    expected = BigInteger.valueOf(expected).gcd(BigInteger.valueOf(tr.getOffsetAfter().getTotalSeconds() - base)).longValue();
+                    if (tr.isGap()) {
+                        final long skipped = Math.floorMod(localTime - tr.getDateTimeBefore().toLocalTime().toSecondOfDay(), 86_400L);
+                        if (skipped > 0 && skipped < tr.getDuration().getSeconds()) {
+                            expected = BigInteger.valueOf(expected).gcd(BigInteger.valueOf(before + skipped - base)).longValue();
+                        }
+                    }
                 }
+                Assert.assertEquals(id + " at " + localTime, expected * Micros.SECOND_MICROS, rules.getLocalTimeOffsetGcd(0, localTime * Micros.SECOND_MICROS));
             }
-            for (ZoneOffsetTransitionRule rule : zoneRules.getTransitionRules()) {
-                expected = expected.gcd(BigInteger.valueOf(rule.getOffsetBefore().getTotalSeconds()))
-                        .gcd(BigInteger.valueOf(rule.getOffsetAfter().getTotalSeconds()));
-            }
-            Assert.assertEquals(id, expected.longValue() * Micros.SECOND_MICROS, new TimeZoneRulesMicros(zoneRules).getOffsetGcd(0));
         }
         final TimeZoneRulesMicros berlin = new TimeZoneRulesMicros(ZoneId.of("Europe/Berlin").getRules());
-        Assert.assertEquals(Micros.HOUR_MICROS, berlin.getOffsetGcd(0));
+        Assert.assertEquals(Micros.HOUR_MICROS, berlin.getLocalTimeOffsetGcd(0, 0));
+        // 02:30 falls in the spring-forward gap, which starts at 02:00 and maps the local time to the shift instant.
+        Assert.assertEquals(30 * Micros.MINUTE_MICROS, berlin.getLocalTimeOffsetGcd(0, 150 * Micros.MINUTE_MICROS));
         // Berlin kept local mean time, +00:53:28, until 1893.
-        Assert.assertEquals(8 * Micros.SECOND_MICROS, berlin.getOffsetGcd(Micros.toMicros(1890, 1, 1, 0, 0)));
-        Assert.assertEquals(330 * Micros.MINUTE_MICROS, new TimeZoneRulesMicros(ZoneId.of("Asia/Kolkata").getRules()).getOffsetGcd(0));
-        Assert.assertEquals(0, new TimeZoneRulesMicros(ZoneId.of("UTC").getRules()).getOffsetGcd(0));
+        Assert.assertEquals(8 * Micros.SECOND_MICROS, berlin.getLocalTimeOffsetGcd(Micros.toMicros(1890, 1, 1, 0, 0), 0));
+        Assert.assertEquals(0, new TimeZoneRulesMicros(ZoneId.of("Asia/Kolkata").getRules()).getLocalTimeOffsetGcd(0, 0));
+        Assert.assertEquals(0, new TimeZoneRulesMicros(ZoneId.of("UTC").getRules()).getLocalTimeOffsetGcd(0, 0));
+        Assert.assertEquals(0, new FixedTimeZoneRule(330 * Micros.MINUTE_MICROS).getLocalTimeOffsetGcd(0, 0));
     }
 
     @Test
