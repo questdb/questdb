@@ -25,11 +25,13 @@
 package io.questdb.test.griffin.model;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.CompiledTickExpression;
+import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.DateVariableExpr;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
@@ -58,6 +60,29 @@ import static io.questdb.test.griffin.GriffinParserTestUtils.intervalToString;
 
 @RunWith(Parameterized.class)
 public class TickExprTest {
+    private static final String[] FUZZ_DAY_FILTERS = {"", "#Tue", "#workday", "#weekend"};
+    private static final String[] FUZZ_DURATIONS = {"", ";1h", ";30m"};
+    // time parts that the grammar rejects
+    private static final String[] FUZZ_MALFORMED_TIMES = {"T[25:00]", "T25:00", "t09:00", "t[09:00]", "T[", "T"};
+    // "now" on different days, weekdays and times of day, and on days when the clocks change
+    private static final String[] FUZZ_NOWS = {
+            "2024-01-02T10:00:00.000000Z", // a Tuesday
+            "2024-01-02T15:00:00.000000Z",
+            "2024-01-03T10:00:00.000000Z", // a Wednesday
+            "2024-01-06T10:00:00.000000Z", // a Saturday
+            "2024-02-29T23:59:00.000000Z", // the last minute of a leap day
+            "2024-03-31T00:30:00.000000Z", // London springs forward at 01:00Z
+            "2024-11-03T05:30:00.000000Z" // New York falls back at 06:00Z
+    };
+    private static final String[] FUZZ_RANGE_ENDS = {"$tomorrow", "$today + 3d", "$now", "$NOW + 1h", "$yesterday", "2024-01-09"};
+    private static final String[] FUZZ_SHIFTS = {" + 1d", "+2h", " - 1bd", "-30m", "+1w", " - 1M", "+90s"};
+    private static final String[] FUZZ_STATIC_ELEMENTS = {"2024-01-05", "2024-01-05T10:00", "2024-01", "2024-01-0[1..3]"};
+    private static final String[] FUZZ_TIMES = {
+            "", "T09:00", "T09", "T09:00:30", "T[09:00]", "T[09:00,14:30]", "T[09..10]:30", "T[01,02]:30",
+            "T[10:30@+02:00]", "T[09:00,10:00]:[15,45]"
+    };
+    private static final String[] FUZZ_VARIABLES = {"$now", "$today", "$yesterday", "$tomorrow", "$NOW", "$TODAY", "$Tomorrow", "$YESTERDAY"};
+    private static final String[] FUZZ_ZONES = {"", "@+02:00", "@Europe/London", "@America/New_York"};
     private static final Log LOG = LogFactory.getLog(TickExprTest.class);
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(".");
     private static final StringSink sink = new StringSink();
@@ -524,6 +549,21 @@ public class TickExprTest {
     }
 
     @Test
+    public void testBracketExpansionWithDenseTimeSuffixAndDayFilter() throws SqlException {
+        // T[00..23]:[00..59] expands the two days to 2880 minutes, beyond the incremental merge
+        // threshold (256 intervals). The day filter must still judge each minute by its own day,
+        // not by the day of a merged interval: 2024-01-05 is a Friday, 2024-01-06 a Saturday.
+        assertBracketInterval(
+                "[{lo=2024-01-05T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
+                "2024-01-[05..06]T[00..23]:[00..59]#workday"
+        );
+        assertBracketInterval(
+                "[{lo=2024-01-05T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
+                "[2024-01-[05..06]]T[00..23]:[00..59]#workday"
+        );
+    }
+
+    @Test
     public void testBracketExpansionWithDuration() throws SqlException {
         // 10:30 is minute-level, so hi = 10:30:59.999999, then +1h = 11:30:59.999999
         assertBracketInterval(
@@ -765,9 +805,13 @@ public class TickExprTest {
 
     @Test
     public void testCompiledTickExprDstFallBack() throws SqlException {
-        // Nov 3, 2024 in America/New_York: clocks fall back at 2:00 AM EDT
-        // T01:30 occurs twice (overlap) — code uses daylight time offset
-        assertCompiledTickExprWithNow("$todayT01:30@America/New_York", "2024-11-03T12:00:00.000000Z");
+        // Nov 3, 2024 in America/New_York: clocks fall back at 2:00 AM EDT, so 01:30 happens twice,
+        // at 05:30Z and at 06:30Z, and the expression covers both
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-11-03T05:30:00.000000Z, hi=2024-11-03T05:30:59.999999Z},{lo=2024-11-03T06:30:00.000000Z, hi=2024-11-03T06:30:59.999999Z}]",
+                "$todayT01:30@America/New_York",
+                "2024-11-03T12:00:00.000000Z"
+        );
     }
 
     @Test
@@ -851,6 +895,34 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprOver255Elements() throws SqlException {
+        // 300 date variables, more elements than the compiled expression could once count
+        final StringBuilder expression = new StringBuilder("[$today");
+        for (int day = 1; day < 300; day++) {
+            expression.append(",$today+").append(day).append('d');
+        }
+        expression.append(']');
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-03-01T00:00:00.000000Z, hi=2024-12-25T23:59:59.999999Z}]",
+                expression.toString(),
+                "2024-03-01T12:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testCompiledTickExprOver255StaticIntervals() throws SqlException {
+        // The static element expands to 480 half-hourly intervals that do not merge, more
+        // elements than the compiled expression could once count
+        final String expression = "[$today,2024-01-[01..10]T[00..23]:[00,30]]";
+        final String now = "2024-03-01T12:00:00.000000Z";
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        out.clear();
+        parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, timestampDriver.parseFloorLiteral(now));
+        Assert.assertEquals(481, out.size() / 2);
+        assertCompiledTickExprWithNow(expression, now);
+    }
+
+    @Test
     public void testCompiledTickExprPositiveDurationExplicitSign() throws SqlException {
         assertCompiledTickExpr("$today;+3d");
     }
@@ -858,6 +930,16 @@ public class TickExprTest {
     @Test
     public void testCompiledTickExprZeroDuration() throws SqlException {
         assertCompiledTickExpr("$today;0d");
+    }
+
+    @Test
+    public void testCompiledTickExprDurationOver255Parts() throws SqlException {
+        // 260 duration parts of 1s each, more than the compiled expression could once count
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-03-01T09:00:00.000000Z, hi=2024-03-01T09:04:19.999999Z}]",
+                "[$today]T09:00;" + "1s".repeat(260),
+                "2024-03-01T12:00:00.000000Z"
+        );
     }
 
     @Test
@@ -961,6 +1043,51 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprIntervalLimit() throws SqlException {
+        // A literal with a date variable evaluates through its IR, which must stop at the
+        // interval limit where the parser stops, with the same error. The parser checks the
+        // merged intervals after each day of a date variable range, and the final result.
+        final String now = "2024-01-02T10:30:00.000000Z";
+        assertParsedAndCompiledErrorWithNow("[$today..$today + 2000d]T09:00", now, "Date range expansion produces too many intervals (max 1024)");
+        assertParsedAndCompiledErrorWithNow("[$today - 2000d..$now]T09:30;1h", now, "Date range expansion produces too many intervals (max 1024)");
+        assertParsedAndCompiledErrorWithNow("$today..$today + 600dT[09:00,15:00]", now, "Date range expansion produces too many intervals (max 1024)");
+        // a single day with 1,100 separate seconds reaches the limit only in the final result
+        assertParsedAndCompiledErrorWithNow("[$today]T[00:00:00,00:00:02,00:00:04,00:00:06,00:00:08,00:00:10,00:00:12,00:00:14,00:00:16,00:00:18,00:00:20,00:00:22,00:00:24,00:00:26,00:00:28,00:00:30,00:00:32,00:00:34,00:00:36,00:00:38,00:00:40,00:00:42,00:00:44,00:00:46,00:00:48,00:00:50,00:00:52,00:00:54,00:00:56,00:00:58,00:01:00,00:01:02,00:01:04,00:01:06,00:01:08,00:01:10,00:01:12,00:01:14,00:01:16,00:01:18,00:01:20,00:01:22,00:01:24,00:01:26,00:01:28,00:01:30,00:01:32,00:01:34,00:01:36,00:01:38,00:01:40,00:01:42,00:01:44,00:01:46,00:01:48,00:01:50,00:01:52,00:01:54,00:01:56,00:01:58,00:02:00,00:02:02,00:02:04,00:02:06,00:02:08,00:02:10,00:02:12,00:02:14,00:02:16,00:02:18,00:02:20,00:02:22,00:02:24,00:02:26,00:02:28,00:02:30,00:02:32,00:02:34,00:02:36,00:02:38,00:02:40,00:02:42,00:02:44,00:02:46,00:02:48,00:02:50,00:02:52,00:02:54,00:02:56,00:02:58,00:03:00,00:03:02,00:03:04,00:03:06,00:03:08,00:03:10,00:03:12,00:03:14,00:03:16,00:03:18,00:03:20,00:03:22,00:03:24,00:03:26,00:03:28,00:03:30,00:03:32,00:03:34,00:03:36,00:03:38,00:03:40,00:03:42,00:03:44,00:03:46,00:03:48,00:03:50,00:03:52,00:03:54,00:03:56,00:03:58,00:04:00,00:04:02,00:04:04,00:04:06,00:04:08,00:04:10,00:04:12,00:04:14,00:04:16,00:04:18,00:04:20,00:04:22,00:04:24,00:04:26,00:04:28,00:04:30,00:04:32,00:04:34,00:04:36,00:04:38,00:04:40,00:04:42,00:04:44,00:04:46,00:04:48,00:04:50,00:04:52,00:04:54,00:04:56,00:04:58,00:05:00,00:05:02,00:05:04,00:05:06,00:05:08,00:05:10,00:05:12,00:05:14,00:05:16,00:05:18,00:05:20,00:05:22,00:05:24,00:05:26,00:05:28,00:05:30,00:05:32,00:05:34,00:05:36,00:05:38,00:05:40,00:05:42,00:05:44,00:05:46,00:05:48,00:05:50,00:05:52,00:05:54,00:05:56,00:05:58,00:06:00,00:06:02,00:06:04,00:06:06,00:06:08,00:06:10,00:06:12,00:06:14,00:06:16,00:06:18,00:06:20,00:06:22,00:06:24,00:06:26,00:06:28,00:06:30,00:06:32,00:06:34,00:06:36,00:06:38,00:06:40,00:06:42,00:06:44,00:06:46,00:06:48,00:06:50,00:06:52,00:06:54,00:06:56,00:06:58,00:07:00,00:07:02,00:07:04,00:07:06,00:07:08,00:07:10,00:07:12,00:07:14,00:07:16,00:07:18,00:07:20,00:07:22,00:07:24,00:07:26,00:07:28,00:07:30,00:07:32,00:07:34,00:07:36,00:07:38,00:07:40,00:07:42,00:07:44,00:07:46,00:07:48,00:07:50,00:07:52,00:07:54,00:07:56,00:07:58,00:08:00,00:08:02,00:08:04,00:08:06,00:08:08,00:08:10,00:08:12,00:08:14,00:08:16,00:08:18,00:08:20,00:08:22,00:08:24,00:08:26,00:08:28,00:08:30,00:08:32,00:08:34,00:08:36,00:08:38,00:08:40,00:08:42,00:08:44,00:08:46,00:08:48,00:08:50,00:08:52,00:08:54,00:08:56,00:08:58,00:09:00,00:09:02,00:09:04,00:09:06,00:09:08,00:09:10,00:09:12,00:09:14,00:09:16,00:09:18,00:09:20,00:09:22,00:09:24,00:09:26,00:09:28,00:09:30,00:09:32,00:09:34,00:09:36,00:09:38,00:09:40,00:09:42,00:09:44,00:09:46,00:09:48,00:09:50,00:09:52,00:09:54,00:09:56,00:09:58,00:10:00,00:10:02,00:10:04,00:10:06,00:10:08,00:10:10,00:10:12,00:10:14,00:10:16,00:10:18,00:10:20,00:10:22,00:10:24,00:10:26,00:10:28,00:10:30,00:10:32,00:10:34,00:10:36,00:10:38,00:10:40,00:10:42,00:10:44,00:10:46,00:10:48,00:10:50,00:10:52,00:10:54,00:10:56,00:10:58,00:11:00,00:11:02,00:11:04,00:11:06,00:11:08,00:11:10,00:11:12,00:11:14,00:11:16,00:11:18,00:11:20,00:11:22,00:11:24,00:11:26,00:11:28,00:11:30,00:11:32,00:11:34,00:11:36,00:11:38,00:11:40,00:11:42,00:11:44,00:11:46,00:11:48,00:11:50,00:11:52,00:11:54,00:11:56,00:11:58,00:12:00,00:12:02,00:12:04,00:12:06,00:12:08,00:12:10,00:12:12,00:12:14,00:12:16,00:12:18,00:12:20,00:12:22,00:12:24,00:12:26,00:12:28,00:12:30,00:12:32,00:12:34,00:12:36,00:12:38,00:12:40,00:12:42,00:12:44,00:12:46,00:12:48,00:12:50,00:12:52,00:12:54,00:12:56,00:12:58,00:13:00,00:13:02,00:13:04,00:13:06,00:13:08,00:13:10,00:13:12,00:13:14,00:13:16,00:13:18,00:13:20,00:13:22,00:13:24,00:13:26,00:13:28,00:13:30,00:13:32,00:13:34,00:13:36,00:13:38,00:13:40,00:13:42,00:13:44,00:13:46,00:13:48,00:13:50,00:13:52,00:13:54,00:13:56,00:13:58,00:14:00,00:14:02,00:14:04,00:14:06,00:14:08,00:14:10,00:14:12,00:14:14,00:14:16,00:14:18,00:14:20,00:14:22,00:14:24,00:14:26,00:14:28,00:14:30,00:14:32,00:14:34,00:14:36,00:14:38,00:14:40,00:14:42,00:14:44,00:14:46,00:14:48,00:14:50,00:14:52,00:14:54,00:14:56,00:14:58,00:15:00,00:15:02,00:15:04,00:15:06,00:15:08,00:15:10,00:15:12,00:15:14,00:15:16,00:15:18,00:15:20,00:15:22,00:15:24,00:15:26,00:15:28,00:15:30,00:15:32,00:15:34,00:15:36,00:15:38,00:15:40,00:15:42,00:15:44,00:15:46,00:15:48,00:15:50,00:15:52,00:15:54,00:15:56,00:15:58,00:16:00,00:16:02,00:16:04,00:16:06,00:16:08,00:16:10,00:16:12,00:16:14,00:16:16,00:16:18,00:16:20,00:16:22,00:16:24,00:16:26,00:16:28,00:16:30,00:16:32,00:16:34,00:16:36,00:16:38,00:16:40,00:16:42,00:16:44,00:16:46,00:16:48,00:16:50,00:16:52,00:16:54,00:16:56,00:16:58,00:17:00,00:17:02,00:17:04,00:17:06,00:17:08,00:17:10,00:17:12,00:17:14,00:17:16,00:17:18,00:17:20,00:17:22,00:17:24,00:17:26,00:17:28,00:17:30,00:17:32,00:17:34,00:17:36,00:17:38,00:17:40,00:17:42,00:17:44,00:17:46,00:17:48,00:17:50,00:17:52,00:17:54,00:17:56,00:17:58,00:18:00,00:18:02,00:18:04,00:18:06,00:18:08,00:18:10,00:18:12,00:18:14,00:18:16,00:18:18,00:18:20,00:18:22,00:18:24,00:18:26,00:18:28,00:18:30,00:18:32,00:18:34,00:18:36,00:18:38,00:18:40,00:18:42,00:18:44,00:18:46,00:18:48,00:18:50,00:18:52,00:18:54,00:18:56,00:18:58,00:19:00,00:19:02,00:19:04,00:19:06,00:19:08,00:19:10,00:19:12,00:19:14,00:19:16,00:19:18,00:19:20,00:19:22,00:19:24,00:19:26,00:19:28,00:19:30,00:19:32,00:19:34,00:19:36,00:19:38,00:19:40,00:19:42,00:19:44,00:19:46,00:19:48,00:19:50,00:19:52,00:19:54,00:19:56,00:19:58,00:20:00,00:20:02,00:20:04,00:20:06,00:20:08,00:20:10,00:20:12,00:20:14,00:20:16,00:20:18,00:20:20,00:20:22,00:20:24,00:20:26,00:20:28,00:20:30,00:20:32,00:20:34,00:20:36,00:20:38,00:20:40,00:20:42,00:20:44,00:20:46,00:20:48,00:20:50,00:20:52,00:20:54,00:20:56,00:20:58,00:21:00,00:21:02,00:21:04,00:21:06,00:21:08,00:21:10,00:21:12,00:21:14,00:21:16,00:21:18,00:21:20,00:21:22,00:21:24,00:21:26,00:21:28,00:21:30,00:21:32,00:21:34,00:21:36,00:21:38,00:21:40,00:21:42,00:21:44,00:21:46,00:21:48,00:21:50,00:21:52,00:21:54,00:21:56,00:21:58,00:22:00,00:22:02,00:22:04,00:22:06,00:22:08,00:22:10,00:22:12,00:22:14,00:22:16,00:22:18,00:22:20,00:22:22,00:22:24,00:22:26,00:22:28,00:22:30,00:22:32,00:22:34,00:22:36,00:22:38,00:22:40,00:22:42,00:22:44,00:22:46,00:22:48,00:22:50,00:22:52,00:22:54,00:22:56,00:22:58,00:23:00,00:23:02,00:23:04,00:23:06,00:23:08,00:23:10,00:23:12,00:23:14,00:23:16,00:23:18,00:23:20,00:23:22,00:23:24,00:23:26,00:23:28,00:23:30,00:23:32,00:23:34,00:23:36,00:23:38,00:23:40,00:23:42,00:23:44,00:23:46,00:23:48,00:23:50,00:23:52,00:23:54,00:23:56,00:23:58,00:24:00,00:24:02,00:24:04,00:24:06,00:24:08,00:24:10,00:24:12,00:24:14,00:24:16,00:24:18,00:24:20,00:24:22,00:24:24,00:24:26,00:24:28,00:24:30,00:24:32,00:24:34,00:24:36,00:24:38,00:24:40,00:24:42,00:24:44,00:24:46,00:24:48,00:24:50,00:24:52,00:24:54,00:24:56,00:24:58,00:25:00,00:25:02,00:25:04,00:25:06,00:25:08,00:25:10,00:25:12,00:25:14,00:25:16,00:25:18,00:25:20,00:25:22,00:25:24,00:25:26,00:25:28,00:25:30,00:25:32,00:25:34,00:25:36,00:25:38,00:25:40,00:25:42,00:25:44,00:25:46,00:25:48,00:25:50,00:25:52,00:25:54,00:25:56,00:25:58,00:26:00,00:26:02,00:26:04,00:26:06,00:26:08,00:26:10,00:26:12,00:26:14,00:26:16,00:26:18,00:26:20,00:26:22,00:26:24,00:26:26,00:26:28,00:26:30,00:26:32,00:26:34,00:26:36,00:26:38,00:26:40,00:26:42,00:26:44,00:26:46,00:26:48,00:26:50,00:26:52,00:26:54,00:26:56,00:26:58,00:27:00,00:27:02,00:27:04,00:27:06,00:27:08,00:27:10,00:27:12,00:27:14,00:27:16,00:27:18,00:27:20,00:27:22,00:27:24,00:27:26,00:27:28,00:27:30,00:27:32,00:27:34,00:27:36,00:27:38,00:27:40,00:27:42,00:27:44,00:27:46,00:27:48,00:27:50,00:27:52,00:27:54,00:27:56,00:27:58,00:28:00,00:28:02,00:28:04,00:28:06,00:28:08,00:28:10,00:28:12,00:28:14,00:28:16,00:28:18,00:28:20,00:28:22,00:28:24,00:28:26,00:28:28,00:28:30,00:28:32,00:28:34,00:28:36,00:28:38,00:28:40,00:28:42,00:28:44,00:28:46,00:28:48,00:28:50,00:28:52,00:28:54,00:28:56,00:28:58,00:29:00,00:29:02,00:29:04,00:29:06,00:29:08,00:29:10,00:29:12,00:29:14,00:29:16,00:29:18,00:29:20,00:29:22,00:29:24,00:29:26,00:29:28,00:29:30,00:29:32,00:29:34,00:29:36,00:29:38,00:29:40,00:29:42,00:29:44,00:29:46,00:29:48,00:29:50,00:29:52,00:29:54,00:29:56,00:29:58,00:30:00,00:30:02,00:30:04,00:30:06,00:30:08,00:30:10,00:30:12,00:30:14,00:30:16,00:30:18,00:30:20,00:30:22,00:30:24,00:30:26,00:30:28,00:30:30,00:30:32,00:30:34,00:30:36,00:30:38,00:30:40,00:30:42,00:30:44,00:30:46,00:30:48,00:30:50,00:30:52,00:30:54,00:30:56,00:30:58,00:31:00,00:31:02,00:31:04,00:31:06,00:31:08,00:31:10,00:31:12,00:31:14,00:31:16,00:31:18,00:31:20,00:31:22,00:31:24,00:31:26,00:31:28,00:31:30,00:31:32,00:31:34,00:31:36,00:31:38,00:31:40,00:31:42,00:31:44,00:31:46,00:31:48,00:31:50,00:31:52,00:31:54,00:31:56,00:31:58,00:32:00,00:32:02,00:32:04,00:32:06,00:32:08,00:32:10,00:32:12,00:32:14,00:32:16,00:32:18,00:32:20,00:32:22,00:32:24,00:32:26,00:32:28,00:32:30,00:32:32,00:32:34,00:32:36,00:32:38,00:32:40,00:32:42,00:32:44,00:32:46,00:32:48,00:32:50,00:32:52,00:32:54,00:32:56,00:32:58,00:33:00,00:33:02,00:33:04,00:33:06,00:33:08,00:33:10,00:33:12,00:33:14,00:33:16,00:33:18,00:33:20,00:33:22,00:33:24,00:33:26,00:33:28,00:33:30,00:33:32,00:33:34,00:33:36,00:33:38,00:33:40,00:33:42,00:33:44,00:33:46,00:33:48,00:33:50,00:33:52,00:33:54,00:33:56,00:33:58,00:34:00,00:34:02,00:34:04,00:34:06,00:34:08,00:34:10,00:34:12,00:34:14,00:34:16,00:34:18,00:34:20,00:34:22,00:34:24,00:34:26,00:34:28,00:34:30,00:34:32,00:34:34,00:34:36,00:34:38,00:34:40,00:34:42,00:34:44,00:34:46,00:34:48,00:34:50,00:34:52,00:34:54,00:34:56,00:34:58,00:35:00,00:35:02,00:35:04,00:35:06,00:35:08,00:35:10,00:35:12,00:35:14,00:35:16,00:35:18,00:35:20,00:35:22,00:35:24,00:35:26,00:35:28,00:35:30,00:35:32,00:35:34,00:35:36,00:35:38,00:35:40,00:35:42,00:35:44,00:35:46,00:35:48,00:35:50,00:35:52,00:35:54,00:35:56,00:35:58,00:36:00,00:36:02,00:36:04,00:36:06,00:36:08,00:36:10,00:36:12,00:36:14,00:36:16,00:36:18,00:36:20,00:36:22,00:36:24,00:36:26,00:36:28,00:36:30,00:36:32,00:36:34,00:36:36,00:36:38]", now, "Bracket expansion produces too many intervals (max 1024)");
+        // a range that merges below the limit is fine
+        assertCompiledTickExprWithNow("[$today..$today + 2000d]", now);
+        assertCompiledTickExprWithNow("[$today..$today + 500d]T[09:00,15:00]", now);
+    }
+
+    @Test
+    public void testCompiledTickExprInvalidDateRange() throws SqlException {
+        // A literal fails on a range that starts after it ends, the way a bind variable does
+        final String now = "2024-01-02T10:30:00.000000Z";
+        final String error = "Invalid date range: start is after end";
+        assertParsedAndCompiledErrorWithNow("[$tomorrow..$today]", now, error);
+        assertParsedAndCompiledErrorWithNow("$tomorrow..$today", now, error);
+        assertParsedAndCompiledErrorWithNow("[$now..$now - 1h]", now, error);
+        assertParsedAndCompiledErrorWithNow("[$today..$now - 2d]T09:00", now, error);
+        assertParsedAndCompiledErrorWithNow("[$today + 3bd..$today, $today]", now, error);
+        // a range within one day is fine
+        assertCompiledTickExprWithNow("[$today..$now]", now);
+        assertCompiledTickExprWithNow("[$now..$today]", now);
+    }
+
+    @Test
+    public void testCompiledTickExprInvalidDurationUnit() {
+        // The parser rejects a duration with an invalid unit. The compiled form, which SQL uses for a
+        // literal with a date variable, must reject it too, rather than evaluate it to an interval
+        // that starts at the beginning of time, such as everything before now for $now;1x.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertParsedAndCompiledRejectedWithNow("$now;1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedWithNow("$today;1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedWithNow("[$now];1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedWithNow("$now;1h1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedWithNow("$today..$tomorrow;1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedWithNow("[$today, $tomorrow]T09:00;1h1x", now, "Invalid duration unit: x");
+    }
+
+    @Test
     public void testCompiledTickExprInvalidSingleTimeOverride() {
         assertCompileTickExprError("[$today]Tabc", "Invalid time override");
     }
@@ -1003,6 +1130,30 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprElementSuffixes() throws SqlException {
+        // An element with its own day filter or timezone compiles, and evaluates like a bind variable.
+        // 2024-01-01 is a Monday and 2024-01-02 a Tuesday.
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}]",
+                "[$today#Mon]",
+                "2024-01-01T10:30:00.000000Z"
+        );
+        assertParsedAndCompiledWithNow("[]", "[$today#Mon]", "2024-01-02T10:30:00.000000Z");
+        // London is at +01:00 in July
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-07-14T23:00:00.000000Z, hi=2024-07-16T22:59:59.999999Z}]",
+                "[$today..$tomorrow@Europe/London]",
+                "2024-07-15T10:00:00.000000Z"
+        );
+        // a static element with its own timezone
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z},{lo=2024-01-04T22:00:00.000000Z, hi=2024-01-05T21:59:59.999999Z}]",
+                "[$today, 2024-01-05@+02:00]",
+                "2024-01-02T10:30:00.000000Z"
+        );
+    }
+
+    @Test
     public void testCompiledTickExprMixedListWithRange() throws SqlException {
         assertCompiledTickExpr("[2025-03-01, $today .. $today + 2d , $yesterday]");
     }
@@ -1029,9 +1180,53 @@ public class TickExprTest {
 
     @Test
     public void testCompiledTickExprMixedPrecisionRange() throws SqlException {
-        // Range where start is day-level ($today = midnight) and end is sub-day ($now).
-        // hasBothTimeComponents = false → day-based iteration (one day if same day).
+        // Range where start is a whole day ($today) and end is a point in time ($now):
+        // the range covers today up to $now.
         assertCompiledTickExpr("$today..$now");
+    }
+
+    @Test
+    public void testCompiledTickExprMixedPrecisionRangeWithBusinessDays() throws SqlException {
+        // Business days from $now, each with a 09:30 session; $now clips today's session
+        assertCompiledTickExpr("[$now..$today + 3bd]T09:30;1h");
+    }
+
+    @Test
+    public void testCompiledTickExprMixedPrecisionRangeWithDayFilter() throws SqlException {
+        assertCompiledTickExpr("[$yesterday + 12h..$tomorrow]#workday");
+    }
+
+    @Test
+    public void testCompiledTickExprMixedPrecisionRangeWithTimeListAcrossDstChanges() throws SqlException {
+        // The range clips its time list in local time, so the parse path and the compiled path
+        // must agree at every moment around a clock change, including while the point-in-time
+        // endpoint falls in the hour that the spring-forward change skips
+        assertCompiledTickExprEvery5Minutes(
+                "2024-03-31T00:00:00.000000Z",
+                "[$now - 2h..$tomorrow]T[00:30,01:30,02:30]@Europe/London",
+                "[$yesterday..$now]T[00:30,01:30,02:30]@Europe/London",
+                "[$now - 2h..$tomorrow]T[01:00,01:15,01:30,01:45,02:00,02:15]@Europe/London",
+                "[$now - 2h..$tomorrow]T[01:30,02:30]@Europe/London;30m",
+                "[$now - 2h..$tomorrow]T[00:30,01:30,02:30]@Europe/London#workday",
+                "[$now - 2h..$tomorrow]T[10:30@Asia/Tokyo,02:30]@Europe/London",
+                "[$now - 2h..$tomorrow]T[02:30@+01:00]@Europe/London"
+        );
+        assertCompiledTickExprEvery5Minutes(
+                "2024-03-10T00:00:00.000000Z",
+                "[$now - 2h..$tomorrow]T[01:30,02:30,03:30]@America/New_York"
+        );
+        assertCompiledTickExprEvery5Minutes(
+                "2024-10-27T00:00:00.000000Z",
+                "[$now - 2h..$tomorrow]T[00:30,01:30,02:30]@Europe/London",
+                "[$yesterday..$now]T[00:30,01:30,02:30]@Europe/London",
+                "[$now - 2h..$tomorrow]T[01:00,01:15,01:30,01:45,02:00,02:15]@Europe/London"
+        );
+    }
+
+    @Test
+    public void testCompiledTickExprMixedPrecisionRangeWithTimeListAndTimezone() throws SqlException {
+        // Both paths clip the time list to $now - 2h in local time, then apply the timezone
+        assertCompiledTickExpr("[$now - 2h..$tomorrow]T[09:00,14:00]@+02:00");
     }
 
     @Test
@@ -1108,6 +1303,32 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprNumericTimeBrackets() throws SqlException {
+        // Numeric brackets in the time part, and brackets after a time list, expand the same way in
+        // a literal as in a bind variable
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T01:30:00.000000Z, hi=2024-01-02T01:30:59.999999Z},{lo=2024-01-02T02:30:00.000000Z, hi=2024-01-02T02:30:59.999999Z}]",
+                "[$today]T[01,02]:30",
+                "2024-01-02T10:30:00.000000Z"
+        );
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:59.999999Z},{lo=2024-01-02T09:30:00.000000Z, hi=2024-01-02T09:30:59.999999Z},{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:59.999999Z},{lo=2024-01-02T10:30:00.000000Z, hi=2024-01-02T10:30:59.999999Z}]",
+                "[$today]T[09..10]:[00,30]",
+                "2024-01-02T10:30:00.000000Z"
+        );
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:59.999999Z},{lo=2024-01-02T09:30:00.000000Z, hi=2024-01-02T09:30:59.999999Z}]",
+                "[$today]T09:[00,30]",
+                "2024-01-02T10:30:00.000000Z"
+        );
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T09:00:15.000000Z, hi=2024-01-02T09:00:15.999999Z},{lo=2024-01-02T09:00:45.000000Z, hi=2024-01-02T09:00:45.999999Z},{lo=2024-01-02T10:00:15.000000Z, hi=2024-01-02T10:00:15.999999Z},{lo=2024-01-02T10:00:45.000000Z, hi=2024-01-02T10:00:45.999999Z}]",
+                "[$today]T[09:00,10:00]:[15,45]",
+                "2024-01-02T10:30:00.000000Z"
+        );
+    }
+
+    @Test
     public void testCompiledTickExprSingleTimeWithManyDurationParts() throws SqlException {
         assertCompiledTickExpr("$todayT09:30;" + "1s".repeat(62));
     }
@@ -1121,10 +1342,52 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprStaticElementUnderTimeList() throws SqlException {
+        // A static element takes the time list like a date variable does
+        assertParsedAndCompiledWithNow(
+                "[{lo=2023-12-30T09:00:00.000000Z, hi=2023-12-30T09:00:59.999999Z},{lo=2023-12-30T14:30:00.000000Z, hi=2023-12-30T14:30:59.999999Z},{lo=2024-03-31T09:00:00.000000Z, hi=2024-03-31T09:00:59.999999Z},{lo=2024-03-31T14:30:00.000000Z, hi=2024-03-31T14:30:59.999999Z}]",
+                "[$today - 3d, 2024-03-31]T[09:00,14:30]",
+                "2024-01-02T10:30:00.000000Z"
+        );
+        // an element with its own time of day keeps it and skips the time override
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T10:30:00.000000Z, hi=2024-01-02T10:30:59.999999Z},{lo=2024-01-02T11:00:00.000000Z, hi=2024-01-02T11:00:59.999999Z},{lo=2024-01-05T09:00:00.000000Z, hi=2024-01-05T09:00:59.999999Z}]",
+                "[2024-01-05T09:00, $today]T[10:30,11:00]",
+                "2024-01-02T10:30:00.000000Z"
+        );
+        // a month element with a duration applies the duration to each of its days
+        assertCompiledTickExprWithNow("[$today, 2024-03]@America/New_York;55m", "2024-01-02T10:30:00.000000Z");
+    }
+
+    @Test
     public void testCompiledTickExprStaticElementIrGrowth() throws SqlException {
         // 22 bracket-expanded dates start at irPos=2, ir.length=64.
         // 21st date has irPos=62 → 62+3=65>64 → triggers IR growth at L600.
         assertCompiledTickExpr("[2025-01-[01..22], $today]");
+    }
+
+    @Test
+    public void testCompiledTickExprStaticWithDayFilterBeyondMergeThreshold() throws SqlException {
+        // The static element expands to 336 days, beyond the incremental merge threshold
+        // (256 intervals). Both paths must apply the day filter to each day, and agree.
+        final String expression = "[$today, 2024-[01..12]-[01..28]]#workday";
+        assertCompiledTickExpr(expression);
+
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        out.clear();
+        parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT,
+                timestampDriver.parseFloorLiteral("2024-01-02T10:30:00.000000Z"));
+        int days = 0;
+        for (int i = 0; i < out.size(); i += 2) {
+            for (long day = timestampDriver.startOfDay(out.getQuick(i), 0); day <= out.getQuick(i + 1); day = timestampDriver.addDays(day, 1)) {
+                final int dayOfWeek = timestampDriver.getDayOfWeek(day);
+                Assert.assertTrue("weekend day in " + intervalToString(timestampDriver, out), dayOfWeek != 6 && dayOfWeek != 7);
+                days++;
+            }
+        }
+        // the first 28 days of a month are four whole weeks, 20 of them weekdays, and $today
+        // (Tuesday 2024-01-02) is one of them
+        Assert.assertEquals(12 * 20, days);
     }
 
     @Test
@@ -1170,8 +1433,10 @@ public class TickExprTest {
     }
 
     @Test
-    public void testCompiledTickExprTimeListInvalidTimezone() {
-        assertCompileTickExprError("[$today]T[09:00@Bogus,14:00]", "invalid timezone in time list");
+    public void testCompiledTickExprTimeListInvalidTimezone() throws SqlException {
+        // a time list slot with its own timezone parses when it evaluates, so the error is the one a
+        // bind variable gets
+        assertParsedAndCompiledErrorWithNow("[$today]T[09:00@Bogus,14:00]", "2024-01-02T10:30:00.000000Z", "invalid timezone: Bogus");
     }
 
     @Test
@@ -1184,6 +1449,40 @@ public class TickExprTest {
         }
         sb.append(']');
         assertCompiledTickExpr(sb.toString());
+    }
+
+    @Test
+    public void testCompiledTickExprTimeListOver255Slots() throws SqlException {
+        // 300 time list slots, a minute each from 00:00, more than the compiled expression could once count
+        final StringBuilder slots = new StringBuilder();
+        for (int minute = 0; minute < 300; minute++) {
+            if (minute > 0) {
+                slots.append(',');
+            }
+            slots.append(String.format("%02d:%02d", minute / 60, minute % 60));
+        }
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-03-01T00:00:00.000000Z, hi=2024-03-01T04:59:59.999999Z}]",
+                "[$today]T[" + slots + "]",
+                "2024-03-01T12:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testCompiledTickExprTimeListSlotTimezones() throws SqlException {
+        // 10:30 in Tokyo is 01:30Z on both days, also on the day London falls back
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-10-27T01:30:00.000000Z, hi=2024-10-27T01:30:59.999999Z},{lo=2024-10-28T01:30:00.000000Z, hi=2024-10-28T01:30:59.999999Z}]",
+                "[$today..$tomorrow]T[10:30@Asia/Tokyo]@Europe/London",
+                "2024-10-27T05:00:00.000000Z"
+        );
+        // London springs forward at 01:00 GMT on 2024-03-31, so the minute 01:30 does not exist
+        // and matches nothing; 02:30 BST is 01:30Z
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-03-31T01:30:00.000000Z, hi=2024-03-31T01:30:59.999999Z}]",
+                "[$today]T[01:30@Europe/London,02:30@Europe/London]",
+                "2024-03-31T05:00:00.000000Z"
+        );
     }
 
     @Test
@@ -1449,6 +1748,53 @@ public class TickExprTest {
                 "[{lo=2026-01-01T09:30:00.000000Z, hi=2026-01-01T09:30:59.999999Z},{lo=2026-01-02T10:00:00.000000Z, hi=2026-01-02T10:00:59.999999Z},{lo=2026-01-02T14:00:00.000000Z, hi=2026-01-02T14:00:59.999999Z}]",
                 "[2026-01-01T09:30, 2026-01-02]T[10:00,14:00]"
         );
+    }
+
+    @Test
+    public void testDateListElementWithTimeAndZonedTimeListSuffix() throws SqlException {
+        // An element with its own time of day keeps it and skips the time part of the suffix,
+        // also when the slots of that time list carry their own timezone
+        assertBracketIntervalWithNow(
+                "[{lo=2024-01-02T18:00:00.000000Z, hi=2024-01-02T18:00:00.000000Z}]",
+                "[$today + 18h]T[10:30@Europe/London]",
+                "2024-01-02T10:30:00.000000Z"
+        );
+        // the global timezone still applies to the element
+        assertBracketIntervalWithNow(
+                "[{lo=2024-01-02T16:00:00.000000Z, hi=2024-01-02T16:00:00.000000Z}]",
+                "[$today + 18h]T[10:30@Europe/London]@+02:00",
+                "2024-01-02T10:30:00.000000Z"
+        );
+        // an element without a time of day takes the slots: 10:30@+02:00 is 08:30Z
+        assertBracketIntervalWithNow(
+                "[{lo=2024-01-02T08:30:00.000000Z, hi=2024-01-02T08:30:59.999999Z},{lo=2024-01-02T11:00:00.000000Z, hi=2024-01-02T11:00:59.999999Z},{lo=2024-01-02T18:00:00.000000Z, hi=2024-01-02T18:00:00.000000Z}]",
+                "[$today + 18h, $today]T[10:30@+02:00,11:00]",
+                "2024-01-02T10:30:00.000000Z"
+        );
+        // a static element with its own time, with and without a duration
+        assertBracketInterval(
+                "[{lo=2024-01-05T09:00:00.000000Z, hi=2024-01-05T09:00:59.999999Z}]",
+                "[2024-01-05T09:00]T[10:30@+02:00]"
+        );
+        assertBracketInterval(
+                "[{lo=2024-01-05T09:00:00.000000Z, hi=2024-01-05T09:59:59.999999Z}]",
+                "[2024-01-05T09:00]T[10:30@+02:00];1h"
+        );
+    }
+
+    @Test
+    public void testDateListElementWithTimeListAndListTimeFails() {
+        // The parser rejects a date list element without a day that has a time part of its own when
+        // the list has a time part too, and an element whose own time part is a time list. The
+        // compiled form, which SQL uses for a literal with a date variable, must reject them too,
+        // rather than ignore the time list of the element and expand its month with the time of the
+        // list.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertParsedAndCompiledRejectedWithNow("[2024-01T[09:00,10:00], $today]T10:00", now, "Invalid date");
+        assertParsedAndCompiledRejectedWithNow("[2024-01T[09:00], $NOW + 1w]T09:00:30", now, "Invalid date");
+        // the element fails on both paths with a time of day of its own, or with a day
+        assertParsedAndCompiledRejectedWithNow("[2024-01T09:00, $today]T10:00", now, "Invalid date");
+        assertParsedAndCompiledRejectedWithNow("[2024-01-[01..03]T[09:00], $today]T10:00", now, "Invalid date");
     }
 
     @Test
@@ -2108,6 +2454,174 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateListWithDenseTimeExpansionAndDayFilter() throws SqlException {
+        // T[hh..hh]:[00..59] emits one interval per minute. Each time the date list holds 256
+        // intervals, the default incremental merge threshold, the bracket expansion merges them,
+        // which can happen part way through a date.
+        // 2024-01-12 is a Friday and 2024-01-13 a Saturday, so #workday keeps 2024-01-12 only.
+        // 2 dates x 120 minutes stay below the threshold
+        assertBracketInterval(
+                "[{lo=2024-01-12T00:00:00.000000Z, hi=2024-01-12T01:59:59.999999Z}]",
+                "[2024-01-12,2024-01-13]T[00..01]:[00..59]#workday"
+        );
+        // 2 dates x 180 minutes cross the threshold while the second date expands
+        assertBracketInterval(
+                "[{lo=2024-01-12T00:00:00.000000Z, hi=2024-01-12T02:59:59.999999Z}]",
+                "[2024-01-12,2024-01-13]T[00..02]:[00..59]#workday"
+        );
+        // every minute of both dates, with the global and with a per-element day filter
+        assertBracketInterval(
+                "[{lo=2024-01-12T00:00:00.000000Z, hi=2024-01-12T23:59:59.999999Z}]",
+                "[2024-01-12,2024-01-13]T[00..23]:[00..59]#workday"
+        );
+        assertBracketInterval(
+                "[{lo=2024-01-12T00:00:00.000000Z, hi=2024-01-12T23:59:59.999999Z}]",
+                "[2024-01-12#workday,2024-01-13#workday]T[00..23]:[00..59]"
+        );
+    }
+
+    @Test
+    public void testDateListWithDenseTimeExpansionAndTimezone() throws SqlException {
+        // T[hh..hh]:[00..59] emits one interval per minute. Each time the date list holds 256
+        // intervals, the default incremental merge threshold, the bracket expansion merges them,
+        // which can happen part way through a date.
+        // +02:00 shifts every minute of every date two hours back.
+        // 2 dates x 120 minutes stay below the threshold
+        assertBracketInterval(
+                "[{lo=2024-01-10T22:00:00.000000Z, hi=2024-01-10T23:59:59.999999Z},{lo=2024-01-11T22:00:00.000000Z, hi=2024-01-11T23:59:59.999999Z}]",
+                "[2024-01-11,2024-01-12]T[00..01]:[00..59]@+02:00"
+        );
+        // 2 dates x 180 minutes cross the threshold while the second date expands
+        assertBracketInterval(
+                "[{lo=2024-01-10T22:00:00.000000Z, hi=2024-01-11T00:59:59.999999Z},{lo=2024-01-11T22:00:00.000000Z, hi=2024-01-12T00:59:59.999999Z}]",
+                "[2024-01-11,2024-01-12]T[00..02]:[00..59]@+02:00"
+        );
+        // every minute of both dates, with the global and with a per-element timezone
+        assertBracketInterval(
+                "[{lo=2024-01-10T22:00:00.000000Z, hi=2024-01-12T21:59:59.999999Z}]",
+                "[2024-01-11,2024-01-12]T[00..23]:[00..59]@+02:00"
+        );
+        assertBracketInterval(
+                "[{lo=2024-01-10T22:00:00.000000Z, hi=2024-01-12T21:59:59.999999Z}]",
+                "[2024-01-11@+02:00,2024-01-12@+02:00]T[00..23]:[00..59]"
+        );
+    }
+
+    @Test
+    public void testDateListWithDenseTimeSuffixAndDayFilter() throws SqlException {
+        // T[00..23]:[00..59] expands each element to 1440 minutes, so the second element
+        // reaches the incremental merge threshold (256 intervals). The day filter must still
+        // see only the intervals of its own element: 2024-01-06 is a Saturday.
+        assertBracketInterval(
+                "[{lo=2024-01-05T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
+                "[2024-01-05, 2024-01-06]T[00..23]:[00..59]#workday"
+        );
+    }
+
+    @Test
+    public void testDateListWithDenseTimeSuffixAndDstOverlap() throws SqlException {
+        // London falls back from BST to GMT at 02:00 on 2024-10-27, so each local minute from
+        // 01:00 to 01:59 happens twice, and covers both of its occurrences. The 1440 minutes
+        // cover the whole local day, 25 hours, the same as the day itself. They reach the
+        // incremental merge threshold (256 intervals), and the result must not depend on where
+        // the merges happen: listing the hours in another order gives the same intervals.
+        final String expected = "[{lo=2024-10-26T23:00:00.000000Z, hi=2024-10-27T23:59:59.999999Z}]";
+        assertBracketInterval(expected, "2024-10-27@Europe/London");
+        assertBracketInterval(expected, "[2024-10-27]T[00..23]:[00..59]@Europe/London");
+        assertBracketInterval(expected, "[2024-10-27]T[02..23,00,01]:[00..59]@Europe/London");
+        assertBracketInterval(expected, "2024-10-27T[00..23]:[00..59]@Europe/London");
+        assertBracketInterval(expected, "2024-10-27T[02..23,00,01]:[00..59]@Europe/London");
+    }
+
+    @Test
+    public void testDateListWithDenseTimeSuffixAndTimezone() throws SqlException {
+        // The second element reaches the incremental merge threshold (256 intervals). Its
+        // timezone must still convert exactly its own intervals.
+        assertBracketInterval(
+                "[{lo=2023-12-31T22:00:00.000000Z, hi=2024-01-01T21:59:59.999999Z},{lo=2024-01-05T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
+                "[2024-01-05, 2024-01-01@+02:00]T[00..23]:[00..59]"
+        );
+        // a global timezone converts each element separately
+        assertBracketInterval(
+                "[{lo=2023-12-31T22:00:00.000000Z, hi=2024-01-01T21:59:59.999999Z},{lo=2024-01-04T22:00:00.000000Z, hi=2024-01-05T21:59:59.999999Z}]",
+                "[2024-01-05, 2024-01-01]T[00..23]:[00..59]@+02:00"
+        );
+    }
+
+    @Test
+    public void testDateListWithDenseTimeSuffixBoundsMemory() throws SqlException {
+        // 100 elements of 240 adjacent minutes each: 24,000 intervals before merging, while no
+        // single element reaches the incremental merge threshold (256 intervals). The incremental
+        // merge must still bound the list across elements.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long firstDay = timestampDriver.parseFloorLiteral("2024-01-01T00:00:00.000000Z");
+        final StringSink expression = new StringSink();
+        expression.put('[');
+        for (int i = 0; i < 100; i++) {
+            if (i > 0) {
+                expression.put(',');
+            }
+            IntervalUtils.appendDate(timestampDriver, timestampDriver.addDays(firstDay, i), expression);
+        }
+        expression.put("]T[09..12]:[00..59]");
+
+        out.clear();
+        parseTickExpr(timestampDriver, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(100, out.size() / 2);
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2024-01-01T09:00:00.000000Z"), out.getQuick(0));
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2024-04-09T13:00:00.000000Z") - 1, out.getQuick(out.size() - 1));
+        // without the incremental merge, the list would hold 48,000 longs
+        Assert.assertTrue("capacity: " + out.capacity(), out.capacity() <= 4_096);
+    }
+
+    @Test
+    public void testDateListWithDenseTimeSuffixCoveredByAnotherElement() throws SqlException {
+        // The second element alone has 1440 separate seconds, beyond the limit of 1024 intervals,
+        // but the first element covers them all, so the result is a single interval
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-03T23:59:59.999999Z}]",
+                "[2024-01-01T00:00;3d, 2024-01-03]T[00..23]:[00..59]:00"
+        );
+        // 2024-01-03 is a Wednesday, so the day filter keeps all of its seconds
+        assertBracketInterval(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-03T23:59:59.999999Z}]",
+                "[2024-01-01T00:00;3d, 2024-01-03#workday]T[00..23]:[00..59]:00"
+        );
+    }
+
+    @Test
+    public void testDateListWithDenseTimeSuffixCoveredByAnotherElementAndTimezone() throws SqlException {
+        // 2024-01-03 at -05:00 runs from 2024-01-03T05:00Z to 2024-01-04T04:59:59.999999Z. The
+        // first element covers its seconds up to the end of 2024-01-03 in UTC, not in local time,
+        // so the 300 seconds from 19:00 local remain on 2024-01-04. The first of them touches
+        // the end of the first element and joins it.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String expression = "[2024-01-01T00:00;3d, 2024-01-03@-05:00]T[00..23]:[00..59]:00";
+        out.clear();
+        parseTickExpr(timestampDriver, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT);
+
+        final LongList expected = new LongList();
+        final long nextDay = timestampDriver.parseFloorLiteral("2024-01-04T00:00:00.000000Z");
+        expected.add(timestampDriver.parseFloorLiteral("2024-01-01T00:00:00.000000Z"), nextDay + timestampDriver.fromSeconds(1) - 1);
+        for (int minute = 1; minute < 5 * 60; minute++) {
+            final long lo = nextDay + timestampDriver.fromMinutes(minute);
+            expected.add(lo, lo + timestampDriver.fromSeconds(1) - 1);
+        }
+        // intervalToString() reuses one sink, so take a copy of the expected text first
+        final String expectedText = intervalToString(timestampDriver, expected).toString();
+        TestUtils.assertEquals(expectedText, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testDateListWithDenseTimeSuffixTooManyIntervals() {
+        // five elements of 255 separate seconds each: 1,275 intervals that do not merge
+        assertBracketIntervalError(
+                "[2024-01-01,2024-01-02,2024-01-03,2024-01-04,2024-01-05]T[00..14]:[00..16]:00",
+                "too many intervals"
+        );
+    }
+
+    @Test
     public void testDateListWithDurationOnly() throws SqlException {
         // Date list with simple duration suffix (no repeating)
         // For a date without time, hi starts at end-of-day (23:59:59.999999), then +1h is added
@@ -2474,6 +2988,49 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariableBareWithBracketedTime() throws SqlException {
+        // A bare date variable takes a bracketed time part the same way as the bracketed form
+        final String now = "2024-01-02T10:30:00.000000Z";
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:59.999999Z},{lo=2024-01-02T14:30:00.000000Z, hi=2024-01-02T14:30:59.999999Z}]",
+                "$todayT[09:00,14:30]",
+                now
+        );
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:00:59.999999Z},{lo=2024-01-01T14:30:00.000000Z, hi=2024-01-01T14:30:59.999999Z},{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:59.999999Z},{lo=2024-01-02T14:30:00.000000Z, hi=2024-01-02T14:30:59.999999Z}]",
+                "$yesterday..$todayT[09:00,14:30]",
+                now
+        );
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T01:30:00.000000Z, hi=2024-01-02T01:30:59.999999Z},{lo=2024-01-02T02:30:00.000000Z, hi=2024-01-02T02:30:59.999999Z}]",
+                "$todayT[01,02]:30",
+                now
+        );
+        // 10:30 at +02:00 is 08:30Z
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T08:30:00.000000Z, hi=2024-01-02T08:30:59.999999Z}]",
+                "$todayT[10:30@+02:00]",
+                now
+        );
+    }
+
+    @Test
+    public void testDateVariableBareWithBracketedTimeIsDynamic() throws SqlException {
+        // A bare date variable with a bracketed time part holds a date variable, the same as its
+        // bracketed form, so the interval model evaluates it on every execution rather than once,
+        // when the SQL compiles
+        assertCompiledTickExpr("$todayT[09:00,14:30]");
+        assertCompiledTickExpr("$tomorrowT[10:30]");
+        assertCompiledTickExpr("$yesterdayT[09:00];30m");
+        assertCompiledTickExpr("$TODAYT[09:00]@Europe/London#workday");
+        assertCompiledTickExpr("$nowT[09:00]");
+        // the compiled form parses these at every evaluation
+        assertCompiledTickExpr("$todayT[01,02]:30");
+        assertCompiledTickExpr("$todayT[09..10]:30");
+        assertCompiledTickExpr("$todayT[10:30@+02:00]");
+    }
+
+    @Test
     public void testDateVariableBareWithDayFilter() throws SqlException {
         // $today#Thu - bare date variable with day filter (2026-01-22 is Thursday)
         assertBracketIntervalWithNow(
@@ -2501,6 +3058,16 @@ public class TickExprTest {
                 "$now - 1h;30m",
                 "2026-01-22T10:30:00.000000Z"
         );
+    }
+
+    @Test
+    public void testDateVariableBareWithMalformedTimeFailsAtCompileTime() {
+        // A malformed time part after a bare date variable fails when the SQL compiles
+        assertIntervalModelError("$todayT[", "Unclosed '['");
+        assertIntervalModelError("$todayT[25:00]", "25:00");
+        assertIntervalModelError("[$todayT[09:00]]", "Unknown date variable");
+        assertIntervalModelError("$todayt[09:00]", "Unknown date variable");
+        assertIntervalModelError("$todayT", "Unknown date variable");
     }
 
     @Test
@@ -2609,6 +3176,44 @@ public class TickExprTest {
                         : "[{lo=2026-01-23T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}]",
                 intervalToString(timestampDriver, out)
         );
+    }
+
+    @Test
+    public void testDateVariableDetectionFuzz() {
+        // SQL folds a tick expression into constants when the query compiles, unless
+        // DateExpressionEvaluator.containsDateVariable() finds a date variable in it. Then it evaluates
+        // the expression on every execution, through CompiledTickExpression. An expression that depends
+        // on "now" but that the detector misses keeps, in a cached plan, the intervals of the time the
+        // query compiled at. The checker parses each expression at several "now" values and requires a
+        // detected date variable when the results differ.
+        final DateVariableDetectionChecker checker = new DateVariableDetectionChecker(timestampType.getDriver());
+        // every bare date variable followed by every suffix, where the end of the variable name meets
+        // the start of the suffix
+        for (String variable : FUZZ_VARIABLES) {
+            for (String time : FUZZ_TIMES) {
+                for (String zone : FUZZ_ZONES) {
+                    for (String dayFilter : FUZZ_DAY_FILTERS) {
+                        for (String duration : FUZZ_DURATIONS) {
+                            checker.check(variable + time + zone + dayFilter + duration, false);
+                        }
+                    }
+                }
+            }
+            for (String time : FUZZ_MALFORMED_TIMES) {
+                for (String zone : FUZZ_ZONES) {
+                    checker.check(variable + time + zone, true);
+                }
+            }
+        }
+        // and random expressions of every shape
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final StringSink expression = new StringSink();
+        for (int i = 0; i < 10_000; i++) {
+            expression.clear();
+            final boolean isMalformed = appendRandomTickExpr(rnd, expression);
+            checker.check(expression.toString(), isMalformed);
+        }
+        checker.assertNoFailures();
     }
 
     @Test
@@ -2812,6 +3417,17 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariableNowAtMidnight() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $now is a point in time even when the clock reads exactly midnight
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T00:00:00.000000Z}]",
+                "$now",
+                "2024-01-02T00:00:00.000000Z"
+        );
+    }
+
+    @Test
     public void testDateVariableNowBare() throws SqlException {
         // $now without brackets - same result as [$now]
         assertBracketIntervalWithNow(
@@ -2870,6 +3486,45 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariablePointInTimeRangeWithMalformedDurationFails() {
+        // A range between two points in time stays one interval, which ignores the duration of the
+        // expression, but a malformed duration still fails the expression, the same as for a range of
+        // days. The parser, which SQL uses for a bind variable, must not let it through where the
+        // compiled form, which SQL uses for a literal, rejects it. The day filter goes before the
+        // duration, so ';1h#Tue' is a malformed duration.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertParsedAndCompiledRejectedWithNow("$now - 1h..$now;1h#Tue", now, "Expected number before unit '#'");
+        assertParsedAndCompiledRejectedWithNow("$today+2h..$now;1h#Tue", now, "Expected number before unit '#'");
+        assertParsedAndCompiledRejectedWithNow("[$now - 1h..$now];1h#Tue", now, "Expected number before unit '#'");
+        // both paths let these through
+        assertParsedAndCompiledRejectedWithNow("$now - 1h..$now;1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedWithNow("[$now - 1h..$now];1x", now, "Invalid duration unit: x");
+        // a range of days applies the duration, which fails on both paths
+        assertParsedAndCompiledRejectedWithNow("$today..$tomorrow;1h#Tue", now, "Expected number before unit '#'");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeWithMalformedTimeFails() {
+        // A point in time keeps its own time and ignores the time part of the expression, but a
+        // malformed time part still fails the expression, the same as when a day takes it. The parser,
+        // which SQL uses for a bind variable, must not let it through where the compiled form, which
+        // SQL uses for a literal, rejects it.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertParsedAndCompiledRejectedWithNow("[$now]T[25:00]", now, "25:00");
+        assertParsedAndCompiledRejectedWithNow("[$now]T25:00", now, "25:00");
+        assertParsedAndCompiledRejectedWithNow("$nowT25:00", now, "25:00");
+        assertParsedAndCompiledRejectedWithNow("$nowT[25:00]", now, "25:00");
+        assertParsedAndCompiledRejectedWithNow("$today+2hT[25:00]", now, "25:00");
+        assertParsedAndCompiledRejectedWithNow("[$now - 1h..$now]T[25:00]", now, "25:00");
+        assertParsedAndCompiledRejectedWithNow("[$now]T09:99", now, "09:99");
+        // the compiled form parses this one at every evaluation, so both paths let it through
+        assertParsedAndCompiledRejectedWithNow("[$now]T[09..10]:99", now, "09:99");
+        // a day takes the time part, which fails on both paths
+        assertParsedAndCompiledRejectedWithNow("[$now, $today]T[25:00]", now, "25:00");
+        assertParsedAndCompiledRejectedWithNow("[$today]T09:99", now, "09:99");
+    }
+
+    @Test
     public void testDateVariableRangeArithmeticBothSides() throws SqlException {
         // [$today+1bd..$today+5bd] produces 2 merged intervals (business days)
         // 2026-01-22 (Thu) + 1bd = Fri 23, + 5bd = Thu 29
@@ -2915,6 +3570,19 @@ public class TickExprTest {
                         "{lo=2026-01-26T00:00:00.000000Z, hi=2026-01-29T23:59:59.999999Z}]",
                 "[$today..$today+5bd]",
                 "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeBusinessDaysFromNow() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $now starts the business-day range at the current moment, not at midnight.
+        // 2024-01-02 is a Tuesday and $today + 3bd is Friday 2024-01-05, so no weekend
+        // falls inside the range.
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T10:00:00.123400Z, hi=2024-01-05T23:59:59.999999Z}]",
+                "$now..$today + 3bd",
+                "2024-01-02T10:00:00.123400Z"
         );
     }
 
@@ -3019,6 +3687,18 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariableRangeDayStartTimeEnd() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $today starts the range at midnight and $now ends it at the current moment,
+        // so the range stops at $now instead of covering the rest of the day
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T10:00:00.123400Z}]",
+                "$today..$now",
+                "2024-01-02T10:00:00.123400Z"
+        );
+    }
+
+    @Test
     public void testDateVariableRangeEmptyEndExpression() {
         // Empty end expression
         assertBracketIntervalError("[$today..]", "Empty end expression in date range");
@@ -3046,6 +3726,12 @@ public class TickExprTest {
     public void testDateVariableRangeInvalidOrder() {
         // End before start should produce error
         assertBracketIntervalError("[$today+5d..$today]", "Invalid date range: start is after end");
+    }
+
+    @Test
+    public void testDateVariableRangeInvalidOrderMixed() {
+        // $now is after the end of $yesterday
+        assertBracketIntervalError("[$now..$yesterday]", "Invalid date range: start is after end");
     }
 
     @Test
@@ -3109,6 +3795,55 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariableRangeNowEndAtMidnight() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // At exactly midnight, "the last 2 hours" still covers 2 hours rather than
+        // the whole of yesterday and today
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-01T22:00:00.000000Z, hi=2024-01-02T00:00:00.000000Z}]",
+                "$now - 2h..$now",
+                "2024-01-02T00:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeNowStartAtMidnight() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $now - 1h lands exactly on midnight; the range still ends at $now
+        // rather than covering the whole day
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T01:00:00.000000Z}]",
+                "$now - 1h..$now",
+                "2024-01-02T01:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeNowStartAtMidnightWithTimeSuffix() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // Both endpoints have a time of day, so the range skips the T09:00 override as it
+        // does at any other moment (see testDateVariableArithmeticHoursWithTimeSuffix).
+        // A start that lands exactly on midnight must not turn the range into whole days
+        // that the override then narrows to 09:00, a window outside the range.
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T02:00:00.000000Z}]",
+                "[$now - 2h..$now]T09:00",
+                "2024-01-02T02:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeNowToToday() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $today as the end stands for the end of today, so the range runs from $now to midnight
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T10:00:00.123400Z, hi=2024-01-02T23:59:59.999999Z}]",
+                "$now..$today",
+                "2024-01-02T10:00:00.123400Z"
+        );
+    }
+
+    @Test
     public void testDateVariableRangeSameDaySingleBusinessDay() throws SqlException {
         // Single business day range: $today+1bd..$today+1bd (Friday 2026-01-23)
         assertBracketIntervalWithNow(
@@ -3164,6 +3899,40 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariableRangeTimeEndAtMidnight() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $today + 24h is the point at midnight of the next day, not the whole next day
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T06:00:00.000000Z, hi=2024-01-03T00:00:00.000000Z}]",
+                "$today + 6h..$today + 24h",
+                "2024-01-02T10:00:00.123400Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeTimeStartDayEnd() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $today + 18h starts the range at 18:00 and $tomorrow ends it at the end of
+        // tomorrow, so the range keeps the 18h offset instead of starting at midnight
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T18:00:00.000000Z, hi=2024-01-03T23:59:59.999999Z}]",
+                "$today + 18h..$tomorrow",
+                "2024-01-02T10:00:00.123400Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeTimeStartDayEndWithTimezone() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // Local range: 2024-01-02T08:00:00.1234 (+02:00) to the end of 2024-01-03 (+02:00)
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T06:00:00.123400Z, hi=2024-01-03T21:59:59.999999Z}]",
+                "[$now - 2h..$tomorrow]@+02:00",
+                "2024-01-02T10:00:00.123400Z"
+        );
+    }
+
+    @Test
     public void testDateVariableRangeUnknownEndVariable() {
         // Unknown variable in end expression
         assertBracketIntervalError("[$today..$invalid]", "Unknown date variable");
@@ -3204,6 +3973,84 @@ public class TickExprTest {
                 "[$today..$today+6d]#Fri",
                 "2026-02-09T10:30:00.000000Z"
         );
+    }
+
+    @Test
+    public void testDateVariableRangeWithDenseTimeExpansionAndDayFilter() throws SqlException {
+        // T[hh..hh]:[00..59] emits one interval per minute. Each time the range holds 256
+        // intervals, the default incremental merge threshold, the bracket expansion merges them,
+        // which can happen part way through a day.
+        // $today is Saturday 2024-01-13, so #workday keeps $yesterday only.
+        // 2 days x 24 hours stay below the threshold
+        assertBracketIntervalWithNow(
+                "[{lo=2024-01-12T00:00:00.000000Z, hi=2024-01-12T23:59:59.999999Z}]",
+                "[$yesterday..$today]T[00..23]#workday",
+                "2024-01-13T10:00:00.000000Z"
+        );
+        // 2 days x 1440 minutes cross the threshold while the second day expands
+        assertBracketIntervalWithNow(
+                "[{lo=2024-01-12T00:00:00.000000Z, hi=2024-01-12T23:59:59.999999Z}]",
+                "[$yesterday..$today]T[00..23]:[00..59]#workday",
+                "2024-01-13T10:00:00.000000Z"
+        );
+        // $yesterday and $today are both workdays
+        assertBracketIntervalWithNow(
+                "[{lo=2024-01-11T00:00:00.000000Z, hi=2024-01-12T23:59:59.999999Z}]",
+                "[$yesterday..$today]T[00..23]:[00..59]#workday",
+                "2024-01-12T10:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithDenseTimeExpansionAndTimezone() throws SqlException {
+        // T[hh..hh]:[00..59] emits one interval per minute. Each time the range holds 256
+        // intervals, the default incremental merge threshold, the bracket expansion merges them,
+        // which can happen part way through a day.
+        // +02:00 shifts every minute of both days two hours back.
+        // 2 days x 24 hours stay below the threshold
+        assertBracketIntervalWithNow(
+                "[{lo=2024-01-10T22:00:00.000000Z, hi=2024-01-12T21:59:59.999999Z}]",
+                "[$yesterday..$today]T[00..23]@+02:00",
+                "2024-01-12T10:00:00.000000Z"
+        );
+        // 2 days x 1440 minutes cross the threshold while the second day expands
+        assertBracketIntervalWithNow(
+                "[{lo=2024-01-10T22:00:00.000000Z, hi=2024-01-12T21:59:59.999999Z}]",
+                "[$yesterday..$today]T[00..23]:[00..59]@+02:00",
+                "2024-01-12T10:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithDenseTimeSuffixAndDayFilter() throws SqlException {
+        // T[00..23]:[00..59] expands each day to 1440 minutes, beyond the incremental merge
+        // threshold (256 intervals). The day filter must still see only the intervals of its
+        // own day: 2024-01-05 is a Friday, 2024-01-06 a Saturday.
+        assertBracketIntervalWithNow(
+                "[{lo=2024-01-05T00:00:00.000000Z, hi=2024-01-05T23:59:59.999999Z}]",
+                "[$today + 3d..$today + 4d]T[00..23]:[00..59]#workday",
+                "2024-01-02T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithElementDayFilter() throws SqlException {
+        // The range carries its own day filter. 2024-01-01 is a Monday.
+        final String mondays = "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T23:59:59.999999Z}," +
+                "{lo=2024-01-08T00:00:00.000000Z, hi=2024-01-08T23:59:59.999999Z}]";
+        final String now = "2024-01-01T12:00:00.000000Z";
+        assertBracketIntervalWithNow(mondays, "[$today..$today+7d#Mon]", now);
+        // the range's own day filter takes precedence over the global one
+        assertBracketIntervalWithNow(mondays, "[$today..$today+7d#Mon]#Tue", now);
+        // dynamic mode keeps the range's day filter on each day for runtime evaluation
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String interval = "[$today..$today+7d#Mon]";
+        out.clear();
+        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, timestampDriver.parseFloorLiteral(now));
+        Assert.assertEquals(8 * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL, out.size());
+        for (int i = 0; i < out.size(); i += IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
+            Assert.assertEquals(1, IntervalUtils.decodeDayFilterMask(out, i)); // Monday
+        }
     }
 
     @Test
@@ -3309,14 +4156,322 @@ public class TickExprTest {
     }
 
     @Test
-    public void testDateVariableRangeWithNowStripsTime() throws SqlException {
-        // $now has time component, but range should use start of day
-        // Range from $now (10:30 on Jan 22) to $tomorrow should be Jan 22-23 full days
+    public void testDateVariableRangeWithNowAndDenseTimeExpansion() throws SqlException {
+        // T[hh..hh]:[00..59] emits one interval per minute. Each time the range holds 256
+        // intervals, the default incremental merge threshold, the bracket expansion merges them,
+        // which can happen part way through a day.
+        // $now ends the range, so the intervals of today stop at 10:00.
+        // 2 days x 24 hours stay below the threshold
         assertBracketIntervalWithNow(
-                "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}]",
+                "[{lo=2024-01-11T00:00:00.000000Z, hi=2024-01-12T10:00:00.000000Z}]",
+                "[$yesterday..$now]T[00..23]",
+                "2024-01-12T10:00:00.000000Z"
+        );
+        // 2 days x 1440 minutes cross the threshold while the second day expands
+        assertBracketIntervalWithNow(
+                "[{lo=2024-01-11T00:00:00.000000Z, hi=2024-01-12T10:00:00.000000Z}]",
+                "[$yesterday..$now]T[00..23]:[00..59]",
+                "2024-01-12T10:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowAfterDenseElement() throws SqlException {
+        // $tomorrow adds 240 intervals, so the first day of the range reaches the incremental
+        // merge threshold (256 intervals). The merge sorts the intervals of $tomorrow after the
+        // ones of the range, and the clip to $now must not drop them.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral("2024-01-02T10:30:00.000000Z");
+        final String expression = "[$tomorrow, $yesterday..$now]T[09..12]:[00..59]:00";
+        out.clear();
+        parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, now);
+
+        // the first second of every minute from 09:00 to 12:59, on 2024-01-01 and 2024-01-03,
+        // and up to $now on 2024-01-02
+        final LongList expected = new LongList();
+        final long firstDay = timestampDriver.parseFloorLiteral("2024-01-01T00:00:00.000000Z");
+        for (int day = 0; day < 3; day++) {
+            final long dayStart = timestampDriver.addDays(firstDay, day);
+            for (int minute = 9 * 60; minute < 13 * 60; minute++) {
+                final long lo = dayStart + timestampDriver.fromMinutes(minute);
+                final long hi = lo + timestampDriver.fromSeconds(1) - 1;
+                if (day != 1) {
+                    expected.add(lo, hi);
+                } else if (lo <= now) {
+                    expected.add(lo, Math.min(hi, now));
+                }
+            }
+        }
+        Assert.assertEquals(571, expected.size() / 2);
+        // intervalToString() reuses one sink, so take a copy of the expected text first
+        final String expectedText = intervalToString(timestampDriver, expected).toString();
+        TestUtils.assertEquals(expectedText, intervalToString(timestampDriver, out));
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowAndDenseTimeSuffix() throws SqlException {
+        // T[00..23]:[00..59] expands each day to 1440 minutes, beyond the incremental merge
+        // threshold (256 intervals). The merge must not change which intervals the clip to
+        // $now applies to.
+        assertBracketIntervalWithNow(
+                "[{lo=2024-01-02T10:30:00.000000Z, hi=2024-01-03T23:59:59.999999Z}]",
+                "[$now..$tomorrow]T[00..23]:[00..59]",
+                "2024-01-02T10:30:00.000000Z"
+        );
+        assertBracketIntervalWithNow(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-02T10:30:00.000000Z}]",
+                "[$yesterday..$now]T[00..23]:[00..59]",
+                "2024-01-02T10:30:00.000000Z"
+        );
+        // the intervals of $tomorrow come first in the list, and sort after the range
+        assertBracketIntervalWithNow(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-02T10:30:00.000000Z},{lo=2024-01-03T00:00:00.000000Z, hi=2024-01-03T23:59:59.999999Z}]",
+                "[$tomorrow, $yesterday..$now]T[00..23]:[00..59]",
+                "2024-01-02T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowAndDenseTimeSuffixWithinLimit() throws SqlException {
+        // The day has 1440 separate seconds, beyond the limit of 1024 intervals, but the range
+        // starts at 18:00 and keeps 360 of them
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String expression = "[$today + 18h..$today]T[00..23]:[00..59]:00";
+        out.clear();
+        parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT,
+                timestampDriver.parseFloorLiteral("2024-01-02T10:30:00.000000Z"));
+        Assert.assertEquals(360, out.size() / 2);
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2024-01-02T18:00:00.000000Z"), out.getQuick(0));
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2024-01-02T23:59:01.000000Z") - 1, out.getQuick(out.size() - 1));
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowAndTimeListAndTimezone() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // The range starts at $now - 2h = 10:00 local (+02:00), which drops the 09:00 of today
+        // but keeps its 10:30. The time list clips its slots in local time before converting
+        // them to UTC: 10:30 local, after 10:00 local, converts to 08:30Z.
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T08:30:00.000000Z, hi=2024-01-02T08:30:59.999999Z}," +
+                        "{lo=2024-01-03T07:00:00.000000Z, hi=2024-01-03T07:00:59.999999Z}," +
+                        "{lo=2024-01-03T08:30:00.000000Z, hi=2024-01-03T08:30:59.999999Z}]",
+                "[$now - 2h..$tomorrow]T[09:00,10:30]@+02:00",
+                "2024-01-02T12:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowAndTimeListApplyEncodedFalse() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $now (10:30) drops today's 09:00. In dynamic mode the first interval carries the
+        // operation and the rest carry UNION, so today's 11:00 takes over INTERSECT.
+        assertEncodedIntervalWithNow(
+                "[{lo=2026-01-22T11:00:00.000000Z, hi=2026-01-22T11:00:59.999999Z}," +
+                        "{lo=2026-01-23T09:00:00.000000Z, hi=2026-01-23T09:00:59.999999Z}," +
+                        "{lo=2026-01-23T11:00:00.000000Z, hi=2026-01-23T11:00:59.999999Z}]",
+                "[$now..$tomorrow]T[09:00,11:00]",
+                "2026-01-22T10:30:00.000000Z"
+        );
+        Assert.assertEquals(IntervalOperation.INTERSECT, IntervalUtils.getEncodedOperation(out, 0));
+        Assert.assertEquals(IntervalOperation.UNION, IntervalUtils.getEncodedOperation(out, IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL));
+        Assert.assertEquals(IntervalOperation.UNION, IntervalUtils.getEncodedOperation(out, 2 * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL));
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowAndTimeListEndInDstGap() throws SqlException {
+        // On 2024-03-31 London clocks skip from 01:00 to 02:00 local time. $now = 01:10 local
+        // ends the range inside that hour, so today's 01:30 and 02:30 fall after the range and
+        // only today's 00:30 remains. The range compares the slots with $now in local time.
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-03-30T00:30:00.000000Z, hi=2024-03-30T00:30:59.999999Z}," +
+                        "{lo=2024-03-30T01:30:00.000000Z, hi=2024-03-30T01:30:59.999999Z}," +
+                        "{lo=2024-03-30T02:30:00.000000Z, hi=2024-03-30T02:30:59.999999Z}," +
+                        "{lo=2024-03-31T00:30:00.000000Z, hi=2024-03-31T00:30:59.999999Z}]",
+                "[$yesterday..$now]T[00:30,01:30,02:30]@Europe/London",
+                "2024-03-31T01:10:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowAndTimeListInDstGap() throws SqlException {
+        // On 2024-03-31 London clocks skip from 01:00 to 02:00 local time. The range compares
+        // the slots with $now - 2h in local time, the way it compares its other intervals, then
+        // converts the slots it keeps to UTC. Today's 01:30 does not exist and matches nothing,
+        // 02:30 BST is 01:30Z, and tomorrow's 00:30, 01:30 and 02:30 BST are 23:30Z, 00:30Z and
+        // 01:30Z.
+        final String expression = "[$now - 2h..$tomorrow]T[00:30,01:30,02:30]@Europe/London";
+        // $now - 2h = 01:20 local, inside the skipped hour: 01:30 and 02:30 are after it
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-03-31T01:30:00.000000Z, hi=2024-03-31T01:30:59.999999Z}," +
+                        "{lo=2024-03-31T23:30:00.000000Z, hi=2024-03-31T23:30:59.999999Z}," +
+                        "{lo=2024-04-01T00:30:00.000000Z, hi=2024-04-01T00:30:59.999999Z}," +
+                        "{lo=2024-04-01T01:30:00.000000Z, hi=2024-04-01T01:30:59.999999Z}]",
+                expression,
+                "2024-03-31T03:20:00.000000Z"
+        );
+        final String afterTodays0130 = "[{lo=2024-03-31T01:30:00.000000Z, hi=2024-03-31T01:30:59.999999Z}," +
+                "{lo=2024-03-31T23:30:00.000000Z, hi=2024-03-31T23:30:59.999999Z}," +
+                "{lo=2024-04-01T00:30:00.000000Z, hi=2024-04-01T00:30:59.999999Z}," +
+                "{lo=2024-04-01T01:30:00.000000Z, hi=2024-04-01T01:30:59.999999Z}]";
+        // $now - 2h = 01:40 local, still inside the skipped hour: 01:30 is before it
+        assertParsedAndCompiledWithNow(afterTodays0130, expression, "2024-03-31T03:40:00.000000Z");
+        // $now - 2h = 02:00 local, the first moment after the skipped hour: 01:30 is before it
+        assertParsedAndCompiledWithNow(afterTodays0130, expression, "2024-03-31T04:00:00.000000Z");
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowAndTimeListInDstGapApplyEncodedFalse() throws SqlException {
+        // Dynamic mode clips the slots before converting them too. $now - 2h = 02:00 local is the
+        // first moment after the hour that London clocks skip on 2024-03-31. It drops today's 00:30
+        // and 01:30, so today's 02:30 BST (01:30Z) takes over INTERSECT.
+        assertEncodedIntervalWithNow(
+                "[{lo=2024-03-31T01:30:00.000000Z, hi=2024-03-31T01:30:59.999999Z}," +
+                        "{lo=2024-03-31T23:30:00.000000Z, hi=2024-03-31T23:30:59.999999Z}," +
+                        "{lo=2024-04-01T00:30:00.000000Z, hi=2024-04-01T00:30:59.999999Z}," +
+                        "{lo=2024-04-01T01:30:00.000000Z, hi=2024-04-01T01:30:59.999999Z}]",
+                "[$now - 2h..$tomorrow]T[00:30,01:30,02:30]@Europe/London",
+                "2024-03-31T04:00:00.000000Z"
+        );
+        assertEncodedOperations(4);
+
+        // $now - 2h = 01:20 local does not exist, so the range starts at the transition, 01:00Z.
+        // 09:00 in Tokyo today is 00:00Z, before it, so the slot with its own timezone drops out
+        // and today's 02:30 BST (01:30Z) takes over INTERSECT.
+        assertEncodedIntervalWithNow(
+                "[{lo=2024-03-31T01:30:00.000000Z, hi=2024-03-31T01:30:59.999999Z}," +
+                        "{lo=2024-04-01T00:00:00.000000Z, hi=2024-04-01T00:00:59.999999Z}," +
+                        "{lo=2024-04-01T01:30:00.000000Z, hi=2024-04-01T01:30:59.999999Z}]",
+                "[$now - 2h..$tomorrow]T[09:00@Asia/Tokyo,02:30]@Europe/London",
+                "2024-03-31T03:20:00.000000Z"
+        );
+        assertEncodedOperations(3);
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowAndTimeListMergedSlots() throws SqlException {
+        // Each slot expands to 60 one-second intervals, 300 a day, so the expansion merges the
+        // intervals while it expands them. The merge must not move a slot's intervals before the
+        // range clips the slot to $now = 12:00. Each slot's seconds merge into its minute.
+        final String expression = "T[09:00,10:00,11:00,12:00,13:00]:[00..59]";
+        final String now = "2024-01-02T12:00:00.000000Z";
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T12:00:00.000000Z, hi=2024-01-02T12:00:59.999999Z}," +
+                        "{lo=2024-01-02T13:00:00.000000Z, hi=2024-01-02T13:00:59.999999Z}," +
+                        "{lo=2024-01-03T09:00:00.000000Z, hi=2024-01-03T09:00:59.999999Z}," +
+                        "{lo=2024-01-03T10:00:00.000000Z, hi=2024-01-03T10:00:59.999999Z}," +
+                        "{lo=2024-01-03T11:00:00.000000Z, hi=2024-01-03T11:00:59.999999Z}," +
+                        "{lo=2024-01-03T12:00:00.000000Z, hi=2024-01-03T12:00:59.999999Z}," +
+                        "{lo=2024-01-03T13:00:00.000000Z, hi=2024-01-03T13:00:59.999999Z}]",
+                "[$now..$tomorrow]" + expression,
+                now
+        );
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:00:59.999999Z}," +
+                        "{lo=2024-01-01T10:00:00.000000Z, hi=2024-01-01T10:00:59.999999Z}," +
+                        "{lo=2024-01-01T11:00:00.000000Z, hi=2024-01-01T11:00:59.999999Z}," +
+                        "{lo=2024-01-01T12:00:00.000000Z, hi=2024-01-01T12:00:59.999999Z}," +
+                        "{lo=2024-01-01T13:00:00.000000Z, hi=2024-01-01T13:00:59.999999Z}," +
+                        "{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:59.999999Z}," +
+                        "{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:59.999999Z}," +
+                        "{lo=2024-01-02T11:00:00.000000Z, hi=2024-01-02T11:00:59.999999Z}," +
+                        "{lo=2024-01-02T12:00:00.000000Z, hi=2024-01-02T12:00:00.000000Z}]",
+                "[$yesterday..$now]" + expression,
+                now
+        );
+        // with a timezone, the slots convert after the clip, in the merges as well
+        assertBracketIntervalWithNow(
+                "[{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:59.999999Z}," +
+                        "{lo=2024-01-02T11:00:00.000000Z, hi=2024-01-02T11:00:59.999999Z}," +
+                        "{lo=2024-01-03T07:00:00.000000Z, hi=2024-01-03T07:00:59.999999Z}," +
+                        "{lo=2024-01-03T08:00:00.000000Z, hi=2024-01-03T08:00:59.999999Z}," +
+                        "{lo=2024-01-03T09:00:00.000000Z, hi=2024-01-03T09:00:59.999999Z}," +
+                        "{lo=2024-01-03T10:00:00.000000Z, hi=2024-01-03T10:00:59.999999Z}," +
+                        "{lo=2024-01-03T11:00:00.000000Z, hi=2024-01-03T11:00:59.999999Z}]",
+                "[$now..$tomorrow]" + expression + "@+02:00",
+                now
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowAndTimeListMultipleIntervalsPerSlotApplyEncodedFalse() throws SqlException {
+        // Each slot expands to two intervals, at :00 and :30 seconds. $now = 09:00:15 drops the
+        // first interval of today's slot, so the second one takes over INTERSECT.
+        assertEncodedIntervalWithNow(
+                "[{lo=2026-01-22T09:00:30.000000Z, hi=2026-01-22T09:00:30.999999Z}," +
+                        "{lo=2026-01-23T09:00:00.000000Z, hi=2026-01-23T09:00:00.999999Z}," +
+                        "{lo=2026-01-23T09:00:30.000000Z, hi=2026-01-23T09:00:30.999999Z}]",
+                "[$now..$tomorrow]T[09:00]:[00,30]",
+                "2026-01-22T09:00:15.000000Z"
+        );
+        assertEncodedOperations(3);
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowAndTimeListPerElementTimezoneInDstGap() throws SqlException {
+        // $now - 2h = 01:20 London time falls in the hour that London clocks skip on 2024-03-31,
+        // so the range starts at the transition, 01:00Z. A slot with its own timezone is a point
+        // in time, which the range compares with that start: 10:30 in Tokyo is 01:30Z, after it.
+        final String expected = "[{lo=2024-03-31T01:30:00.000000Z, hi=2024-03-31T01:30:59.999999Z}," +
+                "{lo=2024-04-01T01:30:00.000000Z, hi=2024-04-01T01:30:59.999999Z}]";
+        final String now = "2024-03-31T03:20:00.000000Z";
+        assertParsedAndCompiledWithNow(expected, "[$now - 2h..$tomorrow]T[10:30@Asia/Tokyo]@Europe/London", now);
+        assertParsedAndCompiledWithNow(expected, "[$now - 2h..$tomorrow]T[02:30@+01:00]@Europe/London", now);
+        // naming the range's own timezone on the slot does not change the result
+        assertParsedAndCompiledWithNow(expected, "[$now - 2h..$tomorrow]T[02:30@Europe/London]@Europe/London", now);
+        assertParsedAndCompiledWithNow(expected, "[$now - 2h..$tomorrow]T[02:30]@Europe/London", now);
+        // The range cuts a slot with its own timezone at the point in time where it starts:
+        // 09:30 to 10:30 in Tokyo is 00:30Z to 01:30Z, and the range starts at 01:00Z
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-03-31T01:00:00.000000Z, hi=2024-03-31T01:29:59.999999Z}," +
+                        "{lo=2024-04-01T00:30:00.000000Z, hi=2024-04-01T01:29:59.999999Z}]",
+                "[$now - 2h..$tomorrow]T[09:30@Asia/Tokyo]@Europe/London;1h",
+                now
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowAndTimeSuffix() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // The range starts at $now (10:30), so today's 09:00 falls outside it
+        assertParsedAndCompiledWithNow(
+                "[{lo=2026-01-23T09:00:00.000000Z, hi=2026-01-23T09:00:59.999999Z}]",
+                "[$now..$tomorrow]T09:00",
+                "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowKeepsTime() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // The range runs from $now (10:30 on Jan 22) to the end of $tomorrow (Jan 23),
+        // keeping the time of day of $now rather than starting at midnight
+        assertParsedAndCompiledWithNow(
+                "[{lo=2026-01-22T10:30:00.000000Z, hi=2026-01-23T23:59:59.999999Z}]",
                 "[$now..$tomorrow]",
                 "2026-01-22T10:30:00.000000Z"
         );
+    }
+
+    @Test
+    public void testDateVariableRangeWithNowRepeatingIntervalApplyEncodedFalse() throws SqlException {
+        // Dynamic mode keeps a repeating interval as one encoded interval, and clipping it
+        // to $now would need its repetitions expanded
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral("2026-01-22T10:30:00.000000Z");
+        // a time list clips its slots itself, and rejects a repeating slot the same way, with
+        // and without a timezone of its own
+        for (String interval : new String[]{
+                "[$now..$tomorrow];1h;1d;2",
+                "[$now..$tomorrow]T[09:00];1h;1d;2",
+                "[$now..$tomorrow]T[09:00@Asia/Tokyo];1h;1d;2"
+        }) {
+            try {
+                parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, now);
+                Assert.fail("Expected SqlException for " + interval);
+            } catch (SqlException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "Repeating interval is not supported in a date variable range with a time of day");
+            }
+        }
     }
 
     @Test
@@ -3488,6 +4643,18 @@ public class TickExprTest {
                 "[{lo=2026-01-22T00:00:00.000000Z, hi=2026-01-22T23:59:59.999999Z}]",
                 "[$today]",
                 "2026-01-22T10:30:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testDateVariableTodayPlusHoursAtMidnight() throws SqlException {
+        // https://github.com/questdb/questdb/issues/8083
+        // $today + 24h is a point in time, like $today + 23h, even though it lands exactly
+        // on midnight; only day-unit arithmetic such as $today + 1d yields a whole day
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-03T00:00:00.000000Z, hi=2024-01-03T00:00:00.000000Z}]",
+                "$today + 24h",
+                "2024-01-02T10:00:00.123400Z"
         );
     }
 
@@ -4287,6 +5454,39 @@ public class TickExprTest {
                 "[{lo=2024-01-01T07:00:00.000000Z, hi=2024-01-01T07:59:59.999999Z},{lo=2024-01-02T07:00:00.000000Z, hi=2024-01-02T07:59:59.999999Z},{lo=2024-01-03T07:00:00.000000Z, hi=2024-01-03T07:59:59.999999Z},{lo=2024-01-04T07:00:00.000000Z, hi=2024-01-04T07:59:59.999999Z},{lo=2024-01-05T07:00:00.000000Z, hi=2024-01-05T07:59:59.999999Z}]",
                 "2024-01-[01..07]T09:00@+02:00#workday;1h"
         );
+    }
+
+    @Test
+    public void testDayFilterWithTimezoneAndTimeList() throws SqlException {
+        // The day filter judges the slots of a time list by their local day, before the time list
+        // converts them to UTC, the same way as a single time of day. 2024-01-15 is a Monday, and
+        // 08:00 in Tokyo on that day is 2024-01-14T23:00Z, a Sunday.
+        final String mondayInTokyo = "[{lo=2024-01-14T23:00:00.000000Z, hi=2024-01-14T23:00:59.999999Z}]";
+        assertBracketInterval(mondayInTokyo, "2024-01-[15..17]T08:00@Asia/Tokyo#Mon");
+        assertBracketInterval(mondayInTokyo, "2024-01-[15..17]T[08:00]@Asia/Tokyo#Mon");
+        assertBracketInterval(mondayInTokyo, "[2024-01-15,2024-01-16,2024-01-17]T[08:00]@Asia/Tokyo#Mon");
+        assertBracketInterval(mondayInTokyo, "[2024-01-15#Mon,2024-01-16#Mon,2024-01-17#Mon]T[08:00]@Asia/Tokyo");
+        // a slot with its own timezone falls on the day of its date
+        assertBracketInterval(mondayInTokyo, "2024-01-[15..17]T[08:00@Asia/Tokyo]#Mon");
+        assertBracketInterval(mondayInTokyo, "2024-01-[15..17]T[08:00@Asia/Tokyo]@America/New_York#Mon");
+        // with suffix brackets, the slot expands to several intervals before the filter
+        assertBracketInterval(
+                "[{lo=2024-01-14T23:00:00.000000Z, hi=2024-01-14T23:00:00.999999Z},{lo=2024-01-14T23:00:30.000000Z, hi=2024-01-14T23:00:30.999999Z}]",
+                "2024-01-[15..17]T[08:00]:[00,30]@Asia/Tokyo#Mon"
+        );
+        // a slot that runs past midnight stays whole, on the day it starts
+        assertBracketInterval(
+                "[{lo=2024-01-15T13:00:00.000000Z, hi=2024-01-15T16:59:59.999999Z}]",
+                "2024-01-[15..17]T[22:00]@Asia/Tokyo#Mon;4h"
+        );
+        // 20:00 in New York on Monday 2024-01-15 is 2024-01-16T01:00Z, a Tuesday
+        assertBracketInterval(
+                "[{lo=2024-01-16T01:00:00.000000Z, hi=2024-01-16T01:00:59.999999Z}]",
+                "2024-01-[14..16]T[20:00]@America/New_York#Mon"
+        );
+        // a date variable range filters its days the same way, as does the compiled path
+        assertParsedAndCompiledWithNow(mondayInTokyo, "[$today..$today+2d]T[08:00]@Asia/Tokyo#Mon", "2024-01-15T12:00:00.000000Z");
+        assertParsedAndCompiledWithNow(mondayInTokyo, "[$today..$today+2d#Mon]T[08:00]@Asia/Tokyo", "2024-01-15T12:00:00.000000Z");
     }
 
     @Test
@@ -5350,6 +6550,52 @@ public class TickExprTest {
     }
 
     @Test
+    public void testTimeListBracketWithDenseSuffixAndTimezone() throws SqlException {
+        // Each element expands its :[00..59] suffix to 60 seconds, so the fifth element reaches
+        // the incremental merge threshold (256 intervals). Its timezone must still convert
+        // exactly its own intervals. 09:00@+02:00 and 08:00@+01:00 are both 07:00Z,
+        // 11:00@-01:00 is 12:00Z and 12:00@+03:00 is 09:00Z.
+        assertBracketInterval(
+                "[{lo=2024-01-01T07:00:00.000000Z, hi=2024-01-01T07:00:59.999999Z},{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:00:59.999999Z},{lo=2024-01-01T10:00:00.000000Z, hi=2024-01-01T10:00:59.999999Z},{lo=2024-01-01T12:00:00.000000Z, hi=2024-01-01T12:00:59.999999Z}]",
+                "2024-01-01T[10:00,09:00@+02:00,08:00@+01:00,11:00@-01:00,12:00@+03:00]:[00..59]"
+        );
+        // a global timezone converts each element separately
+        assertBracketInterval(
+                "[{lo=2024-01-01T06:00:00.000000Z, hi=2024-01-01T06:00:59.999999Z},{lo=2024-01-01T07:00:00.000000Z, hi=2024-01-01T07:00:59.999999Z},{lo=2024-01-01T08:00:00.000000Z, hi=2024-01-01T08:00:59.999999Z},{lo=2024-01-01T09:00:00.000000Z, hi=2024-01-01T09:00:59.999999Z},{lo=2024-01-01T10:00:00.000000Z, hi=2024-01-01T10:00:59.999999Z}]",
+                "2024-01-01T[10:00,09:00,08:00,11:00,12:00]:[00..59]@+02:00"
+        );
+    }
+
+    @Test
+    public void testTimeListBracketWithDenseSuffixBoundsMemory() throws SqlException {
+        // 480 elements, each expanding its :[00..59] suffix to 60 seconds: 28,800 intervals
+        // before merging, while no single element reaches the incremental merge threshold
+        // (256 intervals). The incremental merge must still bound the list across elements.
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final StringSink expression = new StringSink();
+        expression.put("2024-01-01T[");
+        for (int minute = 0; minute < 480; minute++) {
+            if (minute > 0) {
+                expression.put(',');
+            }
+            expression.put('0').put(minute / 60).put(':');
+            if (minute % 60 < 10) {
+                expression.put('0');
+            }
+            expression.put(minute % 60);
+        }
+        expression.put("]:[00..59]");
+
+        out.clear();
+        parseTickExpr(timestampDriver, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT);
+        Assert.assertEquals(2, out.size());
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2024-01-01T00:00:00.000000Z"), out.getQuick(0));
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2024-01-01T08:00:00.000000Z") - 1, out.getQuick(1));
+        // without the incremental merge, the list would hold 57,600 longs
+        Assert.assertTrue("capacity: " + out.capacity(), out.capacity() <= 4_096);
+    }
+
+    @Test
     public void testTimeListBracketWithGlobalTimezone() throws SqlException {
         // Time list with global timezone (applied to all elements)
         // T[09:00,18:00]@+02:00;1h (non-overlapping)
@@ -5547,46 +6793,163 @@ public class TickExprTest {
     }
 
     @Test
-    public void testTimezoneDstGapAdjustment() throws SqlException {
-        // Test DST gap handling - exercises L1602-1604 (lo and hi adjustment)
-        // On March 10, 2024 at 2:00 AM in America/New_York, clocks spring forward to 3:00 AM
-        // So 2:30 AM doesn't exist - both lo and hi are adjusted forward by the same gap offset
-        // to preserve interval width
-        // lo (2:30:00) -> 3:00:00 EDT = 07:00:00 UTC
-        // hi (2:30:59.999999) -> 3:00:59.999999 EDT = 07:00:59.999999 UTC
+    public void testTimezoneDstGapHiOnlyInGap() throws SqlException {
+        // On March 10, 2024 at 2:00 AM in America/New_York, clocks spring forward to 3:00 AM.
+        // The ;2m duration extends the interval from 01:59 EST into the gap. Local times from
+        // 02:00 on do not exist, so the interval ends right before the transition, 07:00 UTC.
         assertBracketInterval(
-                "[{lo=2024-03-10T07:00:00.000000Z, hi=2024-03-10T07:00:59.999999Z}]",
-                "2024-03-10T02:30@America/New_York"
+                "[{lo=2024-03-10T06:59:00.000000Z, hi=2024-03-10T06:59:59.999999Z}]",
+                "2024-03-10T01:59@America/New_York;2m"
         );
     }
 
     @Test
-    public void testTimezoneDstGapHiOnlyInGap() throws SqlException {
-        // Test edge case: lo is before DST gap, hi is in the gap - exercises L1610
-        // On March 10, 2024 at 2:00 AM in America/New_York, clocks spring forward to 3:00 AM
-        // Using ;2m duration to extend interval from 01:59 into the gap
-        // lo = 01:59:00 EST = 06:59:00 UTC (not in gap, unchanged)
-        // hi falls in gap and gets adjusted forward
+    public void testTimezoneDstGapIntervalStartsInGap() throws SqlException {
+        // On March 31, 2024, London clocks spring forward from 01:00 GMT to 02:00 BST, so local
+        // times from 01:00 to 01:59:59.999999 do not exist. An interval that starts in the gap
+        // starts at the transition, 01:00 UTC. 01:10 to 02:04:59.999999 local time keeps the
+        // five minutes from 02:00 BST that exist.
+        assertBracketInterval(
+                "[{lo=2024-03-31T01:00:00.000000Z, hi=2024-03-31T01:04:59.999999Z}]",
+                "2024-03-31T01:10@Europe/London;55m"
+        );
+        // New York springs forward from 02:00 EST to 03:00 EDT, 07:00 UTC
+        assertBracketInterval(
+                "[{lo=2024-03-10T07:00:00.000000Z, hi=2024-03-10T07:04:59.999999Z}]",
+                "2024-03-10T02:10@America/New_York;55m"
+        );
+        // both paths share the conversion
+        assertCompiledTickExprWithNow("$todayT01:10@Europe/London;55m", "2024-03-31T12:00:00.000000Z");
+        assertCompiledTickExprWithNow("$todayT01:00@Europe/London;30m", "2024-03-31T12:00:00.000000Z");
+    }
+
+    @Test
+    public void testTimezoneDstGapMinuteMatchesNothing() throws SqlException {
+        // On March 10, 2024 at 2:00 AM in America/New_York, clocks spring forward to 3:00 AM, so no
+        // instant has a local time from 02:00 to 02:59:59.999999, and an interval in that time
+        // matches nothing
+        assertBracketInterval("[]", "2024-03-10T02:30@America/New_York");
+        assertBracketInterval("[]", "2024-03-10T02:00@America/New_York;30m");
+        assertParsedAndCompiledWithNow("[]", "$todayT02:30@America/New_York", "2024-03-10T12:00:00.000000Z");
+        // so a day covers the same instants as its minutes, also when the day ends in the gap, as
+        // in Nuuk, where clocks skip from 23:00 to 00:00 on 2024-03-30
+        assertBracketInterval("[{lo=2024-03-10T05:00:00.000000Z, hi=2024-03-11T03:59:59.999999Z}]", "2024-03-10T[00..23]:[00..59]@America/New_York");
+        assertBracketInterval("[{lo=2024-03-10T05:00:00.000000Z, hi=2024-03-11T03:59:59.999999Z}]", "2024-03-10@America/New_York");
+        assertBracketInterval("[{lo=2024-03-30T02:00:00.000000Z, hi=2024-03-31T00:59:59.999999Z}]", "2024-03-30T[00..23]:[00..59]@America/Nuuk");
+        assertBracketInterval("[{lo=2024-03-30T02:00:00.000000Z, hi=2024-03-31T00:59:59.999999Z}]", "2024-03-30@America/Nuuk");
+        // in dynamic mode, the minute after the dropped one carries the operation
+        assertEncodedInterval("[{lo=2024-03-10T07:30:00.000000Z, hi=2024-03-10T07:30:59.999999Z}]", "2024-03-10T[02:30,03:30]@America/New_York");
+        assertEncodedOperations(1);
+    }
+
+    @Test
+    public void testTimezoneDstGapRangeStartsInGap() throws SqlException {
+        // On 2024-03-31 London clocks skip from 01:00 to 02:00 local time, and $now - 2h = 01:20
+        // local falls in that hour. The range starts at the transition, 01:00Z, and ends with the
+        // day, at 23:59:59.999999 BST.
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-03-31T01:00:00.000000Z, hi=2024-03-31T22:59:59.999999Z}]",
+                "[$now - 2h..$today]@Europe/London",
+                "2024-03-31T03:20:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testTimezoneDstGapWholeDayAtMidnight() throws SqlException {
+        // Some timezones spring forward at midnight, so the day starts at 01:00 local time, and
+        // has 23 hours
+        assertBracketInterval("[{lo=2024-09-08T04:00:00.000000Z, hi=2024-09-09T02:59:59.999999Z}]", "2024-09-08@America/Santiago");
+        assertBracketInterval("[{lo=2024-03-10T05:00:00.000000Z, hi=2024-03-11T03:59:59.999999Z}]", "2024-03-10@America/Havana");
+        assertBracketInterval("[{lo=2024-03-30T22:00:00.000000Z, hi=2024-03-31T20:59:59.999999Z}]", "2024-03-31@Asia/Beirut");
+        assertBracketInterval("[{lo=2024-04-25T22:00:00.000000Z, hi=2024-04-26T20:59:59.999999Z}]", "2024-04-26@Africa/Cairo");
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-09-08T04:00:00.000000Z, hi=2024-09-09T02:59:59.999999Z}]",
+                "$today@America/Santiago",
+                "2024-09-08T12:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testTimezoneDstOverlapApplyEncodedFalse() throws SqlException {
+        // Dynamic mode keeps both occurrences of a repeated local time: the first interval
+        // carries the operation, the second UNION
+        assertEncodedInterval(
+                "[{lo=2024-11-03T05:30:00.000000Z, hi=2024-11-03T05:30:59.999999Z},{lo=2024-11-03T06:30:00.000000Z, hi=2024-11-03T06:30:59.999999Z}]",
+                "2024-11-03T01:30@America/New_York"
+        );
+        assertEncodedOperations(2);
+        // a subtraction subtracts both
         final TimestampDriver timestampDriver = timestampType.getDriver();
         out.clear();
-        String interval = "2024-03-10T01:59@America/New_York;2m";
-        parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
-        String expected = ColumnType.isTimestampNano(timestampType.getTimestampType())
-                ? "[{lo=2024-03-10T06:59:00.000000000Z, hi=2024-03-10T07:01:59.999999998Z}]"
-                : "[{lo=2024-03-10T06:59:00.000000Z, hi=2024-03-10T07:01:59.999998Z}]";
-        TestUtils.assertEquals(expected, intervalToString(timestampDriver, out));
+        parseTickExpr(timestampDriver, "2024-11-03T01:30@America/New_York", 0, 33, 0, out, IntervalOperation.SUBTRACT, false);
+        Assert.assertEquals(2 * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL, out.size());
+        Assert.assertEquals(IntervalOperation.SUBTRACT, IntervalUtils.getEncodedOperation(out, 0));
+        Assert.assertEquals(IntervalOperation.SUBTRACT, IntervalUtils.getEncodedOperation(out, IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL));
     }
 
     @Test
     public void testTimezoneDstOverlapFallBack() throws SqlException {
-        // Test DST overlap (fall back) - Nov 3, 2024 in America/New_York
-        // At 2:00 AM EDT, clocks fall back to 1:00 AM EST
-        // So 1:30 AM occurs twice - the code uses daylight time (EDT) offset
-        // 1:30 AM EDT = 05:30 UTC
-        // During overlap, daylight time (EDT = UTC-4) is used
+        // On Nov 3, 2024 in America/New_York, at 2:00 AM EDT clocks fall back to 1:00 AM EST, so
+        // 1:30 AM happens twice: at 05:30 UTC in EDT, and at 06:30 UTC in EST. The minute covers
+        // both.
         assertBracketInterval(
-                "[{lo=2024-11-03T05:30:00.000000Z, hi=2024-11-03T05:30:59.999999Z}]",
+                "[{lo=2024-11-03T05:30:00.000000Z, hi=2024-11-03T05:30:59.999999Z},{lo=2024-11-03T06:30:00.000000Z, hi=2024-11-03T06:30:59.999999Z}]",
                 "2024-11-03T01:30@America/New_York"
+        );
+    }
+
+    @Test
+    public void testTimezoneDstOverlapIntervalShapes() throws SqlException {
+        // On 2024-10-27 Berlin clocks fall back from 03:00 CEST to 02:00 CET at 01:00Z, so local
+        // times from 02:00 to 02:59:59.999999 happen twice, at 00:00Z to 00:59:59.999999Z and at
+        // 01:00Z to 01:59:59.999999Z. An interval covers the instants whose local time falls in it.
+        // 02:30 to 03:29:59.999999 local time: 02:30 to 02:59 in CEST, then 02:30 to 03:29 in CET
+        assertBracketInterval(
+                "[{lo=2024-10-27T00:30:00.000000Z, hi=2024-10-27T00:59:59.999999Z},{lo=2024-10-27T01:30:00.000000Z, hi=2024-10-27T02:29:59.999999Z}]",
+                "2024-10-27T02:30@Europe/Berlin;1h"
+        );
+        // 01:30 to 02:29:59.999999 local time: 01:30 to 02:29 in CEST, then 02:00 to 02:29 in CET
+        assertBracketInterval(
+                "[{lo=2024-10-26T23:30:00.000000Z, hi=2024-10-27T00:29:59.999999Z},{lo=2024-10-27T01:00:00.000000Z, hi=2024-10-27T01:29:59.999999Z}]",
+                "2024-10-27T01:30@Europe/Berlin;1h"
+        );
+        // the whole repeated hour
+        assertBracketInterval(
+                "[{lo=2024-10-27T00:00:00.000000Z, hi=2024-10-27T01:59:59.999999Z}]",
+                "2024-10-27T02:00@Europe/Berlin;1h"
+        );
+        // Both ends repeat, a year apart: Berlin falls back at 01:00Z on 2025-10-26 too
+        assertBracketInterval(
+                "[{lo=2024-10-27T00:30:00.000000Z, hi=2024-10-27T00:59:59.999999Z}," +
+                        "{lo=2024-10-27T01:30:00.000000Z, hi=2025-10-26T00:44:59.999999Z}," +
+                        "{lo=2025-10-26T01:00:00.000000Z, hi=2025-10-26T01:44:59.999999Z}]",
+                "2024-10-27T02:30@Europe/Berlin;364d15m"
+        );
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-10-27T00:30:00.000000Z, hi=2024-10-27T00:59:59.999999Z},{lo=2024-10-27T01:30:00.000000Z, hi=2024-10-27T02:29:59.999999Z}]",
+                "$todayT02:30@Europe/Berlin;1h",
+                "2024-10-27T12:00:00.000000Z"
+        );
+    }
+
+    @Test
+    public void testTimezoneDstOverlapTimeListSlotClip() throws SqlException {
+        // On 2024-10-27 Berlin clocks fall back at 01:00Z, and $now = 02:30 local time happens
+        // twice, at 00:30Z and at 01:30Z. A slot with its own timezone is a point in time, which
+        // the range compares with the instants whose Berlin time falls in it. In Tokyo, 09:45 is
+        // 00:45Z, 10:00 is 01:00Z and 10:45 is 01:45Z.
+        final String now = "2024-10-27T02:30:00.000000Z";
+        // from 02:30 Berlin time on: 00:30Z to 00:59:59.999999Z, and from 01:30Z on
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-10-27T00:45:00.000000Z, hi=2024-10-27T00:45:59.999999Z},{lo=2024-10-27T01:45:00.000000Z, hi=2024-10-27T01:45:59.999999Z}]",
+                "[$now..$today]T[09:45@Asia/Tokyo,10:00@Asia/Tokyo,10:45@Asia/Tokyo]@Europe/Berlin",
+                now
+        );
+        // up to 02:30 Berlin time: up to 00:30Z, and 01:00Z to 01:30Z
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-10-27T01:00:00.000000Z, hi=2024-10-27T01:00:59.999999Z}]",
+                "[$today..$now]T[09:45@Asia/Tokyo,10:00@Asia/Tokyo,10:45@Asia/Tokyo]@Europe/Berlin",
+                now
         );
     }
 
@@ -5787,6 +7150,73 @@ public class TickExprTest {
         assertBracketIntervalError("   ", "Invalid date");
     }
 
+    private static void appendRandomDateVariableExpr(Rnd rnd, StringSink sink) {
+        sink.put(pick(rnd, FUZZ_VARIABLES));
+        if (rnd.nextBoolean()) {
+            sink.put(pick(rnd, FUZZ_SHIFTS));
+        }
+        if (rnd.nextInt(3) == 0) {
+            sink.put("..").put(pick(rnd, FUZZ_RANGE_ENDS));
+        }
+    }
+
+    /**
+     * Appends a random tick expression with date variables, either bare or in a date list, and
+     * returns whether the expression holds a part that the grammar rejects.
+     */
+    private static boolean appendRandomTickExpr(Rnd rnd, StringSink sink) {
+        boolean isMalformed = false;
+        if (rnd.nextInt(8) == 0) {
+            sink.put("  ");
+        }
+        if (rnd.nextInt(3) == 0) {
+            appendRandomDateVariableExpr(rnd, sink);
+        } else {
+            sink.put('[');
+            for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
+                if (i > 0) {
+                    sink.put(rnd.nextBoolean() ? "," : ", ");
+                }
+                if (rnd.nextInt(4) == 0) {
+                    sink.put(pick(rnd, FUZZ_STATIC_ELEMENTS));
+                } else {
+                    appendRandomDateVariableExpr(rnd, sink);
+                }
+                // an element with a suffix of its own
+                switch (rnd.nextInt(10)) {
+                    case 0 -> sink.put(pick(rnd, FUZZ_ZONES));
+                    case 1 -> sink.put(pick(rnd, FUZZ_DAY_FILTERS));
+                    case 2 -> {
+                        // a time part on an element rather than after the list, which the grammar
+                        // rejects on a date variable and on a date without a day
+                        sink.put(pick(rnd, FUZZ_TIMES));
+                        isMalformed = true;
+                    }
+                    default -> {
+                    }
+                }
+            }
+            sink.put(']');
+        }
+        if (rnd.nextInt(10) == 0) {
+            sink.put(pick(rnd, FUZZ_MALFORMED_TIMES));
+            isMalformed = true;
+        } else {
+            sink.put(pick(rnd, FUZZ_TIMES));
+        }
+        sink.put(pick(rnd, FUZZ_ZONES));
+        final String dayFilter = pick(rnd, FUZZ_DAY_FILTERS);
+        final String duration = pick(rnd, FUZZ_DURATIONS);
+        if (rnd.nextInt(10) == 0) {
+            // the day filter goes before the duration
+            sink.put(duration).put(dayFilter);
+            isMalformed |= !dayFilter.isEmpty() && !duration.isEmpty();
+        } else {
+            sink.put(dayFilter).put(duration);
+        }
+        return isMalformed;
+    }
+
     /**
      * Converts encoded intervals (4-long format) to a readable string for assertions.
      * Format: [{lo=..., hi=..., dayFilter=Mon,Tue,...}]
@@ -5844,6 +7274,10 @@ public class TickExprTest {
                 (int) encoded,
                 (encoded & (1L << 57)) != 0
         );
+    }
+
+    private static String pick(Rnd rnd, String[] values) {
+        return values[rnd.nextInt(values.length)];
     }
 
     private void assertBracketInterval(String expected, String interval) throws SqlException {
@@ -5938,6 +7372,36 @@ public class TickExprTest {
                         intervalToString(timestampDriver, staticResult).toString(),
                         intervalToString(timestampDriver, dynamicResult)
                 );
+            }
+        }
+    }
+
+    /**
+     * Asserts that the parse path and the compiled path agree for each expression at every
+     * 5 minutes of the 24 hours from {@code from}.
+     */
+    private void assertCompiledTickExprEvery5Minutes(String from, String... expressions) throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long start = timestampDriver.parseFloorLiteral(from);
+        final LongList parsed = new LongList();
+        final LongList compiled = new LongList();
+        for (String expression : expressions) {
+            try (CompiledTickExpression compiledExpr = IntervalUtils.compileTickExpr(
+                    timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+                for (int i = 0; i <= 288; i++) {
+                    final long now = start + timestampDriver.fromMinutes(5 * i);
+                    parsed.clear();
+                    parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0, parsed, IntervalOperation.INTERSECT, now);
+                    compiled.clear();
+                    compiledExpr.evaluate(compiled, now);
+                    sink.clear();
+                    sink.put(expression).put(" at now=");
+                    timestampDriver.append(sink, now);
+                    final String message = sink.toString();
+                    // intervalToString() reuses one sink, so take a copy of the parsed text first
+                    final String parsedText = intervalToString(timestampDriver, parsed).toString();
+                    TestUtils.assertEquals(message, parsedText, intervalToString(timestampDriver, compiled));
+                }
             }
         }
     }
@@ -6044,6 +7508,18 @@ public class TickExprTest {
     }
 
     /**
+     * Asserts that {@link #out} holds {@code intervalCount} encoded intervals, the first of which
+     * carries INTERSECT and the rest UNION.
+     */
+    private void assertEncodedOperations(int intervalCount) {
+        Assert.assertEquals(intervalCount * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL, out.size());
+        Assert.assertEquals(IntervalOperation.INTERSECT, IntervalUtils.getEncodedOperation(out, 0));
+        for (int i = 1; i < intervalCount; i++) {
+            Assert.assertEquals(IntervalOperation.UNION, IntervalUtils.getEncodedOperation(out, i * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL));
+        }
+    }
+
+    /**
      * Asserts that an imprecise tick expression produces the same intervals
      * as its explicit day-range equivalent.
      */
@@ -6083,6 +7559,108 @@ public class TickExprTest {
         }
     }
 
+    /**
+     * Asserts that the interval model rejects the expression when the SQL compiles, with the
+     * position of the expression.
+     */
+    private void assertIntervalModelError(String expression, String expectedError) {
+        final RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
+        builder.of(timestampType.getTimestampType(), 0, configuration);
+        try {
+            builder.intersectIntervals(expression, 0, expression.length(), 42);
+            Assert.fail("Should throw SqlException at compile time: " + expression);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+            Assert.assertEquals(42, e.getPosition());
+        }
+    }
+
+    /**
+     * Asserts that both the parse path ({@code parseTickExpr}) and the compiled path
+     * ({@link CompiledTickExpression#evaluate}) produce the expected intervals for the given "now".
+     */
+    private void assertParsedAndCompiledErrorWithNow(String expression, String nowTimestamp, String expectedError) throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral(nowTimestamp);
+        out.clear();
+        try {
+            parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, now);
+            Assert.fail("parse should fail: " + expression);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+        }
+        out.clear();
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+            compiled.evaluate(out, now);
+            Assert.fail("evaluation should fail: " + expression);
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+        }
+    }
+
+    /**
+     * Asserts that both the parser and the compiled form reject the expression, the compiled form
+     * when it compiles or when it evaluates. SQL parses a bind variable and compiles a literal with a
+     * date variable, so the two must fail on the same expressions.
+     */
+    private void assertParsedAndCompiledRejectedWithNow(String expression, String nowTimestamp, String expectedError) {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral(nowTimestamp);
+        String parsed;
+        out.clear();
+        try {
+            parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, now);
+            parsed = intervalToString(timestampDriver, out).toString();
+        } catch (SqlException e) {
+            parsed = "error: " + e.getFlyweightMessage();
+        }
+        String compiled;
+        try (CompiledTickExpression compiledExpr = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+            out.clear();
+            try {
+                compiledExpr.evaluate(out, now);
+                compiled = intervalToString(timestampDriver, out).toString();
+            } catch (CairoException e) {
+                compiled = "error: " + e.getFlyweightMessage();
+            }
+        } catch (SqlException e) {
+            compiled = "error: " + e.getFlyweightMessage();
+        }
+        // one assertion over both paths, so a failure shows the result of each
+        final String message = expression + " at " + nowTimestamp + ", expected both to fail with '" + expectedError
+                + "'\nparsed: " + parsed + "\ncompiled: " + compiled;
+        Assert.assertTrue(message, parsed.startsWith("error: ") && parsed.contains(expectedError)
+                && compiled.startsWith("error: ") && compiled.contains(expectedError));
+    }
+
+    private void assertParsedAndCompiledWithNow(String expected, String expression, String nowTimestamp) throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral(nowTimestamp);
+        final String expectedForType = ColumnType.isTimestampNano(timestampType.getTimestampType())
+                ? expected.replace("00Z", "00000Z").replace("99Z", "99999Z")
+                : expected;
+
+        out.clear();
+        parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, now);
+        final String parsed = intervalToString(timestampDriver, out).toString();
+
+        out.clear();
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+            compiled.evaluate(out, now);
+        }
+        final String compiled = intervalToString(timestampDriver, out).toString();
+
+        // one assertion over both paths, so a failure shows the result of each
+        TestUtils.assertEquals(
+                expression,
+                "parsed: " + expectedForType + "\ncompiled: " + expectedForType,
+                "parsed: " + parsed + "\ncompiled: " + compiled
+        );
+    }
+
     private void assertShortInterval(String expected, String interval) throws SqlException {
         out.clear();
         final TimestampDriver timestampDriver = timestampType.getDriver();
@@ -6098,5 +7676,140 @@ public class TickExprTest {
     @FunctionalInterface
     interface DateVariableExpectedBuilder {
         String build(long now, TimestampDriver driver, TestTimestampType tsType);
+    }
+
+    /**
+     * Checks tick expressions against the contract of
+     * {@link DateExpressionEvaluator#containsDateVariable}: an expression whose intervals depend on
+     * "now" holds a date variable. SQL evaluates a detected expression through
+     * {@link CompiledTickExpression}, which must agree with the parser on a well-formed expression:
+     * one that it compiles evaluates to the intervals of the parser at every "now", and one that it
+     * rejects fails to parse at every "now".
+     * <p>
+     * The two validate a malformed expression in different ways. The parser ignores the time part
+     * of a point in time, so it lets {@code $nowT[25:00]} through where the compiled form rejects it,
+     * and the compiled form ignores the time part of a static element in a date list with a time of
+     * its own, which the parser rejects. The checker therefore only requires a detected date variable
+     * of a malformed expression.
+     */
+    private static class DateVariableDetectionChecker {
+        private static final String ERROR = "error";
+        private static final int MAX_REPORTED_FAILURES = 20;
+        private final StringSink failures = new StringSink();
+        private final LongList intervals = new LongList();
+        private final long[] nows = new long[FUZZ_NOWS.length];
+        private final StringSink parseSink = new StringSink();
+        private final String[] parsed = new String[FUZZ_NOWS.length];
+        private final TimestampDriver timestampDriver;
+        private int checkCount;
+        private int compiledCount;
+        private int failureCount;
+        private int nowDependentCount;
+
+        DateVariableDetectionChecker(TimestampDriver timestampDriver) {
+            this.timestampDriver = timestampDriver;
+            for (int i = 0; i < FUZZ_NOWS.length; i++) {
+                nows[i] = timestampDriver.parseFloorLiteral(FUZZ_NOWS[i]);
+            }
+        }
+
+        void assertNoFailures() {
+            LOG.info().$("date variable detection fuzz done [expressions=").$(checkCount)
+                    .$(", nowDependent=").$(nowDependentCount)
+                    .$(", compiled=").$(compiledCount)
+                    .$(", failures=").$(failureCount)
+                    .I$();
+            if (failureCount > 0) {
+                Assert.fail(failureCount + " of " + checkCount + " tick expressions failed, the first "
+                        + Math.min(failureCount, MAX_REPORTED_FAILURES) + ":\n" + failures);
+            }
+            Assert.assertTrue("no expression depended on now", nowDependentCount > 0);
+            Assert.assertTrue("no expression compiled", compiledCount > 0);
+        }
+
+        /**
+         * @param isMalformed whether the expression holds a part that the grammar rejects
+         */
+        void check(String expression, boolean isMalformed) {
+            checkCount++;
+            try {
+                check0(expression, isMalformed);
+            } catch (AssertionError | RuntimeException e) {
+                throw new AssertionError("tick expression: " + expression, e);
+            }
+        }
+
+        private void check0(String expression, boolean isMalformed) {
+            boolean isNowDependent = false;
+            for (int i = 0; i < nows.length; i++) {
+                parsed[i] = parse(expression, nows[i]);
+                isNowDependent |= !parsed[i].equals(parsed[0]);
+            }
+            if (isNowDependent) {
+                nowDependentCount++;
+            }
+            if (!DateExpressionEvaluator.containsDateVariable(expression, 0, expression.length())) {
+                if (isNowDependent) {
+                    for (int i = 1; i < nows.length; i++) {
+                        if (!parsed[i].equals(parsed[0])) {
+                            fail(expression, "holds no date variable, but parses to " + parsed[0] + " at " + FUZZ_NOWS[0]
+                                    + " and to " + parsed[i] + " at " + FUZZ_NOWS[i]);
+                            return;
+                        }
+                    }
+                }
+                return;
+            }
+            if (isMalformed) {
+                return;
+            }
+            final CompiledTickExpression compiled;
+            try {
+                compiled = IntervalUtils.compileTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0);
+            } catch (SqlException | CairoException e) {
+                for (int i = 0; i < nows.length; i++) {
+                    if (!ERROR.equals(parsed[i])) {
+                        fail(expression, "does not compile [error=" + e.getFlyweightMessage() + "], but parses to "
+                                + parsed[i] + " at " + FUZZ_NOWS[i]);
+                        return;
+                    }
+                }
+                return;
+            }
+            compiledCount++;
+            try (compiled) {
+                for (int i = 0; i < nows.length; i++) {
+                    intervals.clear();
+                    String evaluated;
+                    try {
+                        compiled.evaluate(intervals, nows[i]);
+                        evaluated = intervalToString(timestampDriver, intervals).toString();
+                    } catch (CairoException e) {
+                        evaluated = ERROR;
+                    }
+                    if (!evaluated.equals(parsed[i])) {
+                        fail(expression, "evaluates to " + evaluated + ", but parses to " + parsed[i] + " at " + FUZZ_NOWS[i]);
+                        return;
+                    }
+                }
+            }
+        }
+
+        private void fail(String expression, String reason) {
+            if (failureCount++ < MAX_REPORTED_FAILURES) {
+                failures.put(expression).put(": ").put(reason).put('\n');
+            }
+        }
+
+        private String parse(String expression, long now) {
+            intervals.clear();
+            try {
+                IntervalUtils.parseTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0,
+                        intervals, IntervalOperation.INTERSECT, parseSink, true, now);
+                return intervalToString(timestampDriver, intervals).toString();
+            } catch (SqlException | CairoException e) {
+                return ERROR;
+            }
+        }
     }
 }

@@ -31,9 +31,11 @@ import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.MutationStep;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -1086,6 +1088,182 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInDateVariableBareTimeListFollowsDayChange() throws Exception {
+        // '$todayT[09:00,14:30]' holds a date variable, the same as '[$today]T[09:00,14:30]', so the
+        // held factory must move the slots to Wednesday rather than keep the ones of Tuesday
+        setCurrentMicros(parseMicros("2024-01-02T10:00:00.000000Z"));
+        try {
+            final ObjList<MutationStep> steps = new ObjList<>();
+            steps.add(MutationStep.of(
+                    insertEveryTenMinutes("2024-01-02T00:00:00.000000Z", 144),
+                    """
+                            count\tmin\tmax
+                            2\t2024-01-02T09:00:00.000000Z\t2024-01-02T14:30:00.000000Z
+                            """
+            ));
+            steps.add(MutationStep.of(
+                    () -> setCurrentMicros(parseMicros("2024-01-03T10:00:00.000000Z")),
+                    insertEveryTenMinutes("2024-01-03T00:00:00.000000Z", 144),
+                    """
+                            count\tmin\tmax
+                            2\t2024-01-03T09:00:00.000000Z\t2024-01-03T14:30:00.000000Z
+                            """
+            ));
+            assertHeldFactory("SELECT count(), min(ts), max(ts) FROM t WHERE to_timezone(ts, 'UTC') IN '$todayT[09:00,14:30]'", steps);
+        } finally {
+            setCurrentMicros(-1);
+        }
+    }
+
+    @Test
+    public void testInDateVariableDayFilterFollowsDayChange() throws Exception {
+        // '$today#Tue' is a whole day on Tuesday and no interval at all on Wednesday, when the held
+        // factory must match nothing rather than keep scanning Tuesday
+        setCurrentMicros(parseMicros("2024-01-02T10:00:00.000000Z"));
+        try {
+            final ObjList<MutationStep> steps = new ObjList<>();
+            steps.add(MutationStep.of(
+                    insertEveryTenMinutes("2024-01-02T00:00:00.000000Z", 61),
+                    """
+                            count\tmin\tmax
+                            62\t2024-01-02T00:00:00.000000Z\t2024-01-02T23:00:00.000000Z
+                            """
+            ));
+            steps.add(MutationStep.of(
+                    () -> setCurrentMicros(parseMicros("2024-01-03T10:00:00.000000Z")),
+                    insertEveryTenMinutes("2024-01-03T00:00:00.000000Z", 61),
+                    """
+                            count\tmin\tmax
+                            0\t\t
+                            """
+            ));
+            assertHeldFactory("SELECT count(), min(ts), max(ts) FROM t WHERE to_timezone(ts, 'UTC') IN '$today#Tue'", steps);
+        } finally {
+            setCurrentMicros(-1);
+        }
+    }
+
+    @Test
+    public void testInDateVariableListFollowsDayChange() throws Exception {
+        // the expression resolves to two intervals, one a day, which the scan does not narrow to, so
+        // the residual filter selects the rows
+        setCurrentMicros(parseMicros("2024-01-02T10:00:00.000000Z"));
+        try {
+            final ObjList<MutationStep> steps = new ObjList<>();
+            steps.add(MutationStep.of(
+                    insertEveryTenMinutes("2024-01-02T00:00:00.000000Z", 61),
+                    """
+                            count\tmin\tmax
+                            3\t2024-01-02T09:00:00.000000Z\t2024-01-02T09:20:00.000000Z
+                            """
+            ));
+            steps.add(MutationStep.of(
+                    () -> setCurrentMicros(parseMicros("2024-01-03T10:00:00.000000Z")),
+                    insertEveryTenMinutes("2024-01-03T00:00:00.000000Z", 61),
+                    """
+                            count\tmin\tmax
+                            6\t2024-01-02T09:00:00.000000Z\t2024-01-03T09:20:00.000000Z
+                            """
+            ));
+            assertHeldFactory("SELECT count(), min(ts), max(ts) FROM t WHERE to_timezone(ts, 'UTC') IN '$yesterday..$todayT09:00;30m'", steps);
+        } finally {
+            setCurrentMicros(-1);
+        }
+    }
+
+    @Test
+    public void testInDateVariableNanoRangeFollowsNow() throws Exception {
+        // the cast makes the chain output nanoseconds, so the expression must resolve in nanoseconds
+        setCurrentMicros(parseMicros("2024-01-02T10:00:00.000000Z"));
+        try {
+            final ObjList<MutationStep> steps = new ObjList<>();
+            steps.add(MutationStep.of(
+                    insertEveryTenMinutes("2024-01-02T00:00:00.000000Z", 61),
+                    """
+                            count\tmin\tmax
+                            61\t2024-01-02T00:00:00.000000Z\t2024-01-02T10:00:00.000000Z
+                            """
+            ));
+            steps.add(MutationStep.of(
+                    () -> setCurrentMicros(parseMicros("2024-01-02T15:00:00.000000Z")),
+                    insertEveryTenMinutes("2024-01-02T10:10:00.000000Z", 30),
+                    """
+                            count\tmin\tmax
+                            91\t2024-01-02T00:00:00.000000Z\t2024-01-02T15:00:00.000000Z
+                            """
+            ));
+            assertHeldFactory("SELECT count(), min(ts), max(ts) FROM t WHERE ts::timestamp_ns IN '$today..$now'", steps);
+        } finally {
+            setCurrentMicros(-1);
+        }
+    }
+
+    @Test
+    public void testInDateVariableRangeFollowsNow() throws Exception {
+        // to_timezone(ts, '+02:00') shifts by two hours, so '$today..$now' selects ts from 22:00 the
+        // day before up to two hours before $now
+        setCurrentMicros(parseMicros("2024-01-02T10:00:00.000000Z"));
+        try {
+            final ObjList<MutationStep> steps = new ObjList<>();
+            steps.add(MutationStep.of(
+                    insertEveryTenMinutes("2024-01-02T00:00:00.000000Z", 61),
+                    """
+                            count\tmin\tmax
+                            50\t2024-01-01T23:00:00.000000Z\t2024-01-02T08:00:00.000000Z
+                            """
+            ));
+            steps.add(MutationStep.of(
+                    () -> setCurrentMicros(parseMicros("2024-01-02T15:00:00.000000Z")),
+                    insertEveryTenMinutes("2024-01-02T10:10:00.000000Z", 30),
+                    """
+                            count\tmin\tmax
+                            80\t2024-01-01T23:00:00.000000Z\t2024-01-02T13:00:00.000000Z
+                            """
+            ));
+            assertHeldFactory("SELECT count(), min(ts), max(ts) FROM t WHERE to_timezone(ts, '+02:00') IN '$today..$now'", steps);
+
+            // the scan still prunes, to the window of the time it runs at
+            assertQuery("SELECT * FROM t WHERE to_timezone(ts, '+02:00') IN '$today..$now'")
+                    .assertsPlanContaining(
+                            "Interval forward scan on: t",
+                            "intervals: [(\"2024-01-01T22:00:00.000000Z\",\"2024-01-02T13:00:00.000000Z\")]"
+                    );
+        } finally {
+            setCurrentMicros(-1);
+        }
+    }
+
+    @Test
+    public void testInDateVariableElementTimezoneFollowsDayChange() throws Exception {
+        // A timezone on an element inside brackets compiles too, by parsing the expression when the
+        // scan opens, so the inversion follows the day like any other date variable. At +02:00,
+        // 2024-01-02 runs from 2024-01-01T22:00Z to 2024-01-02T21:59:59.999999Z. Each day holds 144
+        // rows every ten minutes, plus one of the rows assertHeldFactory() creates.
+        setCurrentMicros(parseMicros("2024-01-02T10:00:00.000000Z"));
+        try {
+            final ObjList<MutationStep> steps = new ObjList<>();
+            steps.add(MutationStep.of(
+                    insertEveryTenMinutes("2024-01-01T00:00:00.000000Z", 432),
+                    """
+                            count\tmin\tmax
+                            145\t2024-01-01T22:00:00.000000Z\t2024-01-02T21:50:00.000000Z
+                            """
+            ));
+            steps.add(MutationStep.of(
+                    () -> setCurrentMicros(parseMicros("2024-01-03T10:00:00.000000Z")),
+                    insertEveryTenMinutes("2024-01-04T00:00:00.000000Z", 1),
+                    """
+                            count\tmin\tmax
+                            145\t2024-01-02T22:00:00.000000Z\t2024-01-03T21:50:00.000000Z
+                            """
+            ));
+            assertHeldFactory("SELECT count(), min(ts), max(ts) FROM t WHERE to_timezone(ts, 'UTC') IN '[$today@+02:00]'", steps);
+        } finally {
+            setCurrentMicros(-1);
+        }
+    }
+
+    @Test
     public void testNanoColumnRuntimeMicroBound() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tn (price DOUBLE, timestamp TIMESTAMP_NS) TIMESTAMP(timestamp) PARTITION BY DAY;");
@@ -1946,6 +2124,10 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
                 "(4, '2024-06-01T00:00:00.000000Z');");
     }
 
+    private static String insertEveryTenMinutes(String from, int count) {
+        return "INSERT INTO t SELECT '" + from + "'::timestamp + (x - 1) * 600_000_000 FROM long_sequence(" + count + ")";
+    }
+
     private static long jitterBound(Rnd rnd, long base, boolean nano) {
         final long sec = nano ? 1_000_000_000L : 1_000_000L;
         return switch (rnd.nextInt(10)) {
@@ -2055,5 +2237,25 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             return Integer.toString(driver.getYear(value));
         }
         return Long.toString(value);
+    }
+
+    /**
+     * Compiles the query once, then runs the same factory after each step. Besides the rows the steps
+     * write, the table holds rows at 21:00 and 23:00 the day before and at 23:00 on 2024-01-02.
+     */
+    private void assertHeldFactory(String query, ObjList<MutationStep> steps) throws Exception {
+        assertQuery(query)
+                .noRandomAccess()
+                .expectSize()
+                .ddl(
+                        "CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        """
+                                INSERT INTO t VALUES
+                                    ('2024-01-01T21:00:00.000000Z'),
+                                    ('2024-01-01T23:00:00.000000Z'),
+                                    ('2024-01-02T23:00:00.000000Z')
+                                """
+                )
+                .mutateStepwise(steps);
     }
 }

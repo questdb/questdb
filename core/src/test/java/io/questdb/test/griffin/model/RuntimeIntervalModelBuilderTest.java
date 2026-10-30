@@ -44,6 +44,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -634,6 +635,82 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDynamicParsedEmptyIntersectionEmptiesModel() throws Exception {
+        // A tick expression that selects nothing empties the intersection, whatever the dynamic
+        // interval before it resolves to, and the model frees that interval's function
+        ReservationFailingBuilder builder = newFailingBuilder();
+        CloseCountingFunction adopted = new CloseCountingFunction();
+        builder.intersectRuntimeTimestamp(adopted, 11);
+        final String intervals = "2024-01-02#Mon";
+        builder.intersectIntervals(intervals, 0, intervals.length(), 0);
+        Assert.assertTrue(builder.isEmptySet());
+        Assert.assertEquals(0, builder.dynamicRangeSize());
+        Assert.assertEquals(1, adopted.closeCount);
+        builder.clear();
+        Assert.assertEquals(1, adopted.closeCount);
+    }
+
+    @Test
+    public void testDynamicParsedIntersectionReservationFailureIsAtomic() throws Exception {
+        ReservationFailingBuilder builder = newFailingBuilder();
+        CloseCountingFunction adopted = new CloseCountingFunction();
+        builder.intersectRuntimeTimestamp(adopted, 11);
+        final int dynamicSize = builder.dynamicRangeSize();
+        final int staticSize = builder.staticIntervalsSize();
+        builder.failNextReservation = true;
+
+        final String intervals = "2018-01-[10,15]T10:30;1h";
+        try {
+            builder.intersectIntervals(intervals, 0, intervals.length(), 0);
+            Assert.fail("injected reservation failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(builder.reservationFailure, e);
+        }
+        Assert.assertEquals(dynamicSize, builder.dynamicRangeSize());
+        Assert.assertEquals(staticSize, builder.staticIntervalsSize());
+        Assert.assertEquals(0, adopted.closeCount);
+
+        // the two intervals go in as one set
+        builder.intersectIntervals(intervals, 0, intervals.length(), 0);
+        Assert.assertEquals(dynamicSize + 2, builder.dynamicRangeSize());
+        Assert.assertEquals(staticSize + 8, builder.staticIntervalsSize());
+        RuntimeIntrinsicIntervalModel model = builder.build();
+        builder.clear();
+        Misc.free(model);
+        Assert.assertEquals(1, adopted.closeCount);
+    }
+
+    @Test
+    public void testDynamicParsedSubtractionReservationFailureIsAtomic() throws Exception {
+        ReservationFailingBuilder builder = newFailingBuilder();
+        CloseCountingFunction adopted = new CloseCountingFunction();
+        builder.intersectRuntimeTimestamp(adopted, 11);
+        final int dynamicSize = builder.dynamicRangeSize();
+        final int staticSize = builder.staticIntervalsSize();
+        builder.failNextReservation = true;
+
+        final String intervals = "2018-01-[10,15]T10:30;1h";
+        try {
+            builder.subtractIntervals(intervals, 0, intervals.length(), 0);
+            Assert.fail("injected reservation failure expected");
+        } catch (RuntimeException e) {
+            Assert.assertSame(builder.reservationFailure, e);
+        }
+        Assert.assertEquals(dynamicSize, builder.dynamicRangeSize());
+        Assert.assertEquals(staticSize, builder.staticIntervalsSize());
+        Assert.assertEquals(0, adopted.closeCount);
+
+        // the complement of the two intervals is three intervals, which go in as one set
+        builder.subtractIntervals(intervals, 0, intervals.length(), 0);
+        Assert.assertEquals(dynamicSize + 3, builder.dynamicRangeSize());
+        Assert.assertEquals(staticSize + 12, builder.staticIntervalsSize());
+        RuntimeIntrinsicIntervalModel model = builder.build();
+        builder.clear();
+        Misc.free(model);
+        Assert.assertEquals(1, adopted.closeCount);
+    }
+
+    @Test
     public void testDynamicTimestampLiteralReservationFailureIsAtomic() throws Exception {
         ReservationFailingBuilder builder = newFailingBuilder();
         CloseCountingFunction adopted = new CloseCountingFunction();
@@ -816,9 +893,48 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         builder.subtractRuntimeIntervals(f, 0);
         Assert.assertEquals(1, f.closeCount);
 
+        // The union of the empty set with a runtime timestamp is that timestamp, so the model
+        // adopts the function instead
         f = new CloseCountingFunction();
         builder.unionRuntimeTimestamp(f, 0);
+        Assert.assertFalse(builder.isEmptySet());
+        Assert.assertEquals(0, f.closeCount);
+        builder.freeAndClear();
         Assert.assertEquals(1, f.closeCount);
+    }
+
+    @Test
+    public void testEmptySetUnionAddsIntervals() throws Exception {
+        // An OR seeds its union with an intersection, which empties the model when the first
+        // branch selects nothing. The union of the empty set with the other branches is those
+        // branches.
+        assertMemoryLeak(() -> {
+            final RuntimeIntervalModelBuilder builder = newBuilder();
+            builder.intersectEmpty();
+            builder.union(10, 20);
+            Assert.assertFalse(builder.isEmptySet());
+            try (RuntimeIntrinsicIntervalModel model = builder.build()) {
+                final LongList intervals = model.calculateIntervals(sqlExecutionContext);
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(10, intervals.getQuick(0));
+                Assert.assertEquals(20, intervals.getQuick(1));
+            }
+            builder.clear();
+
+            final RuntimeIntervalModelBuilder tickBuilder = newConfiguredBuilder();
+            final String nothing = "2024-01-02#Mon";
+            tickBuilder.intersectIntervals(nothing, 0, nothing.length(), 0);
+            Assert.assertTrue(tickBuilder.isEmptySet());
+            final String day = "2024-01-03";
+            tickBuilder.unionIntervals(day, 0, day.length(), 0);
+            try (RuntimeIntrinsicIntervalModel model = tickBuilder.build()) {
+                final LongList intervals = model.calculateIntervals(sqlExecutionContext);
+                Assert.assertEquals(2, intervals.size());
+                Assert.assertEquals(MicrosFormatUtils.parseTimestamp("2024-01-03T00:00:00.000000Z"), intervals.getQuick(0));
+                Assert.assertEquals(MicrosFormatUtils.parseTimestamp("2024-01-03T23:59:59.999999Z"), intervals.getQuick(1));
+            }
+            tickBuilder.clear();
+        });
     }
 
     @Test
@@ -1101,6 +1217,13 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
     private static RuntimeIntervalModelBuilder newBuilder() {
         RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
         builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, null);
+        return builder;
+    }
+
+    private static RuntimeIntervalModelBuilder newConfiguredBuilder() {
+        // parsing a tick expression needs a configuration
+        RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
+        builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, new DefaultCairoConfiguration("."));
         return builder;
     }
 

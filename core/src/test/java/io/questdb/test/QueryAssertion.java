@@ -2083,6 +2083,7 @@ public class QueryAssertion {
         try (RecordCursorFactory factory = compileSelect()) {
             for (int i = 0, n = steps.size(); i < n; i++) {
                 final MutationStep step = steps.getQuick(i);
+                step.runAction();
                 engine.execute(step.getMutation(), context);
                 drainWalQueue(engine);
                 assertCursor(step.getExpected(), factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
