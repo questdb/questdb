@@ -408,6 +408,38 @@ public class OrderedMap implements Map, Reopenable {
         ((OrderedMapCursor) cursor).init(heapAddr, size);
     }
 
+    /**
+     * Binds an independent cursor from this map's {@link #newCursor()} to the insertion-order
+     * range {@code [rowIndex, size)} in O(1). {@code heapOffset} is the {@link #getUsedHeapSize()}
+     * value the caller recorded when the map held {@code rowIndex} entries; heap growth keeps it
+     * valid. The cursor reports the suffix size, and its size calculation and top-K scan cover
+     * only that suffix. Its records and same-map {@code recordAt()} contract remain unchanged.
+     *
+     * <p>The caller must supply a cursor from this map and rebind it after key staging,
+     * insertion, heap growth, clear, close or reopen. Even staging a key for {@code findValue()}
+     * can relocate the heap. Bind only after all such operations finish, and keep the map
+     * unchanged while using the view. An empty, closed map permits a zero-count binding and
+     * iteration, not record access. The var-size layout cannot verify that an interior offset
+     * starts entry {@code rowIndex}, so the caller must pass the pair it recorded.
+     *
+     * @throws IllegalArgumentException if rowIndex is outside {@code [0, size]} or heapOffset
+     *                                  cannot start that suffix; the cursor remains unchanged
+     */
+    public void initCursorAtIndex(MapRecordCursor cursor, long rowIndex, long heapOffset) {
+        if (rowIndex < 0 || rowIndex > size) {
+            throw new IllegalArgumentException("row index out of bounds: " + rowIndex);
+        }
+        final long usedHeapSize = kPos - heapAddr;
+        final boolean isOffsetValid = rowIndex == size ? heapOffset == usedHeapSize
+                : rowIndex == 0 ? heapOffset == 0
+                : keySize != -1 ? heapOffset == rowIndex * Bytes.align8b(keySize + valueSize)
+                : heapOffset > 0 && heapOffset < usedHeapSize;
+        if (!isOffsetValid) {
+            throw new IllegalArgumentException("heap offset does not start row " + rowIndex + ": " + heapOffset);
+        }
+        ((OrderedMapCursor) cursor).init(heapAddr + heapOffset, size - (int) rowIndex);
+    }
+
     @Override
     public boolean isOpen() {
         return heapAddr != 0;

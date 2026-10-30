@@ -1417,6 +1417,240 @@ public class OrderedMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInitCursorAtIndexFixedSize() throws Exception {
+        assertMemoryLeak(() -> assertIndexedCursorRanges(false));
+    }
+
+    @Test
+    public void testInitCursorAtIndexIndependentCursors() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int layout = 0; layout < 2; layout++) {
+                final boolean isVarSize = layout == 1;
+                try (OrderedMap map = newIndexedCursorMap(isVarSize)) {
+                    map.reopen();
+                    final LongList heapOffsets = new LongList();
+                    fillIndexedCursorMap(map, 0, 6, isVarSize, heapOffsets);
+                    final MapRecordCursor primary = map.getCursor();
+                    final MapRecord primaryA = primary.getRecord();
+                    final MapRecord primaryB = primary.getRecordB();
+                    final LongList ids = new LongList();
+                    while (primary.hasNext()) {
+                        ids.add(primaryA.getRowId());
+                    }
+                    primary.toTop();
+                    Assert.assertTrue(primary.hasNext());
+                    primary.recordAt(primaryB, ids.getQuick(5));
+                    try (MapRecordCursor first = map.newCursor(); MapRecordCursor second = map.newCursor()) {
+                        final MapRecord firstA = first.getRecord();
+                        final MapRecord firstB = first.getRecordB();
+                        final MapRecord secondA = second.getRecord();
+                        final MapRecord secondB = second.getRecordB();
+                        Assert.assertNotSame(primaryA, firstA);
+                        Assert.assertNotSame(firstA, secondA);
+                        Assert.assertNotSame(firstA, firstB);
+                        Assert.assertNotSame(secondA, secondB);
+                        map.initCursorAtIndex(first, 2, heapOffsets.getQuick(2));
+                        map.initCursorAtIndex(second, 4, heapOffsets.getQuick(4));
+                        Assert.assertSame(primaryA, map.getRecord());
+                        Assert.assertSame(primaryA, primary.getRecord());
+                        Assert.assertSame(primaryB, primary.getRecordB());
+                        assertIndexedCursorRecord(primaryA, 0, isVarSize);
+                        assertIndexedCursorRecord(primaryB, 5, isVarSize);
+                        Assert.assertTrue(first.hasNext());
+                        Assert.assertTrue(second.hasNext());
+                        assertIndexedCursorRecord(firstA, 2, isVarSize);
+                        assertIndexedCursorRecord(secondA, 4, isVarSize);
+                        Assert.assertEquals(ids.getQuick(2), firstA.getRowId());
+                        Assert.assertEquals(ids.getQuick(4), secondA.getRowId());
+                        // recordAt accepts same-map IDs from either half, without seeking iteration.
+                        first.recordAt(firstB, ids.getQuick(0));
+                        second.recordAt(secondB, ids.getQuick(5));
+                        assertIndexedCursorRecord(firstA, 2, isVarSize);
+                        assertIndexedCursorRecord(secondA, 4, isVarSize);
+                        assertIndexedCursorRecord(firstB, 0, isVarSize);
+                        assertIndexedCursorRecord(secondB, 5, isVarSize);
+                        first.recordAt(firstA, ids.getQuick(5));
+                        assertIndexedCursorRecord(firstA, 5, isVarSize);
+                        Assert.assertTrue(first.hasNext());
+                        Assert.assertTrue(primary.hasNext());
+                        Assert.assertTrue(second.hasNext());
+                        assertIndexedCursorRecord(firstA, 3, isVarSize);
+                        assertIndexedCursorRecord(primaryA, 1, isVarSize);
+                        assertIndexedCursorRecord(secondA, 5, isVarSize);
+                        assertIndexedCursorRecord(firstB, 0, isVarSize);
+                        assertIndexedCursorRecord(primaryB, 5, isVarSize);
+                        first.toTop();
+                        Assert.assertTrue(first.hasNext());
+                        assertIndexedCursorRecord(firstA, 2, isVarSize);
+                        assertIndexedCursorRecord(firstB, 0, isVarSize);
+                        Assert.assertFalse(second.hasNext());
+                        map.initCursor(first);
+                        assertIndexedCursorRange(first, 0, 6, isVarSize);
+                        Assert.assertSame(firstA, first.getRecord());
+                        Assert.assertSame(firstB, first.getRecordB());
+                        Assert.assertSame(secondA, second.getRecord());
+                        Assert.assertSame(secondB, second.getRecordB());
+                        Assert.assertSame(primary, map.getCursor());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInitCursorAtIndexRebindAfterGrowthAndReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int layout = 0; layout < 2; layout++) {
+                final boolean isVarSize = layout == 1;
+                try (OrderedMap map = newIndexedCursorMap(isVarSize); MapRecordCursor cursor = map.newCursor()) {
+                    map.reopen();
+                    final LongList heapOffsets = new LongList();
+                    fillIndexedCursorMap(map, 0, 2, isVarSize, heapOffsets);
+                    map.initCursorAtIndex(cursor, 1, heapOffsets.getQuick(1));
+                    assertIndexedCursorRange(cursor, 1, 2, isVarSize);
+                    final long heapSize = map.getHeapSize();
+                    fillIndexedCursorMap(map, 2, 128, isVarSize, heapOffsets);
+                    Assert.assertTrue(map.getHeapSize() > heapSize);
+                    // An offset recorded before the heap grew still starts its row.
+                    map.initCursorAtIndex(cursor, 1, heapOffsets.getQuick(1));
+                    assertIndexedCursorRange(cursor, 1, 128, isVarSize);
+                    map.initCursorAtIndex(cursor, 64, heapOffsets.getQuick(64));
+                    assertIndexedCursorRange(cursor, 64, 128, isVarSize);
+                    if (isVarSize) {
+                        final long beforeLookup = map.getHeapSize();
+                        final MapKey key = map.withKey();
+                        key.putVarchar("lookup-key".repeat((int) beforeLookup));
+                        key.putTimestamp(0);
+                        Assert.assertNull(key.findValue());
+                        Assert.assertTrue(map.getHeapSize() > beforeLookup);
+                        Assert.assertEquals(128, map.size());
+                        map.initCursorAtIndex(cursor, 64, heapOffsets.getQuick(64));
+                        assertIndexedCursorRange(cursor, 64, 128, true);
+                    }
+                    map.clear();
+                    fillIndexedCursorMap(map, 0, 3, isVarSize, heapOffsets);
+                    map.initCursorAtIndex(cursor, 1, heapOffsets.getQuick(1));
+                    assertIndexedCursorRange(cursor, 1, 3, isVarSize);
+                    map.close();
+                    map.initCursorAtIndex(cursor, 0, 0);
+                    assertIndexedCursorRange(cursor, 0, 0, isVarSize);
+                    map.reopen();
+                    fillIndexedCursorMap(map, 0, 5, isVarSize, heapOffsets);
+                    map.initCursorAtIndex(cursor, 2, heapOffsets.getQuick(2));
+                    assertIndexedCursorRange(cursor, 2, 5, isVarSize);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInitCursorAtIndexRejectsInvalidArguments() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int layout = 0; layout < 2; layout++) {
+                final boolean isVarSize = layout == 1;
+                try (OrderedMap map = newIndexedCursorMap(isVarSize); MapRecordCursor cursor = map.newCursor()) {
+                    map.reopen();
+                    final LongList heapOffsets = new LongList();
+                    fillIndexedCursorMap(map, 0, 6, isVarSize, heapOffsets);
+                    final long usedHeapSize = map.getUsedHeapSize();
+                    final long[][] invalidPairs = {
+                            {-1, 0}, {7, usedHeapSize}, {Long.MAX_VALUE, 0},
+                            // The offset must start the suffix that the index names.
+                            {0, heapOffsets.getQuick(1)}, {6, heapOffsets.getQuick(5)}, {2, -1}, {2, usedHeapSize}
+                    };
+                    for (long[] pair : invalidPairs) {
+                        map.initCursorAtIndex(cursor, 1, heapOffsets.getQuick(1));
+                        Assert.assertTrue(cursor.hasNext());
+                        cursor.recordAt(cursor.getRecordB(), cursor.getRecord().getRowId());
+                        Assert.assertTrue(cursor.hasNext());
+                        final long rowIdA = cursor.getRecord().getRowId();
+                        final long rowIdB = cursor.getRecordB().getRowId();
+                        Assert.assertThrows(IllegalArgumentException.class, () -> map.initCursorAtIndex(cursor, pair[0], pair[1]));
+                        Assert.assertEquals(5, cursor.size());
+                        Assert.assertEquals(rowIdA, cursor.getRecord().getRowId());
+                        Assert.assertEquals(rowIdB, cursor.getRecordB().getRowId());
+                        assertIndexedCursorRecord(cursor.getRecord(), 2, isVarSize);
+                        assertIndexedCursorRecord(cursor.getRecordB(), 1, isVarSize);
+                        Assert.assertTrue(cursor.hasNext());
+                        assertIndexedCursorRecord(cursor.getRecord(), 3, isVarSize);
+                    }
+                    if (!isVarSize) {
+                        // The fixed-size layout also checks interior offsets.
+                        Assert.assertThrows(IllegalArgumentException.class, () -> map.initCursorAtIndex(cursor, 2, heapOffsets.getQuick(3)));
+                    }
+                    map.close();
+                    map.initCursorAtIndex(cursor, 0, 0);
+                    for (long index : new long[]{-1, 1, Long.MAX_VALUE}) {
+                        Assert.assertThrows(IllegalArgumentException.class, () -> map.initCursorAtIndex(cursor, index, 0));
+                        // Validation precedes even the cursor cast/dereference.
+                        Assert.assertThrows(IllegalArgumentException.class, () -> map.initCursorAtIndex(null, index, 0));
+                        assertIndexedCursorRange(cursor, 0, 0, isVarSize);
+                    }
+                    Assert.assertThrows(IllegalArgumentException.class, () -> map.initCursorAtIndex(null, 0, 8));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInitCursorAtIndexTopK() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int layout = 0; layout < 2; layout++) {
+                final boolean isVarSize = layout == 1;
+                try (
+                        OrderedMap map = newIndexedCursorMap(isVarSize);
+                        MapRecordCursor suffix = map.newCursor();
+                        DirectLongLongSortedList list = new DirectLongLongAscList(2, MemoryTag.NATIVE_DEFAULT)
+                ) {
+                    map.reopen();
+                    final LongList heapOffsets = new LongList();
+                    fillIndexedCursorMap(map, 0, 6, isVarSize, heapOffsets);
+                    map.initCursorAtIndex(suffix, 3, heapOffsets.getQuick(3));
+                    // Top-K scans the bound range, not just the remaining rows.
+                    while (suffix.hasNext()) {
+                    }
+                    suffix.longTopK(list, LongColumn.newInstance(0));
+                    Assert.assertEquals(2, list.size());
+                    final DirectLongLongSortedList.Cursor top = list.getCursor();
+                    for (int i = 3; i < 5; i++) {
+                        Assert.assertTrue(top.hasNext());
+                        Assert.assertEquals(100 + i, top.value());
+                        suffix.recordAt(suffix.getRecordB(), top.index());
+                        assertIndexedCursorRecord(suffix.getRecordB(), i, isVarSize);
+                    }
+                    Assert.assertFalse(top.hasNext());
+                    list.clear();
+                    final MapRecordCursor primary = map.getCursor();
+                    primary.longTopK(list, LongColumn.newInstance(0));
+                    top.toTop();
+                    for (int i = 0; i < 2; i++) {
+                        Assert.assertTrue(top.hasNext());
+                        Assert.assertEquals(100 + i, top.value());
+                        primary.recordAt(primary.getRecordB(), top.index());
+                        assertIndexedCursorRecord(primary.getRecordB(), i, isVarSize);
+                    }
+                    Assert.assertFalse(top.hasNext());
+                    list.clear();
+                    map.initCursorAtIndex(suffix, map.size(), map.getUsedHeapSize());
+                    suffix.longTopK(list, LongColumn.newInstance(0));
+                    Assert.assertEquals(0, list.size());
+                    map.close();
+                    map.initCursorAtIndex(suffix, 0, 0);
+                    suffix.toTop();
+                    suffix.longTopK(list, LongColumn.newInstance(0));
+                    Assert.assertEquals(0, list.size());
+                    Assert.assertFalse(suffix.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testInitCursorAtIndexVarSize() throws Exception {
+        assertMemoryLeak(() -> assertIndexedCursorRanges(true));
+    }
+
+    @Test
     public void testKeyCopyFromFixedSizeKey() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             ArrayColumnTypes keyTypes = new ArrayColumnTypes();
@@ -3354,6 +3588,65 @@ public class OrderedMapTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertIndexedCursorRange(MapRecordCursor cursor, int lo, int hi, boolean isVarSize) {
+        Assert.assertEquals(hi - lo, cursor.size());
+        for (int pass = 0; pass < 2; pass++) {
+            for (int i = lo; i < hi; i++) {
+                Assert.assertTrue(cursor.hasNext());
+                assertIndexedCursorRecord(cursor.getRecord(), i, isVarSize);
+            }
+            Assert.assertFalse(cursor.hasNext());
+            Assert.assertFalse(cursor.hasNext());
+            cursor.toTop();
+        }
+        final int consumed = Math.min(2, hi - lo);
+        for (int i = 0; i < consumed; i++) {
+            Assert.assertTrue(cursor.hasNext());
+        }
+        final RecordCursor.Counter counter = new RecordCursor.Counter();
+        counter.add(11);
+        cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+        Assert.assertEquals(11 + hi - lo - consumed, counter.get());
+        Assert.assertEquals(hi - lo, cursor.size());
+        Assert.assertFalse(cursor.hasNext());
+        cursor.toTop();
+        Assert.assertEquals(hi > lo, cursor.hasNext());
+        if (hi > lo) {
+            assertIndexedCursorRecord(cursor.getRecord(), lo, isVarSize);
+        }
+    }
+
+    private static void assertIndexedCursorRanges(boolean isVarSize) {
+        try (OrderedMap map = newIndexedCursorMap(isVarSize); MapRecordCursor cursor = map.newCursor()) {
+            Assert.assertFalse(map.isOpen());
+            map.initCursorAtIndex(cursor, 0, 0);
+            assertIndexedCursorRange(cursor, 0, 0, isVarSize);
+            map.reopen();
+            map.initCursorAtIndex(cursor, 0, 0);
+            assertIndexedCursorRange(cursor, 0, 0, isVarSize);
+            final LongList heapOffsets = new LongList();
+            fillIndexedCursorMap(map, 0, 6, isVarSize, heapOffsets);
+            for (int index = 0; index <= 6; index++) {
+                map.initCursorAtIndex(cursor, index, heapOffsets.getQuick(index));
+                assertIndexedCursorRange(cursor, index, 6, isVarSize);
+            }
+            map.close();
+            map.initCursorAtIndex(cursor, 0, 0);
+            assertIndexedCursorRange(cursor, 0, 0, isVarSize);
+        }
+    }
+
+    private static void assertIndexedCursorRecord(MapRecord record, int index, boolean isVarSize) {
+        Assert.assertEquals(100 + index, record.getLong(0));
+        if (isVarSize) {
+            final Utf8Sequence key = record.getVarcharA(1);
+            Assert.assertEquals(indexedCursorKey(index), key == null ? null : key.toString());
+        } else {
+            Assert.assertEquals(index, record.getInt(1));
+        }
+        Assert.assertEquals(1_000_000L + index * 1000L, record.getTimestamp(2));
+    }
+
     /**
      * Plants an occupied slot with the top bit set in the destination table, right where the source
      * key probes to, then merges. The merge probe has to walk over the planted slot; reading it as
@@ -3473,6 +3766,23 @@ public class OrderedMapTest extends AbstractCairoTest {
         });
     }
 
+    private static void fillIndexedCursorMap(OrderedMap map, int lo, int hi, boolean isVarSize, LongList heapOffsets) {
+        for (int i = lo; i < hi; i++) {
+            heapOffsets.extendAndSet(i, map.getUsedHeapSize());
+            final MapKey key = map.withKey();
+            if (isVarSize) {
+                key.putVarchar(indexedCursorKey(i));
+            } else {
+                key.putInt(i);
+            }
+            key.putTimestamp(1_000_000L + i * 1000L);
+            final MapValue value = key.createValue();
+            Assert.assertTrue(value.isNew());
+            value.putLong(0, 100 + i);
+        }
+        heapOffsets.extendAndSet(hi, map.getUsedHeapSize());
+    }
+
     private static void fillLongKeys(OrderedMap map, int count) {
         for (int i = 0; i < count; i++) {
             MapKey key = map.withKey();
@@ -3491,6 +3801,23 @@ public class OrderedMapTest extends AbstractCairoTest {
             Assert.assertTrue(value.isNew());
             value.putLong(0, i);
         }
+    }
+
+    private static String indexedCursorKey(int index) {
+        return switch (index) {
+            case 0 -> null;
+            case 1 -> "";
+            case 2 -> "a";
+            case 3 -> "é";
+            case 4 -> "東京";
+            default -> "long-key-" + index;
+        };
+    }
+
+    private static OrderedMap newIndexedCursorMap(boolean isVarSize) {
+        return new OrderedMap(64,
+                new ArrayColumnTypes().add(isVarSize ? ColumnType.VARCHAR : ColumnType.INT).add(ColumnType.TIMESTAMP),
+                new SingleColumnType(ColumnType.LONG), 16, 0.5, Integer.MAX_VALUE, false);
     }
 
     private static int firstEmptySlot(OrderedMap map) {

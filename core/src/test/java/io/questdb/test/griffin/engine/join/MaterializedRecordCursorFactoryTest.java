@@ -27,12 +27,15 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
+import io.questdb.griffin.engine.join.MaterializedRecordCursorFactory;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.str.StringSink;
@@ -116,6 +119,53 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, frameRows);
         super.setUp();
+    }
+
+    @Test
+    public void testConstructorFailureClosesBase() throws Exception {
+        run((engine, compiler, context) -> {
+            final RuntimeException failure = new RuntimeException("injected metadata failure");
+            final int[] closeCount = {0};
+            try (RecordCursorFactory delegate = compiler.compile("SELECT x FROM long_sequence(1)", context).getRecordCursorFactory()) {
+                final GenericRecordMetadata metadata = new GenericRecordMetadata() {
+                    @Override
+                    public int getColumnType(int columnIndex) {
+                        throw failure;
+                    }
+                };
+                GenericRecordMetadata.copyColumns(delegate.getMetadata(), metadata);
+                final RecordCursorFactory base = new RecordCursorFactory() {
+                    @Override
+                    public void close() {
+                        closeCount[0]++;
+                        delegate.close();
+                    }
+
+                    @Override
+                    public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+                        return delegate.getCursor(executionContext);
+                    }
+
+                    @Override
+                    public RecordMetadata getMetadata() {
+                        return metadata;
+                    }
+
+                    @Override
+                    public boolean recordCursorSupportsRandomAccess() {
+                        return false;
+                    }
+                };
+                // RecordArray reads column types during construction, after the wrapper adopts base.
+                // No rows reach the sink: this tests consume-on-entry, including constructor failure.
+                try (RecordCursorFactory ignored = new MaterializedRecordCursorFactory(configuration, base, null, true)) {
+                    Assert.fail("expected metadata failure");
+                } catch (RuntimeException e) {
+                    Assert.assertSame(failure, e);
+                }
+                Assert.assertEquals(1, closeCount[0]);
+            }
+        });
     }
 
     @Test

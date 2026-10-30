@@ -1721,7 +1721,7 @@ public class JoinTest extends AbstractCairoTest {
                         ('C', 'w', 40, '2024-01-01T00:00:45.000000Z')
                     """);
             execute("INSERT INTO instruments VALUES ('A', 'alpha'), ('B', 'beta')");
-            // UNION ALL gives the view no random access, so ASOF and LT joins run full-fat on it
+            // UNION ALL gives the view no random access. Pruning q.v lets these joins stay full-fat.
             execute("CREATE VIEW uq AS (SELECT * FROM (SELECT * FROM quotes UNION ALL SELECT * FROM quotes WHERE bid < 0) TIMESTAMP(ts))");
 
             // the default compiler on a view slave, and the full-fat compiler flag on a table slave
@@ -1788,9 +1788,24 @@ public class JoinTest extends AbstractCairoTest {
                                 """);
             }
 
-            // a column that the query references still fails as before
-            assertQuery("SELECT t.ts, q.v FROM trades t ASOF JOIN uq q ON q.sym = t.v")
+            // A referenced variable-size value needs a strict copy in default mode.
+            final String sql = "SELECT t.ts, q.v FROM trades t ASOF JOIN uq q ON q.sym = t.v";
+            assertQuery(sql)
                     .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("Materialize")
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:10.000000Z\tx
+                            2024-01-01T00:00:20.000000Z\ty
+                            2024-01-01T00:00:30.000000Z\tz
+                            2024-01-01T00:00:40.000000Z\t
+                            """);
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fullFatJoins()
                     .fails(31, "right side column 'v' is of unsupported type");
         });
     }

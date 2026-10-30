@@ -1840,6 +1840,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
+    private static int findUnsupportedFullFatJoinColumn(RecordMetadata metadata, ListColumnFilter keyColumns) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (!RecordValueSinkFactory.isSupportedColumnType(metadata.getColumnType(i))) {
+                boolean isKey = false;
+                for (int k = 0, m = keyColumns.getColumnCount(); k < m; k++) {
+                    if (keyColumns.getColumnIndexFactored(k) == i) {
+                        isKey = true;
+                        break;
+                    }
+                }
+                if (!isKey) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
     private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
         final IntList direction = model.getOrderByDirectionAdvice();
         return index >= direction.size() ? IQueryModel.ORDER_DIRECTION_ASCENDING : direction.getQuick(index);
@@ -2012,6 +2030,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return joinColumns.getColumnCount() == 1 &&
                 symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
                 !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
+    }
+
+    private static boolean isTemporalJoinCopySupported(RecordMetadata metadata) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final int type = metadata.getColumnType(i);
+            final boolean isSupported = RecordValueSinkFactory.isSupportedColumnType(type) || switch (ColumnType.tagOf(type)) {
+                case STRING, VARCHAR, BINARY, ARRAY, INTERVAL, NULL -> true;
+                default -> false;
+            };
+            if (!isSupported) {
+                // RecordChain cannot retain pseudo-types such as nested RECORD values.
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isTimestampOrderRequested(
@@ -3059,26 +3092,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             moveRepeatedSlaveKeyColumnsLast();
         }
 
-        // map doesn't support variable length types in map value, which is ok
-        // when we join tables on strings - technically string is the key,
-        // and we do not need to store it in value, but we will still reject
-        //
-        // never mind, this is a stop-gap measure until I understand the problem
-        // fully
-
-        for (int k = 0, m = slaveMetadata.getColumnCount(); k < m; k++) {
-            if (intHashSet.excludes(k)) {
-                // A non-key slave column is materialized into the map value, so it must be a
-                // type the value sink can store. That excludes variable-length types and
-                // fixed-size types the map value cannot hold (e.g. INTERVAL). Reject them here
-                // with a user-facing message instead of letting RecordValueSinkFactory throw a
-                // bare UnsupportedOperationException.
-                if (!RecordValueSinkFactory.isSupportedColumnType(slaveMetadata.getColumnType(k))) {
-                    throw SqlException
-                            .position(joinPosition).put("right side column '")
-                            .put(slaveMetadata.getColumnName(k)).put("' is of unsupported type");
-                }
-            }
+        // The map retains non-key columns as values, which excludes variable-length types
+        // and some fixed-size types (e.g. INTERVAL). Keys have a separate representation.
+        final int unsupportedColumn = findUnsupportedFullFatJoinColumn(slaveMetadata, listColumnFilterA);
+        if (unsupportedColumn != -1) {
+            throw SqlException
+                    .position(joinPosition).put("right side column '")
+                    .put(slaveMetadata.getColumnName(unsupportedColumn)).put("' is of unsupported type");
         }
 
         // at this point listColumnFilterB has column indexes of the master record that are JOIN keys
@@ -7218,6 +7238,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 boolean isSelfJoin = isSameTable(master, slaveToFree);
                                 processJoinContext(index == 1, isSelfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 validateTimestampNotInJoinKeys(slaveModel, masterMetadata, slaveMetadata);
+                                if (!fullFatJoins
+                                        && !slaveToFree.recordCursorSupportsRandomAccess()
+                                        && findUnsupportedFullFatJoinColumn(slaveMetadata, listColumnFilterA) != -1
+                                        && isTemporalJoinCopySupported(slaveMetadata)) {
+                                    // Light temporal joins retain row IDs. Copy only inputs that the full-fat
+                                    // value sink cannot store; compatible inputs keep their per-key state.
+                                    final RecordCursorFactory slaveToMaterialize = slaveToFree;
+                                    slaveToFree = null;
+                                    slaveToFree = materialize(slaveToMaterialize, true);
+                                }
                                 master = joinType == IQueryModel.JOIN_ASOF
                                         ? generateJoinAsof(isSelfJoin, model, slaveModel, master, masterMetadata, masterAlias, slaveToFree, slaveMetadata)
                                         : generateJoinLt(model, slaveModel, master, masterMetadata, masterAlias, slaveToFree, slaveMetadata);

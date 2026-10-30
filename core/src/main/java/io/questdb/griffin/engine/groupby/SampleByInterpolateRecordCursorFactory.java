@@ -40,6 +40,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Function;
@@ -372,7 +373,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     private class SampleByInterpolateRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
         protected final Map recordKeyMap;
         private final GroupByAllocator allocator;
-        private final Map dataMap;
+        private final OrderedMap dataMap;
         private final DataMapCursor dataMapCursor;
         private final Function offsetFunc;
         private final int offsetFuncPos;
@@ -387,6 +388,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private long fixedOffset;
         private long hiSample = -1;
         private long inOrderEntryCount;
+        private long inOrderHeapSize;
         private boolean isMapBuilt;
         private boolean isMapFilled;
         private boolean isMapInitialized;
@@ -673,7 +675,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 }
             }
             // refresh map cursor
-            baseCursor = inOrderEntryCount < 0 ? dataMap.getCursor() : dataMapCursor.of(inOrderEntryCount);
+            baseCursor = inOrderEntryCount < 0 ? dataMap.getCursor() : dataMapCursor.of(inOrderEntryCount, inOrderHeapSize);
         }
 
         private void buildMapConditionally() {
@@ -775,6 +777,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             fillGaps(prevSample, hiSample);
             if (lateGapHi != Numbers.LONG_NULL) {
                 inOrderEntryCount = dataMap.size();
+                inOrderHeapSize = dataMap.getUsedHeapSize();
                 fillGaps(loSample, lateGapHi);
             }
         }
@@ -1026,10 +1029,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             public void toTop() {
                 cursor.toTop();
                 inOrderRemaining = inOrderCount;
-                dataMap.initCursor(lateGapCursor);
-                for (long i = 0; i < inOrderCount; i++) {
-                    lateGapCursor.hasNext();
-                }
+                lateGapCursor.toTop();
                 nextInOrder();
                 nextLateGap();
             }
@@ -1051,10 +1051,12 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 }
             }
 
-            private DataMapCursor of(long inOrderCount) {
+            private DataMapCursor of(long inOrderCount, long inOrderHeapSize) {
                 this.inOrderCount = inOrderCount;
                 cursor = dataMap.getCursor();
                 record = cursor.getRecord();
+                // All map mutations and lookup key staging have finished; bind the suffix once.
+                dataMap.initCursorAtIndex(lateGapCursor, inOrderCount, inOrderHeapSize);
                 toTop();
                 return this;
             }
