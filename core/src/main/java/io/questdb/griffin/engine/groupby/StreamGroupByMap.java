@@ -70,6 +70,8 @@ public final class StreamGroupByMap implements QuietCloseable {
     private final ArrayColumnTypes mapValueTypes;
     private final DirectLongList mergeMemory;
     private final RecordSink mergeSink;
+    // The most keys a map presizes for, 0 when presizing is off.
+    private final long presizeMaxKeys;
     private final SelectedRecord record;
     private final int segmentIndex;
     private final int segmentType;
@@ -79,6 +81,10 @@ public final class StreamGroupByMap implements QuietCloseable {
     private final FlyweightPackedMapValue value;
     private final RecordValueSink valueSink;
     private int initialKeyCapacity;
+    // The most keys a segment held since the map opened.
+    private long peakKeys;
+    // The keys the first segment after a reopen presizes the map for.
+    private long presizeKeys;
     // The most keys a batch of the current segment reserved map capacity for.
     private long reservedKeys;
     private long segmentKey;
@@ -100,6 +106,7 @@ public final class StreamGroupByMap implements QuietCloseable {
         segmentIndex = valueTypes.getColumnCount();
         segmentType = keyTypes.getColumnType(streamKeyIndex);
         batchSize = configuration.getGroupByBatchSize();
+        presizeMaxKeys = configuration.isGroupByPresizeEnabled() ? configuration.getGroupByPresizeMaxCapacity() : 0;
         try {
             mapKeyTypes = new ArrayColumnTypes();
             mapValueTypes = new ArrayColumnTypes().addAll(valueTypes);
@@ -156,6 +163,7 @@ public final class StreamGroupByMap implements QuietCloseable {
         segmentIndex = prototype.segmentIndex;
         segmentType = prototype.segmentType;
         batchSize = prototype.batchSize;
+        presizeMaxKeys = prototype.presizeMaxKeys;
         columnCrossIndex = prototype.columnCrossIndex;
         mapKeyTypes = prototype.mapKeyTypes;
         mapValueTypes = prototype.mapValueTypes;
@@ -213,20 +221,32 @@ public final class StreamGroupByMap implements QuietCloseable {
     }
 
     public void clear(long key) {
-        // Map.clear() zeroes the whole table, which keeps the capacity of the largest segment so far.
-        // Give that capacity back once a segment needs a fraction of it, so a single high-cardinality
-        // segment does not make every later segment pay for it.
-        if (map.getKeyCapacity() > Math.max(initialKeyCapacity, SHRINK_RATIO * (map.size() + reservedKeys))) {
-            map.restoreInitialCapacity();
+        final long size = map.size();
+        peakKeys = Math.max(peakKeys, size);
+        if (presizeKeys > 0 && size == 0) {
+            // A cached factory runs its query again: give the first segment the capacity the largest segment
+            // of the last run needed rather than grow the empty map one rehash at a time.
+            map.setKeyCapacity((int) presizeKeys);
+        } else {
+            // Map.clear() zeroes the whole table, which keeps the capacity of the largest segment so far.
+            // Give that capacity back once a segment needs a fraction of it, so a single high-cardinality
+            // segment does not make every later segment pay for it.
+            if (map.getKeyCapacity() > Math.max(initialKeyCapacity, SHRINK_RATIO * (size + reservedKeys))) {
+                map.restoreInitialCapacity();
+            }
+            // OrderedMap.restoreInitialCapacity() clears only when it reallocates.
+            map.clear();
         }
-        // OrderedMap.restoreInitialCapacity() clears only when it reallocates.
-        map.clear();
+        presizeKeys = 0;
         reservedKeys = 0;
         segmentKey = key;
     }
 
     @Override
     public void close() {
+        if (map != null) {
+            peakKeys = Math.max(peakKeys, map.size());
+        }
         Throwable th = Misc.freeBestEffort(null, map);
         th = Misc.freeBestEffort(th, mergeMemory);
         th = Misc.freeBestEffort(th, batchRows);
@@ -302,6 +322,8 @@ public final class StreamGroupByMap implements QuietCloseable {
         map.reopen();
         initialKeyCapacity = map.getKeyCapacity();
         map.setBatchEmptyValue(updater);
+        presizeKeys = peakKeys > initialKeyCapacity && peakKeys <= presizeMaxKeys ? peakKeys : 0;
+        peakKeys = 0;
     }
 
     public long size() {

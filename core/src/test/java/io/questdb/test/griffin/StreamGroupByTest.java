@@ -638,6 +638,43 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSegmentedMapPresizesFromLastRun() throws Exception {
+        run((engine, compiler, context) -> {
+            // One key in the first second, 5_000 keys in the second one, then 999 seconds of one key each.
+            engine.execute("""
+                    CREATE TABLE trades AS (
+                        SELECT '2024-01-01'::timestamp + CASE WHEN x = 1 THEN 0 WHEN x <= 5_001 THEN 1 ELSE x - 5_000 END * 1_000_000 ts,
+                            CASE WHEN x <= 5_001 THEN x ELSE 0 END k
+                        FROM long_sequence(6_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """, context);
+            try (RecordCursorFactory factory = compiler.compile("SELECT timestamp_floor('1s', ts) bucket, k, count(*) FROM trades", context).getRecordCursorFactory()) {
+                assertStream(factory, true);
+                int initialCapacity = 0;
+                for (int run = 0; run < 2; run++) {
+                    try (RecordCursor cursor = factory.getCursor(context)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        if (run == 0) {
+                            initialCapacity = getSegmentMapKeyCapacity(factory);
+                        } else if (!parallel) {
+                            // The second run sizes the map for the 5_000 keys before it reads the first segment.
+                            Assert.assertTrue(getSegmentMapKeyCapacity(factory) > initialCapacity);
+                        }
+                        long count = 1;
+                        while (cursor.hasNext()) {
+                            count++;
+                        }
+                        Assert.assertEquals(6_000, count);
+                        if (!parallel) {
+                            Assert.assertEquals(initialCapacity, getSegmentMapKeyCapacity(factory));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSegmentedMapShrinksAfterHighCardinalitySegment() throws Exception {
         run((engine, compiler, context) -> {
             for (int[] segment : new int[][]{{5_000, 5_000}, {600, 100}}) {
