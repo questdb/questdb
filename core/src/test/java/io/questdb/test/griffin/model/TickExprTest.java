@@ -1733,8 +1733,7 @@ public class TickExprTest {
                 "2024-01-02T10:00:00.000000Z"
         );
         // Left out: a slot of the week with its own timezone, as in [2024-W01T[09:00@+05:00], $today]T10:00@+02:00,
-        // which the compiled form converts again with the timezone of the list, and judges against the day
-        // filter of the list by its day in UTC.
+        // which the compiled form converts again with the timezone of the list.
     }
 
     @Test
