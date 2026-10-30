@@ -39,6 +39,7 @@ import io.questdb.griffin.OperatorRegistry;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.Long256Function;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.model.QueryColumn;
@@ -63,6 +64,20 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 
 public class SqlUtilTest {
+
+    @Test
+    public void testCharToNumberAcceptsOnlyAsciiDigits() {
+        for (int i = Character.MIN_VALUE; i <= Character.MAX_VALUE; i++) {
+            final char c = (char) i;
+            if (c >= '0' && c <= '9') {
+                Assert.assertEquals(c - '0', SqlUtil.implicitCastCharAsType(c, ColumnType.INT));
+                Assert.assertEquals(c - '0', new CharConstant(c).getInt(null));
+            } else {
+                Assert.assertThrows(ImplicitCastException.class, () -> SqlUtil.implicitCastCharAsType(c, ColumnType.INT));
+                Assert.assertThrows(ImplicitCastException.class, () -> new CharConstant(c).getInt(null));
+            }
+        }
+    }
 
     @Test
     public void testExprColumnAliasAllSpaceBaseYieldsColumn() {
