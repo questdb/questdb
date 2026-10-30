@@ -1298,9 +1298,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 );
                 // Flush before asking the sequencer. A conditional cleanup commit does not hold the sequencer lock
                 // across append and fsync, so a fence rejection rolls back this unsequenced event. Under ADAPTIVE,
-                // syncIfRequired puts the writer's own files on the medium ahead of the sequencer record. With no
-                // window, getSequencerTxn also fdatasyncs the sequencer log; with a window, flushPendingDurable does
-                // the batch's device flush.
+                // syncIfRequired puts the column and event files on the medium ahead of the sequencer record, and
+                // getSequencerTxn does the same for a changed segment _meta before it asks. With no window,
+                // getSequencerTxn also fdatasyncs the sequencer log; with a window, flushPendingDurable does the
+                // batch's device flush.
                 final int commitMode = walCommitMode();
                 // Read the test hook once per commit: it is a static volatile on the hot path.
                 final DeferredCommitInterceptor commitInterceptor = deferredCommitInterceptor;
@@ -1799,7 +1800,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 final long txnRowCount = segmentRowCount - currentTxnStartRowNum;
                 seqTxn = expectedSeqTxn == Long.MAX_VALUE
                         ? nextSeqTxn(getColumnStructureVersion(), txnMinTimestamp, txnMaxTimestamp, txnRowCount)
-                        : sequencer.nextTxnIfLastTxn(tableToken, expectedSeqTxn, walId, getColumnStructureVersion(), segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
+                        : nextSeqTxnIfLastTxn(expectedSeqTxn, getColumnStructureVersion(), txnMinTimestamp, txnMaxTimestamp, txnRowCount);
                 if (seqTxn == NO_TXN) {
                     applyMetadataChangeLog(Long.MAX_VALUE);
                 }

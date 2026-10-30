@@ -119,15 +119,15 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
         // DETERMINISTIC data-loss guard (non-fuzz) for the SCALAR destructive path. Cleanup must never
         // reclaim while the view has committed-but-unapplied WAL txns: the survivor scan reads only APPLIED
         // state, so a refresh back-fill committed to the view's sequencer but not yet applied is invisible
-        // to it. There is no in-job hook to pause exactly between the survivor scan and the destructive
-        // commit, so the trigger state is reproduced deterministically: refresh commits the back-fill into
-        // the view's WAL (seqTxn advances) and the view's WAL apply is skipped (writerTxn < seqTxn). The
-        // sweep baselines expectedSeqTxn on its reader's applied txn, so the per-commit sequencer fence
-        // (commitWithParamsIfSeqTxn) rejects the fully-expired partition's wipe -- cleanup defers, reclaiming
-        // nothing. After the view applies, the back-filled kept row must be visible, and a caught-up sweep
-        // must reclaim the fully-expired partition while that row SURVIVES. The instruction-level
-        // scan-vs-commit interleave on live threads is exercised probabilistically by
-        // testConcurrentCleanupScalarWhen.
+        // to it. The test reproduces that state deterministically: refresh commits the back-fill into the
+        // view's WAL (seqTxn advances) and the view's WAL apply is skipped (writerTxn < seqTxn). The sweep
+        // baselines expectedSeqTxn on its reader's applied txn, finds the sequencer ahead of that baseline,
+        // and defers before it attempts any destructive commit, reclaiming nothing. The per-commit sequencer
+        // fence (commitWithParamsIfSeqTxn) covers a txn sequenced after that check;
+        // MatViewExpireRowsHardeningTest drives it through the sequencer barrier. After the view applies, the
+        // back-filled kept row must be visible, and a caught-up sweep must reclaim the fully-expired
+        // partition while that row SURVIVES. testConcurrentCleanupScalarWhen exercises the instruction-level
+        // scan-vs-commit interleave on live threads probabilistically.
         assertMemoryLeak(() -> {
             final String base = "m3_base";
             final String view = "m3_mv";
@@ -164,10 +164,9 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
                     tracker.getWriterTxn() < tracker.getSeqTxn()
             );
 
-            // The sweep classifies BOTH 01-01 and 01-02 as fully expired and attempts their wipes, but the
-            // refresh txn already advanced the sequencer past the sweep's reader baseline, so the fence
-            // rejects both commits and nothing is reclaimed. This is the data-loss window the fence closes:
-            // an unfenced empty REPLACE_RANGE over 01-02 would sequence AFTER the pending refresh txn and
+            // The refresh txn already advanced the sequencer past the sweep's reader baseline, so the sweep
+            // defers before it attempts any wipe and nothing is reclaimed. This is the data-loss window the
+            // gate closes: an empty REPLACE_RANGE over 01-02 sequenced AFTER the pending refresh txn would
             // physically delete the committed-but-unapplied kept C row when applied.
             final boolean reclaimed;
             try (RowExpiryCleanupJob job = new RowExpiryCleanupJob(engine)) {
