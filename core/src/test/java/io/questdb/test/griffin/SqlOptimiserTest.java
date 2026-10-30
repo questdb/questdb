@@ -4995,6 +4995,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     sample by 5d from '2017-12-20' to '2018-01-31' fill(null)
                     """;
 
+            // the GROUP BY over a keyless ASOF JOIN to a small table reads the master's frames and
+            // looks the slave's columns up (AsOfLookup); this query takes none of them
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
@@ -5004,18 +5006,15 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               fill: null
                                 Encode sort light
                                   keys: [ts]
-                                    GroupBy vectorized: false
+                                    Async Group By workers: 1
                                       keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('5d',ts,'2017-12-20T00:00:00.000Z')]
                                       values: [avg(x)]
-                                        SelectedRecord
-                                            AsOf Join Fast
-                                                PageFrame
-                                                    Row forward scan
-                                                    Interval forward scan on: fromto
-                                                      intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: fromto2
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: fromto
+                                              intervals: [("2017-12-20T00:00:00.000000Z","2018-01-30T23:59:59.999999Z")]
                             """);
             assertQuery(query)
                     .noLeakCheck()
