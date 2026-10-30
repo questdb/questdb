@@ -156,6 +156,69 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateVariableBareTimeListInCachedPlanFollowsDayChange() throws Exception {
+        // A bare date variable takes a bracketed time part, as in $todayT[09:00,14:30], the same way
+        // as [$today]T[09:00,14:30]. A cached plan must move the slots to the next day along with
+        // $today wherever it evaluates them: in the interval scan, for IN, NOT IN and the second IN
+        // of an OR, and in the row filter, with the JIT on and off. The compiled form represents the
+        // first time part and parses the second one on every execution.
+        assertMemoryLeak(() -> {
+            final int jitMode = sqlExecutionContext.getJitMode();
+            try {
+                for (String slots : new String[]{"$todayT[09:00,14:30]", "$todayT[09,14]:[00,30]"}) {
+                    for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                        sqlExecutionContext.setJitMode(mode);
+                        // ts is the designated timestamp, so its IN narrows the interval scan, and ts2
+                        // is not, so the row filter evaluates its IN
+                        for (String column : new String[]{"ts", "ts2"}) {
+                            final String select = "SELECT count(), min(" + column + "), max(" + column + ") FROM t WHERE ";
+                            assertHeldFactoryFollowsDayChange(
+                                    select + column + " IN '" + slots + "'",
+                                    "2\t2024-01-02T09:00:00.000000Z\t2024-01-02T14:30:00.000000Z",
+                                    "2\t2024-01-03T09:00:00.000000Z\t2024-01-03T14:30:00.000000Z"
+                            );
+                            assertHeldFactoryFollowsDayChange(
+                                    select + column + " NOT IN '" + slots + "'",
+                                    "1\t2024-01-02T10:30:00.000000Z\t2024-01-02T10:30:00.000000Z",
+                                    "4\t2024-01-02T09:00:00.000000Z\t2024-01-03T10:30:00.000000Z"
+                            );
+                        }
+                        assertHeldFactoryFollowsDayChange(
+                                "SELECT count(), min(ts), max(ts) FROM t WHERE ts IN '2024-01-05' OR ts IN '" + slots + "'",
+                                "2\t2024-01-02T09:00:00.000000Z\t2024-01-02T14:30:00.000000Z",
+                                "2\t2024-01-03T09:00:00.000000Z\t2024-01-03T14:30:00.000000Z"
+                        );
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    @Test
+    public void testDateVariableBareTimeListParseErrorFails() throws Exception {
+        // A bare date variable with a time part that does not parse fails the query with the
+        // parser's message, at the position of the expression, the same as its bracketed form
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z"));
+            try {
+                for (String tickExpr : new String[]{"$todayT[09,14]:[00,99]", "[$today]T[09,14]:[00,99]"}) {
+                    final String error = "Invalid date: 2024-01-02T09:99";
+                    // the interval scan
+                    assertExceptionNoLeakCheck("SELECT count() FROM t WHERE ts IN '" + tickExpr + "'", 34, error);
+                    assertExceptionNoLeakCheck("SELECT count() FROM t WHERE ts NOT IN '" + tickExpr + "'", 38, error);
+                    // the row filter
+                    assertExceptionNoLeakCheck("SELECT count() FROM t WHERE ts IN '" + tickExpr + "' OR ts = 0", 34, error);
+                }
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testDateVariableInCachedCountFilterFollowsNow() throws Exception {
         // count() takes the count-only filter, which the JIT compiles apart from the row filter
         assertCachedFilterFollowsNow(
@@ -950,6 +1013,15 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     /**
+     * Returns an INSERT of rows at 09:00, 10:30 and 14:30 of the day, in ts and in ts2.
+     */
+    private static String insertSlotRows(String day) {
+        return "INSERT INTO t VALUES ('" + day + "T09:00:00.000000Z', '" + day + "T09:00:00.000000Z'), ('"
+                + day + "T10:30:00.000000Z', '" + day + "T10:30:00.000000Z'), ('"
+                + day + "T14:30:00.000000Z', '" + day + "T14:30:00.000000Z')";
+    }
+
+    /**
      * Compiles the query once at 10:00, runs it, then runs the same factory again at 15:00 after more rows
      * arrive. The table also holds a row at 23:00 that $now never reaches.
      */
@@ -987,6 +1059,33 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 .expectSize()
                 .withPlanContaining(expectedPlan)
                 .returns("count\tmin\tmax\n" + expectedRow + "\n");
+    }
+
+    /**
+     * Compiles the query on 2024-01-02 and runs it over the rows of that day, then runs the same
+     * factory again on 2024-01-03, after the rows of that day arrive. Each day has rows at 09:00,
+     * 10:30 and 14:30, see {@link #insertSlotRows}.
+     */
+    private void assertHeldFactoryFollowsDayChange(String query, String expectedRowOnDay1, String expectedRowOnDay2) throws Exception {
+        execute("DROP TABLE IF EXISTS t");
+        setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T12:00:00.000000Z"));
+        try {
+            final ObjList<MutationStep> steps = new ObjList<>();
+            steps.add(MutationStep.of(insertSlotRows("2024-01-02"), "count\tmin\tmax\n" + expectedRowOnDay1 + "\n"));
+            steps.add(MutationStep.of(
+                    () -> setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-03T12:00:00.000000Z")),
+                    insertSlotRows("2024-01-03"),
+                    "count\tmin\tmax\n" + expectedRowOnDay2 + "\n"
+            ));
+            assertQuery(query)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .ddl("CREATE TABLE t (ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
+                    .mutateStepwise(steps);
+        } finally {
+            setCurrentMicros(-1);
+        }
     }
 
     private void assertIntrinsicRows(String condition, String expectedRow) throws Exception {

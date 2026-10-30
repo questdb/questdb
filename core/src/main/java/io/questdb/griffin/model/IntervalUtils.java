@@ -932,7 +932,7 @@ public final class IntervalUtils {
                 if (c == '@' || c == ';' || c == ',') {
                     break;
                 }
-                if (c == 'T' && isTimeSuffixStart(effectiveSeq, exprEnd + 1, effectiveSeqLim)) {
+                if (c == 'T' && DateExpressionEvaluator.isTimeSuffixStart(effectiveSeq, exprEnd + 1, effectiveSeqLim)) {
                     break;
                 }
                 exprEnd++;
@@ -2190,7 +2190,7 @@ public final class IntervalUtils {
             if (c == '@' || c == ';') {
                 break;
             }
-            if (c == 'T' && isTimeSuffixStart(seq, pos + 1, lim)) {
+            if (c == 'T' && DateExpressionEvaluator.isTimeSuffixStart(seq, pos + 1, lim)) {
                 break;
             }
             pos++;
@@ -4562,19 +4562,6 @@ public final class IntervalUtils {
             }
         }
         return false;
-    }
-
-    /**
-     * Returns whether the character after a 'T' in a bare date variable expression starts its time
-     * part, either a time of day (T09:30) or a bracket (T[09:00,14:30], T[09..17]:30). A variable
-     * name has neither, so 'T' inside one, as in $TOMORROW, does not end the expression.
-     */
-    private static boolean isTimeSuffixStart(CharSequence seq, int index, int lim) {
-        if (index >= lim) {
-            return false;
-        }
-        final char c = seq.charAt(index);
-        return Chars.isAsciiDigit(c) || c == '[';
     }
 
     /**

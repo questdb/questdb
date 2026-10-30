@@ -3097,6 +3097,9 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 "'$now - 1h..$now'",
                 "'$yesterday;2h'",
                 "'$todayT09:30;1h'",
+                "'$todayT[09:00,14:30]'",
+                "'$TOMORROWT[10:30]'",
+                "'$todayT[01,02]:30@Europe/London'",
                 "'[$now - 2h..$now]@America/New_York'",
                 "'$today..$today + 7d#workday'"
         };

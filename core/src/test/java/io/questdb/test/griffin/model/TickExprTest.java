@@ -31,6 +31,7 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.CompiledTickExpression;
+import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.DateVariableExpr;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
@@ -59,6 +60,29 @@ import static io.questdb.test.griffin.GriffinParserTestUtils.intervalToString;
 
 @RunWith(Parameterized.class)
 public class TickExprTest {
+    private static final String[] FUZZ_DAY_FILTERS = {"", "#Tue", "#workday", "#weekend"};
+    private static final String[] FUZZ_DURATIONS = {"", ";1h", ";30m"};
+    // time parts that the grammar rejects
+    private static final String[] FUZZ_MALFORMED_TIMES = {"T[25:00]", "T25:00", "t09:00", "t[09:00]", "T[", "T"};
+    // "now" on different days, weekdays and times of day, and on days when the clocks change
+    private static final String[] FUZZ_NOWS = {
+            "2024-01-02T10:00:00.000000Z", // a Tuesday
+            "2024-01-02T15:00:00.000000Z",
+            "2024-01-03T10:00:00.000000Z", // a Wednesday
+            "2024-01-06T10:00:00.000000Z", // a Saturday
+            "2024-02-29T23:59:00.000000Z", // the last minute of a leap day
+            "2024-03-31T00:30:00.000000Z", // London springs forward at 01:00Z
+            "2024-11-03T05:30:00.000000Z" // New York falls back at 06:00Z
+    };
+    private static final String[] FUZZ_RANGE_ENDS = {"$tomorrow", "$today + 3d", "$now", "$NOW + 1h", "$yesterday", "2024-01-09"};
+    private static final String[] FUZZ_SHIFTS = {" + 1d", "+2h", " - 1bd", "-30m", "+1w", " - 1M", "+90s"};
+    private static final String[] FUZZ_STATIC_ELEMENTS = {"2024-01-05", "2024-01-05T10:00", "2024-01", "2024-01-0[1..3]"};
+    private static final String[] FUZZ_TIMES = {
+            "", "T09:00", "T09", "T09:00:30", "T[09:00]", "T[09:00,14:30]", "T[09..10]:30", "T[01,02]:30",
+            "T[10:30@+02:00]", "T[09:00,10:00]:[15,45]"
+    };
+    private static final String[] FUZZ_VARIABLES = {"$now", "$today", "$yesterday", "$tomorrow", "$NOW", "$TODAY", "$Tomorrow", "$YESTERDAY"};
+    private static final String[] FUZZ_ZONES = {"", "@+02:00", "@Europe/London", "@America/New_York"};
     private static final Log LOG = LogFactory.getLog(TickExprTest.class);
     private static final CairoConfiguration configuration = new DefaultCairoConfiguration(".");
     private static final StringSink sink = new StringSink();
@@ -2962,6 +2986,22 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariableBareWithBracketedTimeIsDynamic() throws SqlException {
+        // A bare date variable with a bracketed time part holds a date variable, the same as its
+        // bracketed form, so the interval model evaluates it on every execution rather than once,
+        // when the SQL compiles
+        assertCompiledTickExpr("$todayT[09:00,14:30]");
+        assertCompiledTickExpr("$tomorrowT[10:30]");
+        assertCompiledTickExpr("$yesterdayT[09:00];30m");
+        assertCompiledTickExpr("$TODAYT[09:00]@Europe/London#workday");
+        assertCompiledTickExpr("$nowT[09:00]");
+        // the compiled form parses these at every evaluation
+        assertCompiledTickExpr("$todayT[01,02]:30");
+        assertCompiledTickExpr("$todayT[09..10]:30");
+        assertCompiledTickExpr("$todayT[10:30@+02:00]");
+    }
+
+    @Test
     public void testDateVariableBareWithDayFilter() throws SqlException {
         // $today#Thu - bare date variable with day filter (2026-01-22 is Thursday)
         assertBracketIntervalWithNow(
@@ -2989,6 +3029,16 @@ public class TickExprTest {
                 "$now - 1h;30m",
                 "2026-01-22T10:30:00.000000Z"
         );
+    }
+
+    @Test
+    public void testDateVariableBareWithMalformedTimeFailsAtCompileTime() {
+        // A malformed time part after a bare date variable fails when the SQL compiles
+        assertIntervalModelError("$todayT[", "Unclosed '['");
+        assertIntervalModelError("$todayT[25:00]", "25:00");
+        assertIntervalModelError("[$todayT[09:00]]", "Unknown date variable");
+        assertIntervalModelError("$todayt[09:00]", "Unknown date variable");
+        assertIntervalModelError("$todayT", "Unknown date variable");
     }
 
     @Test
@@ -3097,6 +3147,44 @@ public class TickExprTest {
                         : "[{lo=2026-01-23T00:00:00.000000Z, hi=2026-01-23T23:59:59.999999Z}]",
                 intervalToString(timestampDriver, out)
         );
+    }
+
+    @Test
+    public void testDateVariableDetectionFuzz() {
+        // SQL folds a tick expression into constants when the query compiles, unless
+        // DateExpressionEvaluator.containsDateVariable() finds a date variable in it. Then it evaluates
+        // the expression on every execution, through CompiledTickExpression. An expression that depends
+        // on "now" but that the detector misses keeps, in a cached plan, the intervals of the time the
+        // query compiled at. The checker parses each expression at several "now" values and requires a
+        // detected date variable when the results differ.
+        final DateVariableDetectionChecker checker = new DateVariableDetectionChecker(timestampType.getDriver());
+        // every bare date variable followed by every suffix, where the end of the variable name meets
+        // the start of the suffix
+        for (String variable : FUZZ_VARIABLES) {
+            for (String time : FUZZ_TIMES) {
+                for (String zone : FUZZ_ZONES) {
+                    for (String dayFilter : FUZZ_DAY_FILTERS) {
+                        for (String duration : FUZZ_DURATIONS) {
+                            checker.check(variable + time + zone + dayFilter + duration, false);
+                        }
+                    }
+                }
+            }
+            for (String time : FUZZ_MALFORMED_TIMES) {
+                for (String zone : FUZZ_ZONES) {
+                    checker.check(variable + time + zone, true);
+                }
+            }
+        }
+        // and random expressions of every shape
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final StringSink expression = new StringSink();
+        for (int i = 0; i < 10_000; i++) {
+            expression.clear();
+            final boolean isMalformed = appendRandomTickExpr(rnd, expression);
+            checker.check(expression.toString(), isMalformed);
+        }
+        checker.assertNoFailures();
     }
 
     @Test
@@ -6994,6 +7082,73 @@ public class TickExprTest {
         assertBracketIntervalError("   ", "Invalid date");
     }
 
+    private static void appendRandomDateVariableExpr(Rnd rnd, StringSink sink) {
+        sink.put(pick(rnd, FUZZ_VARIABLES));
+        if (rnd.nextBoolean()) {
+            sink.put(pick(rnd, FUZZ_SHIFTS));
+        }
+        if (rnd.nextInt(3) == 0) {
+            sink.put("..").put(pick(rnd, FUZZ_RANGE_ENDS));
+        }
+    }
+
+    /**
+     * Appends a random tick expression with date variables, either bare or in a date list, and
+     * returns whether the expression holds a part that the grammar rejects.
+     */
+    private static boolean appendRandomTickExpr(Rnd rnd, StringSink sink) {
+        boolean isMalformed = false;
+        if (rnd.nextInt(8) == 0) {
+            sink.put("  ");
+        }
+        if (rnd.nextInt(3) == 0) {
+            appendRandomDateVariableExpr(rnd, sink);
+        } else {
+            sink.put('[');
+            for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
+                if (i > 0) {
+                    sink.put(rnd.nextBoolean() ? "," : ", ");
+                }
+                if (rnd.nextInt(4) == 0) {
+                    sink.put(pick(rnd, FUZZ_STATIC_ELEMENTS));
+                } else {
+                    appendRandomDateVariableExpr(rnd, sink);
+                }
+                // an element with a suffix of its own
+                switch (rnd.nextInt(10)) {
+                    case 0 -> sink.put(pick(rnd, FUZZ_ZONES));
+                    case 1 -> sink.put(pick(rnd, FUZZ_DAY_FILTERS));
+                    case 2 -> {
+                        // a time part on an element rather than after the list, which the grammar
+                        // rejects on a date variable and on a date without a day
+                        sink.put(pick(rnd, FUZZ_TIMES));
+                        isMalformed = true;
+                    }
+                    default -> {
+                    }
+                }
+            }
+            sink.put(']');
+        }
+        if (rnd.nextInt(10) == 0) {
+            sink.put(pick(rnd, FUZZ_MALFORMED_TIMES));
+            isMalformed = true;
+        } else {
+            sink.put(pick(rnd, FUZZ_TIMES));
+        }
+        sink.put(pick(rnd, FUZZ_ZONES));
+        final String dayFilter = pick(rnd, FUZZ_DAY_FILTERS);
+        final String duration = pick(rnd, FUZZ_DURATIONS);
+        if (rnd.nextInt(10) == 0) {
+            // the day filter goes before the duration
+            sink.put(duration).put(dayFilter);
+            isMalformed |= !dayFilter.isEmpty() && !duration.isEmpty();
+        } else {
+            sink.put(dayFilter).put(duration);
+        }
+        return isMalformed;
+    }
+
     /**
      * Converts encoded intervals (4-long format) to a readable string for assertions.
      * Format: [{lo=..., hi=..., dayFilter=Mon,Tue,...}]
@@ -7051,6 +7206,10 @@ public class TickExprTest {
                 (int) encoded,
                 (encoded & (1L << 57)) != 0
         );
+    }
+
+    private static String pick(Rnd rnd, String[] values) {
+        return values[rnd.nextInt(values.length)];
     }
 
     private void assertBracketInterval(String expected, String interval) throws SqlException {
@@ -7333,6 +7492,22 @@ public class TickExprTest {
     }
 
     /**
+     * Asserts that the interval model rejects the expression when the SQL compiles, with the
+     * position of the expression.
+     */
+    private void assertIntervalModelError(String expression, String expectedError) {
+        final RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
+        builder.of(timestampType.getTimestampType(), 0, configuration);
+        try {
+            builder.intersectIntervals(expression, 0, expression.length(), 42);
+            Assert.fail("Should throw SqlException at compile time: " + expression);
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
+            Assert.assertEquals(42, e.getPosition());
+        }
+    }
+
+    /**
      * Asserts that both the parse path ({@code parseTickExpr}) and the compiled path
      * ({@link CompiledTickExpression#evaluate}) produce the expected intervals for the given "now".
      */
@@ -7397,5 +7572,140 @@ public class TickExprTest {
     @FunctionalInterface
     interface DateVariableExpectedBuilder {
         String build(long now, TimestampDriver driver, TestTimestampType tsType);
+    }
+
+    /**
+     * Checks tick expressions against the contract of
+     * {@link DateExpressionEvaluator#containsDateVariable}: an expression whose intervals depend on
+     * "now" holds a date variable. SQL evaluates a detected expression through
+     * {@link CompiledTickExpression}, which must agree with the parser on a well-formed expression:
+     * one that it compiles evaluates to the intervals of the parser at every "now", and one that it
+     * rejects fails to parse at every "now".
+     * <p>
+     * The two validate a malformed expression in different ways. The parser ignores the time part
+     * of a point in time, so it lets {@code $nowT[25:00]} through where the compiled form rejects it,
+     * and the compiled form ignores the time part of a static element in a date list with a time of
+     * its own, which the parser rejects. The checker therefore only requires a detected date variable
+     * of a malformed expression.
+     */
+    private static class DateVariableDetectionChecker {
+        private static final String ERROR = "error";
+        private static final int MAX_REPORTED_FAILURES = 20;
+        private final StringSink failures = new StringSink();
+        private final LongList intervals = new LongList();
+        private final long[] nows = new long[FUZZ_NOWS.length];
+        private final StringSink parseSink = new StringSink();
+        private final String[] parsed = new String[FUZZ_NOWS.length];
+        private final TimestampDriver timestampDriver;
+        private int checkCount;
+        private int compiledCount;
+        private int failureCount;
+        private int nowDependentCount;
+
+        DateVariableDetectionChecker(TimestampDriver timestampDriver) {
+            this.timestampDriver = timestampDriver;
+            for (int i = 0; i < FUZZ_NOWS.length; i++) {
+                nows[i] = timestampDriver.parseFloorLiteral(FUZZ_NOWS[i]);
+            }
+        }
+
+        void assertNoFailures() {
+            LOG.info().$("date variable detection fuzz done [expressions=").$(checkCount)
+                    .$(", nowDependent=").$(nowDependentCount)
+                    .$(", compiled=").$(compiledCount)
+                    .$(", failures=").$(failureCount)
+                    .I$();
+            if (failureCount > 0) {
+                Assert.fail(failureCount + " of " + checkCount + " tick expressions failed, the first "
+                        + Math.min(failureCount, MAX_REPORTED_FAILURES) + ":\n" + failures);
+            }
+            Assert.assertTrue("no expression depended on now", nowDependentCount > 0);
+            Assert.assertTrue("no expression compiled", compiledCount > 0);
+        }
+
+        /**
+         * @param isMalformed whether the expression holds a part that the grammar rejects
+         */
+        void check(String expression, boolean isMalformed) {
+            checkCount++;
+            try {
+                check0(expression, isMalformed);
+            } catch (AssertionError | RuntimeException e) {
+                throw new AssertionError("tick expression: " + expression, e);
+            }
+        }
+
+        private void check0(String expression, boolean isMalformed) {
+            boolean isNowDependent = false;
+            for (int i = 0; i < nows.length; i++) {
+                parsed[i] = parse(expression, nows[i]);
+                isNowDependent |= !parsed[i].equals(parsed[0]);
+            }
+            if (isNowDependent) {
+                nowDependentCount++;
+            }
+            if (!DateExpressionEvaluator.containsDateVariable(expression, 0, expression.length())) {
+                if (isNowDependent) {
+                    for (int i = 1; i < nows.length; i++) {
+                        if (!parsed[i].equals(parsed[0])) {
+                            fail(expression, "holds no date variable, but parses to " + parsed[0] + " at " + FUZZ_NOWS[0]
+                                    + " and to " + parsed[i] + " at " + FUZZ_NOWS[i]);
+                            return;
+                        }
+                    }
+                }
+                return;
+            }
+            if (isMalformed) {
+                return;
+            }
+            final CompiledTickExpression compiled;
+            try {
+                compiled = IntervalUtils.compileTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0);
+            } catch (SqlException | CairoException e) {
+                for (int i = 0; i < nows.length; i++) {
+                    if (!ERROR.equals(parsed[i])) {
+                        fail(expression, "does not compile [error=" + e.getFlyweightMessage() + "], but parses to "
+                                + parsed[i] + " at " + FUZZ_NOWS[i]);
+                        return;
+                    }
+                }
+                return;
+            }
+            compiledCount++;
+            try (compiled) {
+                for (int i = 0; i < nows.length; i++) {
+                    intervals.clear();
+                    String evaluated;
+                    try {
+                        compiled.evaluate(intervals, nows[i]);
+                        evaluated = intervalToString(timestampDriver, intervals).toString();
+                    } catch (CairoException e) {
+                        evaluated = ERROR;
+                    }
+                    if (!evaluated.equals(parsed[i])) {
+                        fail(expression, "evaluates to " + evaluated + ", but parses to " + parsed[i] + " at " + FUZZ_NOWS[i]);
+                        return;
+                    }
+                }
+            }
+        }
+
+        private void fail(String expression, String reason) {
+            if (failureCount++ < MAX_REPORTED_FAILURES) {
+                failures.put(expression).put(": ").put(reason).put('\n');
+            }
+        }
+
+        private String parse(String expression, long now) {
+            intervals.clear();
+            try {
+                IntervalUtils.parseTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0,
+                        intervals, IntervalOperation.INTERSECT, parseSink, true, now);
+                return intervalToString(timestampDriver, intervals).toString();
+            } catch (SqlException | CairoException e) {
+                return ERROR;
+            }
+        }
     }
 }

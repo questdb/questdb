@@ -1088,6 +1088,34 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInDateVariableBareTimeListFollowsDayChange() throws Exception {
+        // '$todayT[09:00,14:30]' holds a date variable, the same as '[$today]T[09:00,14:30]', so the
+        // held factory must move the slots to Wednesday rather than keep the ones of Tuesday
+        setCurrentMicros(parseMicros("2024-01-02T10:00:00.000000Z"));
+        try {
+            final ObjList<MutationStep> steps = new ObjList<>();
+            steps.add(MutationStep.of(
+                    insertEveryTenMinutes("2024-01-02T00:00:00.000000Z", 144),
+                    """
+                            count\tmin\tmax
+                            2\t2024-01-02T09:00:00.000000Z\t2024-01-02T14:30:00.000000Z
+                            """
+            ));
+            steps.add(MutationStep.of(
+                    () -> setCurrentMicros(parseMicros("2024-01-03T10:00:00.000000Z")),
+                    insertEveryTenMinutes("2024-01-03T00:00:00.000000Z", 144),
+                    """
+                            count\tmin\tmax
+                            2\t2024-01-03T09:00:00.000000Z\t2024-01-03T14:30:00.000000Z
+                            """
+            ));
+            assertHeldFactory("SELECT count(), min(ts), max(ts) FROM t WHERE to_timezone(ts, 'UTC') IN '$todayT[09:00,14:30]'", steps);
+        } finally {
+            setCurrentMicros(-1);
+        }
+    }
+
+    @Test
     public void testInDateVariableDayFilterFollowsDayChange() throws Exception {
         // '$today#Tue' is a whole day on Tuesday and no interval at all on Wednesday, when the held
         // factory must match nothing rather than keep scanning Tuesday
