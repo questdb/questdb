@@ -30,6 +30,7 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TableWriteMode;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TableTransactionLogV1;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
@@ -103,7 +104,7 @@ public class DeltaTableSwitchLogTest extends AbstractCairoTest {
     private static TableTransactionLogFile newLog(CairoConfiguration config, boolean isPartitioned) {
         return isPartitioned
                 ? new TableTransactionLogV2(config, 2, DefaultWalDirectoryPolicy.INSTANCE)
-                : new TableTransactionLogV1(config);
+                : new TableTransactionLogV1(config, LocalDurabilityPolicy.ALWAYS_ON, () -> new long[]{0, -1});
     }
 
     private void testSwitch(boolean isPartitioned, int failAtSync) throws Exception {
