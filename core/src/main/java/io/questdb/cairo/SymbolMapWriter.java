@@ -78,6 +78,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private static long cacheKeyBufferLimit = DirectCharSequenceIntHashMap.MAX_KEY_BUFFER_CAPACITY;
     private final MemoryMARW charMem;
     private final int columnIndex; // column index in the table writer metadata
+    private final FilesFacade ff;
     private final BitmapIndexWriter indexWriter;
     private final SymbolValueCountCollector valueCountCollector;
     private DirectCharSequenceIntHashMap cache;
@@ -88,6 +89,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
     private int symbolCapacity;
     private int symbolIndexInTxWriter;
 
+    /**
+     * Keeps the full-extent msync of the symbol char memory, which every caller outside {@link TableWriter}
+     * wants: only a table column under {@link CommitMode#ADAPTIVE} may narrow it.
+     */
+    @TestOnly
     public SymbolMapWriter(
             CairoConfiguration configuration,
             Path path,
@@ -98,9 +104,39 @@ public class SymbolMapWriter implements Closeable, MapWriter {
             @NotNull SymbolValueCountCollector valueCountCollector,
             int columnIndex
     ) {
+        this(
+                configuration,
+                path,
+                columnName,
+                columnNameTxn,
+                symbolCount,
+                symbolIndexInTxWriter,
+                valueCountCollector,
+                columnIndex,
+                false
+        );
+    }
+
+    /**
+     * @param charMemAppendOnly true to narrow the symbol char memory's msync to the appended range (safe
+     *                          only for {@link CommitMode#ADAPTIVE} table columns); false keeps the
+     *                          full-extent msync
+     */
+    public SymbolMapWriter(
+            CairoConfiguration configuration,
+            Path path,
+            CharSequence columnName,
+            long columnNameTxn,
+            int symbolCount,
+            int symbolIndexInTxWriter,
+            @NotNull SymbolValueCountCollector valueCountCollector,
+            int columnIndex,
+            boolean charMemAppendOnly
+    ) {
         final int plen = path.size();
         try {
             final FilesFacade ff = configuration.getFilesFacade();
+            this.ff = ff;
             // this constructor does not create index. Index must exist,
             // and we use "offset" file to store "header"
             if (!ff.exists(offsetFileName(path.trimTo(plen), columnName, columnNameTxn))) {
@@ -146,6 +182,11 @@ public class SymbolMapWriter implements Closeable, MapWriter {
                     MemoryTag.MMAP_INDEX_WRITER,
                     configuration.getWriterFileOpenOpts()
             );
+            // The char memory only appends (charMem.putStr) and moves its cursor with jumpTo or truncate; it
+            // never writes in place, so its msync may narrow to the written range, under ADAPTIVE only (see
+            // the charMemAppendOnly parameter). offsetMem stays full-extent (updateNullFlag writes in place at
+            // offset 0), and so do the bitmap index .k/.v files (random-access writes below the cursor).
+            charMem.setAppendOnly(charMemAppendOnly);
 
             // move append pointer for symbol values in the correct place
             jumpCharMemToSymbolCount(symbolCount);
@@ -451,6 +492,17 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         }
     }
 
+    /**
+     * Re-applies the CHAR memory's append-only narrowing (see the ctor's {@code charMemAppendOnly}
+     * javadoc). Called by {@code TableWriter.reapplyColumnCommitMode} when enrolment moves an already-open
+     * writer to {@link CommitMode#ADAPTIVE}, so the flag does not stay stale until this symbol writer
+     * reopens.
+     */
+    @Override
+    public void setAppendOnly(boolean isAppendOnly) {
+        charMem.setAppendOnly(isAppendOnly);
+    }
+
     @Override
     public void setSymbolIndexInTxWriter(int symbolIndexInTxWriter) {
         this.symbolIndexInTxWriter = symbolIndexInTxWriter;
@@ -461,6 +513,47 @@ public class SymbolMapWriter implements Closeable, MapWriter {
         charMem.sync(async);
         offsetMem.sync(async);
         indexWriter.sync(async);
+    }
+
+    @Override
+    public void fsyncFiles() {
+        // offsetMem/charMem are the data, the index is derived from them; flush data before index to
+        // match sync()'s ordering discipline.
+        fsyncIfOpen(charMem.getFd());
+        fsyncIfOpen(offsetMem.getFd());
+        indexWriter.fsyncFiles();
+    }
+
+    private void fsyncIfOpen(long fd) {
+        if (fd != -1) {
+            ff.fsync(fd);
+        }
+    }
+
+    @Override
+    public void syncFlushDrain() {
+        // Order-free (see syncFlushKick).
+        charMem.syncFlushDrain();
+        offsetMem.syncFlushDrain();
+        indexWriter.syncFlushDrain();
+    }
+
+    @Override
+    public void syncFlushFinishIfExtended() {
+        // Same order as sync(): char (data), then offset (the pointer into char), then the index. The order
+        // matters only for a memory whose stage 3 flushes by itself; the others are already durable through
+        // the batch's syncfs.
+        charMem.syncFlushFinishIfExtended();
+        offsetMem.syncFlushFinishIfExtended();
+        indexWriter.syncFlushFinishIfExtended();
+    }
+
+    @Override
+    public void syncFlushKick() {
+        // Order-free (no device flush, no durability ordering yet).
+        charMem.syncFlushKick();
+        offsetMem.syncFlushKick();
+        indexWriter.syncFlushKick();
     }
 
     @Override
