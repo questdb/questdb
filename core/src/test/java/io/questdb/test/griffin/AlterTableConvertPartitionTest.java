@@ -912,6 +912,9 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
         assertMemoryLeak(ff, () -> {
             setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            // the split needs the native O3 path, the production default: tests default to merge-append,
+            // which writes the O3 row into a composite partition instead of splitting it
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
             execute("CREATE TABLE x (ts " + timestampType.getTypeName() + ", v VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO x VALUES ('2022-02-25T00:00', 'a'), ('2022-02-25T00:01', 'b'), ('2022-02-25T00:02', 'c'), ('2022-02-25T00:03', 'd')");
             drainWalQueue();
