@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.FactoryProvider;
 import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
+import io.questdb.PropertyKey;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
@@ -40,12 +41,15 @@ import io.questdb.std.RostiAllocFacade;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Map;
 
 public class CairoTestConfiguration extends CairoConfigurationWrapper {
+    // Set only when a developer asked for a RAM-disk test root (ram-disk-test-root profile).
+    private static final boolean RAM_DISK_TEST_ROOT = System.getenv("QDB_TEST_TMPDIR") != null;
     private final String dbRoot;
     private final String installRoot;
     private final Overrides overrides;
@@ -181,8 +185,33 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
+    public boolean isAdaptiveRecoveryRollForwardEnabled() {
+        return overrides.isAdaptiveRecoveryRollForwardEnabled();
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return true;
+    }
+
+    /**
+     * Keeps the on-disk mixed-IO answer for a test root placed on a RAM disk (the {@code ram-disk-test-root}
+     * profile in core/pom.xml). {@link io.questdb.std.FilesFacadeImpl#allowMixedIO} answers false for tmpfs,
+     * which would send every writer down the non-mixed-IO path. Answering true is sound: tmpfs is page-cache
+     * backed, so mmap and write are coherent on it. Applies only when {@code QDB_TEST_TMPDIR} is exported, so a
+     * machine whose {@code /tmp} is tmpfs keeps the default, and never overrides a test that sets
+     * {@code DEBUG_CAIRO_ALLOW_MIXED_IO} itself.
+     */
+    @Override
+    public boolean isWriterMixedIOEnabled() {
+        if (RAM_DISK_TEST_ROOT && !overrides.isPropertySet(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO)) {
+            try (Path path = new Path()) {
+                if (Files.getFileSystemStatus(path.of(dbRoot).$()) == Files.TMPFS_MAGIC) {
+                    return true;
+                }
+            }
+        }
+        return super.isWriterMixedIOEnabled();
     }
 
     @Override

@@ -119,7 +119,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -141,7 +142,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 N,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = N - 1;
@@ -328,7 +330,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                         0,
                         -1,
                         NOOP_COLLECTOR,
-                        -1
+                        -1,
+                        false
                 )) {
                     int prev = -1;
                     for (int i = 0; i < keys; i++) {
@@ -402,7 +405,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     Assert.assertEquals(0, writer.put("A1"));
@@ -440,7 +444,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 symbolCount,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     Assert.fail("expected corrupt exception");
@@ -464,7 +469,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 symbolCount,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     Assert.assertEquals(5, writer.put("A6"));
@@ -699,7 +705,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     Rnd rnd = new Rnd();
@@ -736,7 +743,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                             0,
                             -1,
                             NOOP_COLLECTOR,
-                            -1
+                            -1,
+                            false
                     );
                     Assert.fail();
                 } catch (CairoException e) {
@@ -761,7 +769,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -784,7 +793,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -807,7 +817,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, N)) {
@@ -853,7 +864,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -876,7 +888,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, N)) {
@@ -915,7 +928,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -938,7 +952,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -962,7 +977,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, N)) {
@@ -1034,7 +1050,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -1097,7 +1114,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                         0,
                         -1,
                         NOOP_COLLECTOR,
-                        -1
+                        -1,
+                        false
                 )) {
                     for (int i = 0; i < keys.length; i++) {
                         keys[i] = writer.put("key" + i);
@@ -1186,7 +1204,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     Rnd rnd = new Rnd();
@@ -1229,7 +1248,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     Assert.assertEquals(0, writer.put("A1"));
@@ -1288,7 +1308,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                         0,
                         -1,
                         NOOP_COLLECTOR,
-                        -1
+                        -1,
+                        false
                 );
                 int hi = rnd.nextInt(symbols);
                 hi = addRange(w, 0, hi, rnd, symbolList, indexList, prefix);
@@ -1308,7 +1329,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                             resetTo,
                             -1,
                             NOOP_COLLECTOR,
-                            -1
+                            -1,
+                            false
                     );
 
                     hi = resetTo + rnd.nextInt(symbols - resetTo);
@@ -1334,7 +1356,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                             0,
                             -1,
                             NOOP_COLLECTOR,
-                            -1
+                            -1,
+                            false
                     );
                     Assert.fail();
                 } catch (CairoException e) {
@@ -1358,7 +1381,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                         0,
                         -1,
                         NOOP_COLLECTOR,
-                        -1
+                        -1,
+                        false
                 )
                 ) {
                     Rnd rnd = new Rnd();
@@ -1391,7 +1415,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -1531,7 +1556,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     int prev = -1;
@@ -1582,7 +1608,8 @@ public class SymbolMapTest extends AbstractCairoTest {
                                 0,
                                 -1,
                                 NOOP_COLLECTOR,
-                                -1
+                                -1,
+                                false
                         )
                 ) {
                     Rnd rnd = new Rnd();
