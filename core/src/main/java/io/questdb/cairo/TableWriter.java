@@ -2323,8 +2323,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return true; // Partition is already in Parquet format.
         }
 
-        lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-        boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
+        boolean lastPartitionConverted = false;
         long partitionNameTxn;
         int newPartitionDirLen = 0;
         boolean isTxnWriteStarted = false;
@@ -2334,6 +2333,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // a failed data sync must stop the engine under a durable commit mode.
             compactPartitionToPlain(partitionIndex, "parquet conversion");
             squashPartitionForce(partitionIndex);
+            // Only known after the squash: before it, the last partition can be a split sibling of this one,
+            // whose timestamp is not the logical partition timestamp. Missing that leaves columns[] open on
+            // the replaced native directory once the partition becomes parquet.
+            lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+            lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
             partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             if (!ff.exists(path.$())) {
