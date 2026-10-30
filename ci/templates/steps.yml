@@ -5,6 +5,29 @@ parameters:
   - name: isHetznerAptMirrorEnabled
     type: boolean
     default: true
+  # Name of a pipeline artifact holding this platform's prebuilt Rust library
+  # (rust-build-job.yml). Empty: Maven compiles the crate in this job.
+  - name: prebuiltRustArtifact
+    type: string
+    default: ''
+  - name: testTimeoutInMinutes
+    type: number
+    default: 55
+  - name: artifactNameSuffix
+    type: string
+    default: ""
+  # Main CI runs every test shard on several jobs at once (the Linux legs of one stage, or the
+  # macOS and Windows halves of the hosted pipeline). Name those jobs here, space-separated, and
+  # select-test-commit-mode.yml puts half of them on NOSYNC and half on ADAPTIVE, swapping them on
+  # the branch's next run. Empty leaves the suite default (ADAPTIVE) in place, which is what the
+  # fuzz and adaptive-soak pipelines rely on.
+  - name: testCommitModeGroup
+    type: string
+    default: ""
+  # This job's name within testCommitModeGroup.
+  - name: testCommitModeMember
+    type: string
+    default: ""
 
 steps:
   - ${{ if eq(parameters.isCheckoutEnabled, true) }}:
@@ -38,6 +61,10 @@ steps:
         # Direct-to-Central path: keep historical behaviour (no connection reuse).
         echo "##vso[task.setvariable variable=MAVEN_KEEPALIVE_OPT]-Dhttp.keepAlive=false"
       fi
+      # Empty unless select-test-commit-mode.yml picks a mode for this job. Defined here because
+      # this step runs in every job, and "Run tests" would otherwise pass the undefined macro to
+      # Maven as literal text.
+      echo "##vso[task.setvariable variable=TEST_COMMIT_MODE_OPT]"
     displayName: "Select Maven settings (local proxy vs default)"
   - bash: |
       rm -rf /tmp/junit* /tmp/surefire-agent /tmp/libquestdbr* /tmp/libqdbsqllogic*
@@ -206,9 +233,26 @@ steps:
       destinationFolder: "$(build.sourcesdirectory)/maven"
     condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'))
 
-  - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
-    displayName: "Ensure Rust is installed"
-    # Note, the `prepare_rust_env.py` script exports a number of variables.
+  # Where the Rust library comes from. With prebuiltRustArtifact, the leg tests against the
+  # library a rust-build-job.yml job published instead of compiling the crate; RUST_NATIVE_ARGS
+  # carries the Maven flags for that. It is set on every agent, empty where Maven compiles the
+  # crate itself, because an undefined $(VAR) would reach Maven as literal text. Coverage legs
+  # never pass an artifact: they need the library instrumented for coverage (qdbr-coverage).
+  - ${{ if ne(parameters.prebuiltRustArtifact, '') }}:
+      - task: DownloadPipelineArtifact@2
+        displayName: "Download prebuilt Rust library"
+        inputs:
+          buildType: current
+          artifactName: ${{ parameters.prebuiltRustArtifact }}
+          targetPath: $(Pipeline.Workspace)/qdbr-native
+      - bash: echo "##vso[task.setvariable variable=RUST_NATIVE_ARGS]-DskipNative -Dqdbr.prebuilt.dir=$(Pipeline.Workspace)/qdbr-native"
+        displayName: "Use prebuilt Rust library"
+  - ${{ else }}:
+      - bash: echo "##vso[task.setvariable variable=RUST_NATIVE_ARGS]"
+        displayName: "Use Maven-built Rust library"
+      - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
+        displayName: "Ensure Rust is installed"
+        # Note, the `prepare_rust_env.py` script exports a number of variables.
 
   - template: install-llvm.yml
     parameters:
@@ -219,6 +263,12 @@ steps:
           ne(variables['System.PullRequest.IsFork'], 'true')
         )
 
+  - ${{ if ne(parameters.testCommitModeGroup, '') }}:
+      - template: select-test-commit-mode.yml
+        parameters:
+          group: ${{ parameters.testCommitModeGroup }}
+          member: ${{ parameters.testCommitModeMember }}
+
   - task: Maven@3
     displayName: "Compile with Maven"
     inputs:
@@ -227,7 +277,7 @@ steps:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "compile"
-      options: "-s $(MAVEN_SETTINGS_FILE) $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+      options: "-s $(MAVEN_SETTINGS_FILE) $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS)"
       jdkVersionOption: $(jdk)
     # succeeded() explicitly: a bare variable condition replaces Azure's implicit
     # succeeded() guard, so without it this step runs after an earlier step (e.g.
@@ -240,6 +290,35 @@ steps:
           eq(variables['testset'], 'none'),
           eq(variables['SOURCE_CODE_CHANGED'], 'false')
         )
+      )
+  - task: Maven@3
+    displayName: "Run tests (prebuilt Rust library)"
+    inputs:
+      mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
+      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenPomFile: "pom.xml"
+      mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
+      goals: "clean test"
+      options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode --quiet $(TEST_REACTOR_ARGS) -Dtest.include=$(includeTests)
+        -Dtest.exclude=$(excludeTests)
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
+        -DfailIfNoTests=false
+        -Dsurefire.failIfNoSpecifiedTests=false
+        $(WEB_CONSOLE_PROFILE)
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS) $(TEST_COMMIT_MODE_OPT)"
+      jdkVersionOption: $(jdk)
+      ${{ if ne(parameters.testCommitModeGroup, '') }}:
+        testRunTitle: "$(TEST_RUN_TITLE)"
+    env:
+      QDB_TEST_WINDOWS_SYMLINKS: "1"
+    timeoutInMinutes: ${{ parameters.testTimeoutInMinutes }}
+    # succeeded() explicitly: see "Compile with Maven" above.
+    condition: |
+      and(
+        succeeded(),
+        eq(variables['testset'], 'all'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+        or(eq(variables['os'], 'Windows'), eq(variables['os'], 'macOS'))
       )
   - task: Maven@3
     displayName: "Run tests"
@@ -255,18 +334,26 @@ steps:
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
         $(WEB_CONSOLE_PROFILE)
-        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS) $(TEST_COMMIT_MODE_OPT)"
       jdkVersionOption: $(jdk)
+      ${{ if ne(parameters.testCommitModeGroup, '') }}:
+        testRunTitle: "$(TEST_RUN_TITLE)"
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
-    timeoutInMinutes: 55
+    # Defaults to 55, matching master's previous hardcoded value; the adaptive
+    # nightly overrides it (165 / 315) for its long single-JVM passes.
+    timeoutInMinutes: ${{ parameters.testTimeoutInMinutes }}
     # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
       and(
         succeeded(),
         eq(variables['testset'], 'all'),
-        eq(variables['SOURCE_CODE_CHANGED'], 'true')
+        eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['os'], 'Linux')
       )
+  - ${{ if ne(parameters.testCommitModeGroup, '') }}:
+      - template: verify-test-commit-mode.yml
+
   - bash: find . -name '*.profraw' -delete
     displayName: "Clean stale profraw files"
     condition: |
@@ -328,7 +415,12 @@ steps:
         )
       )
 
-  - bash: find . -type f -name 'hs_*.log' -exec sh -c 'x="{}"; mv "$x" "$(ARCHIVED_CRASH_LOG)"' \;
+  - bash: |
+      echo "##vso[task.setvariable variable=HAS_CRASH_DUMP]false"
+      find . -type f -name 'hs_*.log' -exec sh -c 'mv "$1" "$2"' _ {} "$(ARCHIVED_CRASH_LOG)" \;
+      if [ -f "$(ARCHIVED_CRASH_LOG)" ]; then
+        echo "##vso[task.setvariable variable=HAS_CRASH_DUMP]true"
+      fi
     displayName: "Tests failed -- rename crash dump"
     workingDirectory: $(Build.SourcesDirectory)/core/
     condition: and(failed(), not(eq(variables['os'], 'Windows')))
@@ -336,18 +428,22 @@ steps:
     inputs:
       targetType: "inline"
       script: |
+        Write-Host "##vso[task.setvariable variable=HAS_CRASH_DUMP]false"
         Get-ChildItem -Path . -Filter "hs_*.log" -File | ForEach-Object {
             Move-Item -Path $_.FullName -Destination "$(ARCHIVED_CRASH_LOG)"
+        }
+        if (Test-Path -LiteralPath "$(ARCHIVED_CRASH_LOG)" -PathType Leaf) {
+            Write-Host "##vso[task.setvariable variable=HAS_CRASH_DUMP]true"
         }
       workingDirectory: $(Build.SourcesDirectory)\core\
     displayName: "Tests failed -- rename crash dump -- windows"
     condition: and(failed(), eq(variables['os'], 'Windows'))
   - task: PublishBuildArtifacts@1
     displayName: "Tests failed -- Upload crash logs"
-    condition: failed()
+    condition: and(failed(), eq(variables['HAS_CRASH_DUMP'], 'true'))
     inputs:
       pathToPublish: $(ARCHIVED_CRASH_LOG)
-      artifactName: CrashDump
+      artifactName: "CrashDump${{ parameters.artifactNameSuffix }}"
   - powershell: |
       $base = "$(QDB_LOG_W_FILE_LOCATION)"
       $dir = Split-Path -Parent $base
@@ -387,7 +483,7 @@ steps:
     condition: failed()
     inputs:
       pathToPublish: $(ARCHIVED_LOGS)
-      artifactName: MavenFailedTestsLogs
+      artifactName: "MavenFailedTestsLogs${{ parameters.artifactNameSuffix }}"
 
   - bash: |
       set -eux

@@ -225,31 +225,45 @@ public class TableNameRegistryStore extends GrowOnlyTableNameRegistryStore {
 
         tableNameMemory.close(false);
         tableNameMemory.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
-        tableNameMemory.putLong(0L);
+        final long newAppendOffset;
+        try {
+            tableNameMemory.putLong(0L);
 
-        // Save tables not fully deleted yet to complete the deletion.
-        for (ReverseTableMapItem reverseMapItem : reverseNameMap.values()) {
-            if (reverseMapItem.isDropped()) {
-                writeEntry(reverseMapItem.getToken(), OPERATION_ADD);
-                writeEntry(reverseMapItem.getToken(), OPERATION_REMOVE);
+            // Save tables not fully deleted yet to complete the deletion.
+            for (ReverseTableMapItem reverseMapItem : reverseNameMap.values()) {
+                if (reverseMapItem.isDropped()) {
+                    writeEntry(reverseMapItem.getToken(), OPERATION_ADD);
+                    writeEntry(reverseMapItem.getToken(), OPERATION_REMOVE);
+                }
             }
-        }
 
-        for (TableToken token : nameTableTokenMap.values()) {
-            writeEntry(token, OPERATION_ADD);
-        }
+            for (TableToken token : nameTableTokenMap.values()) {
+                writeEntry(token, OPERATION_ADD);
+            }
 
-        tableNameMemory.sync(false);
-        long newAppendOffset = tableNameMemory.getAppendOffset();
-        tableNameMemory.close();
+            tableNameMemory.sync(false);
+            newAppendOffset = tableNameMemory.getAppendOffset();
+        } finally {
+            // A failed flush must not leave the temporary file open, nor the registry appending to it.
+            tableNameMemory.close();
+        }
 
         // rename tmp to next version file, everyone will automatically switch to new file
         LPSZ path2 = Path.getThreadLocal2(configuration.getDbRoot())
                 .concat(TABLE_REGISTRY_NAME_FILE).put('.').put(lastFileVersion + 1).$();
-        if (ff.rename(path.$(), path2) == Files.FILES_RENAME_OK) {
+        // renameDurable, not rename: the fsyncDirDurable below is what publishes this new name, and it is a
+        // no-op on a restricted (Windows) file system, where the durable rename is the barrier.
+        if (ff.renameDurable(path.$(), path2) == Files.FILES_RENAME_OK) {
             LOG.info().$("compacted tables file [path=").$(path2).I$();
             lastFileVersion++;
             currentOffset = newAppendOffset;
+            // The rename above and the unlink below are two namespace changes in one directory, and neither is
+            // durable until the directory is fsynced, so a power loss between them may persist the unlink and
+            // lose the new version's entry, leaving no registry file. Every name resolves through the registry,
+            // and the directory-scan fallback cannot tell a dropped but unpurged table from a live one, so
+            // dropped tables would come back. Fsync the db root first, so at least one version is durable.
+            // Fail-stop (see TableUtils.fsyncDirDurable): without this barrier the unlink must not run.
+            TableUtils.fsyncDirDurable(ff, path.trimTo(pathRootLen).$());
             // best effort to remove old files, but we don't care if it fails
             path.trimTo(pathRootLen).concat(TABLE_REGISTRY_NAME_FILE).putAscii('.').put(lastFileVersion - 1);
             ff.removeQuiet(path.$());
