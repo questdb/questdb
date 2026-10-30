@@ -6099,7 +6099,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.position(position)
                         .put(switch (action) {
                             case PartitionAction.DETACH -> "cannot detach partition, partition is delta-active [table=";
-                            case PartitionAction.CONVERT_TO_PARQUET -> "cannot convert partition to parquet, partition is delta-active [table=";
+                            case PartitionAction.CONVERT_TO_PARQUET ->
+                                    "cannot convert partition to parquet, partition is delta-active [table=";
                             default -> "cannot convert parquet partition to native, partition is delta-active [table=";
                         })
                         .put(tableToken.getTableName())
