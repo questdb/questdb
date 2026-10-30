@@ -375,8 +375,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             // expensive decode() stays gated on the buffer cache miss / partial window.
             final byte usageBit = record.getLetter() == PageFrameMemoryRecord.RECORD_A_LETTER ? RECORD_A_MASK : RECORD_B_MASK;
             DecodedFrameBuffers parquetBuffers = tryHit(frameIndex, usageBit);
-            final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
-            final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+            final long rowGroupLo = getFrameDecodeRowLo(frameIndex);
+            final long rowGroupHi = getFrameDecodeRowHi(frameIndex);
             if (parquetBuffers == null) {
                 try {
                     prepareDecode(frameIndex);
@@ -508,11 +508,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 throw th;
             }
         } else if (format == PartitionFormat.PARQUET || hasCustomDecode) {
-            final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
-            final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
-            final int decodeLo = (int) Math.min(rowGroupHi, rowGroupLo + (long) inFrameRowLo);
-            final int decodeHi = (int) Math.min(rowGroupHi, rowGroupLo + (long) inFrameRowHi);
-            final int frameRowLo = decodeLo - rowGroupLo;
+            final long rowGroupLo = getFrameDecodeRowLo(frameIndex);
+            final long rowGroupHi = getFrameDecodeRowHi(frameIndex);
+            final long decodeLo = Math.min(rowGroupHi, Math.addExact(rowGroupLo, inFrameRowLo));
+            final long decodeHi = Math.min(rowGroupHi, Math.addExact(rowGroupLo, inFrameRowHi));
+            final int frameRowLo = Math.toIntExact(decodeLo - rowGroupLo);
             if (decodeLo == decodeHi) {
                 // Nothing will be read from this frame (e.g. skipRows with a zero
                 // post-skip cap); publish NULL addresses instead of decoding.
@@ -1028,8 +1028,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     private void decodeAndAccount(int frameIndex, DecodedFrameBuffers decodedFrameBuffers) {
-        final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
-        final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+        final long rowGroupLo = getFrameDecodeRowLo(frameIndex);
+        final long rowGroupHi = getFrameDecodeRowHi(frameIndex);
         decodeWindowAndAccount(frameIndex, decodedFrameBuffers, rowGroupLo, rowGroupHi, 0);
     }
 
@@ -1088,8 +1088,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         final int sliceLo = Numbers.decodeLowInt(slice);
         final int sliceHi = Numbers.decodeHighInt(slice);
         final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
-        final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
-        final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+        final long rowGroupLo = getFrameDecodeRowLo(frameIndex);
+        final long rowGroupHi = getFrameDecodeRowHi(frameIndex);
         try {
             if (isPartitionFrameDecodeActive()) {
                 partitionFrameWindowContext.prepareWindow(addressCache, frameIndex, decodedFrameBuffers.rowGroupBuffers);
@@ -1099,7 +1099,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 );
             } else {
                 decodedFrameBuffers.decodeRowFiltered(
-                        activeDecoder, decodeColumns, rowGroupIndex, rowGroupLo, rowGroupHi,
+                        activeDecoder,
+                        decodeColumns,
+                        rowGroupIndex,
+                        Math.toIntExact(rowGroupLo),
+                        Math.toIntExact(rowGroupHi),
                         recordAtRows.getAddress() + 8L * sliceLo, sliceHi - sliceLo
                 );
             }
@@ -1111,14 +1115,21 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         accountDecode(decodedFrameBuffers);
     }
 
-    private void decodeWindowAndAccount(int frameIndex, DecodedFrameBuffers decodedFrameBuffers, int decodeLo, int decodeHi, int frameRowLo) {
+    private void decodeWindowAndAccount(int frameIndex, DecodedFrameBuffers decodedFrameBuffers, long decodeLo, long decodeHi, int frameRowLo) {
         final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
         try {
             if (isPartitionFrameDecodeActive()) {
                 partitionFrameWindowContext.prepareWindow(addressCache, frameIndex, decodedFrameBuffers.rowGroupBuffers);
                 decodedFrameBuffers.decode(partitionFrameWindowContext.decoder(), decodeColumns, decodeLo, decodeHi, frameRowLo);
             } else {
-                decodedFrameBuffers.decode(activeDecoder, decodeColumns, rowGroupIndex, decodeLo, decodeHi, frameRowLo);
+                decodedFrameBuffers.decode(
+                        activeDecoder,
+                        decodeColumns,
+                        rowGroupIndex,
+                        Math.toIntExact(decodeLo),
+                        Math.toIntExact(decodeHi),
+                        frameRowLo
+                );
             }
         } catch (Throwable th) {
             evictHalfInitialized(decodedFrameBuffers);
@@ -1200,6 +1211,18 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         return addressCache.getPartitionFrameState(frameIndex) != 0 ? PartitionFormat.NATIVE : storageFormat;
     }
 
+    private long getFrameDecodeRowHi(int frameIndex) {
+        return addressCache.getPartitionFrameState(frameIndex) != 0
+                ? addressCache.getPartitionFrameRowHi(frameIndex)
+                : addressCache.getParquetRowGroupHi(frameIndex);
+    }
+
+    private long getFrameDecodeRowLo(int frameIndex) {
+        return addressCache.getPartitionFrameState(frameIndex) != 0
+                ? addressCache.getPartitionFrameRowLo(frameIndex)
+                : addressCache.getParquetRowGroupLo(frameIndex);
+    }
+
     private DirectLongList getNullColumnAddresses() {
         final int columnCount = addressCache.getColumnCount();
         if (nullColumnAddresses == null) {
@@ -1234,10 +1257,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         if (buffers == null || buffers.frameIndex != frameIndex || buffers.isRowFiltered) {
             return false;
         }
-        final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
-        final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
-        final int decodeLo = (int) Math.min(rowGroupHi, rowGroupLo + (long) inFrameRowLo);
-        final int decodeHi = (int) Math.min(rowGroupHi, rowGroupLo + (long) inFrameRowHi);
+        final long rowGroupLo = getFrameDecodeRowLo(frameIndex);
+        final long rowGroupHi = getFrameDecodeRowHi(frameIndex);
+        final long decodeLo = Math.min(rowGroupHi, Math.addExact(rowGroupLo, inFrameRowLo));
+        final long decodeHi = Math.min(rowGroupHi, Math.addExact(rowGroupLo, inFrameRowHi));
         return buffers.decodedRowLo <= decodeLo && buffers.decodedRowHi >= decodeHi;
     }
 
@@ -1246,7 +1269,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     private boolean isRowFilterEligible(int frameIndex, long declaredRowCount) {
-        return declaredRowCount * 2 < addressCache.getParquetRowGroupHi(frameIndex) - addressCache.getParquetRowGroupLo(frameIndex);
+        return declaredRowCount * 2 < getFrameDecodeRowHi(frameIndex) - getFrameDecodeRowLo(frameIndex);
     }
 
     private void lruAppend(DecodedFrameBuffers b) {
@@ -2115,8 +2138,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private long decodedBytes;
         // decoded window bounds (row group coordinates); a cached buffer serves a
         // request only when its window covers the requested [lo, hi)
-        private int decodedRowHi = -1;
-        private int decodedRowLo = -1;
+        private long decodedRowHi = -1;
+        private long decodedRowLo = -1;
         private int frameIndex = -1;
         private boolean isRowFiltered;
         private DecodedFrameBuffers next;
@@ -2231,7 +2254,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             remapColumns(frameRowLo);
         }
 
-        public void decode(PartitionFrameDecoder decoder, DirectIntList columns, int rowLo, int rowHi, int frameRowLo) {
+        public void decode(PartitionFrameDecoder decoder, DirectIntList columns, long rowLo, long rowHi, int frameRowLo) {
             // This buffer is being repurposed for a new frame; drop the prior frame's pins.
             releaseDecodeResources();
             clearAddresses();
@@ -2239,7 +2262,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             retainDecodeResource(decoder, resource);
             if (frameRowLo == 0) {
                 sourceRowRefsAddress = decoder.sourceRowRefsAddress(resource);
-                sourceRowRefsRowCount = rowHi - rowLo;
+                sourceRowRefsRowCount = Math.toIntExact(rowHi - rowLo);
                 sourceRowTimestampsAddress = decoder.sourceRowTimestampsAddress(resource);
             }
             if (columns.size() > 0) {
@@ -2367,8 +2390,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 PartitionFrameDecoder decoder,
                 IntHashSet filterColumnIndexes,
                 DirectIntList columns,
-                int rowLo,
-                int rowHi,
+                long rowLo,
+                long rowHi,
                 DirectLongList filteredRows,
                 boolean fillWithNulls
         ) {
@@ -2424,8 +2447,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         public void decodeRowFiltered(
                 PartitionFrameDecoder decoder,
                 DirectIntList columns,
-                int rowLo,
-                int rowHi,
+                long rowLo,
+                long rowHi,
                 long localRowsAddr,
                 long localRowCount
         ) {
@@ -2790,8 +2813,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
             prepareDecode(frameIndex, filterColumnIndexes, false);
             final int rowGroupIndex = addressCache.getParquetRowGroup(frameIndex);
-            final int rowGroupLo = addressCache.getParquetRowGroupLo(frameIndex);
-            final int rowGroupHi = addressCache.getParquetRowGroupHi(frameIndex);
+            final long rowGroupLo = getFrameDecodeRowLo(frameIndex);
+            final long rowGroupHi = getFrameDecodeRowHi(frameIndex);
             if (filteredRows.size() != 0) {
                 final long extra;
                 try {
@@ -2812,8 +2835,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                                 filterColumnIndexes,
                                 decodeColumns,
                                 rowGroupIndex,
-                                rowGroupLo,
-                                rowGroupHi,
+                                Math.toIntExact(rowGroupLo),
+                                Math.toIntExact(rowGroupHi),
                                 filteredRows,
                                 fillWithNulls
                         );

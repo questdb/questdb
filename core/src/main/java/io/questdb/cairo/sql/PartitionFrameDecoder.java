@@ -46,8 +46,8 @@ public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietClos
     long decodeFilteredSubframe(
             RowGroupBuffers buffers,
             int columnOffset,
-            int rowLo,
-            int rowHi,
+            long rowLo,
+            long rowHi,
             long survivorRowsAddress,
             long survivorRowCount,
             boolean fillNulls
@@ -57,7 +57,7 @@ public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietClos
      * Decode a full subframe, install its output views into {@code buffers}, and
      * return the owning, non-zero decode-resource handle.
      */
-    long decodeSubframe(RowGroupBuffers buffers, int rowLo, int rowHi);
+    long decodeSubframe(RowGroupBuffers buffers, long rowLo, long rowHi);
 
     /**
      * Materialize the requested remaining columns in the supplied order for a previously
@@ -69,8 +69,8 @@ public interface PartitionFrameDecoder extends DecodeResourceReleaser, QuietClos
             RowGroupBuffers buffers,
             int columnOffset,
             DirectIntList columns,
-            int rowLo,
-            int rowHi,
+            long rowLo,
+            long rowHi,
             long survivorRowsAddress,
             long survivorRowCount,
             boolean fillNulls

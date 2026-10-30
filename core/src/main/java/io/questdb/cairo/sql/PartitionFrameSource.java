@@ -25,6 +25,7 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.std.Mutable;
+import io.questdb.std.str.Path;
 
 /**
  * Catalog fields identifying the physical base pinned by one partition snapshot.
@@ -35,11 +36,13 @@ public final class PartitionFrameSource implements Mutable {
     public static final int NATIVE = 1;
     public static final int PARQUET = 2;
     public static final int REMOTE_PARQUET = 3;
+    public static final int BASE_LOCAL_PARQUET = 4;
     private long columnVersion = -1;
     private int kind;
     private long metadataCommittedBytes;
     private int metadataSlot = -1;
     private long partitionNameTxn = -1;
+    private long physicalBaseId;
 
     @Override
     public void clear() {
@@ -48,6 +51,7 @@ public final class PartitionFrameSource implements Mutable {
         metadataCommittedBytes = 0;
         metadataSlot = -1;
         partitionNameTxn = -1;
+        physicalBaseId = 0;
     }
 
     /** Native column-version identity, or -1 for Parquet. */
@@ -74,17 +78,32 @@ public final class PartitionFrameSource implements Mutable {
         return partitionNameTxn;
     }
 
+    /** PhysicalBase identity whose private directory owns a BASE_LOCAL_PARQUET source. */
+    public long getPhysicalBaseId() {
+        return physicalBaseId;
+    }
+
+    /** Appends the private source directory when this source is a replacement local base. */
+    public Path appendBasePath(Path path) {
+        if (kind == BASE_LOCAL_PARQUET) {
+            path.concat("_bases").concat(Long.toUnsignedString(physicalBaseId));
+        }
+        return path;
+    }
+
     public void of(
             int kind,
             long partitionNameTxn,
             long columnVersion,
             long metadataCommittedBytes,
-            int metadataSlot
+            int metadataSlot,
+            long physicalBaseId
     ) {
         this.kind = kind;
         this.partitionNameTxn = partitionNameTxn;
         this.columnVersion = columnVersion;
         this.metadataCommittedBytes = metadataCommittedBytes;
         this.metadataSlot = metadataSlot;
+        this.physicalBaseId = physicalBaseId;
     }
 }

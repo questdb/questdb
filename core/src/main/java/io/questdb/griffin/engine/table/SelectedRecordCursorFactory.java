@@ -564,6 +564,16 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long getPartitionFrameRowHi() {
+            return baseFrame.getPartitionFrameRowHi();
+        }
+
+        @Override
+        public long getPartitionFrameRowLo() {
+            return baseFrame.getPartitionFrameRowLo();
+        }
+
+        @Override
         public long getPartitionFrameState() {
             return baseFrame.getPartitionFrameState();
         }

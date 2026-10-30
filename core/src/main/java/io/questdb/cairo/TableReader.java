@@ -1522,8 +1522,11 @@ public class TableReader implements Closeable, SymbolTableSource {
             partitionFrameStateFactory.readSource(state, partitionFrameSource);
             final boolean isNative = partitionFrameSource.getKind() == PartitionFrameSource.NATIVE;
             if (!isNative && ((partitionFrameSource.getKind() != PartitionFrameSource.PARQUET
-                    && partitionFrameSource.getKind() != PartitionFrameSource.REMOTE_PARQUET)
-                    || partitionFrameSource.getMetadataCommittedBytes() <= 0)) {
+                    && partitionFrameSource.getKind() != PartitionFrameSource.REMOTE_PARQUET
+                    && partitionFrameSource.getKind() != PartitionFrameSource.BASE_LOCAL_PARQUET)
+                    || partitionFrameSource.getMetadataCommittedBytes() <= 0
+                    || (partitionFrameSource.getKind() == PartitionFrameSource.BASE_LOCAL_PARQUET
+                    && partitionFrameSource.getPhysicalBaseId() == 0))) {
                 throw CairoException.critical(0).put("invalid catalog physical source [partitionIndex=").put(partitionIndex)
                         .put(", kind=").put(partitionFrameSource.getKind())
                         .put(", metadataBytes=").put(partitionFrameSource.getMetadataCommittedBytes()).put(']');
@@ -1798,8 +1801,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
         final long partitionNameTxn = state == 0 ? txFile.getPartitionNameTxn(partitionIndex) : partitionFrameSource.getPartitionNameTxn();
         final boolean isRemoteBase = state != 0 && partitionFrameSource.getKind() == PartitionFrameSource.REMOTE_PARQUET;
+        final boolean isBaseLocal = state != 0 && partitionFrameSource.getKind() == PartitionFrameSource.BASE_LOCAL_PARQUET;
+        final long sourceDirectoryNameTxn = isBaseLocal ? txFile.getPartitionNameTxn(partitionIndex) : partitionNameTxn;
         final boolean isParquet = state == 0 ? txFile.isPartitionParquet(partitionIndex)
-                : isRemoteBase || partitionFrameSource.getKind() == PartitionFrameSource.PARQUET;
+                : isRemoteBase || isBaseLocal || partitionFrameSource.getKind() == PartitionFrameSource.PARQUET;
         final long committedBytes = state != 0 && isParquet ? partitionFrameSource.getMetadataCommittedBytes() : 0;
         final int metadataSlot = state != 0 && isParquet ? partitionFrameSource.getMetadataSlot() : 0;
         final long columnVersion = state == 0 || isParquet
@@ -1808,7 +1813,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         try {
             path.trimTo(rootLen);
             if (isParquet) {
-                Path path = pathGenNativePartition(partitionIndex, partitionNameTxn).concat(metadataSlot == 0 ? TableUtils.PARQUET_METADATA_FILE_NAME : TableUtils.PARQUET_METADATA_B_FILE_NAME);
+                Path path = pathGenNativePartition(partitionIndex, sourceDirectoryNameTxn);
+                if (isBaseLocal) {
+                    partitionFrameSource.appendBasePath(path);
+                }
+                path.concat(metadataSlot == 0 ? TableUtils.PARQUET_METADATA_FILE_NAME : TableUtils.PARQUET_METADATA_B_FILE_NAME);
                 if (ff.exists(path.$())) {
                     final long partitionSize = getPartitionRowCountFromMetadata(partitionIndex);
                     if (partitionSize > -1) {
@@ -1830,7 +1839,12 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 && metadataSlot == 0 && parquetFileSize == txFile.getPartitionParquetFileSize(partitionIndex))));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_PARQUET_FILE_SIZE, parquetFileSize);
                         path.trimTo(rootLen);
-                        pathGenParquetPartition(partitionIndex, partitionNameTxn);
+                        if (isBaseLocal) {
+                            partitionFrameSource.appendBasePath(pathGenNativePartition(partitionIndex, sourceDirectoryNameTxn))
+                                    .concat(TableUtils.PARQUET_PARTITION_NAME);
+                        } else {
+                            pathGenParquetPartition(partitionIndex, partitionNameTxn);
+                        }
                         // A remote base maps no local file, not even a stale one in the directory.
                         final long parquetActualLength = isRemoteBase ? -1 : ff.length(path.$());
                         if (parquetActualLength >= 0) {
@@ -1871,7 +1885,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         // which allows createIndexReaderAt() to open real index
                         // readers from the .k/.v files in the native partition directory.
                         path.trimTo(rootLen);
-                        Path nativePath = pathGenNativePartition(partitionIndex, partitionNameTxn);
+                        Path nativePath = pathGenNativePartition(partitionIndex, sourceDirectoryNameTxn);
                         openPartitionColumns(partitionIndex, nativePath, getColumnBase(partitionIndex), partitionSize);
                         // Assign SIZE last, matching the native branch below. If any of the
                         // steps above (openParquetMetadata, parquetMem.of, openPartitionColumns)

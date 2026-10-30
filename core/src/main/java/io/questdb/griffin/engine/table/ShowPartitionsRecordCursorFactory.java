@@ -288,7 +288,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
          */
         private boolean isDeltaParquetBase() {
             final int kind = deltaStats.getBaseSource().getKind();
-            return kind == PartitionFrameSource.PARQUET || kind == PartitionFrameSource.REMOTE_PARQUET;
+            return kind == PartitionFrameSource.PARQUET
+                    || kind == PartitionFrameSource.REMOTE_PARQUET
+                    || kind == PartitionFrameSource.BASE_LOCAL_PARQUET;
         }
 
         /**
@@ -347,7 +349,10 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 final long partitionNameTxn = tableTxReader.getPartitionNameTxn(partitionIndex);
                 if (isDeltaParquet) {
                     // A Delta base replacement updates neither _txn nor _pm, so read the catalog's base.
-                    TableUtils.setPathForNativePartition(path, timestampType, partitionBy, timestamp, deltaStats.getBaseSource().getPartitionNameTxn());
+                    final long sourceNameTxn = deltaStats.getBaseSource().getKind() == PartitionFrameSource.BASE_LOCAL_PARQUET
+                            ? partitionNameTxn
+                            : deltaStats.getBaseSource().getPartitionNameTxn();
+                    TableUtils.setPathForNativePartition(path, timestampType, partitionBy, timestamp, sourceNameTxn);
                     openDeltaParquetMeta(path);
                     path.trimTo(rootLen);
                     TableUtils.setPathForNativePartition(path, timestampType, partitionBy, timestamp, partitionNameTxn);
@@ -535,6 +540,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             final PartitionFrameSource source = deltaStats.getBaseSource();
             final long committedBytes = source.getMetadataCommittedBytes();
             final int dirLen = partitionDirPath.size();
+            source.appendBasePath(partitionDirPath);
             partitionDirPath.concat(source.getMetadataSlot() == 0 ? TableUtils.PARQUET_METADATA_FILE_NAME : TableUtils.PARQUET_METADATA_B_FILE_NAME).$();
             try {
                 if (parquetMetaReader == null) {

@@ -256,7 +256,7 @@ public class TableReaderSourceTest extends AbstractCairoTest {
         @Override
         public void readSource(long state, PartitionFrameSource target) {
             Source source = states.get(state).source;
-            target.of(source.kind, source.nameTxn, source.columnVersion, source.metadataBytes, source.metadataSlot);
+            target.of(source.kind, source.nameTxn, source.columnVersion, source.metadataBytes, source.metadataSlot, 0);
         }
 
         @Override

@@ -17081,13 +17081,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         deltaWriter.readBaseSource(this, partitionIndex, deltaBaseSource);
         final int kind = deltaBaseSource.getKind();
-        if (kind != PartitionFrameSource.PARQUET && kind != PartitionFrameSource.REMOTE_PARQUET) {
+        if (kind != PartitionFrameSource.PARQUET
+                && kind != PartitionFrameSource.REMOTE_PARQUET
+                && kind != PartitionFrameSource.BASE_LOCAL_PARQUET) {
             return false;
         }
         // The catalog's base can sit in either slot and outgrow the _txn Parquet size.
         final long committedBytes = deltaBaseSource.getMetadataCommittedBytes();
         final Path metaPath = Path.getThreadLocal2(path).trimTo(pathSize);
-        setPathForNativePartition(metaPath, timestampType, partitionBy, txWriter.getPartitionTimestampByIndex(partitionIndex), deltaBaseSource.getPartitionNameTxn());
+        final long metadataNameTxn = kind == PartitionFrameSource.BASE_LOCAL_PARQUET
+                ? txWriter.getPartitionNameTxn(partitionIndex)
+                : deltaBaseSource.getPartitionNameTxn();
+        setPathForNativePartition(metaPath, timestampType, partitionBy, txWriter.getPartitionTimestampByIndex(partitionIndex), metadataNameTxn);
+        deltaBaseSource.appendBasePath(metaPath);
         metaPath.concat(deltaBaseSource.getMetadataSlot() == 0 ? PARQUET_METADATA_FILE_NAME : PARQUET_METADATA_B_FILE_NAME);
         final long fd = openRO(ff, metaPath.$(), LOG);
         final long addr;

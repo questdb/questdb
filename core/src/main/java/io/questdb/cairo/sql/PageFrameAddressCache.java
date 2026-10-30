@@ -97,6 +97,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     private final IntList parquetRowGroupHis = new IntList();
     private final IntList parquetRowGroupLos = new IntList();
     private final IntList parquetRowGroups = new IntList();
+    private final LongList partitionFrameRowHis = new LongList();
+    private final LongList partitionFrameRowLos = new LongList();
     private final LongList partitionFrameStates = new LongList();
     // Makes it possible to determine real row id, not the one relative to the page.
     private final LongList rowIdOffsets = new LongList();
@@ -176,6 +178,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         designatedTimestampPageSizes.clear();
         designatedTimestampPageTops.clear();
         parquetDecoders.clear();
+        partitionFrameRowHis.clear();
+        partitionFrameRowLos.clear();
         partitionFrameStates.clear();
         parquetRowGroups.clear();
         parquetRowGroupLos.clear();
@@ -352,6 +356,14 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return parquetRowGroupLos.getQuick(frameIndex);
     }
 
+    public long getPartitionFrameRowHi(int frameIndex) {
+        return hasCustomFrames ? partitionFrameRowHis.getQuick(frameIndex) : getParquetRowGroupHi(frameIndex);
+    }
+
+    public long getPartitionFrameRowLo(int frameIndex) {
+        return hasCustomFrames ? partitionFrameRowLos.getQuick(frameIndex) : getParquetRowGroupLo(frameIndex);
+    }
+
     public long getIndexRowLo(int frameIndex) {
         return indexRowLos.getQuick(frameIndex);
     }
@@ -524,6 +536,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         }
         final long partitionFrameState = hasCustomFrames ? frame.getPartitionFrameState() : 0;
         if (hasCustomFrames) {
+            partitionFrameRowHis.setQuick(frameIndex, frame.getPartitionFrameRowHi());
+            partitionFrameRowLos.setQuick(frameIndex, frame.getPartitionFrameRowLo());
             partitionFrameStates.setQuick(frameIndex, partitionFrameState);
         }
         final int parquetRowGroup = frame.getParquetRowGroup();
@@ -550,8 +564,15 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 || indexRowLos.getQuick(frameIndex) != frame.getIndexRowLo()) {
             return false;
         }
-        if (hasCustomFrames && partitionFrameStates.getQuick(frameIndex) != frame.getPartitionFrameState()) {
-            return false;
+        if (hasCustomFrames) {
+            if (partitionFrameStates.getQuick(frameIndex) != frame.getPartitionFrameState()) {
+                return false;
+            }
+            if (frame.getPartitionFrameState() != 0
+                    && (partitionFrameRowLos.getQuick(frameIndex) != frame.getPartitionFrameRowLo()
+                    || partitionFrameRowHis.getQuick(frameIndex) != frame.getPartitionFrameRowHi())) {
+                return false;
+            }
         }
         if (format == PartitionFormat.PARQUET || frame.getPartitionFrameState() != 0) {
             return parquetRowGroups.getQuick(frameIndex) == frame.getParquetRowGroup()
@@ -677,6 +698,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 designatedTimestampPageAddresses.add(frame.getDesignatedTimestampPageAddress());
                 designatedTimestampPageSizes.add(frame.getDesignatedTimestampPageSize());
                 designatedTimestampPageTops.add(frame.getDesignatedTimestampPageTop());
+                partitionFrameRowHis.add(frame.getPartitionFrameRowHi());
+                partitionFrameRowLos.add(frame.getPartitionFrameRowLo());
                 partitionFrameStates.add(partitionFrameState);
             }
             frameSizes.add(frameSize);
@@ -699,6 +722,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
                 designatedTimestampPageAddresses.setQuick(frameIndex, frame.getDesignatedTimestampPageAddress());
                 designatedTimestampPageSizes.setQuick(frameIndex, frame.getDesignatedTimestampPageSize());
                 designatedTimestampPageTops.setQuick(frameIndex, frame.getDesignatedTimestampPageTop());
+                partitionFrameRowHis.setQuick(frameIndex, frame.getPartitionFrameRowHi());
+                partitionFrameRowLos.setQuick(frameIndex, frame.getPartitionFrameRowLo());
                 partitionFrameStates.setQuick(frameIndex, partitionFrameState);
             }
             frameSizes.setQuick(frameIndex, frameSize);
