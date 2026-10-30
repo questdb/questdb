@@ -1074,6 +1074,20 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprInvalidDurationUnit() {
+        // The parser rejects a duration with an invalid unit. The compiled form, which SQL uses for a
+        // literal with a date variable, must reject it too, rather than evaluate it to an interval
+        // that starts at the beginning of time, such as everything before now for $now;1x.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertParsedAndCompiledRejectedWithNow("$now;1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedWithNow("$today;1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedWithNow("[$now];1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedWithNow("$now;1h1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedWithNow("$today..$tomorrow;1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedWithNow("[$today, $tomorrow]T09:00;1h1x", now, "Invalid duration unit: x");
+    }
+
+    @Test
     public void testCompiledTickExprInvalidSingleTimeOverride() {
         assertCompileTickExprError("[$today]Tabc", "Invalid time override");
     }
@@ -1766,6 +1780,21 @@ public class TickExprTest {
                 "[{lo=2024-01-05T09:00:00.000000Z, hi=2024-01-05T09:59:59.999999Z}]",
                 "[2024-01-05T09:00]T[10:30@+02:00];1h"
         );
+    }
+
+    @Test
+    public void testDateListElementWithTimeListAndListTimeFails() {
+        // The parser rejects a date list element without a day that has a time part of its own when
+        // the list has a time part too, and an element whose own time part is a time list. The
+        // compiled form, which SQL uses for a literal with a date variable, must reject them too,
+        // rather than ignore the time list of the element and expand its month with the time of the
+        // list.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertParsedAndCompiledRejectedWithNow("[2024-01T[09:00,10:00], $today]T10:00", now, "Invalid date");
+        assertParsedAndCompiledRejectedWithNow("[2024-01T[09:00], $NOW + 1w]T09:00:30", now, "Invalid date");
+        // the element fails on both paths with a time of day of its own, or with a day
+        assertParsedAndCompiledRejectedWithNow("[2024-01T09:00, $today]T10:00", now, "Invalid date");
+        assertParsedAndCompiledRejectedWithNow("[2024-01-[01..03]T[09:00], $today]T10:00", now, "Invalid date");
     }
 
     @Test
@@ -3454,6 +3483,45 @@ public class TickExprTest {
     public void testDateVariableNumberOverflow() {
         // Number too large for int
         assertBracketIntervalError("[$today + 99999999999d]", "Invalid number in date expression");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeRangeWithMalformedDurationFails() {
+        // A range between two points in time stays one interval, which ignores the duration of the
+        // expression, but a malformed duration still fails the expression, the same as for a range of
+        // days. The parser, which SQL uses for a bind variable, must not let it through where the
+        // compiled form, which SQL uses for a literal, rejects it. The day filter goes before the
+        // duration, so ';1h#Tue' is a malformed duration.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertParsedAndCompiledRejectedWithNow("$now - 1h..$now;1h#Tue", now, "Expected number before unit '#'");
+        assertParsedAndCompiledRejectedWithNow("$today+2h..$now;1h#Tue", now, "Expected number before unit '#'");
+        assertParsedAndCompiledRejectedWithNow("[$now - 1h..$now];1h#Tue", now, "Expected number before unit '#'");
+        // both paths let these through
+        assertParsedAndCompiledRejectedWithNow("$now - 1h..$now;1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedWithNow("[$now - 1h..$now];1x", now, "Invalid duration unit: x");
+        // a range of days applies the duration, which fails on both paths
+        assertParsedAndCompiledRejectedWithNow("$today..$tomorrow;1h#Tue", now, "Expected number before unit '#'");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeWithMalformedTimeFails() {
+        // A point in time keeps its own time and ignores the time part of the expression, but a
+        // malformed time part still fails the expression, the same as when a day takes it. The parser,
+        // which SQL uses for a bind variable, must not let it through where the compiled form, which
+        // SQL uses for a literal, rejects it.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertParsedAndCompiledRejectedWithNow("[$now]T[25:00]", now, "25:00");
+        assertParsedAndCompiledRejectedWithNow("[$now]T25:00", now, "25:00");
+        assertParsedAndCompiledRejectedWithNow("$nowT25:00", now, "25:00");
+        assertParsedAndCompiledRejectedWithNow("$nowT[25:00]", now, "25:00");
+        assertParsedAndCompiledRejectedWithNow("$today+2hT[25:00]", now, "25:00");
+        assertParsedAndCompiledRejectedWithNow("[$now - 1h..$now]T[25:00]", now, "25:00");
+        assertParsedAndCompiledRejectedWithNow("[$now]T09:99", now, "09:99");
+        // the compiled form parses this one at every evaluation, so both paths let it through
+        assertParsedAndCompiledRejectedWithNow("[$now]T[09..10]:99", now, "09:99");
+        // a day takes the time part, which fails on both paths
+        assertParsedAndCompiledRejectedWithNow("[$now, $today]T[25:00]", now, "25:00");
+        assertParsedAndCompiledRejectedWithNow("[$today]T09:99", now, "09:99");
     }
 
     @Test
@@ -7529,6 +7597,42 @@ public class TickExprTest {
         } catch (CairoException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
         }
+    }
+
+    /**
+     * Asserts that both the parser and the compiled form reject the expression, the compiled form
+     * when it compiles or when it evaluates. SQL parses a bind variable and compiles a literal with a
+     * date variable, so the two must fail on the same expressions.
+     */
+    private void assertParsedAndCompiledRejectedWithNow(String expression, String nowTimestamp, String expectedError) {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral(nowTimestamp);
+        String parsed;
+        out.clear();
+        try {
+            parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, now);
+            parsed = intervalToString(timestampDriver, out).toString();
+        } catch (SqlException e) {
+            parsed = "error: " + e.getFlyweightMessage();
+        }
+        String compiled;
+        try (CompiledTickExpression compiledExpr = IntervalUtils.compileTickExpr(
+                timestampDriver, configuration, expression, 0, expression.length(), 0)) {
+            out.clear();
+            try {
+                compiledExpr.evaluate(out, now);
+                compiled = intervalToString(timestampDriver, out).toString();
+            } catch (CairoException e) {
+                compiled = "error: " + e.getFlyweightMessage();
+            }
+        } catch (SqlException e) {
+            compiled = "error: " + e.getFlyweightMessage();
+        }
+        // one assertion over both paths, so a failure shows the result of each
+        final String message = expression + " at " + nowTimestamp + ", expected both to fail with '" + expectedError
+                + "'\nparsed: " + parsed + "\ncompiled: " + compiled;
+        Assert.assertTrue(message, parsed.startsWith("error: ") && parsed.contains(expectedError)
+                && compiled.startsWith("error: ") && compiled.contains(expectedError));
     }
 
     private void assertParsedAndCompiledWithNow(String expected, String expression, String nowTimestamp) throws SqlException {

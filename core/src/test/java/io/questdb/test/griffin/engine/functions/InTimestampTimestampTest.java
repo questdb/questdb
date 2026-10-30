@@ -126,6 +126,13 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateListElementWithTimeListAndListTimeFailsAsLiteralAndAsBindVariable() throws Exception {
+        // a month element with a time list of its own, in a date list with a time part: the literal
+        // selected 10:00 of every day in January
+        assertMalformedTickExprFails("[2024-01T[09:00,10:00], $today]T10:00", "Invalid date");
+    }
+
+    @Test
     public void testDateListWithDenseTimeExpansionAndDayFilter() throws Exception {
         // The minute expansion emits 1440 intervals per date, past the incremental merge
         // threshold (256). 2024-01-03 is a Wednesday and 2024-01-04 a Thursday, so #Wed keeps
@@ -641,6 +648,12 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidDurationUnitFailsAsLiteralAndAsBindVariable() throws Exception {
+        // the literal selected every row before $today
+        assertMalformedTickExprFails("$today;1x", "Invalid duration unit: x");
+    }
+
+    @Test
     public void testListOfTimestamps() throws Exception {
         execute("create table test as (select rnd_int() a, timestamp_sequence(0, 1000) ts from long_sequence(100))");
 
@@ -731,6 +744,20 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testPointInTimeRangeWithMalformedDurationFailsAsLiteralAndAsBindVariable() throws Exception {
+        // a range between points in time ignores the duration, which still has to be well-formed,
+        // and the day filter goes before it: the bind variable selected the range
+        assertMalformedTickExprFails("$now - 1h..$now;1h#Tue", "Expected number before unit '#'");
+    }
+
+    @Test
+    public void testPointInTimeWithMalformedTimeFailsAsLiteralAndAsBindVariable() throws Exception {
+        // a point in time ignores the time part, which still has to be well-formed: the bind variable
+        // selected the row at $now
+        assertMalformedTickExprFails("[$now]T[25:00]", "25:00");
     }
 
     @Test
@@ -1108,6 +1135,38 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                     .expectSize()
                     .withPlanContaining(expectedRow.startsWith("0\t") ? "" : "Interval forward scan")
                     .returns("count\tmin\tmax\n" + expectedRow + "\n");
+        }
+    }
+
+    /**
+     * Asserts that the tick expression fails the query at its position, in the interval scan and in
+     * the row filter, both as a literal and as a bind variable. SQL compiles a literal with a date
+     * variable and parses a bind variable, so a malformed expression must fail on both paths rather
+     * than select rows on one of them. The table has a row every hour from 2024-01-01 to 2024-01-04,
+     * and "now" is 2024-01-02T10:00Z.
+     */
+    private void assertMalformedTickExprFails(String tickExpr, String expectedError) throws Exception {
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                assertQueryFails("SELECT count() FROM t WHERE ts IN '" + tickExpr + "'", tickExpr, expectedError);
+                assertQueryFails("SELECT count() FROM t WHERE ts IN '" + tickExpr + "' OR ts = 0", tickExpr, expectedError);
+                bindVariableService.clear();
+                bindVariableService.setStr(0, tickExpr);
+                assertQueryFails("SELECT count() FROM t WHERE ts IN $1", tickExpr, expectedError);
+                assertQueryFails("SELECT count() FROM t WHERE ts IN $1 OR ts = 0", tickExpr, expectedError);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    private void assertQueryFails(String sql, String tickExpr, String expectedError) throws Exception {
+        try {
+            assertExceptionNoLeakCheck(sql, 34, expectedError);
+        } catch (AssertionError e) {
+            throw new AssertionError(sql + " with tick expression " + tickExpr, e);
         }
     }
 
