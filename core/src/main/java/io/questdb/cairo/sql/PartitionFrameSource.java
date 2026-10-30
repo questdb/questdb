@@ -69,7 +69,7 @@ public final class PartitionFrameSource implements Mutable {
         return metadataCommittedBytes;
     }
 
-    /** Parquet metadata slot: 0 for _pm, 1 for _pm.b; -1 for native. */
+    /** Parquet metadata slot: 0 for _pm and all base-local sources, 1 for _pm.b; -1 for native. */
     public int getMetadataSlot() {
         return metadataSlot;
     }
