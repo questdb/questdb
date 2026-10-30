@@ -239,6 +239,9 @@ public class WalUpdateFilterValidationTest extends AbstractCairoTest {
             assertInvalidTextBind("ts = $1::string", 32, "STRING");
             assertInvalidTextBind("other = $1", 33, "STRING");
             assertInvalidTextBind("ts < now() AND other = $1", 48, "STRING");
+            assertInvalidTextBind("other = $1 AND v = (SELECT max(v) FROM u)", 33, "STRING");
+            assertInvalidTextBind("ts = $1::string AND v = (SELECT max(v) FROM u)", 32, "STRING");
+            assertInvalidTextBind("v = (SELECT max(v) FROM u) AND other < $1::varchar", 66, "VARCHAR");
             if (walEnabled) {
                 drainWalQueue();
                 final TableToken token = engine.verifyTableName("u");

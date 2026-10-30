@@ -35,11 +35,13 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.math.BigInteger;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.zone.ZoneOffsetTransition;
+import java.time.zone.ZoneOffsetTransitionRule;
 import java.time.zone.ZoneRules;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -188,6 +190,30 @@ public class TimeZoneRulesMicrosTest {
         Assert.assertTrue(next > beforeFirst);
         // the offset genuinely changes at that transition
         Assert.assertNotEquals(rules.getOffset(beforeFirst), rules.getOffset(next));
+    }
+
+    @Test
+    public void testGetOffsetGcd() {
+        for (String id : ZoneId.getAvailableZoneIds()) {
+            final ZoneRules zoneRules = ZoneId.of(id).getRules();
+            BigInteger expected = BigInteger.valueOf(zoneRules.getOffset(Instant.EPOCH).getTotalSeconds()).abs();
+            for (ZoneOffsetTransition transition : zoneRules.getTransitions()) {
+                if (transition.getInstant().getEpochSecond() > 0) {
+                    expected = expected.gcd(BigInteger.valueOf(transition.getOffsetAfter().getTotalSeconds()));
+                }
+            }
+            for (ZoneOffsetTransitionRule rule : zoneRules.getTransitionRules()) {
+                expected = expected.gcd(BigInteger.valueOf(rule.getOffsetBefore().getTotalSeconds()))
+                        .gcd(BigInteger.valueOf(rule.getOffsetAfter().getTotalSeconds()));
+            }
+            Assert.assertEquals(id, expected.longValue() * Micros.SECOND_MICROS, new TimeZoneRulesMicros(zoneRules).getOffsetGcd(0));
+        }
+        final TimeZoneRulesMicros berlin = new TimeZoneRulesMicros(ZoneId.of("Europe/Berlin").getRules());
+        Assert.assertEquals(Micros.HOUR_MICROS, berlin.getOffsetGcd(0));
+        // Berlin kept local mean time, +00:53:28, until 1893.
+        Assert.assertEquals(8 * Micros.SECOND_MICROS, berlin.getOffsetGcd(Micros.toMicros(1890, 1, 1, 0, 0)));
+        Assert.assertEquals(330 * Micros.MINUTE_MICROS, new TimeZoneRulesMicros(ZoneId.of("Asia/Kolkata").getRules()).getOffsetGcd(0));
+        Assert.assertEquals(0, new TimeZoneRulesMicros(ZoneId.of("UTC").getRules()).getOffsetGcd(0));
     }
 
     @Test

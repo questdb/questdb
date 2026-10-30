@@ -215,8 +215,16 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
      * rows a sort under the LIMIT keeps for them.
      */
     public static final class Bounds {
+        private final int position;
         private long hi;
         private long lo;
+
+        /**
+         * {@code position}: the position of the LIMIT in the query text, which {@link #of} reports its error at.
+         */
+        public Bounds(int position) {
+            this.position = position;
+        }
 
         public long getHi() {
             return hi;
@@ -267,9 +275,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         /**
          * Reads {@code LIMIT lo, hi}, or {@code LIMIT lo} as {@code LIMIT lo, 0} where {@code hiFunction} is null. A NULL
          * {@code lo} of a pair reads 0 where {@code hi} is not NULL, and the bounds apply as {@code LIMIT hi, lo} where
-         * {@link #isDescending} holds.
+         * {@link #isDescending} holds. Rejects a negative {@code lo} with a positive {@code hi}.
          */
-        public void of(Function loFunction, @Nullable Function hiFunction) {
+        public void of(Function loFunction, @Nullable Function hiFunction) throws SqlException {
             long lo = loFunction.getLong(null);
             long hi = 0;
             if (hiFunction != null) {
@@ -281,6 +289,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             final boolean isDescending = isDescending(lo, hi);
             this.lo = isDescending ? hi : lo;
             this.hi = isDescending ? lo : hi;
+            if (this.lo < 0 && this.hi > 0) {
+                throw SqlException.$(position, "LIMIT <negative>, <positive> is not allowed");
+            }
         }
     }
 
@@ -288,8 +299,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
      * Applies a LIMIT over a base cursor; a negative LIMIT counts the base rows first, then skips to the last ones.
      */
     public static class LimitRecordCursor implements RecordCursor {
-        private final int argPos;
-        private final Bounds bounds = new Bounds();
+        private final Bounds bounds;
         private final RecordCursor.Counter counter = new Counter();
         private final Function leftFunction;
         private final MasterSuffixLimitFunction masterSuffixLimit;
@@ -326,7 +336,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         ) {
             this.leftFunction = leftFunction;
             this.rightFunction = rightFunction;
-            this.argPos = argPos;
+            this.bounds = new Bounds(argPos);
             this.masterSuffixLimit = masterSuffixLimit;
         }
 
@@ -607,13 +617,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             long startInclusive, endExclusive;
             if (lo < 0) {
                 startInclusive = baseSize + lo;
-                if (hi <= 0) {
-                    endExclusive = baseSize + hi;
-                } else {
-                    // "LIMIT <negative>, <positive> is validated against in of() because it's confusing.
-                    // We handle it here anyway, in case this decision changes.
-                    endExclusive = hi;
-                }
+                endExclusive = baseSize + hi;
             } else {
                 // This method is called only when lo < 0 || hi < 0.
                 // In this branch, we know that lo >= 0, therefore hi < 0.
@@ -650,9 +654,6 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             bounds.of(leftFunction, rightFunction);
             lo = bounds.getLo();
             hi = bounds.getHi();
-            if (lo < 0 && hi > 0) {
-                throw SqlException.$(argPos, "LIMIT <negative>, <positive> is not allowed");
-            }
 
             baseSize = -1;
             size = -1;

@@ -233,7 +233,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final BindScopeStack scopes = new BindScopeStack();
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final ObjList<Subquery> subqueries = new ObjList<>();
-    private final SubqueryReads subqueryReads = new SubqueryReads();
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final CompilerTemporaries temporaries;
@@ -2895,7 +2894,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 );
 
                                 timerTimeZone = viewDefinition.getTimeZone();
-                                tzRulesMicros = viewDefinition.getTzRules();
+                                if (timerTimeZone != null) {
+                                    tzRulesMicros = MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timerTimeZone);
+                                }
                                 if (viewDefinition.getTimeZoneOffset() != null) {
                                     final long val = Dates.parseOffset(viewDefinition.getTimeZoneOffset());
                                     if (val == Numbers.LONG_NULL) {
@@ -6674,7 +6675,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     .put("UPDATE cannot require live WAL progress");
         }
 
-        if (!updateTableToken.isWal() || executionContext.isWalApplication()) {
+        if (!updateTarget.isSequenced()) {
             return new UpdateOperation(
                     updateTableToken,
                     updateTarget.getTableId(),
@@ -6720,7 +6721,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     updateTarget.getMetadataVersion(),
                     lexer.getPosition(),
                     updateColumnNames,
-                    subqueryReads.isReadBy(root) ? Misc.free(recordCursorFactory) : recordCursorFactory
+                    recordCursorFactory
             );
         }
     }

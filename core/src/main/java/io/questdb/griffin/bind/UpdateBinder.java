@@ -225,17 +225,16 @@ final class UpdateBinder implements Mutable {
             throw SqlException.cannotModify(tableName.position, token);
         }
         try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(token, source.getMetadataVersion())) {
+            final boolean isSequenced = !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(metadata.getTableToken());
+            target.of(tableName.token, tableName.position, metadata.getTableToken(), metadata.getTableId(), metadata.getMetadataVersion(), isSequenced);
             final ScanPlan scan = binder.bindScan(source, tableName, metadata.getTableToken(), metadata.getMetadataVersion());
             for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
                 binder.bindScanColumn(scan, i, metadata.getColumnName(i), metadata.getColumnType(i), metadata.isSymbolTableStatic(i),
                         metadata.isColumnIndexed(i), i == metadata.getTimestampIndex());
             }
-            if (!executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(scan.getTableToken())) {
-                scan.markWalClientUpdate();
-            } else {
+            if (!isSequenced) {
                 ctx.planTables.acquire(metadata.getTableToken(), metadata.getMetadataVersion(), tableName.position, executionContext);
             }
-            target.of(tableName.token, tableName.position, metadata.getTableToken(), metadata.getTableId(), metadata.getMetadataVersion());
             targetScan = scan;
             return scan;
         } catch (CairoException e) {
@@ -244,5 +243,12 @@ final class UpdateBinder implements Mutable {
             }
             throw SqlException.position(tableName.position).put(e);
         }
+    }
+
+    /**
+     * True while the binder binds an UPDATE the WAL sequences, see {@link UpdateTarget#isSequenced()}.
+     */
+    boolean isSequenced() {
+        return target.isSequenced();
     }
 }

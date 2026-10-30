@@ -242,6 +242,22 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     }
 
     @Override
+    public long getOffsetGcd(long utcEpoch) {
+        if (standardOffset != Long.MIN_VALUE) {
+            return Math.abs(standardOffset);
+        }
+        final int index = historicTransitions.binarySearch(utcEpoch, Vect.BIN_SEARCH_SCAN_UP);
+        long gcd = 0;
+        for (int i = index < 0 ? -index - 1 : index + 1, n = wallOffsets.length; i < n; i++) {
+            gcd = gcd(gcd, wallOffsets[i]);
+        }
+        for (int i = 0; i < ruleCount; i++) {
+            gcd = gcd(gcd(gcd, rules[i].offsetBefore), rules[i].offsetAfter);
+        }
+        return gcd * multiplier;
+    }
+
+    @Override
     public long getStandardOffset() {
         return baseStandardOffset;
     }
@@ -277,6 +293,17 @@ public abstract class AbstractTimeZoneRules implements TimeZoneRules {
     @Override
     public boolean hasFixedOffset() {
         return standardOffset != Long.MIN_VALUE;
+    }
+
+    private static long gcd(long a, long b) {
+        a = Math.abs(a);
+        b = Math.abs(b);
+        while (b != 0) {
+            final long remainder = a % b;
+            a = b;
+            b = remainder;
+        }
+        return a;
     }
 
     // A backward shift repeats [transition + offsetAfter, transition + offsetBefore) of local time.

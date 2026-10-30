@@ -614,6 +614,9 @@ public final class SqlBinder implements Mutable {
                 }
                 continue;
             }
+            if (!hasWindows && bindScope.outerScopes.size() > 0) {
+                validateOuterNames(expression, model.getBottomUpColumns(), i, output, sourceAlias(source));
+            }
             final int cursorSource = i < bindScope.cursorProjectionSources.size() ? bindScope.cursorProjectionSources.getQuick(i) : -1;
             final int aliasIndex = hasWindows && bindScope.windowAliasIds.getQuick(i) >= 0
                     ? output.getColumnIndexById(bindScope.windowAliasIds.getQuick(i)) : -1;
@@ -1080,6 +1083,42 @@ public final class SqlBinder implements Mutable {
         return candidate;
     }
 
+    /**
+     * Rejects a name in the expression of select column {@code columnIndex} that reads a column of an enclosing
+     * LATERAL scope while a later select column aliases another value under it: the column reads only earlier aliases,
+     * where a projection over windows reads the later column.
+     */
+    private void validateOuterNames(ExpressionNode node, ObjList<QueryColumn> columns, int columnIndex, OutputSchema source,
+                                    CharSequence sourceAlias) throws SqlException {
+        if (node == null || node.type == ExpressionNode.QUERY) {
+            return;
+        }
+        if (node.type != ExpressionNode.LITERAL) {
+            validateOuterNames(node.lhs, columns, columnIndex, source, sourceAlias);
+            validateOuterNames(node.rhs, columns, columnIndex, source, sourceAlias);
+            for (int i = 0, n = node.args.size(); i < n; i++) {
+                validateOuterNames(node.args.getQuick(i), columns, columnIndex, source, sourceAlias);
+            }
+            return;
+        }
+        final int outerId = FunctionBinder.qualifierEnd(node, source) < 0 && FunctionBinder.findColumn(node, source, sourceAlias) == -1
+                ? ctx.functionBinder.outerScopeColumnId(node) : -1;
+        if (outerId < 0) {
+            return;
+        }
+        final CharSequence name = GenericLexer.unquote(node.token);
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (i != columnIndex && Chars.equalsIgnoreCase(columns.getQuick(i).getName(), name)) {
+                final ExpressionNode aliased = columns.getQuick(i).getAst();
+                if (i > columnIndex && (aliased.type != ExpressionNode.LITERAL || FunctionBinder.findColumn(aliased, source, sourceAlias) != -1
+                        || ctx.functionBinder.outerScopeColumnId(aliased) != outerId)) {
+                    throw SqlException.invalidColumn(node.position, node.token);
+                }
+                return;
+            }
+        }
+    }
+
     private void validateWithin(ExpressionNode node, OutputSchema input, CharSequence alias,
                                 SqlExecutionContext executionContext) throws SqlException {
         if (node == null || node.type == ExpressionNode.QUERY) {
@@ -1298,6 +1337,9 @@ public final class SqlBinder implements Mutable {
      */
     ScanPlan bindScan(QueryModel source, ExpressionNode tableName, TableToken token, long metadataVersion) {
         final ScanPlan scan = ctx.planNodes.scans.next().of(token, metadataVersion, tableName.position, source.isUpdate());
+        if (updateBinder.isSequenced()) {
+            scan.markWalClientUpdate();
+        }
         scan.setHints(scanHints(source));
         final ExpressionNode view = source.getViewNameExpr();
         if (view != null) {

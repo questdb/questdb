@@ -58,8 +58,7 @@ import io.questdb.std.ObjObjHashMap;
  * windows, then its aggregation, DISTINCT and cursor columns, each starting from an empty list; a PIVOT and a WINDOW
  * JOIN bind their keys, aggregates and combinations outside windows; no substitution spans the cursor columns;
  * only a block without windows translates its projection's aliases; a block looks up its SELECT aliases outside the
- * binding of its windows' self references and the translation of its aliases; and its window calls bind before its
- * projection reads earlier aliases.
+ * translation of its aliases; and its window calls bind before its projection reads earlier aliases.
  */
 final class BindScope implements Mutable {
     final IntIntHashMap aggregateColumnMappings = new IntIntHashMap();
@@ -109,7 +108,7 @@ final class BindScope implements Mutable {
     final ObjList<ExpressionNode> projectedOffsets = new ObjList<>();
     final IntList projectionAliasIndexes = new IntList();
     final OutputSchema referenceScope = new OutputSchema();
-    final LowerCaseCharSequenceIntHashMap selectAliasIndexes;
+    final LowerCaseCharSequenceIntHashMap selectAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     final IntList sourceProjectionIndexes = new IntList();
     final ObjList<ColumnExpression> substitutionColumns = new ObjList<>();
     final ObjList<ExpressionNode> substitutionNodes = new ObjList<>();
@@ -142,7 +141,6 @@ final class BindScope implements Mutable {
     final ObjList<ExpressionNode> windowOrderExpressions = new ObjList<>();
     final ObjList<ExpressionNode> windowSelectExpressions = new ObjList<>();
     final ObjIntHashMap<ExpressionNode> windowSelectIndexes = new ObjIntHashMap<>();
-    final LowerCaseCharSequenceIntHashMap windowSelfReferences = new LowerCaseCharSequenceIntHashMap();
     private final IntList aggregateHashes;
     FunctionBinder.BindingRole bindingRole;
     ExpressionNode bindingRoot;
@@ -188,8 +186,7 @@ final class BindScope implements Mutable {
         pivotIndexes = projectionAliasIndexes;
         pivotKeyAliases = windowNames;
         pivotKeyIndexes = sourceProjectionIndexes;
-        selectAliasIndexes = windowSelfReferences;
-        translatingAliases = new TranslatingAliases(joinNativeTimestampIds, windowColumnIds, windowSelfReferences);
+        translatingAliases = new TranslatingAliases(joinNativeTimestampIds, windowColumnIds, selectAliasIndexes);
         windowInputScope = referenceScope;
         windowJoinAggregateSteps = windowColumnIds;
     }
@@ -218,6 +215,7 @@ final class BindScope implements Mutable {
         projectedOffsets.clear();
         projectionAliasIndexes.clear();
         referenceScope.clear();
+        selectAliasIndexes.clear();
         sourceProjectionIndexes.clear();
         substitutionColumns.clear();
         substitutionNodes.clear();
@@ -246,7 +244,6 @@ final class BindScope implements Mutable {
         windowOrderExpressions.clear();
         windowSelectExpressions.clear();
         windowSelectIndexes.clear();
-        windowSelfReferences.clear();
         bindingRole = null;
         bindingRoot = null;
         boundLowerBound = null;

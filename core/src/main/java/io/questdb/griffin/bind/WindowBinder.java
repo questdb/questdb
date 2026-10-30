@@ -149,8 +149,6 @@ final class WindowBinder {
             final int index = FunctionBinder.findColumn(node, input, sourceAlias(source));
             if (index >= 0) {
                 addWindowInnerColumn(project, input, index);
-            } else if (!isSpecIncluded) {
-                addWindowSelfReference(project, node);
             }
             return;
         }
@@ -170,26 +168,6 @@ final class WindowBinder {
         for (int i = 0, n = nodes.size(); i < n; i++) {
             addWindowInnerLiterals(project, input, nodes.getQuick(i), source, true);
         }
-    }
-
-    private void addWindowSelfReference(ProjectPlan project, ExpressionNode node) {
-        final BindScope scope = ctx.scope();
-        if (FunctionBinder.qualifierEnd(node, null) >= 0 || scope.windowSelfReferences.keyIndex(node.token) < 0) {
-            return;
-        }
-        final OutputSchema output = project.getOutput();
-        final CharSequence name = GenericLexer.unquote(node.token);
-        int index = output.getColumnCount() - 1;
-        while (index >= 0 && !Chars.equalsIgnoreCase(output.getColumnName(index), name)) {
-            index--;
-        }
-        if (index < 0 || project.getExpressions().getQuick(index) instanceof ColumnExpression) {
-            return;
-        }
-        final int id = ctx.planNodes.nextColumnId();
-        project.getExpressions().add(ctx.planNodes.columns.next().of(output.getColumnId(index), output.getColumnType(index), node.position));
-        output.add(id, ctx.createOutputName(name), output.getColumnType(index), false);
-        scope.windowSelfReferences.put(node.token, id);
     }
 
     private void addWindowTranslationColumn(ProjectPlan project, OutputSchema input, int index, CharSequence name) {
@@ -611,8 +589,8 @@ final class WindowBinder {
     }
 
     /**
-     * A window function argument may name an earlier computed column, which it reads through a
-     * self-reference column of the inner projection.
+     * A window function argument may name an earlier computed column, which it reads as a column of the inner
+     * projection.
      */
     private boolean referencesEarlierAlias(ExpressionNode node, ObjList<QueryColumn> columns, int columnIndex, OutputSchema source,
                                            boolean isWindowArgument) {
@@ -773,7 +751,7 @@ final class WindowBinder {
             return null;
         }
         if (expression.windowExpression != null) {
-            return rewriteWindowAliases(expression, model, source, false, executionContext);
+            return rewriteWindowAliases(expression, model, source, -1, false, executionContext);
         }
         expression.lhs = rewriteOrderWindowAliases(expression.lhs, model, source, executionContext);
         expression.rhs = rewriteOrderWindowAliases(expression.rhs, model, source, executionContext);
@@ -783,7 +761,12 @@ final class WindowBinder {
         return expression;
     }
 
-    private ExpressionNode rewriteWindowAliases(ExpressionNode expression, QueryModel model, QueryModel source,
+    /**
+     * Rewrites the names in an expression that name SELECT aliases to the columns that compute them. Within the
+     * expression of SELECT column {@code columnIndex}, or of no SELECT column when -1, the column's own alias names
+     * no SELECT column: the name reads an outer column of a LATERAL body, and is otherwise invalid.
+     */
+    private ExpressionNode rewriteWindowAliases(ExpressionNode expression, QueryModel model, QueryModel source, int columnIndex,
                                                 boolean isWindowArgument, SqlExecutionContext executionContext) throws SqlException {
         final BindScope scope = ctx.scope();
         if (expression == null) {
@@ -791,14 +774,9 @@ final class WindowBinder {
         }
         final boolean isAlias = expression.type == ExpressionNode.LITERAL && !expression.isWildcard()
                 && FunctionBinder.qualifierEnd(expression, null) < 0 && getColumnIndexQuiet(scope.windowInput.getOutput(), expression.token) < 0;
-        if (!isWindowArgument && !isAlias && expression.type == ExpressionNode.LITERAL && !expression.isWildcard()) {
+        if (!isWindowArgument && !isAlias && expression.type == ExpressionNode.LITERAL && !expression.isWildcard()
+                && !ctx.functionBinder.isOuterScopeColumn(expression)) {
             ctx.bindColumnIndex(expression, scope.windowInput.getOutput(), source);
-        }
-        if (isWindowArgument && expression.type == ExpressionNode.LITERAL && scope.windowSelfReferences.size() > 0) {
-            final int index = scope.windowSelfReferences.keyIndex(expression.token);
-            if (index < 0) {
-                return windowColumnReference(scope.windowSelfReferences.valueAt(index), expression.position);
-            }
         }
         if (isAlias) {
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
@@ -812,8 +790,11 @@ final class WindowBinder {
                 if (!Chars.equalsIgnoreCase(column.getName(), expression.token)) {
                     continue;
                 }
+                if (i == columnIndex && ctx.functionBinder.isOuterScopeColumn(expression)) {
+                    return expression;
+                }
                 int id = scope.windowAliasIds.getQuick(i);
-                if (id == -2) {
+                if (id == -2 || i == columnIndex) {
                     throw SqlException.invalidColumn(expression.position, expression.token);
                 }
                 if (id < 0 && !isWindowArgument && i < scope.windowSelectExpressions.size()
@@ -825,7 +806,7 @@ final class WindowBinder {
                 if (id < 0) {
                     scope.windowAliasIds.setQuick(i, -2);
                     final ExpressionNode aliased = rewriteWindowAliases(copyWindowSyntax(column.getAst(), column.getAst()),
-                            model, source, true, executionContext);
+                            model, source, i, true, executionContext);
                     scope.windowAliasIds.setQuick(i, -1);
                     if (ctx.hasAggregate(aliased)) {
                         return aliased;
@@ -846,7 +827,7 @@ final class WindowBinder {
                 }
                 return windowColumnReference(id, expression.position);
             }
-            if (!isWindowArgument) {
+            if (!isWindowArgument && !ctx.functionBinder.isOuterScopeColumn(expression)) {
                 ctx.bindColumnIndex(expression, scope.windowInput.getOutput(), source);
             }
         }
@@ -854,17 +835,17 @@ final class WindowBinder {
             final WindowExpression syntax = resolveWindowSyntax(expression.windowExpression, model, executionContext);
             expression.windowExpression = syntax;
             for (int i = 0, n = syntax.getPartitionBy().size(); i < n; i++) {
-                syntax.getPartitionBy().setQuick(i, rewriteWindowAliases(syntax.getPartitionBy().getQuick(i), model, source, true, executionContext));
+                syntax.getPartitionBy().setQuick(i, rewriteWindowAliases(syntax.getPartitionBy().getQuick(i), model, source, columnIndex, true, executionContext));
             }
             for (int i = 0, n = syntax.getOrderBy().size(); i < n; i++) {
-                syntax.getOrderBy().setQuick(i, rewriteWindowAliases(syntax.getOrderBy().getQuick(i), model, source, true, executionContext));
+                syntax.getOrderBy().setQuick(i, rewriteWindowAliases(syntax.getOrderBy().getQuick(i), model, source, columnIndex, true, executionContext));
             }
             isWindowArgument = true;
         }
-        expression.lhs = rewriteWindowAliases(expression.lhs, model, source, isWindowArgument, executionContext);
-        expression.rhs = rewriteWindowAliases(expression.rhs, model, source, isWindowArgument, executionContext);
+        expression.lhs = rewriteWindowAliases(expression.lhs, model, source, columnIndex, isWindowArgument, executionContext);
+        expression.rhs = rewriteWindowAliases(expression.rhs, model, source, columnIndex, isWindowArgument, executionContext);
         for (int i = 0, n = expression.args.size(); i < n; i++) {
-            expression.args.setQuick(i, rewriteWindowAliases(expression.args.getQuick(i), model, source, isWindowArgument, executionContext));
+            expression.args.setQuick(i, rewriteWindowAliases(expression.args.getQuick(i), model, source, columnIndex, isWindowArgument, executionContext));
         }
         return expression;
     }
@@ -1025,7 +1006,6 @@ final class WindowBinder {
         bindScope.windowSelectExpressions.clear();
         bindScope.windowSelectIndexes.clear();
         bindScope.windowAliasIds.setAll(model.getBottomUpColumns().size(), -1);
-        bindScope.windowSelfReferences.clear();
         bindScope.resetAliases();
         ProjectPlan innerProject = null;
         if (hasPureComputedColumn(model) && model.getNamedWindows().size() == 0
@@ -1043,7 +1023,7 @@ final class WindowBinder {
                 ast.paramCount = 0;
             }
             final ExpressionNode expression = bindScope.windowAliasIds.getQuick(i) >= 0 ? ast
-                    : rewriteWindowAliases(ast, model, source, false, executionContext);
+                    : rewriteWindowAliases(ast, model, source, i, false, executionContext);
             bindScope.windowSelectIndexes.putIfAbsent(expression, i);
             bindScope.windowSelectExpressions.add(expression);
             collectWindowNodes(expression);

@@ -353,7 +353,7 @@ final class SampleByFactoryGenerator {
                 assert isMaterialized || groupByFactory.recordCursorSupportsRandomAccess();
                 final RecordCursorFactory base = groupByFactory;
                 groupByFactory = null;
-                groupByFactory = sortGenerator.generateSort(sortMetadata, base, listColumnFilterA, null, null, -1, isEncoded, isMaterialized);
+                groupByFactory = sortGenerator.generateSort(sortMetadata, base, listColumnFilterA, null, null, 0, -1, isEncoded, isMaterialized);
             }
 
             if (ParanoiaState.PLAN_PARANOIA_MODE && needsPrevPositioning && !isSampleBySource && !groupByFactory.recordCursorSupportsRandomAccess()) {

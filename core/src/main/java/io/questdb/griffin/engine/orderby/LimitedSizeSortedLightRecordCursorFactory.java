@@ -48,7 +48,7 @@ import org.jetbrains.annotations.Nullable;
  * Same as SortedLightRecordCursorFactory but using LimitedSizeLongTreeChain instead.
  */
 public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final LimitRecordCursorFactory.Bounds bounds = new LimitRecordCursorFactory.Bounds();
+    private final LimitRecordCursorFactory.Bounds bounds;
     private final RecordComparator comparator;
     private final CairoConfiguration configuration;
     private final ObjList<DirectIntList> rankMaps;
@@ -69,6 +69,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
             RecordComparator comparator,
             Function loFunc,
             @Nullable Function hiFunc,
+            int limitPosition,
             ListColumnFilter sortColumnFilter,
             int timestampIndex // index of timestamp that base record cursor is already sorted on
     ) {
@@ -76,6 +77,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
         this.base = base;
         this.loFunction = loFunc;
         this.hiFunction = hiFunc;
+        this.bounds = new LimitRecordCursorFactory.Bounds(limitPosition);
         this.configuration = configuration;
         this.comparator = comparator;
         this.sortColumnFilter = sortColumnFilter;
@@ -140,7 +142,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
      * L >=0 - first L records
      * L < 0 - last L records
      * 2. "limit L, H" means we need to keep :
-     * L < 0          - last  L records (but skip last H records, if H >=0 then don't skip anything)
+     * L < 0          - last  L records (but skip last H records if H < 0; a positive H is rejected)
      * L >= 0, H >= 0 - first H records (but skip first L later, if H <= L then return empty set)
      * L >= 0, H < 0  - the result spans from record L-th from the beginning up to H-th from the end, so the
      * chain stays unbounded (limit -1) and the cursor skips L rows from the start and H from the end.

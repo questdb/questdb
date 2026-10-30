@@ -29,11 +29,12 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
 /**
- * The target of the UPDATE the binder bound last: its table, as the statement names it and as it resolved, and the
- * table columns its SET clause assigns, in assignment order.
+ * The target of the UPDATE the binder bound last: its table, as the statement names it and as it resolved, the table
+ * columns its SET clause assigns, in assignment order, and whether the WAL sequences the statement.
  */
 public final class UpdateTarget implements Mutable {
     private final ObjList<CharSequence> columnNames;
+    private boolean isSequenced;
     private long metadataVersion;
     private int tableId;
     private CharSequence tableName;
@@ -50,6 +51,7 @@ public final class UpdateTarget implements Mutable {
 
     @Override
     public void clear() {
+        isSequenced = false;
         metadataVersion = 0;
         tableId = 0;
         tableName = null;
@@ -81,7 +83,17 @@ public final class UpdateTarget implements Mutable {
         return tableToken;
     }
 
-    void of(CharSequence tableName, int tablePosition, TableToken tableToken, int tableId, long metadataVersion) {
+    /**
+     * True when the target is a WAL table and the statement binds outside WAL apply: the WAL sequences the statement
+     * and its apply job runs it, so the client compiles it only to validate it, and every scan the statement binds
+     * reads no rows, see {@link io.questdb.griffin.plan.logical.ScanPlan#isWalClientUpdate()}.
+     */
+    public boolean isSequenced() {
+        return isSequenced;
+    }
+
+    void of(CharSequence tableName, int tablePosition, TableToken tableToken, int tableId, long metadataVersion, boolean isSequenced) {
+        this.isSequenced = isSequenced;
         this.tableName = tableName;
         this.tablePosition = tablePosition;
         this.tableToken = tableToken;

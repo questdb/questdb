@@ -71,6 +71,13 @@ public interface TimeZoneRules {
     long getOffset(long utcEpoch, int year);
 
     /**
+     * Returns the greatest common divisor of every UTC offset the zone takes at or after the instant, in the rules'
+     * units: the historic offsets in effect from then on and the offsets of the recurring transition rules; zero when
+     * every such offset is zero.
+     */
+    long getOffsetGcd(long utcEpoch);
+
+    /**
      * Returns the standard (non-DST) UTC offset for this timezone. This is
      * the base offset without any daylight saving adjustment, i.e. the
      * "winter time" offset for most timezones.

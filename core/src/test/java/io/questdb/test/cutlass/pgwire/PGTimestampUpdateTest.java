@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.pgwire;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -276,6 +277,97 @@ public class PGTimestampUpdateTest extends BasePGTest {
                         ts[TIMESTAMP],x[INTEGER]
                         2024-01-01 00:00:00.0,0
                         2024-01-03 00:00:00.0,1
+                        """, new StringSink(), rs);
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateWithSubqueryAndInvalidTextBindFailsBeforeSequencing() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE TABLE t (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                statement.executeUpdate("INSERT INTO t VALUES ('2024-01-01', 1), ('2024-01-02', 2)");
+            }
+            drainWalQueue();
+            for (String bind : new String[]{"?", "?::string", "?::varchar"}) {
+                try (PreparedStatement update = connection.prepareStatement("UPDATE t SET v = 7 WHERE ts = " + bind + " AND v = (SELECT max(v) FROM t)")) {
+                    update.setString(1, "garbage");
+                    update.executeUpdate();
+                    Assert.fail("invalid text must fail the UPDATE before the WAL records it");
+                } catch (SQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "inconvertible value: `garbage` [");
+                    TestUtils.assertContains(e.getMessage(), " -> TIMESTAMP]");
+                }
+            }
+            try (PreparedStatement update = connection.prepareStatement("UPDATE t SET v = 7 WHERE ts = ? AND v = (SELECT max(v) FROM t)")) {
+                update.setString(1, "2024-01-02T00:00:00.000000Z");
+                update.executeUpdate();
+            }
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("INSERT INTO t VALUES ('2024-01-03', 3)");
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
+            try (
+                    Statement statement = connection.createStatement();
+                    ResultSet rs = statement.executeQuery("SELECT ts, v FROM t")
+            ) {
+                assertResultSet("""
+                        ts[TIMESTAMP],v[INTEGER]
+                        2024-01-01 00:00:00.0,1
+                        2024-01-02 00:00:00.0,7
+                        2024-01-03 00:00:00.0,3
+                        """, new StringSink(), rs);
+            }
+        });
+    }
+
+    @Test
+    public void testUpdateWithInvalidTextBindInsideSubqueryFailsBeforeSequencing() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, _, _, _) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("CREATE TABLE t (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                statement.executeUpdate("INSERT INTO t VALUES ('2024-01-01', 1), ('2024-01-02', 2)");
+            }
+            drainWalQueue();
+            for (String bind : new String[]{"?", "?::string", "?::varchar"}) {
+                for (String sql : new String[]{
+                        "UPDATE t SET v = 7 WHERE v = (SELECT max(v) FROM t WHERE ts = " + bind + ")",
+                        "UPDATE t SET v = 7 WHERE v = (SELECT max(v) FROM t WHERE v < (SELECT max(v) FROM t WHERE ts = " + bind + "))"
+                }) {
+                    try (PreparedStatement update = connection.prepareStatement(sql)) {
+                        update.setString(1, "garbage");
+                        update.executeUpdate();
+                        Assert.fail("invalid text must fail the UPDATE before the WAL records it");
+                    } catch (SQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "inconvertible value: `garbage` [");
+                        TestUtils.assertContains(e.getMessage(), " -> TIMESTAMP]");
+                    }
+                }
+            }
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("t");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(token));
+            try (PreparedStatement update = connection.prepareStatement("UPDATE t SET v = 7 WHERE v = (SELECT max(v) FROM t WHERE ts <= ?)")) {
+                update.setString(1, "2024-01-02T00:00:00.000000Z");
+                update.executeUpdate();
+            }
+            try (Statement statement = connection.createStatement()) {
+                statement.executeUpdate("INSERT INTO t VALUES ('2024-01-03', 3)");
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            try (
+                    Statement statement = connection.createStatement();
+                    ResultSet rs = statement.executeQuery("SELECT ts, v FROM t")
+            ) {
+                assertResultSet("""
+                        ts[TIMESTAMP],v[INTEGER]
+                        2024-01-01 00:00:00.0,1
+                        2024-01-02 00:00:00.0,7
+                        2024-01-03 00:00:00.0,3
                         """, new StringSink(), rs);
             }
         });

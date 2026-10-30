@@ -443,7 +443,8 @@ final class AccessPathPlanning {
             predicate = filter.getPredicate();
             source = filter.getChild();
         }
-        if (!(source instanceof ScanPlan scan) || scan.hasHint(ScanPlan.HINT_NO_COVERING) || scan.hasHint(ScanPlan.HINT_NO_INDEX)) {
+        if (!(source instanceof ScanPlan scan) || scan.isWalClientUpdate() || scan.hasHint(ScanPlan.HINT_NO_COVERING)
+                || scan.hasHint(ScanPlan.HINT_NO_INDEX)) {
             return false;
         }
         final OutputSchema output = scan.getOutput();

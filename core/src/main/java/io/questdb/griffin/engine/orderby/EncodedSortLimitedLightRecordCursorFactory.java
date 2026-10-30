@@ -57,7 +57,7 @@ import org.jetbrains.annotations.Nullable;
  * factory remains the fallback for unsupported keys.
  */
 public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCursorFactory {
-    private final LimitRecordCursorFactory.Bounds bounds = new LimitRecordCursorFactory.Bounds();
+    private final LimitRecordCursorFactory.Bounds bounds;
     private final ListColumnFilter sortColumnFilter;
     private final int timestampIndex;
     private RecordCursorFactory base;
@@ -71,6 +71,7 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
             RecordCursorFactory base,
             Function loFunction,
             @Nullable Function hiFunction,
+            int limitPosition,
             ListColumnFilter sortColumnFilter,
             int timestampIndex
     ) {
@@ -80,6 +81,7 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
         this.base = base;
         this.loFunction = loFunction;
         this.hiFunction = hiFunction;
+        this.bounds = new LimitRecordCursorFactory.Bounds(limitPosition);
         this.sortColumnFilter = sortColumnFilter;
         this.timestampIndex = timestampIndex;
         try {

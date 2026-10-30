@@ -506,8 +506,10 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     /**
-     * True when the scan reads the target of a client-side UPDATE of a WAL table: the client validates the UPDATE
-     * against the sequencer metadata and only the WAL apply job reads the rows.
+     * True when the scan belongs to the client-side compilation of an UPDATE of a WAL table, see
+     * {@link io.questdb.griffin.bind.UpdateTarget#isSequenced()}: the client only validates the statement, so the scan
+     * reads no rows and takes no reader, and only the WAL apply job reads the rows. The target binds the sequencer
+     * metadata; a sub-query's scan binds the table it reads as any scan does.
      */
     public boolean isWalClientUpdate() {
         return isWalClientUpdate;
@@ -540,8 +542,8 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     /**
-     * Marks the scan as the target of a client-side UPDATE of a WAL table, see {@link #isWalClientUpdate}; the binder
-     * decides it from the execution context it binds the UPDATE under.
+     * Marks the scan as part of the client-side compilation of an UPDATE of a WAL table, see
+     * {@link #isWalClientUpdate}; the binder marks every scan it binds for such a statement.
      */
     public void markWalClientUpdate() {
         isWalClientUpdate = true;

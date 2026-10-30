@@ -67,6 +67,11 @@ public class FixedTimeZoneRule implements TimeZoneRules {
     }
 
     @Override
+    public long getOffsetGcd(long utcEpoch) {
+        return Math.abs(offset);
+    }
+
+    @Override
     public long getStandardOffset() {
         return offset;
     }

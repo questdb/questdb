@@ -59,7 +59,8 @@ import static io.questdb.griffin.optimiser.ScalarCompensation.isTailLimit;
  * node starts the block's source and never sees the filter's equalities, as in the equivalent join. Each kind of
  * chain node takes one rule when the mapping enters below it:
  * <ul>
- * <li>Project: exposes each mapped column as a hidden column; ends a filter's chain.</li>
+ * <li>Project: exposes each mapped column as a hidden column, and a column that reads an earlier plain column reference
+ * reads the referenced column; ends a filter's chain.</li>
  * <li>Filter: reads the mapped columns and drops the equalities they satisfy; commutes with a filter.</li>
  * <li>Sort: none, a LIMIT above it, across filters and distincts, ranks in its order; commutes with a filter.</li>
  * <li>Distinct: none, its tuples hold the mapped columns; commutes with a filter.</li>
@@ -141,6 +142,23 @@ final class CorrelatedChainRewriter {
                 ctx.insertColumn(output, keyIndex, context.newColumnId(), ctx.outerRefName(mapping.outerIdAt(i)), type);
             }
             mapping.setColumnIdAt(i, output.getColumnId(keyIndex));
+        }
+    }
+
+    /**
+     * Has each column of the projection that reads an earlier plain column reference by alias read the referenced
+     * column instead, as the binder binds such a read. An outer column the projection selects becomes a plain column
+     * reference once it reads its mapped column.
+     */
+    private void inlinePlainReferences(ProjectPlan project) {
+        final ObjList<BoundExpression> expressions = project.getExpressions();
+        substitution.clear();
+        for (int i = 0, n = expressions.size(); i < n; i++) {
+            final BoundExpression expression = context.getRewriter().remapColumns(expressions.getQuick(i), substitution);
+            expressions.setQuick(i, expression);
+            if (expression instanceof ColumnExpression column && !column.isCast()) {
+                substitution.put(project.getOutput().getColumnId(i), column.getColumnId());
+            }
         }
     }
 
@@ -235,6 +253,7 @@ final class CorrelatedChainRewriter {
         final boolean isCorrelated = mapping.mark() > base;
         return switch (node) {
             case ProjectPlan project -> {
+                inlinePlainReferences(project);
                 for (int k = base, n = mapping.mark(); k < n; k++) {
                     mapping.setColumnIdAt(k, ctx.exposeColumn(project, input.getOutput(), mapping.columnIdAt(k),
                             ctx.outerRefName(mapping.outerIdAt(k)), project.getPosition()));

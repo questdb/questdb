@@ -52,6 +52,7 @@ import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
@@ -122,6 +123,24 @@ final class Decorrelation implements OptimiserPass {
     private final PlanNodePools planNodes;
     private final IntIntHashMap substitution;
     private final IntList tmpColumnIds;
+    private final ExpressionVisitor readIdCollector = this::collectReadId;
+    private final PlanExpressionVisitor nodeReadIds = new PlanExpressionVisitor() {
+        @Override
+        public int visitColumnId(int columnId, int position) {
+            tmpColumnIds.add(columnId);
+            return columnId;
+        }
+
+        @Override
+        public BoundExpression visitExpression(BoundExpression expression) {
+            expression.walk(readIdCollector);
+            return expression;
+        }
+    };
+    private final PlanVisitor readingNodes = plan -> {
+        plan.visitReads(nodeReadIds);
+        return TreeWalk.CONTINUE;
+    };
     private final DecorrelationCarriers verificationCarriers = ParanoiaState.PLAN_PARANOIA_MODE ? new DecorrelationCarriers() : null;
     private final ScalarCompensation compensation;
     private final DecorrelationContext ctx;
@@ -283,6 +302,23 @@ final class Decorrelation implements OptimiserPass {
     }
 
     /**
+     * Adds to {@link #tmpColumnIds} the ids of the columns that the nodes of the body's chain from {@code chainBase}
+     * read, and of the columns and outer columns that the bodies of the steps after the step read.
+     */
+    private void collectBodyColumnReads(int chainBase) {
+        for (int i = chainBase, n = chain.size(); i < n; i++) {
+            chain.getQuick(i).visitReads(nodeReadIds);
+        }
+        final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(ctx.master());
+        for (int i = steps.indexOf(ctx.step()) + 1, n = steps.size(); i < n; i++) {
+            final JoinInput input = steps.getQuick(i);
+            if (input.isDependent() && input.getInput() != null) {
+                input.getInput().walkTopDown(readingNodes);
+            }
+        }
+    }
+
+    /**
      * Collects the outer columns the block reads above {@code chainOuterBase}: those its chain and source join
      * read, and those of its deferred nullable inputs, which the block satisfies itself.
      */
@@ -295,6 +331,15 @@ final class Decorrelation implements OptimiserPass {
             outerColumnReads.collect(join, chainOuterIds);
         }
         keys.collectDeferredOuterIds(deferredBase, chainOuterIds);
+    }
+
+    private int collectReadId(BoundExpression expression) {
+        if (expression instanceof ColumnExpression column) {
+            tmpColumnIds.add(column.getColumnId());
+        } else if (expression instanceof OuterColumnExpression outer) {
+            tmpColumnIds.add(outer.getColumnId());
+        }
+        return TreeWalk.CONTINUE;
     }
 
     /**
@@ -763,13 +808,17 @@ final class Decorrelation implements OptimiserPass {
 
     /**
      * True when the projection column computes a value over outer columns no equality satisfies that the step
-     * can compute above the join instead, with each join key that reads it joining its step's ON condition.
+     * can compute above the join instead: the value reads no other column of the projection, no read that
+     * {@link #collectBodyColumnReads} added to {@link #tmpColumnIds} from {@code readBase} on names the column, and
+     * each join key that reads it joins its step's ON condition.
      */
-    private boolean isLiftableSelection(ProjectPlan project, int index, int base) {
+    private boolean isLiftableSelection(ProjectPlan project, int index, int base, int readBase) {
         final OutputSchema output = project.getOutput();
         final BoundExpression expression = project.getExpressions().getQuick(index);
+        final int columnId = output.getColumnId(index);
         return output.isVisible(index) && !(expression instanceof OuterColumnExpression) && ctx.readsUnmappedOuter(expression, base)
-                && isLiftable(expression) && hasNullableOuterTypes(expression) && isKeyReadMovable(output.getColumnId(index), output, base);
+                && isLiftable(expression) && hasNullableOuterTypes(expression) && !ctx.readsAnyColumn(expression, output)
+                && tmpColumnIds.indexOf(columnId, readBase, tmpColumnIds.size()) < 0 && isKeyReadMovable(columnId, output, base);
     }
 
     /**
@@ -865,11 +914,13 @@ final class Decorrelation implements OptimiserPass {
                 }
             }
         }
+        final int readBase = tmpColumnIds.size();
+        collectBodyColumnReads(chainBase);
         for (int i = chainBase, n = chain.size(); i < n; i++) {
             if (chain.getQuick(i) instanceof ProjectPlan project) {
                 final ObjList<BoundExpression> expressions = project.getExpressions();
                 for (int k = 0, m = expressions.size(); k < m; k++) {
-                    if (isLiftableSelection(project, k, base)) {
+                    if (isLiftableSelection(project, k, base, readBase)) {
                         final BoundExpression expression = expressions.getQuick(k);
                         final int columnId = project.getOutput().getColumnId(k);
                         keys.moveKeyReads(ctx.master(), columnId);
@@ -883,6 +934,7 @@ final class Decorrelation implements OptimiserPass {
                 }
             }
         }
+        tmpColumnIds.setPos(readBase);
         collectChainOuterIds(source, chainBase, chainOuterBase, deferredBase);
     }
 

@@ -2224,13 +2224,22 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      * True when the name resolves in an enclosing lateral scope.
      */
     boolean isOuterScopeColumn(ExpressionNode node) {
+        return outerScopeColumnId(node) > -1;
+    }
+
+    /**
+     * The id of the column the name reads in the innermost enclosing lateral scope that defines it, or -1.
+     */
+    int outerScopeColumnId(ExpressionNode node) {
         final ObjList<OutputSchema> outerScopes = ctx.scope().outerScopes;
         for (int i = outerScopes.size() - 1; i > -1; i--) {
-            if (findColumn(node, outerScopes.getQuick(i), null) > -1) {
-                return true;
+            final OutputSchema outer = outerScopes.getQuick(i);
+            final int index = findColumn(node, outer, null);
+            if (index > -1) {
+                return outer.getColumnId(index);
             }
         }
-        return false;
+        return -1;
     }
 
     BoundExpression toBooleanSubquery(BoundExpression expression) {

@@ -361,6 +361,84 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidNegativePositiveArgsOnEveryPath() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ti (s SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO ti VALUES
+                        ('b', 1, '2024-01-01T00:00:00.000000Z'),
+                        ('a', 2, '2024-01-01T01:00:00.000000Z'),
+                        ('c', 3, '2024-01-01T02:00:00.000000Z'),
+                        ('e', 4, '2024-01-01T03:00:00.000000Z'),
+                        ('d', 5, '2024-01-01T04:00:00.000000Z'),
+                        ('a', 6, '2024-01-02T00:00:00.000000Z')
+                    """);
+            execute("CREATE TABLE tn (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tn SELECT * FROM ti");
+            final String[] sources = {"SELECT * FROM ti", "SELECT /*+ no_index(ti) */ * FROM ti", "SELECT * FROM tn"};
+            final String[] orders = {"", " ORDER BY s", " ORDER BY s DESC"};
+            final String[] lastThree = {
+                    """
+                    s\tv\tts
+                    c\t3\t2024-01-01T02:00:00.000000Z
+                    e\t4\t2024-01-01T03:00:00.000000Z
+                    d\t5\t2024-01-01T04:00:00.000000Z
+                    """,
+                    """
+                    s\tv\tts
+                    c\t3\t2024-01-01T02:00:00.000000Z
+                    d\t5\t2024-01-01T04:00:00.000000Z
+                    e\t4\t2024-01-01T03:00:00.000000Z
+                    """,
+                    """
+                    s\tv\tts
+                    c\t3\t2024-01-01T02:00:00.000000Z
+                    b\t1\t2024-01-01T00:00:00.000000Z
+                    a\t2\t2024-01-01T01:00:00.000000Z
+                    """
+            };
+            final String[] lastThreeButOne = {
+                    """
+                    s\tv\tts
+                    c\t3\t2024-01-01T02:00:00.000000Z
+                    e\t4\t2024-01-01T03:00:00.000000Z
+                    """,
+                    """
+                    s\tv\tts
+                    c\t3\t2024-01-01T02:00:00.000000Z
+                    d\t5\t2024-01-01T04:00:00.000000Z
+                    """,
+                    """
+                    s\tv\tts
+                    c\t3\t2024-01-01T02:00:00.000000Z
+                    b\t1\t2024-01-01T00:00:00.000000Z
+                    """
+            };
+            for (boolean isEncoded : new boolean[]{true, false}) {
+                node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, isEncoded);
+                for (String source : sources) {
+                    for (int i = 0; i < orders.length; i++) {
+                        final String query = source + " WHERE ts IN '2024-01-01'" + orders[i] + " LIMIT ";
+                        assertQuery(query + "-1, 4").noLeakCheck().fails(query.length(), "LIMIT <negative>, <positive> is not allowed");
+                        assertQuery(query + "-2, 3").noLeakCheck().fails(query.length(), "LIMIT <negative>, <positive> is not allowed");
+                        bindVariableService.clear();
+                        bindVariableService.setLong(0, -1);
+                        bindVariableService.setLong(1, 4);
+                        assertQuery(query + "$1, $2").noLeakCheck().fails(query.length(), "LIMIT <negative>, <positive> is not allowed");
+                        bindVariableService.clear();
+                        final String timestamp = orders[i].isEmpty() ? "ts" : null;
+                        final String path = orders[i].isEmpty() ? "PageFrame" : source.equals(sources[0]) ? "SortedSymbolIndex"
+                                                                                : isEncoded ? "Encode sort light" : "Sort light";
+                        assertQuery(query + "-3").noLeakCheck().timestamp(timestamp).inferRandomAccess().sizeMayVary().withPlanContaining(path)
+                                .returns(lastThree[i]);
+                        assertQuery(query + "-3, -1").noLeakCheck().timestamp(timestamp).inferRandomAccess().sizeMayVary().returns(lastThreeButOne[i]);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testInvertedTopRange() throws Exception {
         String expected = """
                 i\tsym2\tprice\ttimestamp\tb\tc\td\te\tf\tg\tik\tj\tk\tl\tm\tn

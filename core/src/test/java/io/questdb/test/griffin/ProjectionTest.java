@@ -37,7 +37,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
@@ -332,11 +331,9 @@ public class ProjectionTest extends AbstractCairoTest {
                 Assert.assertTrue(plan instanceof WindowPlan);
                 Assert.assertTrue(plan.inputAt(0) instanceof ProjectPlan);
                 final ProjectPlan input = (ProjectPlan) plan.inputAt(0);
-                // The window reads adjusted1, which aliases adjusted; neither is an input-only forward.
-                Assert.assertEquals(2, input.getOutput().getColumnCount());
+                // The window reads adjusted, which is not an input-only forward.
+                Assert.assertEquals(1, input.getOutput().getColumnCount());
                 Assert.assertEquals("adjusted", input.getOutput().getColumnName(0).toString());
-                Assert.assertTrue(input.getExpressions().getQuick(1) instanceof ColumnExpression);
-                Assert.assertEquals(input.getOutput().getColumnId(0), ((ColumnExpression) input.getExpressions().getQuick(1)).getColumnId());
                 Assert.assertEquals(-1, input.getOutput().getColumnIndexQuiet("x"));
                 Assert.assertTrue(input.getChild().getOutput().getColumnIndexQuiet("x") >= 0);
                 assertFactory(factory).withContext(sqlExecutionContext).expectSize().noRandomAccess().returns("prev\nnull\n2\n3\n");

@@ -712,6 +712,104 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateWithTextBindAndSubqueryOverTargetValidatesBindAndReadsPendingUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyedTable();
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "garbage");
+            assertQuery("UPDATE w SET v = 7 WHERE ts >= $1 AND v = (SELECT v FROM w WHERE k = 1)")
+                    .noLeakCheck()
+                    .fails(31, "inconvertible value: `garbage` [STRING -> TIMESTAMP]");
+            if (walEnabled) {
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName("w");
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+                Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(token));
+            }
+            execute("DROP TABLE w");
+
+            bindVariableService.setStr(0, "2024-01-01");
+            assertUpdateAfterPendingUpdate("UPDATE w SET v = 7 WHERE ts >= $1 AND v = (SELECT v FROM w WHERE k = 1)", """
+                    k\tv
+                    1\t7
+                    2\t20
+                    """);
+            bindVariableService.setStr(0, "2025-01-01");
+            assertUpdateAfterPendingUpdate("UPDATE w SET v = 7 WHERE ts >= (SELECT ts FROM w WHERE k = 1) AND ts < $1", """
+                    k\tv
+                    1\t7
+                    2\t7
+                    """);
+        });
+    }
+
+    @Test
+    public void testUpdateWithTextBindInsideSubqueryOverTargetValidatesBindAndReadsPendingUpdate() throws Exception {
+        assertMemoryLeak(() -> {
+            createKeyedTable();
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "garbage");
+            assertQuery("UPDATE w SET v = 7 WHERE v = (SELECT v FROM w WHERE k = 1 AND ts >= $1)")
+                    .noLeakCheck()
+                    .fails(68, "inconvertible value: `garbage` [STRING -> TIMESTAMP]");
+            assertQuery("UPDATE w SET v = 7 WHERE v = (SELECT max(v) FROM w WHERE k = (SELECT min(k) FROM w WHERE ts >= $1::varchar))")
+                    .noLeakCheck()
+                    .fails(97, "inconvertible value: `garbage` [VARCHAR -> TIMESTAMP]");
+            if (walEnabled) {
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName("w");
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+                Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(token));
+            }
+            execute("DROP TABLE w");
+
+            bindVariableService.setStr(0, "2024-01-01");
+            assertUpdateAfterPendingUpdate("UPDATE w SET v = 7 WHERE v = (SELECT v FROM w WHERE k = 1 AND ts >= $1)", """
+                    k\tv
+                    1\t7
+                    2\t20
+                    """);
+            assertUpdateAfterPendingUpdate("UPDATE w SET v = 7 WHERE v = (SELECT max(v) FROM w WHERE k = (SELECT min(k) FROM w WHERE ts >= $1::varchar))", """
+                    k\tv
+                    1\t7
+                    2\t20
+                    """);
+
+            execute("CREATE TABLE ws (k SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY" + (walEnabled ? " WAL" : ""));
+            execute("INSERT INTO ws VALUES ('a', 10, '2024-01-01'), ('a', 20, '2024-01-02')");
+            if (walEnabled) {
+                drainWalQueue();
+            }
+            bindVariableService.setStr(0, "a");
+            bindVariableService.setStr(1, "garbage");
+            assertQuery("UPDATE ws SET v = 7 WHERE v = (SELECT v FROM ws WHERE k = $1 AND ts >= $2)")
+                    .noLeakCheck()
+                    .fails(71, "inconvertible value: `garbage` [STRING -> TIMESTAMP]");
+            assertQuery("UPDATE ws SET v = 7 WHERE k IN (SELECT k FROM ws WHERE k = $1 AND ts >= $2)")
+                    .noLeakCheck()
+                    .fails(72, "inconvertible value: `garbage` [STRING -> TIMESTAMP]");
+            update("UPDATE ws SET k = 'b' WHERE v = 20");
+            bindVariableService.setStr(0, "b");
+            bindVariableService.setStr(1, "2024-01-01");
+            update("UPDATE ws SET v = 8 WHERE v = (SELECT v FROM ws WHERE k = $1 AND ts >= $2)");
+            update("UPDATE ws SET v = v + 1 WHERE k IN (SELECT k FROM ws WHERE k = $1 AND ts >= $2)");
+            assertQuery("SELECT k, v FROM ws")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tv
+                            a\t10
+                            b\t9
+                            """);
+            if (walEnabled) {
+                final TableToken token = engine.verifyTableName("ws");
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+                Assert.assertEquals(4, engine.getTableSequencerAPI().lastTxn(token));
+            }
+        });
+    }
+
+    @Test
     public void testUpdateWithMultiRowSubqueryOverTargetSuspendsWalTable() throws Exception {
         Assume.assumeTrue(walEnabled);
         assertMemoryLeak(() -> {

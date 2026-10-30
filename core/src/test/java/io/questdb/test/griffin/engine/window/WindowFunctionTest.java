@@ -239,6 +239,16 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAliasArgumentBesideAliasSuffixedColumn() throws Exception {
+        testAliasArgumentBesideAliasSuffixedColumn("BYPASS WAL");
+    }
+
+    @Test
+    public void testAliasArgumentBesideAliasSuffixedColumnWal() throws Exception {
+        testAliasArgumentBesideAliasSuffixedColumn("WAL");
+    }
+
+    @Test
     public void testAliasOfVolatileWindowExpressionIsOneValue() throws Exception {
         assertQuery("SELECT a = b - 1 eq, count() FROM (SELECT rnd_int(1, 1_000_000, 0) + first_value(x) OVER (ORDER BY ts) a, a + 1 b FROM t)")
                 .ddl("CREATE TABLE t AS (SELECT x::INT x, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY")
@@ -22416,6 +22426,106 @@ public class WindowFunctionTest extends AbstractCairoTest {
 
     private String replaceTimestampSuffix1(String expected) {
         return timestampType == TestTimestampType.NANO ? expected.replaceAll("0.0000", "0.0000000") : expected;
+    }
+
+    private void testAliasArgumentBesideAliasSuffixedColumn(String walMode) throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE t (v1 INT, v2 INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode, timestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE u (v1 INT, v2 INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode, timestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE c (Price1 INT, Price2 INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode, timestampType.getTypeName());
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 10, '2024-01-01T00:00:00.000000Z'),
+                        (2, 20, '2024-01-01T00:01:00.000000Z'),
+                        (3, 30, '2024-01-01T00:02:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO u VALUES
+                        (1, 30, '2024-01-01T00:00:00.000000Z'),
+                        (2, 10, '2024-01-01T00:01:00.000000Z'),
+                        (3, 20, '2024-01-01T00:02:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO c VALUES
+                        (1, 10, '2024-01-01T00:00:00.000000Z'),
+                        (2, 20, '2024-01-01T00:01:00.000000Z'),
+                        (3, 30, '2024-01-01T00:02:00.000000Z')
+                    """);
+            drainWalQueue();
+
+            assertQuery("SELECT v2 * 2 AS v, avg(v) OVER () a, v1 FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\ta\tv1
+                            20\t40.0\t1
+                            40\t40.0\t2
+                            60\t40.0\t3
+                            """);
+            assertQuery("SELECT v2 * 2 AS v, avg(v) OVER (ORDER BY v1) a FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\ta
+                            20\t20.0
+                            40\t30.0
+                            60\t40.0
+                            """);
+            assertQuery("SELECT v2 * 2 AS v, sum(v) OVER () s, max(v) OVER () m, lag(v) OVER (ORDER BY v1) l, v1 FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\ts\tm\tl\tv1
+                            20\t120.0\t60\tnull\t1
+                            40\t120.0\t60\t20\t2
+                            60\t120.0\t60\t40\t3
+                            """);
+            assertQuery("SELECT v2 * 2 AS v, avg(v) OVER () a FROM t ORDER BY v1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\ta
+                            20\t40.0
+                            40\t40.0
+                            60\t40.0
+                            """);
+            assertQuery("SELECT v2 * 2 AS v, avg(v) OVER (PARTITION BY v) a, v1 FROM u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\ta\tv1
+                            60\t60.0\t1
+                            20\t20.0\t2
+                            40\t40.0\t3
+                            """);
+            assertQuery("SELECT v2 * 2 AS v, lag(v) OVER (ORDER BY v DESC) l, v1 FROM u")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v\tl\tv1
+                            60\tnull\t1
+                            20\t40\t2
+                            40\t60\t3
+                            """);
+            assertQuery("SELECT Price2 * 2 AS price, avg(price) OVER () a, Price1 FROM c")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            price\ta\tPrice1
+                            20\t40.0\t1
+                            40\t40.0\t2
+                            60\t40.0\t3
+                            """);
+            assertQuery("SELECT Price2 * 2 AS PRICE, avg(Price) OVER (ORDER BY price1) a FROM c")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            PRICE\ta
+                            20\t20.0
+                            40\t30.0
+                            60\t40.0
+                            """);
+        });
     }
 
     private void testRenamedColumnAfterSameNamedExpression(boolean isAliasExpressionEnabled) throws Exception {

@@ -494,7 +494,7 @@ final class ScanFactoryGenerator {
             throw new IllegalStateException("scan access path is not planned");
         }
         return switch (accessPath) {
-            case EMPTY -> new EmptyTableRecordCursorFactory(metadata);
+            case EMPTY, UPDATE_STUB -> new EmptyTableRecordCursorFactory(metadata);
             case PAGE_FRAMES -> generatePageFrameScan(frame, scan, executionContext, scanIntervals, metadata, table,
                     indexes, shifts, stolenFilter);
             case SORTED_SYMBOL_INDEX -> {
@@ -515,7 +515,7 @@ final class ScanFactoryGenerator {
                  LATEST_BY_SYMBOLS,
                  LATEST_BY_ALL -> generateLatestByScan(frame, scan, executionContext, scanIntervals, latest, metadata,
                     table, indexes, shifts);
-            case POSTING_DISTINCT, UPDATE_STUB ->
+            case POSTING_DISTINCT ->
                     throw new IllegalStateException("access path does not read the table through a reader scan");
         };
     }
@@ -645,7 +645,7 @@ final class ScanFactoryGenerator {
 
     private RecordCursorFactory generateTableScan0(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext, IntervalExtractor scanIntervals,
                                                    LatestByPlan latest, @Nullable PreparedFilter stolenFilter) throws SqlException {
-        if (scan.isWalClientUpdate()) {
+        if (scan.isWalClientUpdate() && scan.isUpdate()) {
             // Client-side WAL UPDATE validates against sequencer metadata. The data
             // reader may still have an older schema; rows are read only during WAL apply.
             final TableRecordMetadata tableMetadata = executionContext.getMetadataForWrite(scan.getTableToken(), scan.getMetadataVersion());

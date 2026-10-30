@@ -142,15 +142,16 @@ final class SortFactoryGenerator {
                 case PARALLEL_FILTERED_TOP_K, PARALLEL_TOP_K ->
                         throw new IllegalStateException("parallel top-K generates its own input");
                 case LIMITED, PRESORTED_LIMITED -> {
+                    assert limit != null;
                     isInputTransferred = true;
                     isLimitTransferred = true;
-                    return generateSort(metadata, base, keys, lo, hi,
+                    return generateSort(metadata, base, keys, lo, hi, limit.getPosition(),
                             algorithm == SortPlan.Algorithm.PRESORTED_LIMITED ? Math.abs(firstKey) - 1 : -1,
                             configuration.isSqlOrderBySortEnabled(), false);
                 }
                 default -> {
                     isInputTransferred = true;
-                    final RecordCursorFactory sorted = generateSort(metadata, base, keys, null, null, -1, configuration.isSqlOrderBySortEnabled(),
+                    final RecordCursorFactory sorted = generateSort(metadata, base, keys, null, null, 0, -1, configuration.isSqlOrderBySortEnabled(),
                             algorithm == SortPlan.Algorithm.MATERIALIZED);
                     isLimitTransferred = true;
                     return applyLimit(sorted, limit, lo, hi);
@@ -222,8 +223,9 @@ final class SortFactoryGenerator {
 
     /**
      * Consumes the input and optional LIMIT functions. A non-null lo selects the bounded sort of a random-access
-     * input; without one, the sort copies the rows of the input when {@code isMaterialized}. The sort compares
-     * encoded keys when {@code isEncodingEnabled} and the encoder supports the keys.
+     * input, which reports the errors of its LIMIT at {@code limitPosition}; without one, the sort copies the rows of
+     * the input when {@code isMaterialized}. The sort compares encoded keys when {@code isEncodingEnabled} and the
+     * encoder supports the keys.
      * The column filter is borrowed; retained factories receive a private copy.
      */
     RecordCursorFactory generateSort(
@@ -232,6 +234,7 @@ final class SortFactoryGenerator {
             ListColumnFilter keys,
             @Nullable Function lo,
             @Nullable Function hi,
+            int limitPosition,
             int preSortedTimestampIndex,
             boolean isEncodingEnabled,
             boolean isMaterialized
@@ -283,8 +286,8 @@ final class SortFactoryGenerator {
         }
         if (lo != null) {
             return isEncoded
-                    ? new EncodedSortLimitedLightRecordCursorFactory(configuration, orderedMetadata, base, lo, hi, retainedKeys, preSortedTimestampIndex)
-                    : new LimitedSizeSortedLightRecordCursorFactory(configuration, orderedMetadata, base, comparator, lo, hi, retainedKeys, preSortedTimestampIndex);
+                    ? new EncodedSortLimitedLightRecordCursorFactory(configuration, orderedMetadata, base, lo, hi, limitPosition, retainedKeys, preSortedTimestampIndex)
+                    : new LimitedSizeSortedLightRecordCursorFactory(configuration, orderedMetadata, base, comparator, lo, hi, limitPosition, retainedKeys, preSortedTimestampIndex);
         }
         if (sink != null) {
             return isEncoded

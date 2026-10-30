@@ -31,10 +31,12 @@ import io.questdb.cairo.mv.SampleByIntervalIterator;
 import io.questdb.cairo.mv.TimeZoneIntervalIterator;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.engine.groupby.TimezoneFloorTimestampSampler;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.test.tools.TestUtils;
@@ -60,6 +62,33 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         return Arrays.asList(new Object[][]{
                 {MicrosTimestampDriver.INSTANCE}, {NanosTimestampDriver.INSTANCE}
         });
+    }
+
+    // Asserts that the iterator walks increasing steps, covers each single-timestamp cluster exactly once, and, given a
+    // grid, starts and ends every step on that grid.
+    private static void assertClusterSteps(SampleByIntervalIterator iterator, LongList clusters, @Nullable TimestampSampler grid) {
+        final int clusterCount = clusters.size() / 2;
+        int coveredCount = 0;
+        int stepCount = 0;
+        long prevHi = Long.MIN_VALUE;
+        while (iterator.next()) {
+            final long lo = iterator.getTimestampLo();
+            final long hi = iterator.getTimestampHi();
+            Assert.assertTrue("unexpected step " + stepCount, ++stepCount <= clusterCount);
+            Assert.assertTrue(prevHi <= lo && lo < hi);
+            if (grid != null) {
+                Assert.assertEquals(lo, grid.round(lo));
+                Assert.assertEquals(hi, grid.round(hi));
+            }
+            for (int i = 0, n = clusters.size(); i < n; i += 2) {
+                final long cluster = clusters.getQuick(i);
+                if (lo <= cluster && cluster < hi) {
+                    coveredCount++;
+                }
+            }
+            prevHi = hi;
+        }
+        Assert.assertEquals(clusterCount, coveredCount);
     }
 
     @Test
@@ -406,6 +435,120 @@ public class TimeZoneIntervalIteratorTest extends AbstractIntervalIteratorTest {
         Assert.assertEquals(timestampDriver.parseFloorLiteral("2021-03-28T04:00:00.000000Z"), iterator.getTimestampHi());
 
         Assert.assertFalse(iterator.next());
+    }
+
+    @Test(timeout = 60_000)
+    public void testPerClusterStepSnapsAroundDstTransitions() throws Exception {
+        // Every step must start and end on the timestamp_floor_utc grid of a calendar stride, and the walk must reach
+        // each cluster. Sub-day strides do not use this iterator in a refresh, so only the walk is checked for them.
+        final String[] zones = {"Europe/Berlin", "America/New_York", "America/Santiago"};
+        final int[] strideCounts = {30, 1, 1, 1, 1};
+        final char[] strideUnits = {'m', 'h', 'd', 'w', 'M'};
+        final int[] offsetMinutes = {0, 30, 60, 90, 120, 150, 180, 210, 1380};
+        final long yearLo = timestampDriver.parseFloorLiteral("2024-01-01T00:00:00.000000Z");
+        final long yearHi = timestampDriver.parseFloorLiteral("2025-01-01T00:00:00.000000Z");
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final LongList intervals = new LongList();
+        final LongList stepPerCluster = new LongList();
+        for (String zone : zones) {
+            final TimeZoneRules tzRules = timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, zone);
+            for (long transition = tzRules.getNextDST(yearLo); transition < yearHi; transition = tzRules.getNextDST(transition)) {
+                final long firstCluster = transition - timestampDriver.fromDays(45);
+                for (int s = 0; s < strideUnits.length; s++) {
+                    final char unit = strideUnits[s];
+                    final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, strideCounts[s], unit, 0);
+                    final TimezoneFloorTimestampSampler grid = CommonUtils.isSubDayUnit(unit) ? null : new TimezoneFloorTimestampSampler(
+                            TimestampSamplerFactory.getInstance(timestampDriver, strideCounts[s], unit, 0),
+                            tzRules,
+                            unit
+                    );
+                    for (int offsetMinute : offsetMinutes) {
+                        final long offset = timestampDriver.fromMinutes(offsetMinute);
+                        if (grid != null) {
+                            grid.setOffset(offset);
+                        }
+                        for (long step = 1; step < 4; step += 2) {
+                            for (long cluster = transition - timestampDriver.fromHours(4); cluster <= transition + timestampDriver.fromHours(4); cluster += timestampDriver.fromMinutes(15)) {
+                                intervals.clear();
+                                intervals.add(firstCluster, firstCluster);
+                                intervals.add(cluster, cluster);
+                                stepPerCluster.clear();
+                                stepPerCluster.add(step, step);
+                                iterator.of(timestampDriver, sampler, tzRules, offset, intervals, firstCluster, cluster, stepPerCluster);
+                                try {
+                                    assertClusterSteps(iterator, intervals, grid);
+                                } catch (AssertionError e) {
+                                    throw new AssertionError(zone + ' ' + strideCounts[s] + unit + " offset=" + offsetMinute
+                                            + "m step=" + step + " cluster=" + timestampDriver.toMSecString(cluster), e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test(timeout = 60_000)
+    public void testPerClusterStepSnapsToBucketSpanningDstFold() throws Exception {
+        // Europe/Berlin fall-back on 2024-10-27 with OFFSET '02:30': the 1d bucket line falls in the repeated hour,
+        // so the iterator joins the buckets on both sides of it.
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
+        final long firstCluster = timestampDriver.parseFloorLiteral("2024-10-20T12:00:00.000000Z");
+        final long secondCluster = timestampDriver.parseFloorLiteral("2024-10-27T02:30:00.000000Z");
+        final LongList intervals = new LongList();
+        intervals.add(firstCluster, firstCluster);
+        intervals.add(secondCluster, secondCluster);
+        final LongList stepPerCluster = new LongList();
+        stepPerCluster.add(1L, 1L);
+        iterator.of(
+                timestampDriver,
+                sampler,
+                timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
+                timestampDriver.fromMinutes(150),
+                intervals,
+                firstCluster,
+                secondCluster,
+                stepPerCluster
+        );
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2024-10-20T00:30:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2024-10-21T00:30:00.000000Z"), iterator.getTimestampHi());
+
+        Assert.assertTrue(iterator.next());
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2024-10-26T00:30:00.000000Z"), iterator.getTimestampLo());
+        Assert.assertEquals(timestampDriver.parseFloorLiteral("2024-10-28T01:30:00.000000Z"), iterator.getTimestampHi());
+
+        Assert.assertFalse(iterator.next());
+    }
+
+    @Test(timeout = 60_000)
+    public void testPerClusterStepStartsAtDstFoldEnd() throws Exception {
+        // Europe/Berlin fall-back on 2024-10-27 with OFFSET '03:00': the 1d bucket line is the local time right after
+        // the repeated hour, 02:00 UTC.
+        final TimeZoneIntervalIterator iterator = new TimeZoneIntervalIterator();
+        final TimestampSampler sampler = TimestampSamplerFactory.getInstance(timestampDriver, 1, 'd', 0);
+        final long cluster = timestampDriver.parseFloorLiteral("2024-10-27T02:00:00.000000Z");
+        final LongList intervals = new LongList();
+        intervals.add(cluster, cluster);
+        final LongList stepPerCluster = new LongList();
+        stepPerCluster.add(1L);
+        iterator.of(
+                timestampDriver,
+                sampler,
+                timestampDriver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, "Europe/Berlin"),
+                timestampDriver.fromHours(3),
+                intervals,
+                cluster,
+                cluster,
+                stepPerCluster
+        );
+
+        final LongList expectedBounds = new LongList();
+        expectedBounds.add(cluster, timestampDriver.parseFloorLiteral("2024-10-28T02:00:00.000000Z"));
+        assertSteps(iterator, expectedBounds);
     }
 
     @Test

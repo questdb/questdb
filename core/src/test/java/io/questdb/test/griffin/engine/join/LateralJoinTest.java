@@ -420,6 +420,367 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEliminateOuterRefLiftSelectAliasMatchesWindowSpelling() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, sym SYMBOL, a INT, b INT)");
+            execute("INSERT INTO o VALUES (1, 'x', 100, 1000), (2, 'y', 200, 2000), (3, 'z', 300, 3000)");
+            execute("CREATE TABLE t (sym SYMBOL, v INT)");
+            execute("INSERT INTO t VALUES ('x', 1), ('x', 2), ('y', 3)");
+
+            final String expected = """
+                    id\tv\ta\tc
+                    1\t1\t101\t111
+                    1\t2\t101\t111
+                    2\t3\t201\t211
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, a + 1 AS a, a + 10 AS c FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, l.v, l.a, l.c
+                    FROM o, LATERAL (SELECT v, a + 1 AS a, a + 10 AS c, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym) l
+                    ORDER BY o.id, l.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, l.v, l.a, l.c
+                    FROM o, LATERAL (SELECT v, a + 1 AS a, a + 10 AS c, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym ORDER BY c) l
+                    ORDER BY o.id, l.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+
+            final String expectedLeft = """
+                    id\tv\ta\tc
+                    1\t1\t101\t111
+                    1\t2\t101\t111
+                    2\t3\t201\t211
+                    3\tnull\tnull\tnull
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o LEFT JOIN LATERAL (SELECT v, a + 1 AS a, a + 10 AS c FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .returns(expectedLeft);
+            assertQuery("""
+                    SELECT o.id, l.v, l.a, l.c
+                    FROM o LEFT JOIN LATERAL (SELECT v, a + 1 AS a, a + 10 AS c, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym) l
+                    ORDER BY o.id, l.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedLeft);
+
+            final String expectedCast = """
+                    id\tv\ta\tc
+                    1\t1\t100\t110
+                    1\t2\t100\t110
+                    2\t3\t200\t210
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, a::LONG AS a, a + 10 AS c FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedCast);
+            assertQuery("""
+                    SELECT o.id, l.v, l.a, l.c
+                    FROM o, LATERAL (SELECT v, a::LONG AS a, a + 10 AS c, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym) l
+                    ORDER BY o.id, l.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedCast);
+
+            final String expectedChain = """
+                    id\tv\ta\tb\tc
+                    1\t1\t101\t102\t103
+                    1\t2\t101\t102\t103
+                    2\t3\t201\t202\t203
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, a + 1 AS a, a + 1 AS b, b + 1 AS c FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedChain);
+            assertQuery("""
+                    SELECT o.id, l.v, l.a, l.b, l.c
+                    FROM o, LATERAL (SELECT v, a + 1 AS a, a + 1 AS b, b + 1 AS c, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym) l
+                    ORDER BY o.id, l.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedChain);
+
+            final String expectedSameColumn = """
+                    id\tv\tc\tb
+                    1\t1\t1001\t1000
+                    1\t2\t1001\t1000
+                    2\t3\t2001\t2000
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b + 1 AS c, b FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedSameColumn);
+            assertQuery("""
+                    SELECT o.id, l.v, l.c, l.b
+                    FROM o, LATERAL (SELECT v, b + 1 AS c, b, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym) l
+                    ORDER BY o.id, l.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedSameColumn);
+        });
+    }
+
+    @Test
+    public void testEliminateOuterRefLiftSelectAliasReadBySibling() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, sym SYMBOL, a INT, b INT)");
+            execute("INSERT INTO o VALUES (1, 'x', 100, 1000), (2, 'y', 200, 2000), (3, 'z', 300, 3000)");
+            execute("CREATE TABLE t (sym SYMBOL, v INT)");
+            execute("INSERT INTO t VALUES ('x', 1), ('x', 2), ('y', 3)");
+
+            final String expected = """
+                    id\tv\ta\tc
+                    1\t1\t101\t111
+                    1\t2\t101\t111
+                    2\t3\t201\t211
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, a + 1 AS a, a + 10 AS c FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, o.a + 1 AS a, o.a + 11 AS c FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o CROSS JOIN LATERAL (SELECT v, a + 1 AS a, a + 10 AS c FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, a + 1 AS a, a + 10 AS c FROM t WHERE t.sym = o.sym ORDER BY c) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b + 0 AS x, x + 0 AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\tx\ty
+                            1\t1\t1000\t1000
+                            1\t2\t1000\t1000
+                            2\t3\t2000\t2000
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, a + 1 AS a FROM t WHERE t.sym = o.sym AND a > 150) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\ta
+                            2\t3\t201
+                            """);
+        });
+    }
+
+    @Test
+    public void testEliminateOuterRefLiftSelectAliasSwapFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, sym SYMBOL, a INT, b INT)");
+            execute("INSERT INTO o VALUES (1, 'x', 100, 1000), (2, 'y', 200, 2000), (3, 'z', 300, 3000)");
+            execute("CREATE TABLE t (sym SYMBOL, v INT)");
+            execute("INSERT INTO t VALUES ('x', 1), ('x', 2), ('y', 3)");
+
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b AS a, a AS b FROM t WHERE t.sym = o.sym) l")
+                    .fails(44, "Invalid column: b");
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b AS a, a AS b, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym) l")
+                    .fails(44, "Invalid column: b");
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b + 0 AS a, a + 0 AS b FROM t WHERE t.sym = o.sym) l")
+                    .fails(44, "Invalid column: b");
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b + 0 AS a, a + 0 AS b, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym) l")
+                    .fails(44, "Invalid column: b");
+            assertQuery("SELECT o.id, l.* FROM o LEFT JOIN LATERAL (SELECT v, b AS a, a AS b FROM t WHERE t.sym = o.sym) l")
+                    .fails(53, "Invalid column: b");
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT * FROM (SELECT v, b AS a, a AS b FROM t WHERE t.sym = o.sym) WHERE b > 1500) l")
+                    .fails(59, "Invalid column: b");
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b + 1 AS c, v * 2 AS b FROM t WHERE t.sym = o.sym) l")
+                    .fails(44, "Invalid column: b");
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b + 1 AS c, v AS b FROM t WHERE t.sym = o.sym) l")
+                    .fails(44, "Invalid column: b");
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b + 1 AS c, o.b AS b FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\tc\tb
+                            1\t1\t1001\t1000
+                            1\t2\t1001\t1000
+                            2\t3\t2001\t2000
+                            """);
+        });
+    }
+
+    @Test
+    public void testEliminateOuterRefLiftSelectPlainAliasReadBySibling() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, sym SYMBOL, a INT, b INT)");
+            execute("INSERT INTO o VALUES (1, 'x', 100, 1000), (2, 'y', 200, 2000), (3, 'z', 300, 3000)");
+            execute("CREATE TABLE t (sym SYMBOL, v INT)");
+            execute("INSERT INTO t VALUES ('x', 1), ('x', 2), ('y', 3)");
+
+            final String expected = """
+                    id\tv\tx\ty
+                    1\t1\t1000\t1000
+                    1\t2\t1000\t1000
+                    2\t3\t2000\t2000
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b AS x, x AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b AS x, b AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b::LONG AS x, x AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b AS x, x AS y, y AS z FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\tx\ty\tz
+                            1\t1\t1000\t1000\t1000
+                            1\t2\t1000\t1000\t1000
+                            2\t3\t2000\t2000\t2000
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o LEFT JOIN LATERAL (SELECT v, b AS x, x AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\tx\ty
+                            1\t1\t1000\t1000
+                            1\t2\t1000\t1000
+                            2\t3\t2000\t2000
+                            3\tnull\tnull\tnull
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT * FROM (SELECT v, b AS x, x AS y FROM t WHERE t.sym = o.sym) WHERE y > 1500) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\tx\ty
+                            2\t3\t2000\t2000
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.*, m.w
+                    FROM o, LATERAL (SELECT v, b AS x, x AS y FROM t WHERE t.sym = o.sym) l, LATERAL (SELECT l.y + v AS w FROM t WHERE t.v = l.v) m
+                    ORDER BY o.id, l.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\tx\ty\tw
+                            1\t1\t1000\t1000\t1001
+                            1\t2\t1000\t1000\t1002
+                            2\t3\t2000\t2000\t2003
+                            """);
+        });
+    }
+
+    @Test
+    public void testEliminateOuterRefLiftedColumnReadInBody() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, sym SYMBOL, a INT, b INT)");
+            execute("INSERT INTO o VALUES (1, 'x', 100, 1000), (2, 'y', 200, 2000), (3, 'z', 300, 3000)");
+            execute("CREATE TABLE t (sym SYMBOL, v INT)");
+            execute("INSERT INTO t VALUES ('x', 1), ('x', 2), ('y', 3)");
+            execute("CREATE TABLE u (v INT, a INT)");
+            execute("INSERT INTO u VALUES (1, 150), (2, 250)");
+
+            final String expected = """
+                    id\tv\tx
+                    1\t1\t101
+                    1\t2\t102
+                    2\t3\t203
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, a + v AS x FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, a + v AS x FROM t WHERE t.sym = o.sym ORDER BY x DESC) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT * FROM (SELECT v, a + v AS x FROM t WHERE t.sym = o.sym) WHERE x > 150) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\tx
+                            2\t3\t203
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT a + v AS x, count() n FROM t WHERE t.sym = o.sym GROUP BY x) l ORDER BY o.id, l.x")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tx\tn
+                            1\t101\t1
+                            1\t102\t1
+                            2\t203\t1
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, v * 2 AS x, x + a AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\tx\ty
+                            1\t1\t2\t102
+                            1\t2\t4\t104
+                            2\t3\t6\t206
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b AS x, x + a AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\tx\ty
+                            1\t1\t1000\t1100
+                            1\t2\t1000\t1100
+                            2\t3\t2000\t2200
+                            """);
+
+            final String expectedChained = """
+                    id\tx\tw
+                    1\t101\t102
+                    1\t102\t104
+                    2\t203\t206
+                    """;
+            assertQuery("""
+                    SELECT o.id, l.x, m.w
+                    FROM o, LATERAL (SELECT v, a + v AS x FROM t WHERE t.sym = o.sym) l, LATERAL (SELECT l.x + v AS w FROM t WHERE t.v = l.v) m
+                    ORDER BY o.id, l.x
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedChained);
+            assertQuery("""
+                    SELECT o.id, l.x, l.x + l.v AS w
+                    FROM o, LATERAL (SELECT v, a + v AS x FROM t WHERE t.sym = o.sym) l
+                    ORDER BY o.id, l.x
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedChained);
+            assertQuery("""
+                    SELECT o.id, l.x, m.w
+                    FROM o LEFT JOIN LATERAL (SELECT v, a + v AS x FROM t WHERE t.sym = o.sym) l LEFT JOIN LATERAL (SELECT l.x + v AS w FROM t WHERE t.v = l.v) m
+                    ORDER BY o.id, l.x
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tx\tw
+                            1\t101\t102
+                            1\t102\t104
+                            2\t203\t206
+                            3\tnull\tnull
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.x, m.v
+                    FROM o, LATERAL (SELECT v, a + v AS x FROM t WHERE t.sym = o.sym) l, LATERAL (SELECT v FROM u WHERE u.a < l.x) m
+                    ORDER BY o.id, l.x, m.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tx\tv
+                            2\t203\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testEliminateOuterRefNoExtraColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -19166,6 +19527,146 @@ public class LateralJoinTest extends AbstractCairoTest {
                             1\t10.0\t1.5\t0.9
                             2\t30.0\t2.0\t0.8
                             """);
+        });
+    }
+
+    @Test
+    public void testWindowBodySelectsOuterColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, sym SYMBOL, y INT)");
+            execute("INSERT INTO o VALUES (1, 'a', 100), (2, 'b', 200), (3, 'c', 300)");
+            execute("CREATE TABLE t (sym SYMBOL, v INT)");
+            execute("INSERT INTO t VALUES ('a', 1), ('a', 2), ('b', 3), ('b', 4)");
+
+            final String expected = """
+                    id\tv\ty\trn
+                    1\t2\t100\t1
+                    1\t1\t100\t2
+                    2\t4\t200\t1
+                    2\t3\t200\t2
+                    """;
+            final String expectedPlain = """
+                    id\tv\ty
+                    1\t2\t100
+                    1\t1\t100
+                    2\t4\t200
+                    2\t3\t200
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, y, row_number() OVER (ORDER BY v DESC) rn FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.rn")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedPlain);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, o.y, row_number() OVER (ORDER BY v DESC) rn FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.rn")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, o.y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedPlain);
+            assertQuery("SELECT o.id, l.* FROM o CROSS JOIN LATERAL (SELECT v, y, row_number() OVER (ORDER BY v DESC) rn FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.rn")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, y, row_number() OVER (ORDER BY v DESC) rn FROM t WHERE t.sym = o.sym ORDER BY y, v) l ORDER BY o.id, l.rn")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o LEFT JOIN LATERAL (SELECT v, y, row_number() OVER (ORDER BY v DESC) rn FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.rn")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\ty\trn
+                            1\t2\t100\t1
+                            1\t1\t100\t2
+                            2\t4\t200\t1
+                            2\t3\t200\t2
+                            3\tnull\tnull\tnull
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o LEFT JOIN LATERAL (SELECT v, y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v DESC")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\ty
+                            1\t2\t100
+                            1\t1\t100
+                            2\t4\t200
+                            2\t3\t200
+                            3\tnull\tnull
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, y AS oy, row_number() OVER (ORDER BY v DESC) rn FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.rn")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\toy\trn
+                            1\t2\t100\t1
+                            1\t1\t100\t2
+                            2\t4\t200\t1
+                            2\t3\t200\t2
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, y AS oy FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\toy
+                            1\t2\t100
+                            1\t1\t100
+                            2\t4\t200
+                            2\t3\t200
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, v + y vy, row_number() OVER (ORDER BY v DESC) rn FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.rn")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\tvy\trn
+                            1\t2\t102\t1
+                            1\t1\t101\t2
+                            2\t4\t204\t1
+                            2\t3\t203\t2
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, v + y vy FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v DESC")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\tvy
+                            1\t2\t102
+                            1\t1\t101
+                            2\t4\t204
+                            2\t3\t203
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, y + 1 AS y, row_number() OVER (ORDER BY v DESC) rn FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.rn")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\ty\trn
+                            1\t2\t101\t1
+                            1\t1\t101\t2
+                            2\t4\t201\t1
+                            2\t3\t201\t2
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, y + 1 AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v DESC")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\ty
+                            1\t2\t101
+                            1\t1\t101
+                            2\t4\t201
+                            2\t3\t201
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, sum(y) OVER () AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\ty
+                            1\t1\t200.0
+                            1\t2\t200.0
+                            2\t3\t400.0
+                            2\t4\t400.0
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v * 2 AS y, sum(y) OVER () s FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.y")
+                    .noLeakCheck()
+                    .returns("""
+                            id\ty\ts
+                            1\t2\t6.0
+                            1\t4\t6.0
+                            2\t6\t14.0
+                            2\t8\t14.0
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, id AS y, y AS id, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym) l")
+                    .fails(44, "Invalid column: id");
         });
     }
 

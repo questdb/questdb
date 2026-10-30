@@ -839,6 +839,88 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewGroupByTimestampFloorOverNestedSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String hourly = "(select ts, sum(v) s from " + TABLE1 + " sample by 1h)";
+            final String daily = "(select ts, sum(v) s from " + TABLE1 + " sample by 1d)";
+            final String dailyByKey = "(select ts, k, sum(v) s from " + TABLE1 + " sample by 1d)";
+            final String[] queries = {
+                    "select timestamp_floor('1d', ts) ts, sum(s) s from " + hourly + " order by ts",
+                    "select timestamp_floor('1d', ts) ts, sum(s) s from " + hourly,
+                    "select timestamp_floor('1d', ts) ts, s from " + hourly + " order by ts",
+                    "select timestamp_floor('1d', ts) ts, sum(s) s from (select ts, sum(v) s from (select * from " + TABLE1 + " where v > 0) sample by 1h) order by ts",
+                    "select timestamp_floor('1M', ts) ts, sum(s) s from " + daily + " order by ts",
+                    "select timestamp_floor('1w', ts) ts, sum(s) s from " + daily + " order by ts",
+                    "select timestamp_floor('1y', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 3M) order by ts",
+                    "select timestamp_floor_utc('1h', ts, null, '00:30', null) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 30m) order by ts",
+                    "select timestamp_floor_utc('1d', ts, null, null, 'Europe/Berlin') ts, sum(s) s from (select ts, sum(v) s from " + TABLE1
+                            + " sample by 1h align to calendar time zone 'Europe/Berlin') order by ts",
+                    "select ts, sum(s) s from " + hourly,
+                    "select timestamp_floor('1h', ts) ts, k, sum(s) s from " + dailyByKey + " order by ts",
+                    "select timestamp_floor('1h', ts) ts, k, sum(s) s from " + dailyByKey + " group by 1, k",
+                    "select timestamp_floor('1h', ts) ts, s from " + daily + " order by ts",
+                    "select timestamp_floor('1h', ts) ts, sum(s) s from (select ts, sum(v) s from (select * from " + TABLE1 + " where v > 0) sample by 1d) order by ts",
+                    "select timestamp_floor('1d', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1h align to calendar time zone 'Europe/Berlin') order by ts",
+                    "select timestamp_floor('1h', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1d align to calendar time zone 'Europe/Berlin') order by ts",
+                    "select timestamp_floor('1d', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 30m align to calendar time zone 'Asia/Kolkata') order by ts"
+            };
+            final char[] units = {'d', 'd', 'd', 'd', 'M', 'w', 'y', 'h', 'd', 'h', 'd', 'd', 'd', 'd', 'd', 'd', 'd'};
+            final String[] timeZones = {null, null, null, null, null, null, null, null, "Europe/Berlin", null, null, null, null, null, null, "Europe/Berlin", null};
+            final String[] offsets = {null, null, null, null, null, null, null, "00:30", null, null, null, null, null, null, null, null, null};
+            for (int i = 0; i < queries.length; i++) {
+                execute("create materialized view test" + i + " as (" + queries[i] + ") partition by day");
+                assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test" + i, queries[i], TABLE1, 1, units[i], timeZones[i], offsets[i]);
+                assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test" + i, queries[i], TABLE1, 1, units[i], timeZones[i], offsets[i]);
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewGroupByTimestampFloorOverNestedSampleByRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String message = "the materialized view's sampling interval and a nested SAMPLE BY interval must have aligned buckets, one evenly dividing the other";
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('1d', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 5h) order by ts",
+                    "5h)",
+                    message
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('2h', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1h align to calendar with offset '00:30') order by ts",
+                    "1h align",
+                    message
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('1y', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 5M) order by ts",
+                    "5M)",
+                    message
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('1M', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1w) order by ts",
+                    "1w)",
+                    message
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('1d', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1h align to calendar time zone 'Asia/Kolkata') order by ts",
+                    "1h align",
+                    message
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('1h', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1d align to calendar time zone 'Asia/Kolkata') order by ts",
+                    "1d align",
+                    message
+            );
+        });
+    }
+
+    @Test
     public void testCreateMatViewGroupByTimestampFloorRuntimeConstantArguments() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -1413,6 +1495,28 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery("create materialized view test as (" + to + ") partition by day")
                     .noLeakCheck()
                     .fails(91, "FROM-TO on base table is not supported for materialized views: " + TABLE2);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleByNestedSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String[] queries = {
+                    "select ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1h) sample by 1d",
+                    "select ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1d) sample by 1h",
+                    "select ts, sum(s) s from (select ts, sum(v) s from (select * from " + TABLE1 + " where v > 0) sample by 1d) sample by 1h"
+            };
+            for (int i = 0; i < queries.length; i++) {
+                execute("create materialized view test" + i + " as (" + queries[i] + ") partition by day");
+                assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test" + i, queries[i], TABLE1, 1, 'd', null, null);
+            }
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 5h) sample by 1d",
+                    "5h)",
+                    "the materialized view's sampling interval and a nested SAMPLE BY interval must have aligned buckets, one evenly dividing the other"
+            );
         });
     }
 

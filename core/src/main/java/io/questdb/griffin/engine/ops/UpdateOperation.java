@@ -71,8 +71,7 @@ public class UpdateOperation extends AbstractOperation {
      * An UPDATE of a WAL table, which the WAL records as SQL text and its bind variables.
      *
      * @param clientPlan the plan the client compiled for the statement, over no rows, which the operation adopts;
-     *                   null for a statement that evaluates a sub-query, whose rows only the WAL apply job reads; see
-     *                   {@link #validate()}
+     *                   null when the operation carries none; see {@link #validate()}
      */
     public UpdateOperation(
             @NotNull TableToken tableToken,
@@ -202,7 +201,9 @@ public class UpdateOperation extends AbstractOperation {
      * closing its cursor, which reads no rows, so a value the statement cannot take fails before the WAL records
      * the statement for every node to apply. The probe catches the errors functions raise while the cursor opens,
      * such as text a TIMESTAMP comparison cannot convert; an error a row would raise surfaces only when the WAL
-     * applies the statement. The open is a {@link SqlExecutionContext#isMetadataProbe() metadata probe}: it hands
+     * applies the statement. Every scan of the client plan, a sub-query's included, has no rows and takes no reader,
+     * so the probe checks the statement, sub-queries included, as if each table it reads were empty, and only the WAL
+     * apply job reads rows. The open is a {@link SqlExecutionContext#isMetadataProbe() metadata probe}: it hands
      * nobody rows. Does nothing without a client plan.
      */
     @Override

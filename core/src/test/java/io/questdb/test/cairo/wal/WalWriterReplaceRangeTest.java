@@ -2195,9 +2195,8 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         });
     }
 
-    // The complete final row set in ts order. Commit B and the oracle both write exactly this.
     @Test
-    public void testReplaceRangeRewriteValidationPreservesEvents() throws Exception {
+    public void testReplaceRangeLocalAddSymbolKeepsSequencedEvent() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 100_000);
             execute("CREATE TABLE rewrite (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -2216,13 +2215,9 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     }
                     writer.newRow(2).append();
                     execute("ALTER TABLE rewrite ADD COLUMN s SYMBOL");
-                    try {
-                        writer.goActive();
-                        Assert.fail("expected rewrite range rejection");
-                    } catch (CairoException e) {
-                        TestUtils.assertEquals("Replace range high timestamp must be greater than the maximum timestamp.", e.getFlyweightMessage());
-                    }
-                    Assert.assertTrue(writer.isDistressed());
+                    writer.goActive();
+                    Assert.assertFalse(writer.isDistressed());
+                    writer.commit();
                 }
                 try (WalEventReader reader = new WalEventReader(configuration)) {
                     WalEventCursor cursor = reader.of(path, 0);
@@ -2236,12 +2231,24 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     Assert.assertEquals(WAL_DEDUP_MODE_REPLACE_RANGE, data.getDedupMode());
                     Assert.assertEquals(0, data.getReplaceRangeTsLow());
                     Assert.assertEquals(1, data.getReplaceRangeTsHi());
+                    Assert.assertTrue(cursor.hasNext());
+                    Assert.assertEquals(1, cursor.getTxn());
+                    Assert.assertEquals(WalTxnType.DATA, cursor.getType());
+                    data = cursor.getDataInfo();
+                    Assert.assertEquals(0, data.getStartRowID());
+                    Assert.assertEquals(1, data.getEndRowID());
+                    Assert.assertEquals(2, data.getMinTimestamp());
+                    Assert.assertEquals(2, data.getMaxTimestamp());
+                    Assert.assertEquals(WAL_DEDUP_MODE_DEFAULT, data.getDedupMode());
                     Assert.assertFalse(cursor.hasNext());
                 }
             }
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
-            assertQuery("SELECT count() FROM rewrite").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+            assertQuery("SELECT ts::LONG AS ts, s FROM rewrite").noLeakCheck().expectSize().returns("ts\ts\n2\t\n");
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertTrue(reader.getSymbolMapReader(1).containsNullValue());
+            }
             try (WalWriter writer = engine.getWalWriter(token)) {
                 TableWriter.Row row = writer.newRow(3);
                 row.putSym(1, "ok");
@@ -2249,7 +2256,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                 writer.commit();
             }
             drainWalQueue();
-            assertQuery("SELECT ts::LONG AS ts, s FROM rewrite").noLeakCheck().expectSize().returns("ts\ts\n3\tok\n");
+            assertQuery("SELECT ts::LONG AS ts, s FROM rewrite").noLeakCheck().expectSize().returns("ts\ts\n2\t\n3\tok\n");
         });
     }
 
@@ -2271,6 +2278,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         });
     }
 
+    // The complete final row set in ts order. Commit B and the oracle both write exactly this.
     private static void appendFinalDataset(WalWriter ww) throws NumericException {
         long id = 1;
         for (int day = 0; day < 5; day++) {
