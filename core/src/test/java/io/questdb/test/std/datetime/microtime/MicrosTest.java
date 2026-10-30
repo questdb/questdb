@@ -1062,4 +1062,12 @@ public class MicrosTest {
         MicrosFormatUtils.appendDateTimeUSec(sink, Micros.floorYYYY(micros, 1, 0));
         TestUtils.assertEquals(expected, sink);
     }
+
+    @Test
+    public void testGetYearLateDecemberPre1970() throws NumericException {
+        long micros = MicrosFormatUtils.parseTimestamp("1956-12-31T23:28:00.000000Z");
+        Assert.assertEquals(1956, Micros.getYear(micros));
+        Assert.assertEquals(12, Micros.getMonthOfYear(micros));
+        Assert.assertEquals(31, Micros.getDayOfMonth(micros));
+    }
 }

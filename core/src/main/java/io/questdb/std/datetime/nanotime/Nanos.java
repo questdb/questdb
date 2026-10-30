@@ -878,7 +878,7 @@ public final class Nanos {
         // Initial year estimate relative to 1970
         // Use a reasonable approximation of days per year to avoid overflow
         // 365.25 days per year approximation
-        int yearsSinceEpoch = (int) (nanos / AVG_YEAR_NANOS);
+        int yearsSinceEpoch = (int) Math.floorDiv(nanos, AVG_YEAR_NANOS);
         int yearEstimate = 1970 + yearsSinceEpoch;
 
         // Handle negative years appropriately

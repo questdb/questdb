@@ -1068,4 +1068,12 @@ public class NanosTest {
                 Nanos.floorYYYY(parseNSecUTC(timestamp), 1, 0)
         );
     }
+
+    @Test
+    public void testGetYearLateDecemberPre1970() throws NumericException {
+        long nanos = parseNSecUTC("1956-12-31T23:28:00.000000000Z");
+        Assert.assertEquals(1956, Nanos.getYear(nanos));
+        Assert.assertEquals(12, Nanos.getMonthOfYear(nanos));
+        Assert.assertEquals(31, Nanos.getDayOfMonth(nanos));
+    }
 }
