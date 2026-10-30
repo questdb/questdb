@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -35,10 +36,47 @@ import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.MutationStep;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class InTimestampTimestampTest extends AbstractCairoTest {
+    // the row filter, which the JIT compiles on its own, of a TIMESTAMP, of a TIMESTAMP with a NULL, of a
+    // DATE, and of a monotonic function of the designated timestamp; %s stands for the tick expression
+    private static final String[] EVERY_SQL_CONTEXT_FILTER_QUERIES = {
+            "SELECT count() FROM t WHERE ts IN %s OR ts = 0",
+            "SELECT count() FROM t WHERE ts2 IN %s",
+            "SELECT count() FROM tn WHERE d IN %s",
+            "SELECT count() FROM t WHERE dateadd('h', 1, ts) IN %s"
+    };
+    // the queries over the tables of createEverySqlContextTables(); %s stands for the tick expression
+    private static final String[] EVERY_SQL_CONTEXT_QUERIES = {
+            // the interval scan of a TIMESTAMP, of a TIMESTAMP_NS and of an empty table
+            "SELECT count() FROM t WHERE ts IN %s",
+            "SELECT count() FROM tn WHERE ts IN %s",
+            "SELECT count() FROM te WHERE ts IN %s",
+            "SELECT count() FROM t WHERE ts NOT IN %s",
+            // after a tick expression that compiles
+            "SELECT count() FROM t WHERE ts IN '$today' OR ts IN %s",
+            // with an indexed and a plain symbol
+            "SELECT count() FROM t WHERE s = 'a' AND ts IN %s",
+            "SELECT count() FROM t WHERE p = 'a' AND ts IN %s",
+            // in every kind of query
+            "SELECT count() FROM (SELECT * FROM t WHERE ts IN %s)",
+            "WITH x AS (SELECT * FROM t WHERE ts IN %s) SELECT count() FROM x",
+            "SELECT count() FROM t a JOIN t b ON a.ts = b.ts WHERE a.ts IN %s",
+            "SELECT count() FROM t a JOIN t b ON a.ts = b.ts WHERE b.ts IN %s",
+            "SELECT p, count() FROM t WHERE ts IN %s GROUP BY p",
+            "SELECT ts, count() FROM t WHERE ts IN %s SAMPLE BY 1d",
+            "SELECT * FROM t WHERE ts IN %s LATEST ON ts PARTITION BY s",
+            "SELECT ts, row_number() OVER (ORDER BY ts) FROM t WHERE ts IN %s",
+            "SELECT ts FROM t WHERE ts IN %s ORDER BY ts DESC LIMIT -3",
+            "SELECT ts FROM t WHERE ts IN %s UNION SELECT ts FROM t",
+            "SELECT ts FROM t EXCEPT SELECT ts FROM t WHERE ts IN %s",
+            "SELECT ts FROM t INTERSECT SELECT ts FROM t WHERE ts IN %s",
+            "EXPLAIN SELECT count() FROM t WHERE ts IN %s",
+            "SELECT sum(CASE WHEN ts IN %s THEN 1 ELSE 0 END) FROM t"
+    };
 
     @Test
     public void testBindVarRuntimeConstantsWithConstant() throws Exception {
@@ -814,10 +852,155 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPointInTimeRangeWithMalformedDurationBindVariableFailsInEverySqlContext() throws Exception {
+        // the bind variable selected the range, and EXPLAIN printed it
+        assertTickExprBindVariableFailsInEverySqlContext("$now - 1h..$now;1x", "Invalid duration unit: x");
+    }
+
+    @Test
+    public void testPointInTimeRangeWithMalformedDurationBindVariableFailsOnlyItsExecution() throws Exception {
+        // The query compiles once and parses the bind variable each time it runs: a malformed duration
+        // fails that run at $1, and the next value selects its range again, within a partition and
+        // across two partitions
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            final String query = "SELECT count(), min(ts), max(ts) FROM t WHERE ts IN $1";
+            final int position = query.indexOf("$1");
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            try {
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+                addTickExprBindCase(cases, "$now - 1h..$now;1h", "2\t2024-01-02T09:00:00.000000Z\t2024-01-02T10:00:00.000000Z");
+                addTickExprBindFailureCase(cases, "$now - 1h..$now;1x", position, "Invalid duration unit: x");
+                addTickExprBindCase(cases, "$now - 1h..$now", "2\t2024-01-02T09:00:00.000000Z\t2024-01-02T10:00:00.000000Z");
+                assertQuery(query)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .assertBinds(cases);
+
+                // from 23:00 on 2024-01-01 to 00:30 on 2024-01-02
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T00:30:00.000000Z"));
+                cases.clear();
+                addTickExprBindCase(cases, "$now - 90m..$now;1h", "2\t2024-01-01T23:00:00.000000Z\t2024-01-02T00:00:00.000000Z");
+                addTickExprBindFailureCase(cases, "$now - 90m..$now;1x", position, "Invalid duration unit: x");
+                addTickExprBindCase(cases, "$now - 90m..$now;1h", "2\t2024-01-01T23:00:00.000000Z\t2024-01-02T00:00:00.000000Z");
+                assertQuery(query)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .assertBinds(cases);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testPointInTimeRangeWithMalformedDurationFailsAsLiteralAndAsBindVariable() throws Exception {
         // a range between points in time ignores the duration, which still has to be well-formed,
         // and the day filter goes before it: the bind variable selected the range
         assertMalformedTickExprFails("$now - 1h..$now;1h#Tue", "Expected number before unit '#'");
+        assertMalformedTickExprFails("$now - 1h..$now;1x", "Invalid duration unit: x");
+        assertMalformedTickExprFails("[$now - 1h..$now];1x", "Invalid duration unit: x");
+        // the bind variable selected nothing, as 2024-01-02 is a Tuesday
+        assertMalformedTickExprFails("$now - 1h..$now#Mon;1x", "Invalid duration unit: x");
+        // the bind variable selected the range without the repetition of the periodic form
+        assertMalformedTickExprFails("$now - 1h..$now;30m;2d;2", "Expected number before unit ';'");
+        // the literal leaves these to the parser when the query runs, and selected the range too
+        assertMalformedTickExprFails("[$now - 1h..$now]T[09..10]:00;1x", "Invalid duration unit: x");
+        assertMalformedTickExprFails("[$now - 1h..$now@+02:00];1x", "Invalid duration unit: x");
+        // or the range and the repetitions of $today
+        assertMalformedTickExprFails("[$now - 1h..$now, $today@+01:00];30m;2d;2", "Expected number before unit ';'");
+    }
+
+    @Test
+    public void testPointInTimeRangeWithMalformedDurationFailsInDropPartitionWhere() throws Exception {
+        // The compiled form leaves a time part with a numeric expansion to the parser, which the
+        // statement runs when it compiles. The statement dropped the partition of 2024-01-02.
+        assertTickExprFailsInDropPartitionWhere("[$now - 12h..$now]T[09..10]:00;1x", "2024-01-02;1x", "Invalid duration unit: x");
+    }
+
+    @Test
+    public void testPointInTimeRangeWithMalformedDurationFailsInEverySqlContext() throws Exception {
+        // The literal fails the query at its position wherever the query holds it, the same as the
+        // expression without a date variable. On a monotonic function of the designated timestamp it
+        // selected the range.
+        assertTickExprFailsInEverySqlContext("$now - 1h..$now;1x", "2024-01-02T09:00;1x", "Invalid duration unit: x");
+    }
+
+    @Test
+    public void testPointInTimeRangeWithMalformedDurationFailsInStringColumn() throws Exception {
+        // ts IN <column> parses the tick expression of each row when the query runs: a malformed
+        // duration fails the query at the column, which selected the range, and a well-formed one
+        // selects the range
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts,
+                               '$now - 1h..$now;1x'::STRING bad,
+                               '$now - 1h..$now;1x'::VARCHAR bad_varchar,
+                               '$now - 1h..$now;1h'::STRING good
+                        FROM long_sequence(96)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                for (String column : new String[]{"bad", "bad_varchar"}) {
+                    final String sql = "SELECT count() FROM t WHERE ts IN " + column;
+                    assertExceptionNoLeakCheck(sql, sql.indexOf(column), "Invalid duration unit: x");
+                }
+                assertQuery("SELECT count(), min(ts), max(ts) FROM t WHERE ts IN good")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count\tmin\tmax
+                                2\t2024-01-02T09:00:00.000000Z\t2024-01-02T10:00:00.000000Z
+                                """);
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testPointInTimeRangeWithMalformedDurationFailsInView() throws Exception {
+        // CREATE VIEW runs its query to learn the columns, which evaluates the literal that the
+        // compiled form leaves to the parser, and creates no view when it fails. It created the view.
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                try {
+                    execute("CREATE VIEW v AS (SELECT count() FROM t WHERE ts IN '[$now - 12h..$now]T[09..10]:00;1x')");
+                    Assert.fail("CREATE VIEW should fail");
+                } catch (CairoException | SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "Invalid duration unit: x");
+                }
+                Assert.assertNull(engine.getTableTokenIfExists("v"));
+                // the hour from 2024-01-02T00:00
+                assertQuery("SELECT count() FROM t WHERE ts IN '$today;1h'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("count\n1\n");
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
+    public void testPointInTimeRangeWithMisplacedDayFilterBindVariableFailsInEverySqlContext() throws Exception {
+        // the day filter goes before the duration: the bind variable selected the range
+        assertTickExprBindVariableFailsInEverySqlContext("$now - 1h..$now;1h#Tue", "Expected number before unit '#'");
+    }
+
+    @Test
+    public void testPointInTimeRangeWithMisplacedDayFilterFailsInEverySqlContext() throws Exception {
+        // the day filter goes before the duration: on a monotonic function of the designated
+        // timestamp the literal selected the range
+        assertTickExprFailsInEverySqlContext("$now - 1h..$now;1h#Tue", "2024-01-02T09:00;1h#Tue", "Expected number before unit '#'");
     }
 
     @Test
@@ -1080,6 +1263,41 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
         ));
     }
 
+    private static void addTickExprBindFailureCase(ObjList<BindVarTuple> cases, String tickExpr, int position, String expectedError) {
+        cases.add(BindVarTuple.fails(
+                tickExpr,
+                position,
+                expectedError,
+                bindVariableService -> bindVariableService.setStr(0, tickExpr)
+        ));
+    }
+
+    /**
+     * Creates the tables of {@link #EVERY_SQL_CONTEXT_QUERIES} and {@link #EVERY_SQL_CONTEXT_FILTER_QUERIES}.
+     */
+    private static void createEverySqlContextTables() throws SqlException {
+        // hourly rows from 2024-01-01T00:00 to 2024-01-04T23:00, in ts and in ts2, and a row whose
+        // ts2 is NULL
+        execute("""
+                CREATE TABLE t AS (
+                    SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts,
+                           timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts2,
+                           rnd_symbol('a', 'b') s,
+                           rnd_symbol('a', 'b') p
+                    FROM long_sequence(96)
+                ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY
+                """);
+        execute("INSERT INTO t VALUES ('2024-01-05T00:00:00.000000Z', NULL, 'a', 'a')");
+        execute("CREATE TABLE tn (ts TIMESTAMP_NS, d DATE) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO tn VALUES
+                    ('2024-01-01T10:00:00.000000Z', '2024-01-01T10:00:00.000Z'),
+                    ('2024-01-02T10:00:00.000000Z', '2024-01-02T10:00:00.000Z')
+                """);
+        execute("CREATE TABLE te (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE tw (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+    }
+
     private static void createHourlyTable() throws SqlException {
         // hourly rows from 2024-01-01T00:00 to 2024-01-04T23:00
         execute("""
@@ -1240,6 +1458,30 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     /**
+     * Asserts that the query, in which %s stands for the bind variable $1, fails at $1 with the error
+     * when $1 holds the tick expression, and again when the query compiles a second time. The table t
+     * still answers a query afterwards.
+     */
+    private void assertQueryFailsAtBindVariable(String query, String tickExpr, String expectedError) throws Exception {
+        final String sql = String.format(query, "$1");
+        bindVariableService.clear();
+        bindVariableService.setStr(0, tickExpr);
+        try {
+            assertExceptionNoLeakCheck(sql, sql.indexOf("$1"), expectedError);
+            assertExceptionNoLeakCheck(sql, sql.indexOf("$1"), expectedError);
+        } catch (AssertionError e) {
+            throw new AssertionError(sql + " with $1 = " + tickExpr, e);
+        }
+        bindVariableService.clear();
+        // the hour from 2024-01-02T00:00
+        assertQuery("SELECT count() FROM t WHERE ts IN '$today;1h'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n1\n");
+    }
+
+    /**
      * Asserts that the query, in which %s stands for a quoted tick expression, fails at the expression
      * with the error, both with the expression that holds a date variable and with the static one,
      * which the parser rejects when the query compiles, and again when the query compiles a second
@@ -1262,6 +1504,37 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("count\n1\n");
         }
+    }
+
+    /**
+     * Asserts that the tick expression, as the bind variable $1, fails the query at $1 wherever the
+     * query holds it, see {@link #assertQueryFailsAtBindVariable}: in the queries of
+     * {@link #assertTickExprFailsInEverySqlContext} but for the views, which hold no bind variable.
+     * "now" is 2024-01-02T10:00Z.
+     */
+    private void assertTickExprBindVariableFailsInEverySqlContext(String tickExpr, String expectedError) throws Exception {
+        assertMemoryLeak(() -> {
+            createEverySqlContextTables();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                for (String query : EVERY_SQL_CONTEXT_QUERIES) {
+                    assertQueryFailsAtBindVariable(query, tickExpr, expectedError);
+                }
+                final int jitMode = sqlExecutionContext.getJitMode();
+                try {
+                    for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                        sqlExecutionContext.setJitMode(mode);
+                        for (String query : EVERY_SQL_CONTEXT_FILTER_QUERIES) {
+                            assertQueryFailsAtBindVariable(query, tickExpr, expectedError);
+                        }
+                    }
+                } finally {
+                    sqlExecutionContext.setJitMode(jitMode);
+                }
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
     }
 
     private void assertTickExprBindVariableMatches(String tickExpr, String expectedRow) throws Exception {
@@ -1322,72 +1595,17 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
      */
     private void assertTickExprFailsInEverySqlContext(String tickExpr, String staticTickExpr, String expectedError) throws Exception {
         assertMemoryLeak(() -> {
-            // hourly rows from 2024-01-01T00:00 to 2024-01-04T23:00, in ts and in ts2, and a row whose
-            // ts2 is NULL
-            execute("""
-                    CREATE TABLE t AS (
-                        SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts,
-                               timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts2,
-                               rnd_symbol('a', 'b') s,
-                               rnd_symbol('a', 'b') p
-                        FROM long_sequence(96)
-                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY
-                    """);
-            execute("INSERT INTO t VALUES ('2024-01-05T00:00:00.000000Z', NULL, 'a', 'a')");
-            execute("CREATE TABLE tn (ts TIMESTAMP_NS, d DATE) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO tn VALUES
-                        ('2024-01-01T10:00:00.000000Z', '2024-01-01T10:00:00.000Z'),
-                        ('2024-01-02T10:00:00.000000Z', '2024-01-02T10:00:00.000Z')
-                    """);
-            execute("CREATE TABLE te (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE tw (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            createEverySqlContextTables();
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
             try {
-                // %s stands for the tick expression
-                final String[] queries = {
-                        // the interval scan of a TIMESTAMP, of a TIMESTAMP_NS and of an empty table
-                        "SELECT count() FROM t WHERE ts IN %s",
-                        "SELECT count() FROM tn WHERE ts IN %s",
-                        "SELECT count() FROM te WHERE ts IN %s",
-                        "SELECT count() FROM t WHERE ts NOT IN %s",
-                        // after a tick expression that compiles
-                        "SELECT count() FROM t WHERE ts IN '$today' OR ts IN %s",
-                        // with an indexed and a plain symbol
-                        "SELECT count() FROM t WHERE s = 'a' AND ts IN %s",
-                        "SELECT count() FROM t WHERE p = 'a' AND ts IN %s",
-                        // in every kind of query
-                        "SELECT count() FROM (SELECT * FROM t WHERE ts IN %s)",
-                        "WITH x AS (SELECT * FROM t WHERE ts IN %s) SELECT count() FROM x",
-                        "SELECT count() FROM t a JOIN t b ON a.ts = b.ts WHERE a.ts IN %s",
-                        "SELECT count() FROM t a JOIN t b ON a.ts = b.ts WHERE b.ts IN %s",
-                        "SELECT p, count() FROM t WHERE ts IN %s GROUP BY p",
-                        "SELECT ts, count() FROM t WHERE ts IN %s SAMPLE BY 1d",
-                        "SELECT * FROM t WHERE ts IN %s LATEST ON ts PARTITION BY s",
-                        "SELECT ts, row_number() OVER (ORDER BY ts) FROM t WHERE ts IN %s",
-                        "SELECT ts FROM t WHERE ts IN %s ORDER BY ts DESC LIMIT -3",
-                        "SELECT ts FROM t WHERE ts IN %s UNION SELECT ts FROM t",
-                        "SELECT ts FROM t EXCEPT SELECT ts FROM t WHERE ts IN %s",
-                        "SELECT ts FROM t INTERSECT SELECT ts FROM t WHERE ts IN %s",
-                        "EXPLAIN SELECT count() FROM t WHERE ts IN %s",
-                        "SELECT sum(CASE WHEN ts IN %s THEN 1 ELSE 0 END) FROM t"
-                };
-                for (String query : queries) {
+                for (String query : EVERY_SQL_CONTEXT_QUERIES) {
                     assertQueryFailsAtTickExpr(query, tickExpr, staticTickExpr, expectedError);
                 }
-                // the row filter, which the JIT compiles on its own, of a TIMESTAMP, of a TIMESTAMP with a
-                // NULL, of a DATE, and of a monotonic function of the designated timestamp
-                final String[] filterQueries = {
-                        "SELECT count() FROM t WHERE ts IN %s OR ts = 0",
-                        "SELECT count() FROM t WHERE ts2 IN %s",
-                        "SELECT count() FROM tn WHERE d IN %s",
-                        "SELECT count() FROM t WHERE dateadd('h', 1, ts) IN %s"
-                };
                 final int jitMode = sqlExecutionContext.getJitMode();
                 try {
                     for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
                         sqlExecutionContext.setJitMode(mode);
-                        for (String query : filterQueries) {
+                        for (String query : EVERY_SQL_CONTEXT_FILTER_QUERIES) {
                             assertQueryFailsAtTickExpr(query, tickExpr, staticTickExpr, expectedError);
                         }
                     }

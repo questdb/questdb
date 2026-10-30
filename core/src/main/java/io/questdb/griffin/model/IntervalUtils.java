@@ -2102,7 +2102,8 @@ public final class IntervalUtils {
     /**
      * Parses duration parts (e.g. "6h30m") and appends each (unit, value) encoded
      * long to irList. Rejects a unit that {@link TimestampDriver#add} does not know,
-     * with the error of {@link #addDuration}.
+     * with the error of {@link #addDuration}. The parser passes a null irList to only
+     * check the duration of a range between two points in time, which the range ignores.
      *
      * @return number of duration parts parsed
      */
@@ -2112,7 +2113,7 @@ public final class IntervalUtils {
             int durationLo,
             int durationHi,
             int position,
-            LongList irList
+            @Nullable LongList irList
     ) throws SqlException {
         int durationPartCount = 0;
         int numStart = durationLo;
@@ -2138,7 +2139,9 @@ public final class IntervalUtils {
             if (timestampDriver.add(0, c, 0) == Numbers.LONG_NULL) {
                 throw SqlException.$(position, "Invalid duration unit: ").put(c);
             }
-            irList.add(CompiledTickExpression.encodeDuration(c, value));
+            if (irList != null) {
+                irList.add(CompiledTickExpression.encodeDuration(c, value));
+            }
             durationPartCount++;
             numStart = i + 1;
         }
@@ -3664,6 +3667,13 @@ public final class IntervalUtils {
             // Apply timezone AFTER day filter (converts local to UTC)
             if (activeTzLo >= 0) {
                 applyTimezoneToIntervals(timestampDriver, configuration, out, outSizeBeforeInterval, seq, activeTzLo, activeTzHi, errorPos, applyEncoded);
+            }
+
+            // The range ignores the duration of the expression, but the duration must still be well-formed:
+            // the compiled form, which SQL uses for a literal, rejects a malformed one when it compiles,
+            // and a bind variable must fail the same way. The check adds the duration to no timestamp.
+            if (durationSemicolon >= 0) {
+                compileDurationParts(timestampDriver, seq, durationSemicolon + 1, lim, errorPos, null);
             }
             return;
         }

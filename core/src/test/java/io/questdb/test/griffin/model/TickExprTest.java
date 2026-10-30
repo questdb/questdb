@@ -77,6 +77,10 @@ public class TickExprTest {
             "2024-03-31T00:30:00.000000Z", // London springs forward at 01:00Z
             "2024-11-03T05:30:00.000000Z" // New York falls back at 06:00Z
     };
+    // ranges between two points in time, which ignore the duration of the expression
+    private static final String[] FUZZ_POINT_IN_TIME_RANGES = {
+            "$now - 1h..$now", "$today+2h..$now", "[$now - 1h..$now]", "$now..$NOW + 1h", "[$now - 3h..$now - 2h, $now - 1h..$now]"
+    };
     private static final String[] FUZZ_RANGE_ENDS = {"$tomorrow", "$today + 3d", "$now", "$NOW + 1h", "$yesterday", "2024-01-09"};
     private static final String[] FUZZ_SHIFTS = {" + 1d", "+2h", " - 1bd", "-30m", "+1w", " - 1M", "+90s"};
     private static final String[] FUZZ_STATIC_ELEMENTS = {"2024-01-05", "2024-01-05T10:00", "2024-01", "2024-01-0[1..3]"};
@@ -3386,6 +3390,27 @@ public class TickExprTest {
                 }
             }
         }
+        // every range between two points in time with every suffix and a malformed duration, which the
+        // range ignores but which fails the expression
+        for (String range : FUZZ_POINT_IN_TIME_RANGES) {
+            for (String time : FUZZ_TIMES) {
+                for (String zone : FUZZ_ZONES) {
+                    for (String dayFilter : FUZZ_DAY_FILTERS) {
+                        final String expression = range + time + zone + dayFilter;
+                        for (String duration : FUZZ_BAD_UNIT_DURATIONS) {
+                            checker.check(expression + duration, TickExprKind.BAD_DURATION_UNIT);
+                        }
+                        for (String duration : FUZZ_DURATIONS) {
+                            for (String misplacedDayFilter : FUZZ_DAY_FILTERS) {
+                                if (!duration.isEmpty() && !misplacedDayFilter.isEmpty()) {
+                                    checker.check(expression + duration + misplacedDayFilter, TickExprKind.MISPLACED_DAY_FILTER);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         // every static element with a time part of its own in a date list with a time part
         for (String element : FUZZ_TIMED_STATIC_ELEMENTS) {
             for (String elementTime : FUZZ_TIMES) {
@@ -3685,6 +3710,70 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateVariablePointInTimeRangeChecksTimezoneBeforeDuration() {
+        // The compiled form reads the timezone of the expression before its duration, and the parser
+        // converts a range between two points in time to the timezone before it checks the duration,
+        // so both report the bad timezone of an expression that also has a malformed duration
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$now@Bogus;1x", "2024-01-02T10:00:00.000000Z", "invalid timezone: Bogus");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeRangeIgnoresWellFormedDuration() throws SqlException {
+        // A range between two points in time is the one interval from its start to its end, whatever
+        // well-formed duration the expression has, on both paths
+        final String now = "2024-01-02T10:00:00.000000Z";
+        final String range = "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]";
+        assertParsedAndCompiledWithNow(range, "$now - 1h..$now", now);
+        final String[] durations = {
+                ";1h", ";1h30m", ";-1h", ";+1h", ";1_000s", ";0h",
+                // every unit that TimestampDriver.add() knows
+                ";1y", ";1M", ";1w", ";1d", ";1m", ";1s", ";1T", ";1u", ";1n",
+                // the largest and the smallest numbers, which take a timestamp out of range: the check of
+                // the duration adds it to no timestamp
+                ";2147483647h", ";-2147483648h", ";2147483647y", ";-2147483648M",
+                // a duration of many parts
+                ";" + "1s".repeat(10_000)
+        };
+        for (String duration : durations) {
+            assertParsedAndCompiledWithNow(range, "$now - 1h..$now" + duration, now);
+        }
+        // An empty duration, as in $now - 1h..$now;, is left out: a day, as in $today;, gives the
+        // literal and the bind variable different intervals, and what it means is not settled
+    }
+
+    @Test
+    public void testDateVariablePointInTimeRangeRejectsMalformedDurations() {
+        // A range between two points in time ignores the duration of the expression, but the parser,
+        // which SQL uses for a bind variable, rejects a malformed duration with the error of the
+        // compiled form, which SQL uses for a literal and which rejects it when it compiles
+        final String now = "2024-01-02T10:00:00.000000Z";
+        // a unit without a number, and a number without a unit
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$now;h", now, "Expected number before unit 'h'");
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$now;1", now, "Missing unit at end of duration");
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$now;1h5", now, "Missing unit at end of duration");
+        // a number outside the range of an int, a sign without digits and a sign after digits
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$now;2147483648h", now, "Duration not a number: 2147483648");
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$now;-2147483649h", now, "Duration not a number: -2147483649");
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$now;--1h", now, "Duration not a number: -");
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$now;1-h", now, "Invalid duration unit: -");
+        // a unit that TimestampDriver.add() does not know: the other letter case of a unit, and a
+        // two-byte UTF-8 character
+        for (String unit : new String[]{"H", "D", "W", "Y", "\u00e9"}) {
+            assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$now;1" + unit, now, "Invalid duration unit: " + unit);
+        }
+        // and a four-byte one
+        assertParsedAndCompiledRejectedWithNow("$now - 1h..$now;1\uD83D\uDE00", now, "Invalid duration unit: ");
+        // whitespace in the duration
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$now;1h ", now, "Expected number before unit ' '");
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$now; 1h", now, "Expected number before unit ' '");
+        // a timezone after the duration, a second ';', and a ';' inside a time list, which starts the
+        // duration on both paths
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$now;1h@+02:00", now, "Expected number before unit '@'");
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$now;1h;", now, "Expected number before unit ';'");
+        assertParsedAndCompiledRejectedAtCompileTime("[$now - 1h..$now]T[09:00;1h]", now, "Expected number before unit ']'");
+    }
+
+    @Test
     public void testDateVariablePointInTimeRangeWithMalformedDurationFails() {
         // A range between two points in time stays one interval, which ignores the duration of the
         // expression, but a malformed duration still fails the expression, the same as for a range of
@@ -3700,6 +3789,52 @@ public class TickExprTest {
         assertParsedAndCompiledRejectedWithNow("[$now - 1h..$now];1x", now, "Invalid duration unit: x");
         // a range of days applies the duration, which fails on both paths
         assertParsedAndCompiledRejectedWithNow("$today..$tomorrow;1h#Tue", now, "Expected number before unit '#'");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeRangeWithMalformedDurationFailsAtEveryEndpoint() {
+        // a range of no length, a range to $now shifted by business days, which stays a point in
+        // time, a range around $now, and a range from $today shifted by hours
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertParsedAndCompiledRejectedAtCompileTime("$now..$now;1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedAtCompileTime("$now..$NOW + 1bd;1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 90s..$now + 90s;1x", now, "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedAtCompileTime("$today+2h..$now;1x", now, "Invalid duration unit: x");
+        // a range across midnight, and a range before 1970
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$now;1x", "2024-01-02T00:30:00.000000Z", "Invalid duration unit: x");
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$now;1x", "1969-12-31T23:30:00.000000Z", "Invalid duration unit: x");
+    }
+
+    @Test
+    public void testDateVariablePointInTimeRangeWithMalformedDurationFailsInDynamicMode() throws SqlException {
+        // Without applying the intervals, the parser keeps a range between two points in time as one
+        // encoded interval, and checks its duration the same way
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertEncodedIntervalWithNow("[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T10:00:00.000000Z}]", "$now - 1h..$now;1h", now);
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final String expression = "$now - 1h..$now;1h#Tue";
+        out.clear();
+        try {
+            parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 42, out, IntervalOperation.INTERSECT, false, timestampDriver.parseFloorLiteral(now));
+            Assert.fail("parse should fail: " + expression + ", parsed: " + encodedIntervalToSink(timestampDriver, out));
+        } catch (SqlException e) {
+            TestUtils.assertEquals("Expected number before unit '#'", e.getFlyweightMessage());
+            Assert.assertEquals(42, e.getPosition());
+        }
+        // and leaves no interval behind
+        Assert.assertEquals(0, out.size());
+    }
+
+    @Test
+    public void testDateVariablePointInTimeRangeWithPeriodicDurationFails() {
+        // The compiled form rejects the periodic form of a duration, as in ;30m;2d;2, in an expression
+        // with a date variable. The parser must reject it on a range between two points in time too,
+        // rather than drop the repetition that the expression asks for.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertParsedAndCompiledRejectedAtCompileTime("$now - 1h..$now;30m;2d;2", now, "Expected number before unit ';'");
+        // The compiled form leaves a list with an element with its own timezone to the parser, which
+        // repeats $today, so the literal fails on the range too
+        assertParsedAndCompiledRejectedWithNow("[$now - 1h..$now, $today@+01:00];30m;2d;2", now, "Expected number before unit ';'");
     }
 
     @Test
@@ -7440,15 +7575,19 @@ public class TickExprTest {
             return TickExprKind.BAD_DURATION_UNIT;
         }
         final String duration = pick(rnd, FUZZ_DURATIONS);
+        boolean isDayFilterMisplaced = false;
         if (rnd.nextInt(10) == 0) {
             // the day filter goes before the duration
             sink.put(duration).put(dayFilter);
-            isMalformed |= !dayFilter.isEmpty() && !duration.isEmpty();
+            isDayFilterMisplaced = !dayFilter.isEmpty() && !duration.isEmpty();
         } else {
             sink.put(dayFilter).put(duration);
         }
         if (isMalformed) {
             return TickExprKind.MALFORMED;
+        }
+        if (isDayFilterMisplaced) {
+            return TickExprKind.MISPLACED_DAY_FILTER;
         }
         return hasStaticElementTime ? TickExprKind.STATIC_ELEMENT_TIME : TickExprKind.WELL_FORMED;
     }
@@ -7986,10 +8125,11 @@ public class TickExprTest {
      * reads as the start of the week whatever follows it. The checker requires the compiled form to
      * agree with the parser on such an expression as on a well-formed one.
      * <p>
-     * The parser rejects a duration unit that TimestampDriver.add() does not know wherever it applies
-     * the duration, so the compiled form must fail, when it compiles or when it evaluates, at every
-     * "now" at which the parser fails: SQL must not select rows for a literal where it fails a bind
-     * variable.
+     * A malformed duration, one with a unit that TimestampDriver.add() does not know or one followed by
+     * a day filter, fails the expression wherever it is, also where the intervals ignore it, as a range
+     * between two points in time does. The parser must fail at every "now", and the compiled form too,
+     * when it compiles or when it evaluates: SQL must not select rows for a literal or for a bind
+     * variable where it fails the other.
      */
     private static class DateVariableDetectionChecker {
         private static final String ERROR = "error";
@@ -8005,6 +8145,8 @@ public class TickExprTest {
         private int checkCount;
         private int compiledCount;
         private int failureCount;
+        private int misplacedDayFilterCount;
+        private int misplacedDayFilterRejectedCount;
         private int nowDependentCount;
         private int staticElementTimeCount;
         private int staticElementTimeRejectedCount;
@@ -8022,6 +8164,8 @@ public class TickExprTest {
                     .$(", compiled=").$(compiledCount)
                     .$(", badDurationUnit=").$(badDurationUnitCount)
                     .$(", badDurationUnitRejected=").$(badDurationUnitRejectedCount)
+                    .$(", misplacedDayFilter=").$(misplacedDayFilterCount)
+                    .$(", misplacedDayFilterRejected=").$(misplacedDayFilterRejectedCount)
                     .$(", staticElementTime=").$(staticElementTimeCount)
                     .$(", staticElementTimeRejected=").$(staticElementTimeRejectedCount)
                     .$(", failures=").$(failureCount)
@@ -8034,6 +8178,8 @@ public class TickExprTest {
             Assert.assertTrue("no expression compiled", compiledCount > 0);
             Assert.assertTrue("no expression with a date variable had a bad duration unit", badDurationUnitCount > 0);
             Assert.assertTrue("no expression with a bad duration unit failed to compile", badDurationUnitRejectedCount > 0);
+            Assert.assertTrue("no expression with a date variable had a day filter after the duration", misplacedDayFilterCount > 0);
+            Assert.assertTrue("no expression with a day filter after the duration failed to compile", misplacedDayFilterRejectedCount > 0);
             Assert.assertTrue("no expression with a date variable had a static element with a time part", staticElementTimeCount > 0);
             Assert.assertTrue("no expression with a static element with a time part failed to compile", staticElementTimeRejectedCount > 0);
         }
@@ -8074,8 +8220,8 @@ public class TickExprTest {
             if (kind == TickExprKind.MALFORMED) {
                 return;
             }
-            if (kind == TickExprKind.BAD_DURATION_UNIT) {
-                checkBadDurationUnit(expression);
+            if (kind == TickExprKind.BAD_DURATION_UNIT || kind == TickExprKind.MISPLACED_DAY_FILTER) {
+                checkMalformedDuration(expression, kind);
                 return;
             }
             final boolean isStaticElementTime = kind == TickExprKind.STATIC_ELEMENT_TIME;
@@ -8117,28 +8263,41 @@ public class TickExprTest {
             }
         }
 
-        private void checkBadDurationUnit(String expression) {
-            badDurationUnitCount++;
+        private void checkMalformedDuration(String expression, TickExprKind kind) {
+            final boolean isBadDurationUnit = kind == TickExprKind.BAD_DURATION_UNIT;
+            if (isBadDurationUnit) {
+                badDurationUnitCount++;
+            } else {
+                misplacedDayFilterCount++;
+            }
+            for (int i = 0; i < nows.length; i++) {
+                if (!ERROR.equals(parsed[i])) {
+                    fail(expression, "has a malformed duration, but parses to " + parsed[i] + " at " + FUZZ_NOWS[i]);
+                    return;
+                }
+            }
             final CompiledTickExpression compiled;
             try {
                 compiled = IntervalUtils.compileTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0);
             } catch (SqlException | CairoException e) {
-                badDurationUnitRejectedCount++;
+                if (isBadDurationUnit) {
+                    badDurationUnitRejectedCount++;
+                } else {
+                    misplacedDayFilterRejectedCount++;
+                }
                 return;
             }
             try (compiled) {
                 for (int i = 0; i < nows.length; i++) {
-                    if (ERROR.equals(parsed[i])) {
-                        intervals.clear();
-                        try {
-                            compiled.evaluate(intervals, nows[i]);
-                        } catch (CairoException e) {
-                            continue;
-                        }
-                        fail(expression, "evaluates to " + intervalToString(timestampDriver, intervals)
-                                + ", but does not parse at " + FUZZ_NOWS[i]);
-                        return;
+                    intervals.clear();
+                    try {
+                        compiled.evaluate(intervals, nows[i]);
+                    } catch (CairoException e) {
+                        continue;
                     }
+                    fail(expression, "has a malformed duration, but evaluates to " + intervalToString(timestampDriver, intervals)
+                            + " at " + FUZZ_NOWS[i]);
+                    return;
                 }
             }
         }
@@ -8171,6 +8330,8 @@ public class TickExprTest {
         MALFORMED,
         // well-formed but for a duration unit that TimestampDriver.add() does not know
         BAD_DURATION_UNIT,
+        // well-formed but for a day filter after the duration, which makes the duration malformed
+        MISPLACED_DAY_FILTER,
         // a static element with a time part of its own in a date list with a time part, which the parser
         // mostly rejects, and on which the compiled form must agree with it
         STATIC_ELEMENT_TIME

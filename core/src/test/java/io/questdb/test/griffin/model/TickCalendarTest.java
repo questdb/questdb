@@ -32,6 +32,7 @@ import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
@@ -425,6 +426,39 @@ public class TickCalendarTest {
                 "[$today#XNYS,2025-02-03#XHKG]",
                 nowTimestamp
         );
+    }
+
+    @Test
+    public void testDateVariablePointInTimeRangeWithDurationAndExchangeFilter() throws SqlException {
+        // At 15:00 on 2025-01-07, a Tuesday, the range from 14:00 starts at the open of XNYS at 14:30,
+        // and the duration, which applies to what the calendar keeps, extends its end by an hour
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            assertParsedAndCompiledWithNow(
+                    driver,
+                    "[{lo=2025-01-07T14:30:00.000000Z, hi=2025-01-07T16:00:00.000000Z}]",
+                    "$now - 1h..$now#XNYS;1h",
+                    driver.parseFloorLiteral("2025-01-07T15:00:00.000000Z")
+            );
+        }
+    }
+
+    @Test
+    public void testDateVariablePointInTimeRangeWithMalformedDurationAndExchangeFilterFails() {
+        // A range between two points in time ignores the duration of the expression, but the parser,
+        // which SQL uses for a bind variable, must reject a malformed one like the compiled form, which
+        // SQL uses for a literal, also when the calendar keeps no part of the range for the duration to
+        // extend: before the open of 2025-01-07, a Tuesday, and on Saturday 2025-01-11. A date list,
+        // as in [$now - 1h..$now]#XNYS;1x, is left out: it applies the duration only to what the
+        // calendar keeps.
+        final String expression = "$now - 1h..$now#XNYS;1x";
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            for (String now : new String[]{"2025-01-07T10:00:00.000000Z", "2025-01-11T15:00:00.000000Z"}) {
+                assertTickExprErrorWithNow(driver, expression, driver.parseFloorLiteral(now), "Invalid duration unit: x");
+            }
+            assertCompileTickExprError(driver, expression, "Invalid duration unit: x");
+        }
     }
 
     @Test
@@ -1294,6 +1328,29 @@ public class TickCalendarTest {
             Assert.assertEquals(expression, expectedError, e.getFlyweightMessage().toString());
             Assert.assertEquals(expression, 42, e.getPosition());
         }
+    }
+
+    /**
+     * Asserts that the parser and the compiled form, which SQL uses for a bind variable and for a literal,
+     * give the expected intervals, written in microseconds, at the given "now".
+     */
+    private void assertParsedAndCompiledWithNow(TimestampDriver driver, String expected, String expression, long now) throws SqlException {
+        final String expectedForType = ColumnType.isTimestampNano(driver.getTimestampType())
+                ? expected.replace("00Z", "00000Z")
+                : expected;
+        final LongList intervals = new LongList();
+        IntervalUtils.parseTickExpr(driver, configuration, expression, 0, expression.length(), 0, intervals, IntervalOperation.INTERSECT, sink, true, now);
+        final String parsed = intervalToString(driver, intervals);
+        intervals.clear();
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(driver, configuration, expression, 0, expression.length(), 0)) {
+            compiled.evaluate(intervals, now);
+        }
+        // one assertion over both paths, so a failure shows the result of each
+        Assert.assertEquals(
+                expression,
+                "parsed: " + expectedForType + "\ncompiled: " + expectedForType,
+                "parsed: " + parsed + "\ncompiled: " + intervalToString(driver, intervals)
+        );
     }
 
     private void assertTickExprErrorWithNow(TimestampDriver driver, String expression, long now, String expectedError) {

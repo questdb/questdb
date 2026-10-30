@@ -10982,6 +10982,68 @@ create table tab as (
     }
 
     @Test
+    public void testSingleInClauseWithMalformedTickDurationFails() throws Exception {
+        // The server parses the tick expression of the bind variable each time the statement runs. A
+        // range between two points in time ignores the duration, but a malformed one fails the run, and
+        // the statement then runs again with a well-formed one.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, mode, _) -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                // hourly rows from 2024-01-01T00:00 to 2024-01-04T23:00
+                try (PreparedStatement statement = connection.prepareStatement("""
+                        CREATE TABLE xts AS (
+                            SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L) ts
+                            FROM long_sequence(96)
+                        ) TIMESTAMP(ts) PARTITION BY DAY
+                        """)) {
+                    statement.execute();
+                }
+                mayDrainWalQueue();
+
+                final String sql = "SELECT ts FROM xts WHERE ts IN ?";
+                final String expected = """
+                        ts[TIMESTAMP]
+                        2024-01-02 09:00:00.0
+                        2024-01-02 10:00:00.0
+                        """;
+                try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                    statement.setString(1, "$now - 1h..$now;1h");
+                    try (ResultSet rs = statement.executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, rs);
+                    }
+
+                    statement.setString(1, "$now - 1h..$now;1x");
+                    try (ResultSet ignore = statement.executeQuery()) {
+                        Assert.fail("the statement should fail");
+                    } catch (PSQLException e) {
+                        TestUtils.assertContains(e.getMessage(), "ERROR: Invalid duration unit: x");
+                        final ServerErrorMessage serverErrorMessage = e.getServerErrorMessage();
+                        Assert.assertNotNull(serverErrorMessage);
+                        // the position of the bind variable, counted from 1; in simple mode the driver
+                        // writes the value into the SQL text as ('...'), so the position is that of the quote
+                        Assert.assertEquals(sql.indexOf('?') + (mode == Mode.SIMPLE ? 2 : 1), serverErrorMessage.getPosition());
+                    }
+
+                    statement.setString(1, "$now - 1h..$now;1h");
+                    try (ResultSet rs = statement.executeQuery()) {
+                        sink.clear();
+                        assertResultSet(expected, sink, rs);
+                    }
+                }
+
+                if (isEnabledForWalRun()) {
+                    try (PreparedStatement statement = connection.prepareStatement("DROP TABLE xts")) {
+                        statement.execute();
+                    }
+                }
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testSlowClient() throws Exception {
         assertMemoryLeak(() -> {
             DelayingNetworkFacade nf = new DelayingNetworkFacade();
