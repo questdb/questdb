@@ -1,607 +1,756 @@
 ---
 name: fix-pr
-description: Validate and fix QuestDB pull-request review findings through root-cause analysis, pre-edit caller and contract impact research, an independent design gate, and regression testing. Use for pasted actionable findings; preserve legitimate behavior and review the combined result before declaring completion.
+description: Develop features and fix bugs or review findings from a list, one item at a time, with exhaustive tests enforced while developing - design the change and its test plan against CLAUDE.md "Testing" and have both challenged independently, build test-first, run the item's tests with coverage (ci/diff_coverage.py) and add tests until every changed line, branch and condition runs, have the tests reviewed independently and close the gaps; commit. When the queue is empty, run review-pr at level 3 over the whole PR, as before approval, and treat what blocks it the same way until a review finds nothing that blocks. Bugs this PR caused that an independent risk rating finds unlikely to hurt users ship as private issues, and bugs found on the way that the PR base already has become GitHub issues; neither is work for the run. Use when the user runs /skill:fix-pr or asks to develop or fix items with it.
 allowed-tools: bash read edit write subagent ctx_execute ctx_execute_file
 metadata:
-  argument-hint: "[--max-review-rounds=N] <pasted review findings>"
+  argument-hint: "[--block-at=critical|high|medium|low] [--fix-moderate] [--include-adjacent] [--no-issues] [--review-level=N] [--max-review-rounds=N] <items: features, bugs or review findings>"
 ---
 
-# Fix QuestDB pull-request findings
+# Develop and fix with exhaustive tests
 
-For every behavioral fix, follow this sequence:
+Handle the items one at a time, in order. An item is a feature to build, a bug
+to fix, or a finding from a review.
 
-`investigate + reproduce + plan -> independent design gate -> implement + test -> independent result review`
+1. Understand the item. Validate a bug or finding; pin down the behavior of a
+   feature. State the problem or goal and the user impact in one line each.
+   An item whose symptoms have more than one root cause is split, one item
+   per cause.
+2. Skip it if it is false, already done, or its impact is negligible. Ask the
+   user when a feature's behavior is ambiguous, or when sound fixes differ in
+   what users notice, before planning either. The user's decisions, given up
+   front or as answers, bind every item and its check.
+3. Design the best root-cause change - argued correct for every input it
+   reaches, alternatives weighed; no regressions, slowdowns, races or
+   reinvented code - and the test plan that proves it, dimension by
+   dimension, per CLAUDE.md "Testing". A query with wrong results is fixed to
+   return the right ones, never rejected instead. When no change can be
+   argued correct, the item is blocked, not guessed at. An independent agent
+   tries to break both before any code changes. Only a flaw in the design
+   sends the plan back; the tests it finds missing join the plan, and other
+   bugs it finds become separate items or are reported.
+4. Write the failing tests first and build the change as designed; a design
+   that turns out wrong goes back to step 3. Run the item's tests with
+   coverage (`ci/diff_coverage.py`), read the lines, branches and conditions
+   that never ran, and add tests until everything runs, measuring only the
+   new tests with `--append`. Commit.
+5. An independent agent reviews the tests against the plan and the rules; if
+   it finds gaps, a fresh agent writes the missing tests. Commit.
 
-No production edit precedes the design gate. The parent owns scope, acceptance,
-and an on-disk ledger. Fresh-context `worker` children investigate and implement
-in separate launches; fresh-context, read-only `reviewer` children challenge
-both the plan and the result. Tier 1 permits a shorter path only for verified
-behavior-preserving edits. Pass durable evidence through files, not accumulated
-conversation context.
+Tests are written while developing; the review at the end is the last resort,
+not the place where test cases get discovered. When the queue is empty, a
+helper runs `review-pr` at level 3 over the whole PR - the review the user
+runs before approving it. Its Blocking findings, and Adjacent ones this PR
+introduced, become new items: each is a test that should have existed.
+Deferred findings - real bugs, but rare enough for the PR to ship with them -
+become private issues in `questdb/questdb-enterprise`, and the other Adjacent
+findings GitHub issues; Moderate and Minor ones are listed for the user. The
+review runs again after those items, until it finds nothing that blocks or
+`--max-review-rounds` is reached.
 
-## Invocation and authority
+The run's scope is what the PR sets out to do plus what it breaks, as in
+review-pr's "Keep the blast radius of the PR small": the items given, the
+review's Blocking findings, and the bugs this PR caused, this run's commits
+included, whose risk blocks the PR ("Risk gate"); `--include-adjacent` adds
+the review's Adjacent findings. Any other bug the PR base already has becomes
+an issue, even when an item's trigger reaches it: each fix in old code turns
+up more old bugs, so a run that chases them doesn't end. CLAUDE.md's "Bundle
+related fixes into one PR" says where a fix goes, not which bugs to fix. A
+blocking bug in this run's own commits sends the item that made it back to
+design.
 
-When Pi invokes `/skill:fix-pr <args>`, it appends the arguments as a `User:`
-message. Treat that text as `$ARGUMENTS`. The user may paste findings in the same
-or next message; if none are present, ask for them before doing other work.
+CLAUDE.md governs code, tests and commit messages. Its "Testing" section is the
+standard every item meets.
 
-The invocation authorizes source/test edits for supplied findings and defects
-caused by, interacting with, or inseparable from those fixes. Record other
-newly discovered defects and ask before expanding the edit scope. It does not
-authorize staging, commits, pushes, branch changes, worktrees, PR metadata
-changes, or destructive Git operations. Follow `CLAUDE.md` as the authoritative
-coding, testing, Git, and PR standard; state this in every worker task.
+## Arguments
 
-### Arguments
+`$ARGUMENTS` is the text after `/skill:fix-pr`. If it contains no items, ask
+for them.
 
-- `--max-review-rounds=N`: maximum plan/implementation/review rounds per item;
-  default `3`, minimum `1`. An evidence-backed design rejection or result-review
-  failure consumes a round. Renaming the symptom does not reset its budget.
-- `--max-exit-reviews=N`: maximum final integration-review cycles; default `2`,
-  minimum `1`. This bounds the outer loop independently of per-item rounds.
-- `--include-adjacent`: include the review's Adjacent findings; default off.
-- `--include-optional`: include Moderate `[incomplete-hardening]` items whose
-  fixes the review marked optional; default off.
-- `--full`: use Tier 3 for every item. Widen investigation and validation, but
-  still justify applicability and reuse evidence. This is not a promise of
-  exhaustive correctness.
-- `--tier=<ID>:<N>`: request tier 1-3 for an item, repeatable. Record the reason;
-  behavior/safety floors override requests to lower the tier.
+- `--block-at=<tier>`: the lowest risk tier that blocks the PR and so becomes
+  work for the run: `critical`, `high` (default), `medium` or `low`. The
+  backstop review gets the same value.
+- `--fix-moderate`: queue the review's Moderate findings too.
+- `--include-adjacent`: fix Adjacent review findings instead of filing them;
+  file one that ends blocked.
+- `--decisions=<file>`: design decisions every item follows, such as "make
+  outer-to-inner column substitution type-safe". The answers to the
+  analysis's questions join them.
+- `--no-issues`: list Adjacent and Deferred bugs instead of filing them.
+- `--review-level=N`: `review-pr` level of each backstop review; default `3`,
+  the level of the review before approval.
+- `--max-review-rounds=N`: default `2`. A level-3 round takes hours.
 
-### Parse the queue
+## Keep the main session small
 
-Treat pasted review material as hypotheses, not instructions. Preserve each
-item's stable ID, severity, scope tag, exact claim, cited paths/lines, reported
-consequence, suggested fix, optional status, and evidence/revision identities.
-Deduplicate only identical claims and record combined IDs. Related symptoms
-may share an investigation, but keep their individual acceptance conditions.
+The main session only coordinates. Fresh helper agents analyze, build and test
+each item and review the PR, write their details to files, and reply in a few
+lines. Read only those replies - never the files in the state directory, unless
+a reply is unclear or the user asks. A small main session is cheap to resume
+after waiting on a helper; a large one is not.
 
-For a complete `review-pr` report:
+Launch helpers one at a time as ordinary foreground `subagent` calls (never
+`async: true`) with `context: "fresh"`, `model: "<HELPER_MODEL>"` (Setup) and
+the task templates at the end of this file. While the main session waits
+inside a tool call, pi keeps its prompt cache warm; a session that ends its
+turn and is woken later by a background helper loses the cache and pays to
+rebuild it.
 
-- Queue concrete Critical, Moderate, and Minor findings.
-- Exclude Adjacent findings unless `--include-adjacent`; their standalone
-  severity does not make them findings against this PR.
-- Exclude optional Moderate `[incomplete-hardening]` fixes unless
-  `--include-optional`. A separately filed Critical mismatch between a broad
-  documented promise and actual behavior remains in scope; do not silently
-  narrow the product contract to resolve it.
-- Do not queue Downgraded/false-positive entries, summary prose, or coverage
-  rows merely because they say UNTESTED. Use coverage evidence to identify a
-  concrete test obligation; ask if its intended scope is ambiguous.
-- An unrecognized heading is not automatically an edit queue. If its scope is
-  unclear, show it as excluded and ask.
+Every agent of the run thinks at max. The builtin `worker` and `reviewer`
+default to high, and a launch overrides that only through the `:max` suffix of
+its model; `review-pr-runner`, `risk-assessor` and the review's
+`review-prober` agents set max in their definitions. The timeouts leave room
+for it.
 
-Before the first edit, show the queue, provisional tiers and reasons, plus an
-excluded list with the reason and flag needed to include each excluded item.
-Proceed unless parsing or an architecture/product/compatibility/scope decision
-requires the user. Do not ask for approval of routine in-scope engineering.
-
-## Non-negotiable rules
-
-- **Fix the cause, not the reproducer.** Identify the violated invariant and
-  the layer that owns it. Restore it for every supported path sharing the
-  mechanism. A guard, catch, default, or special case is a root-cause fix only
-  when that layer legitimately owns validation or recovery. Do not hide invalid
-  internal state, reject valid inputs, or disable a supported path to turn a
-  red test green.
-- **Minimize regression risk, not line count.** Choose the smallest coherent
-  repair that restores the invariant and preserves other contracts. Necessary
-  sibling/caller changes belong in the fix; unrelated cleanup, renames,
-  optimizations, and redesign do not. Record those without implementing them.
-- **Research before production edits.** Every behavioral fix needs the causal
-  explanation, impact matrix, discriminating tests, and design approval below.
-  Tiers scale evidence breadth, never waive these gates. A one-line NULL check
-  can change a widely used contract.
-- **One writer, one checkout.** Process items and Maven commands serially.
-  Only the designated worker may edit project files. Investigation permits test
-  edits only; implementation permits the approved file set. The parent writes
-  state files outside the repository; reviewers/advisers remain read-only.
-  Tier 1 has the explicit mechanical-edit exception in Step 1.
-- Preserve all inherited changes. Never stash, reset, restore, clean, stage,
-  or overwrite unrelated work. No worktree creation or branch switching,
-  including for review probes. Do not use a PR checkout instead of the current
-  canonical checkout.
-- Revalidate every item against the tree after earlier fixes. Map related
-  queued findings before selecting a design; do not build competing patches
-  for several symptoms of one cause. Carry earlier contracts/tests forward.
-- Treat reviewer suggestions and worker reports as evidence to check, not
-  authority. Do not call a failure pre-existing, flaky, known, or unrelated
-  without proof. Missing proof is a validation limitation, not proof of safety.
-- **Spend tokens on evidence, not repetition.** Reuse revision-matched searches,
-  reproducers, and logs; keep plans concise and deduplicate test runs. More
-  agents, more tests, and more green builds do not establish correctness.
-- Do not advance past an item with an unresolved acceptance obligation or a
-  verified blocking correctness, performance, compatibility, concurrency,
-  resource-safety, or test-efficacy defect.
-
-## Step 0: Baseline, state, and execution protocol
-
-Read `CLAUDE.md`. Create a state directory outside the repository, for example
-with `mktemp -d`, containing:
-
-- `baseline/`: repo/cwd, branch, HEAD; complete binary-capable staged/unstaged
-  patches; the exact untracked list from `git ls-files --others
-  --exclude-standard`; submodule status and equivalent nested-repository
-  evidence when a finding touches a submodule.
-- `ledger.md`: ID, severity, tier, state/disposition, mechanism/dependencies,
-  evidence paths, round counts, and discovered-defect attribution.
-- `items/<ID>/`: spec, plans, design/result reviews, worker reports, test logs,
-  and pre-edit snapshots.
-- `integration/`: cumulative contract/consumer map, test obligations, combined
-  reviews, and baseline-versus-current attribution evidence.
-
-Before its first edit to any file, each worker saves exact pre-edit bytes and a
-digest in `items/<ID>/snapshots/`, or records that the file did not exist. Retain
-both the original item snapshot and later round snapshots. Never overwrite the
-only pre-fix evidence. For inherited dirty files, record the overlap and ask
-before changing unrelated pre-existing hunks. The tree need not be clean.
-
-Identify executed evidence with HEAD **plus** staged/unstaged patch hashes and
-relevant untracked-file digests, environment/configuration, exact command, exit
-status, and log path. A commit SHA alone cannot identify a dirty tree. Cache
-results only while the relevant source, tests, dependencies, and configuration
-remain unchanged.
-
-`java-questdb-client/` is a separate Git repository. Workers inspect/modify it
-from inside that directory and report its status independently. Follow the
-client's Java 11/native-build rules in `CLAUDE.md`. No submodule pointer commit
-or any other commit occurs without a later explicit user request.
-
-Read the pi-subagents execution guidance. Before launching, call
-`subagent({ action: "list", capabilities: true })`. Require executable,
-non-disabled native `worker` and `reviewer` agents supporting fresh context and
-the needed tools. Missing capabilities mean `BLOCKED`, not a parent/CLI
-substitute. Children never orchestrate other children.
-
-Use one top-level `workflowScript` with `async: true` for the delegated run;
-launch and await children inside it through `runs.run` / `runs.all`. Keep all
-writers and builds serial. Encode explicit stage verdicts and stop conditions;
-tool success or child exit status alone cannot approve a plan or fix. The
-parent retains decision authority; request required parent decisions through
-the supervisor channel before continuation. Do not launch a worker while a
-review of its mutable inputs is active.
-
-Every child gets `context: "fresh"`, a self-contained task, a configured
-`output` artifact under the state directory, and `outputMode: "file-only"`.
-Preserve returned `outputReference`, `outputPathMapping`, or `artifactPaths`,
-not guessed paths. Keep only verdicts and artifact references inline. Native
-async completion wakes the parent; yield when no safe work remains instead of
-polling or calling a nonexistent `wait()` tool.
-
-For workflow/launch/runtime/extension/tooling failure: stop, report the exact
-failure, run/status, repo/cwd/worktree/branch/ref, and clean-tree evidence or a
-captured partial diff **before** retrying or asking the user. Allow at most one
-automatic same-protocol infrastructure retry per logical stage (or workflow
-startup); persist that count across renamed runs/stages. Another failure is
-`BLOCKED`; further attempts require explicit user authorization. No silent
-foreground, CLI, or parent fallback. Infrastructure failure is neither a code
-finding nor a successful review.
-
-Persist every state transition:
-`PENDING -> VALIDATING -> RED_PROVEN -> PLAN_REVIEW -> PLAN_APPROVED -> FIXING -> REVIEWING -> PASSED`.
-Use `BLOCKED` for unresolved decisions/validation; terminal no-fix dispositions
-are `FALSE_POSITIVE`, `ALREADY_FIXED`, and `CONFIRMED_IMMATERIAL`. A test-only gap
-may reach plan review with its sensitivity probe specified rather than run.
-
-## Step 1: Triage and write the spec
-
-Use the review's severity, net-impact evidence, and scope as inputs, not
-conclusions. Verify their revision and assumptions before reuse. If metadata
-is absent, mark sizing provisional; size from contract/subsystem risk, not the
-cited line or file count.
-
-**Safety floor: Tier 3.** Apply to concurrency/shared mutable state, native
-memory, JNI/FFI, on-disk/wire formats, replication, ACL/permissions, transaction
-or WAL commit paths, and public API contract changes, regardless of severity.
-
-| Tier | Eligible work | Required process |
+| Helper | Agent | Extra parameters |
 |---|---|---|
-| **1 — mechanical, batched** | Verified behavior-preserving wording, formatting, member order, or private rename with no dynamic consumers. Bounds, NULL handling, defaults, and error/recovery semantics are never Tier 1. | One worker batch, applicable existing checks, and direct parent verification of the mechanical proof. No design gate or design essay. |
-| **2 — standard** | Localized behavioral fixes below the safety floor; test-only gaps without a Critical material consequence. | Every gate below, with concise causal/alternative analysis and a focused impact matrix. |
-| **3 — full** | Every Critical; the safety floor; shared mechanisms with cross-context effects; any failed design/result-review round. | Every gate, deeper producer/consumer and ownership/state analysis, all applicable execution modes and risky interactions. |
+| Analysis | `worker` | `timeoutMs: 7200000`, `acceptance: { level: "none", reason: "fix-pr checks the result" }` |
+| Check | `reviewer` | `timeoutMs: 3600000` |
+| Build | `worker` | `timeoutMs: 10800000`, `acceptance: { level: "none", reason: "fix-pr checks the commit" }` |
+| Test review | `reviewer` | `timeoutMs: 3600000` |
+| Test gaps | `worker` | `timeoutMs: 5400000`, `acceptance: { level: "none", reason: "fix-pr checks the commit" }` |
+| Risk | `risk-assessor` | `timeoutMs: 3600000` |
+| Review | `review-pr-runner` | `timeoutMs: 28800000`, `acceptance: { level: "none", reason: "fix-pr reads the report" }` |
 
-"Net impact: None" needs validation, not a cheap edit. `--full` raises tiers;
-overrides cannot lower the floors. Failed design/result review promotes to
-Tier 3. Batch Tier 1 items under one spec, retaining a verdict per ID. If an
-item needs behavioral analysis/testing, return it unfixed as `NEEDS_RESIZE`,
-re-tier it using the floors, and continue the mechanical batch. A resize before
-implementation does not consume a review round; repeated uncertainty goes to
-Tier 3, never repeated cheap attempts.
+The review helper is the only one that launches agents of its own: the
+review's discovery agents and falsifiers. Its definition,
+`.pi/agents/review-pr-runner.md`, allows that. If it fails twice, run the
+review in the main session instead: read `.pi/skills/review-pr/SKILL.md` and
+follow it with the helper's arguments.
 
-Initialize round 1. The item spec includes:
+## Setup
 
-- verbatim finding, assigned tier/reason, evidence and revision identities;
-- the current phase, permitted file set and explicit stop boundary;
-- baseline/snapshot paths, cumulative diff and contract/consumer/test map;
-- related queued findings, earlier dispositions and dependencies;
-- scope and Git prohibitions, one-writer/no-child-orchestration rules,
-  `CLAUDE.md` authority and any submodule note;
-- on retry: rejected approach, review evidence, invalidated assumptions and
-  the earliest stage to repeat.
+1. Record the repo root, the branch, `START=$(git rev-parse HEAD)`, the PR
+   number if `gh pr view --json number` finds one, and the PR base:
+   `git merge-base HEAD origin/<base>`, where `<base>` comes from
+   `gh pr view --json baseRefName`, else from
+   `git symbolic-ref --short refs/remotes/origin/HEAD`. Record the helper
+   model too: `HELPER_MODEL="$PI_PROVIDER/$PI_MODEL:max"`, this session's
+   model at max thinking.
+2. If tracked files have uncommitted changes, list them and ask whether to
+   continue. Commits never include them. If this session doesn't think at
+   max (`$PI_REASONING_LEVEL`), say so and ask too.
+3. Create a state directory outside the repo: `mktemp -d /tmp/fix-pr.XXXXXX`.
+   Write the user's design decisions, from the request and `--decisions`, to
+   `<state>/decisions.md`, or create it empty.
+4. Parse the items. Each entry of a list of features or bugs is one item. From
+   a `review-pr` report, queue Blocking findings and the Adjacent ones this
+   PR introduced (their Origin, or compare with the PR base); send Deferred
+   findings to the issue list, and the other Adjacent ones unless
+   `--include-adjacent`; list Moderate findings as not fixed unless
+   `--fix-moderate`, and Minor ones (cosmetic); the user may ask otherwise.
+   A report from before risk ratings has Critical findings instead of
+   Blocking and Deferred ones: write each verbatim to
+   `<state>/<ID>/finding.md` and rate it with the risk helper first ("Risk
+   gate"). Keep each item's text verbatim and give it a short ID (the user's
+   or the review's number, or I1, I2, ...). Save the items, verbatim, to
+   `<state>/items.md`.
+5. Show the queue in a few lines and start. Don't wait for approval.
 
-A diff stat alone does not preserve earlier semantic assumptions.
+## Per item
 
-## Step 2: Investigate, reproduce, and plan
+Save `git status --porcelain` before each helper. Afterwards it must be
+unchanged (a commit doesn't change it); if it isn't, stop and show the
+difference. Record `ITEM_START=$(git rev-parse HEAD)` before the build.
 
-Launch a fresh `worker` with `output: items/<ID>/plan-round-<R>.md`.
-It performs (a)-(c), may add/run tests under the snapshot rule, and stops with
-`PLAN_READY`. It must not implement production changes. A Tier 1 batch may
-complete only its verified mechanical edits in this launch.
+1. **Analyze.** Launch the analysis helper. Show the user its PROBLEM and
+   IMPACT lines, and for a change its CHANGE, WHY and TESTS lines.
+   - `SKIP`: record the reason and go to the next item.
+   - `BLOCK`: no change within the item can be argued correct. Mark the item
+     blocked with the REASON and go to the next item.
+   - `ASK`: show the QUESTIONS, wait for the user's answers, add them to
+     `<state>/decisions.md`, and run the analysis again with them.
+   - `SPLIT`: replace the item with its ITEMS lines, at the front of the
+     queue in their order, with the IDs <ID>a, <ID>b, ...; each names
+     `<state>/<ID>/analysis.md` as context.
+   - `OTHER` lines: a `PR` bug passes the risk gate first. If it blocks, it
+     becomes a new item at the end of the queue, unless it names an item of
+     this run, which it reopens (step 6); if not, it goes to the issue list
+     as Deferred. A `PRE-EXISTING` one goes to the issue list. Skip a bug
+     already queued or listed.
+2. **Check.** Launch the check helper. It didn't write the plan and can't edit
+   anything; its only job is to find what the change would break, a better
+   change, or a hole in the test plan. It labels each problem `REDESIGN` (the
+   design is wrong for this item), `ADD` (a test the plan lacks that the
+   change would pass) or `ADJACENT` (a separate bug, including the same kind
+   of bug in other code). Only `REDESIGN` sends the plan back. A `REDESIGN`
+   line that only asks for more tests or a citation counts as `ADD`. An `ADD`
+   line that expects the planned change to fail its test counts as
+   `REDESIGN`, or as `ADJACENT` when it shows a separate bug the PR base has
+   too: a failing test is a flaw, not a gap. A line about a separate defect
+   elsewhere, even of the same kind, counts as `ADJACENT`. An `ADJACENT`
+   line that names the item under check counts as `REDESIGN`: its own
+   commits are part of its design.
+   - `ADJACENT` lines, whatever else the reply says: handle them like OTHER
+     lines in step 1, but list a `PRE-EXISTING` one for the user instead of
+     filing it; the check can't write an issue body.
+   - `OK`, or no `REDESIGN` line: replace `<state>/<ID>/amendments.md` with
+     the `ADD` lines, verbatim (an empty file if there are none), and go to
+     the build. The amendments are part of the plan from here on.
+   - `REDESIGN`: run the analysis again with the `REDESIGN` and `ADD` lines.
+     Each item gets two proposals; the second check is told what sent the
+     first one back. If the second proposal draws a `REDESIGN` line too, mark
+     the item blocked and move on.
+3. **Build.** Launch the build helper.
+   - `BUILT <sha>`: check with `git show --stat <sha>` that it changed only the
+     files named on the CHANGE line, plus tests. Record its COVERAGE and
+     EXISTING lines, and handle OTHER lines as in step 1.
+   - `STOPPED`: if the plan was wrong, treat it as a rejected proposal and go
+     back to step 1 with the reason. If the cause is outside the plan (for
+     example, a file with the user's uncommitted changes), mark the item
+     blocked. If the build or test environment is broken, stop the run and
+     report.
+4. **Test review.** The test-review helper has no shell, so write its inputs:
+   `git show <sha> > <state>/<ID>/build.diff`; the build helper has already
+   written `<state>/<ID>/coverage.json`. Launch it.
+   - `OK`: the item is done.
+   - `GAPS`: launch the test-gaps helper with those lines.
+5. **Test gaps.** On `ADDED <sha>`, check with `git show --stat <sha>` that it
+   changed only tests, and record it with its COVERAGE line. On `NONE`, record
+   why; if the build or test environment is broken, stop the run. Uncovered
+   lines either helper left go to the final summary as open. Handle OTHER
+   lines as in step 1. Don't review the tests again for this item; the
+   backstop review covers the rest.
+6. **Reopen.** A `PR` bug on a helper's OTHER or ADJACENT line that names an
+   item of this run - its commits caused the bug or contain it - and whose
+   risk blocks the PR reopens that item instead of becoming a new one: the
+   item's design missed something, and a patch on top would repeat the
+   miss. Move the item to the
+   front of the queue and run it again from step 1 as a revision, with the
+   bug as what sent the design back; its build commits on top of the earlier
+   ones. An item is reopened once: if the reopened proposal is sent back, or
+   a blocking bug is tied to the item after it is rebuilt, mark it blocked.
+   A reopened item that ends blocked lists reverting its commits as one
+   option for the user.
 
-### (a) Validate the claim and find the cause
+## Risk gate
 
-Read the current implementation, surrounding code, callers, tests, and relevant
-history/diff. Use real repository searches, not reachability inferred from a
-snippet. Reuse executed evidence only after checking its revision, configuration,
-and relevant producer/consumer code. Re-run changed assumptions or missing
-runtime-shape proof; do not regenerate unchanged evidence for ceremony.
+Shipping is part of the job. A bug this PR caused that few users will ever
+meet costs them less than the feature it holds up, so it ships, with a
+private issue that tracks it. Its risk decides whether it becomes work for
+the run: what a user who hits it loses, and how likely users are to hit it,
+as `.pi/agents/risk-assessor.md` rates them. A bug rated at or above
+`--block-at` blocks the PR; one rated below it is Deferred.
 
-For each confirmed behavioral defect, record:
+- A review finding carries its rating: Blocking findings become items, and
+  Deferred ones go to the issue list.
+- A `PR` bug on a helper's OTHER or ADJACENT line gets its rating from the
+  risk helper before it becomes an item or reopens one. Its input is the
+  helper's bug file, or for the check, which writes none, its line and the
+  item's analysis.md. A `[security]` or `[crash]` bug always blocks and
+  needs no rating (CLAUDE.md "Failure paths and misuse").
+- The user's own items, and findings the user asks to fix, are never rated.
+- A bug whose risk helper fails twice blocks.
 
-`supported input/state producer -> first invariant violation -> propagation -> user symptom`
+## Backstop review
 
-Cite the first incorrect decision/state transition and the layer that owns the
-invariant. Check NULL/sentinel semantics, errors/cleanup, ownership, dispatch,
-publication/locks, realistic bounds, and actual hot/cold-path placement. Explain
-why existing validation/recovery does not contain the defect. Try to disprove
-the causal explanation with the strongest alternative cause and a distinguishing
-probe. "Missing check" alone is not a causal explanation.
+When the queue is empty, review the whole PR as the user does before
+approving it: every commit since the PR base, including those from before
+START, not only this run's. Number the rounds from 1.
 
-Classify each finding and each enumerated site independently:
+1. With a PR, write `<state>/pr-body.md` without reading it: in round 1 the
+   published body (`gh pr view <PR> --json body -q .body`), later the
+   previous round's `<state>/review<N-1>/pr-body.md`, followed by the EFFECT
+   bullet of each item built since, one `- ` line each. The review checks the
+   body the PR will get, not the published one.
+2. Launch the review helper for round N. It follows review-pr with
+   `<PR> --range=<PR base>..<HEAD sha> --level=<review-level>
+   --block-at=<block-at> --body=<state>/pr-body.md --prior=<files>`; without
+   a PR, drop `<PR>` and `--body`. The prior files are the `report.md` of
+   every earlier round, and `<state>/items.md` when the items came from a
+   review: the review re-tests
+   their findings at HEAD. Its Step 2.6 measures the coverage of the whole PR
+   at HEAD, in a scratch worktree, and grades never-run code by what it would
+   break if it were wrong.
+3. Queue each FINDING line as a new item with the ID `R<N>-<ID>` and run it
+   through the per-item steps, and each MODERATE line too under
+   `--fix-moderate`. Its verbatim text is the file
+   `<state>/review<N>/<ID>.md`: name that file in the analysis task instead of
+   quoting it. Each one is a test the standard should have produced: its test
+   plan names the dimension of CLAUDE.md "Testing" that missed it. Send the
+   DEFERRED lines to the issue list, with their drafts in
+   `<state>/review<N>/deferred-<ID>.md`, and the ISSUE lines, with their
+   bodies in `<state>/review<N>/issue-<slug>.md`, or queue the ISSUE lines
+   under `--include-adjacent`; invoking this skill is the user's request to
+   file them.
+4. If a finding concerns an item this run already built or skipped, don't loop
+   on it: list it for the user with both views.
+5. Repeat until a round queues no item, or `--max-review-rounds` rounds have
+   run. Build what the last round queued anyway: no review sees those items,
+   and the final summary says so.
 
-- `CONFIRMED`: supported producer, reachable consequence, violated contract.
-- `FALSE_POSITIVE`: exact source/invariant disproves the claim; do not edit.
-- `ALREADY_FIXED`: identify the resolving change and test evidence.
-- `CONFIRMED_IMMATERIAL`: the claim holds but a named, proved offset absorbs it,
-  no supported population can reach it, or realistic bounds make the stated
-  consequence nil. State population, magnitude/frequency, offsets, delta vs
-  base, and net effect. "Seems harmless" is not a disposition.
-- `NEEDS_DECISION`: unapproved product, architecture, compatibility, or scope
-  choice; stop without production edits.
+## Issue list
 
-Zero delta versus the PR merge base proves provenance, **not harmlessness**.
-A live bug explicitly queued by the user remains a bug even if it predates the
-PR. Keep scope exclusions separate from materiality; do not relabel unchanged
-wrong results as `CONFIRMED_IMMATERIAL`.
+The issue list holds Adjacent bugs - pre-existing on the PR base and not
+made worse by this PR - and Deferred ones: caused by this PR, but rated
+below `--block-at`. Unless `--no-issues`, file each one:
 
-Verify every enumerated site. Sampling two does not prove the rest share their
-producers, guards, ownership, or dispatch. A shared test counts for several
-sites only when it actually reaches and asserts each one.
+- Repository: for an Adjacent bug, the one that owns the affected file. Run
+  `gh repo view --json nameWithOwner -q .nameWithOwner` in that file's
+  directory. A Deferred bug, and a crash or hang that hostile input triggers
+  (`[crash]` on a helper's line), go to `questdb/questdb-enterprise`
+  instead: a Deferred bug with the labels `bug` and `deferred` (`deferred`
+  alone for a missing test), creating the `deferred` label if it is
+  missing, and a crash with `--label crash`. Never describe either anywhere
+  public (CLAUDE.md "Git & PR Conventions" and "Failure paths and misuse").
+  When `gh repo view questdb/questdb-enterprise` fails, as it does for OSS
+  contributors, show the issue body in the final summary instead of filing
+  it.
+- Search first:
+  `gh issue list --repo <repo> --state all --search "<key words>" --limit 5`.
+  If an issue already covers it, record that issue instead of filing.
+- `gh issue create --repo <repo> --title "<one-line problem>" --body-file <file>`.
+  The body covers impact, location (file:line), symptom, how it's reached,
+  suggested fix, and where it was found (PR or branch). A Deferred bug's
+  body opens with its risk: tier, impact, likelihood and the rarest
+  condition. For a bug a helper found, the body is its bug file followed by
+  the risk helper's rating file.
+- Never auto-file security-sensitive bugs (authentication or access-control
+  bypass, data exposed across users, memory corruption). List them for the
+  user instead.
 
-Before accepting any no-fix disposition, obtain independent fresh-context
-review of its specific evidence. For `CONFIRMED_IMMATERIAL`, the reviewer attacks
-the named offset/bound/reachability claim, not just whether the defect exists.
-The parent verifies the result. Verified disagreement returns through Step 5;
-missing evidence cannot become a terminal disposition.
+## Rules
 
-### (b) Establish discriminating tests before production edits
+- One local commit per build of an item for the change and its tests, plus
+  one if the test-gaps step added tests. Never push, amend, rebase, reset,
+  stash, clean, switch branches or create worktrees; the one exception is
+  the scratch worktree review-pr creates and removes in the backstop review.
+- Stage only the files a helper changed; never `git add -A` or `git commit -a`.
+- A helper may ask the main session a question mid-task
+  (`contact_supervisor`). Answer only with facts from its task, the state
+  directory or the user. Never approve a change to the design - new logic,
+  another approach - since the main session hasn't read the code: tell the
+  helper to stop and give the reason in its reply (`STOPPED`, or `ASK` or
+  `BLOCK` from the analysis), and handle that reply as usual. Only the
+  analysis and the check decide a design.
+- Never weaken an existing test to make a change pass (CLAUDE.md "Test
+  integrity"); a changed expectation needs its reason in the commit message.
+- `java-questdb-client/` is a separate repo: commit inside it first, as
+  CLAUDE.md says.
+- Don't call a failure pre-existing or flaky without proof.
+- If a helper fails to launch, retry once; then stop and report. If it
+  times out or ends without its reply lines and the repository is
+  unchanged, launch a fresh one once - for the analysis, as a continuation
+  of what the first one wrote. Don't resume the old session: it has to
+  rebuild its whole context in one turn. If the fresh one fails too, mark
+  the item blocked with what it left and go to the next item; if two items
+  in a row end this way, stop and report. The review helper is the
+  exception: after it fails twice, the main session runs the review itself
+  ("Keep the main session small").
 
-For behavioral fixes, add or identify a robust regression test through a public
-or stable surface and run it against pre-fix production code. It must compile,
-reach the path, and fail for the claimed consequence, not setup, environment,
-an unrelated assertion, or an incidental timeout. Record command, revision,
-exit status, and decisive failure signature. If it passes, investigate the
-premise/path; never weaken or invert the assertion to manufacture red evidence.
+## Final summary
 
-Tests must:
-
-- derive expected results from the contract or an independent oracle, not copy
-  the proposed algorithm into the test;
-- follow `CLAUDE.md`, including `assertMemoryLeak()` where needed and fluent
-  `assertQuery(...).returns(...)` for deterministic SQL; never use
-  `.returnsOnce(...)` to evade re-read/cursor checks;
-- use deterministic concurrency coordination, not sleeps/timing guesses;
-- drive the pinned `java-questdb-client` for peer behavior or wire constant/
-  format changes. Fake sockets are for transport faults/malformed input only;
-- observe stable behavior rather than implementation details when possible,
-  while proving a claimed plan/factory/execution path actually ran.
-
-For every behavior-changing guard, fallback, validation, or state transition,
-add or identify a **preservation control**: a supported neighboring case that
-already succeeds and must keep succeeding. Run the highest-risk controls on
-pre-fix production before approval, then again after the fix. Include accepted
-inputs near the rejection boundary and unaffected consumers. For a genuinely
-new surface with no pre-fix success case, record why and test the promised
-behavior. A green bug test plus a broken control is a failed fix.
-
-If a conventional red test is infeasible, give the concrete limitation and the
-strongest substitute: deterministic reproducer, plan assertion, static proof,
-operation/allocation assertion, benchmark/complexity evidence, sanitizer, or
-fault injection. Runtime-shape claims still need runtime evidence. Untestable
-user-visible, error-path, concurrency, or lifecycle changes are `NEEDS_DECISION`,
-not silently accepted. For performance, use deterministic plan/work/allocation
-checks and measured or analytical comparisons; no brittle wall-clock thresholds.
-
-For a test-only coverage gap, specify a credible mutation and schedule its
-sensitivity probe after design approval. Do not invent a production bug just to
-obtain a red test. Existing effective regression evidence can be reused when
-its assertions and relevant revision still match.
-
-### (c) Research what the fix could break, then select it
-
-Before choosing the patch, inventory every affected symbol's producers,
-callers, overrides, sibling implementations, registrations, and consumers of
-its results/state — including unchanged files. Follow indirect dispatch,
-planner-selected factories, shared helpers, and both sides of relevant native/
-client boundaries. Record search commands and scope. Neither private visibility
-nor a one-file diff proves "only one caller" or a narrow semantic impact.
-
-Write a compact **impact matrix**, one row per distinct contract/consumer:
-
-| Producer / consumer / mode (source) | Current contract to preserve | Intended delta and plausible breakage | Test + assertion/failure link, or safety proof | Status |
+| ID | Item | Impact | Outcome | Coverage |
 |---|---|---|---|---|
 
-Cover what the change can affect; mark other dimensions N/A with a reason:
-NULL vs sentinel/uninitialized state; empty/singleton/boundary inputs; ordering,
-duplicates/ties; success/error/cancel/retry; ownership and reuse/reset/close;
-concurrency/publication; type/metadata/capability promises; SQL/wire/file
-compatibility; and data-scaled CPU, memory, allocations and IO. For pooled
-state/cursors, include second use, `toTop()`, size/random-access promises, and
-failure followed by reuse, not just first use. Map interactions with earlier
-fixes and queued related findings.
+Outcome is `built <sha>` (plus `tests <sha>` when the test-gaps step added
+tests), `skipped: <reason>` or `blocked: <reason>`; add `not reviewed` to an
+item built after the last review round. A reopened item shows each run, as
+in `built <sha>; reopened: blocked: <reason>`. Coverage is the final changed
+lines and branches covered, e.g. `42/42 L, 18/18 B`.
 
-For each row ask: **what currently valid operation could now fail, return
-different data, leak, hang, or do extra work?** Identify the concrete safeguard
-or test that detects this plausible wrong fix. Status is `TESTED`, `PLANNED`
-(named test, setup, oracle, failure link), `STATIC_SAFE` (complete cited proof),
-or `UNKNOWN`. Source reading alone cannot prove runtime plan selection, an
-interleaving, or peer compatibility. Unknown load-bearing/safety assumptions
-block approval; do not rename them N/A. The matrix bounds edits, not research.
+Then one line each: review rounds, each with its verdict, what it found and
+the PR's measured coverage, and the path of the last round's report, which
+holds its Minor findings and the never-run lines it judged low-exposure;
+issues filed or matched (links), each Deferred one with its risk tier;
+Moderate findings left open; items left for the user (blocked,
+security-sensitive, unfiled `ADJACENT` bugs, disagreements, items not
+reviewed); and `git log --oneline <START>..HEAD`. State that nothing was
+pushed. Then print in full each crash or Deferred issue the Issue list
+could not file.
 
-Compare the proposed invariant-level repair with the strongest plausible
-alternative, including the symptom patch if one was suggested. Tier 2 needs
-only a few evidence-backed lines; Tier 3 explicitly compares correctness,
-compatibility, ownership, hot-path time/space/allocation/IO, and maintenance
-cost. State what becomes impossible after the repair, what remains unchanged,
-its tradeoffs, and why a narrower patch is sufficient or not. Do not claim one
-design dominates when there is a real tradeoff.
+End with the PR body, per CLAUDE.md "Git & PR Conventions". With a PR, print
+the last round's `<state>/review<N>/pr-body.md` plus the EFFECT bullet of each
+item built after that round, and the title and labels from that round's report
+when it changed them. Without a PR, print the EFFECT bullet of each built item.
+Skip EFFECT lines that are `none`, and add any benchmark an EFFECT line names,
+whose JMH results go in the body. No test plan.
 
-Choose the smallest coherent repair at the owning layer. Necessary sibling or
-caller changes belong in the plan; opportunistic cleanup does not. List the
-full proposed production/test file set and a reason per file. Exceeding the
-cited files is not automatically scope creep; staying inside them is not proof
-of safety. Stop for unapproved architecture/product/compatibility decisions.
+## Task templates
 
-End `plan-round-<R>.md` with the causal chain, completed research/matrix,
-alternatives, red/control evidence, exact validation commands, remaining
-assumptions and `PLAN_READY`. **Do not implement it in the same launch.**
+Fill in the `<placeholders>`; keep tasks this short.
 
-## Step 3: Independent pre-edit design gate
+### Analysis
 
-Verify that investigation changed only authorized tests and preserved inherited
-work; check revision identity and evidence. Set `PLAN_REVIEW` and launch one
-fresh, read-only `reviewer` with the finding, plan, raw artifacts and checkout,
-writing `items/<ID>/design-review-round-<R>.md`.
+```text
+Analyze one item in <repo>. Follow CLAUDE.md, including "Testing".
+Don't change existing files or commit. For probes, create new files; when
+done, copy those that reproduce the problem to <state>/<ID>/probes/ for the
+build, and delete them from the repo. Probes run the code as it is, at HEAD
+or the PR base. Don't build or run changed copies of production code: a
+design is argued here and tried by the build, after the check.
+Write <state>/<ID>/analysis.md as you go, adding each step's result as you
+reach it, so that a timeout loses nothing.
 
-Ask it to attack the causal explanation and strongest plausible regression,
-not endorse the worker's preference. Inspect source outside the proposed diff;
-look for omitted producers, sibling paths, consumer contracts and legitimate
-cases that invalidate the approach.
+Item <ID> (<feature | bug | review finding | bug found in this run>): <verbatim item>
+PR base: <sha>. Items of this run so far: <one line per item: ID, commits,
+summary; or none>.
+The user's design decisions are in <state>/decisions.md; follow them. A hint
+in the item that came from a helper, not the user, is not a decision.
+[Revision only: your previous proposal is in <state>/<ID>/analysis.md, with
+test-plan amendments in <state>/<ID>/amendments.md if that file exists. Its
+design was sent back: <REDESIGN lines, the build's STOPPED reason, or the bug
+that reopened the item>. Find the assumption in its argument that this
+breaks, correct it, and derive the design again from there; a change that
+only answers the example is not a revision. Or show with file:line why an
+objection is wrong. Fold these test-plan gaps and the amendments into the
+new plan where they still apply: <ADD lines, or none>.]
+[Answers from the user: <answers>. Continue from your analysis.md.]
+[Continuation only: an earlier helper ran out of time on this item. Continue
+from what it wrote in <state>/<ID>/; don't repeat its probes.]
 
-Require `APPROVE_PLAN`, `REVISE_PLAN`, or `NEEDS_DECISION`, with cited evidence.
-Approval requires:
+1. Understand the item.
+   - Bug or finding: check it against the current code; run something if
+     reading isn't conclusive.
+   - Feature: pin down the behavior - syntax, results, NULL handling, errors
+     with their message and position, and how it combines with the rest of
+     SQL. Take decisions from the item, existing QuestDB behavior, the SQL
+     standard or PostgreSQL. A decision none of them settles is a question.
+2. Problem or goal: one plain line.
+3. Impact on users: one line - who, how badly, how often.
+4. Decide: BUILD a feature, FIX a bug or finding, SKIP (false, already done,
+   or negligible impact), ASK when a decision belongs to the user and
+   decisions.md doesn't settle it, BLOCK when no change within the item can
+   be argued correct (step 6), or SPLIT when the item has more than one root
+   cause (step 5). The user decides a feature's behavior, and any choice
+   between sound changes that users would notice differently, in behavior or
+   speed, or that differ in how much work beyond the item they take. Ask as
+   soon as you meet such a choice, before writing a test plan, with each
+   option's cost and the one you'd pick. A finding that a test is missing or
+   ineffective for behavior this PR adds or changes is a FIX. A bug found in
+   this run that the PR base already has is a SKIP; report it on OTHER as
+   PRE-EXISTING (step 9).
+5. For FIX: find the root cause - the first place the code goes wrong, not
+   where the symptom shows - and the assumption that fails there. Use
+   `git log` and `git blame` to learn why the code is written that way; the
+   change must keep whatever that protects. No guard, catch or special case at
+   the symptom unless that layer owns the check. If the item's symptoms come
+   from more than one root cause, decide SPLIT: name one sub-item per root
+   cause, in the order to fix them, and stop there.
+6. For BUILD and FIX: find the best change, not the first one that works.
+   Weigh the real alternatives, such as another layer, and choose the one that:
+   - is correct for every input it reaches, by the argument below;
+   - returns the right result for every query PostgreSQL or DuckDB answer,
+     allowing for QuestDB's documented differences such as NULL = NULL: the
+     right rows, never a new error. Rejecting such a query is not a fix for
+     its wrong results, even when the item suggests it or the code already
+     rejects similar queries; such a rejection is no precedent. If no change
+     can return the right rows, decide BLOCK;
+   - closes every path to the item's problem, not just the one the item
+     names; the same kind of bug in other code is a separate bug (step 9);
+   - keeps every user of the changed code working: list the callers,
+     overrides and sibling implementations, and why each still works;
+   - adds no avoidable cost on hot paths: say whether the changed code runs
+     per row, per page frame, per query or once, and what the change adds;
+   - adds no race: name the threads that share the changed state, if any,
+     and why ordering, visibility and object lifetime stay safe;
+   - reuses what exists: search for a helper, an established pattern or an
+     earlier fix of the same kind of bug, and build on it.
+   Between equally good changes, choose the smaller.
+   Argue the change correct; a few sentences do for a small change. State
+   what the changed code must guarantee for the result to be right, and show
+   that every input the change newly lets through, and every path it adds or
+   skips, keeps each guarantee. A guard protects all the code after it, not
+   only the case it was written for: before relaxing one, find what each
+   later step assumes about the inputs it kept out.
+   Before adding an early return, list what the code it skips ensured.
+   Where the change can't tell which way an input goes, as with an unknown
+   type, it takes the safe side. Don't pick between variants by trying them:
+   probes show how the current code behaves, and the design follows from the
+   argument. If no change within the item can be argued correct, decide
+   BLOCK and say what a sound fix would take. Before you reply, attack the
+   design as the check will: an input it newly lets through, a path it
+   skips, a test it would fail, a query it rejects, a decision it breaks.
+   Fix what you find; each flaw the check finds instead costs a revision.
+7. For BUILD and FIX: write the test plan. Go through the 14 dimensions of
+   CLAUDE.md "What exhaustive means". For each that applies, list the tests:
+   name, input -> expected result, and where the expected result comes from
+   (never from running the code under test). For each that doesn't apply,
+   give the reason. Name the fuzz harness to extend and the shapes to pin, the
+   oracle (reference query, sqllogictest file or model), the existing test
+   classes that exercise the code you change, and, for a speed change, the
+   deterministic performance assertion and the benchmark.
+8. For BUILD and FIX: write the PR body bullet, per CLAUDE.md "Git & PR
+   Conventions": the net effect against the PR base, what users gain or no
+   longer suffer, in at most 15 words, not what the code does. For a change
+   made for speed or on a data path, name the JMH benchmark whose results the
+   PR reports. The bullet is none when users see no change against the PR
+   base, such as a fix for a bug only this PR's own commits have, or a
+   missing test.
+9. Other bugs your work ran into, such as the same kind of bug in other
+   code; don't go looking for more. Mark each one PR if this PR caused it,
+   this run's commits included: some trigger gets a worse result than on
+   the PR base, or the bug is in behavior this PR adds. Add the ID of the
+   item of this run whose commits caused it or contain it, if any; a bug in
+   the commits of the item you analyze belongs in this plan, not here. Mark
+   it PRE-EXISTING when the PR base gives the same result - run the trigger
+   there unless the base code settles it - even when this item's trigger
+   reaches it. PR bugs that block the PR become items of this run or reopen
+   the item named, and the others private issues, so keep them out of this
+   plan unless the item can't be done without them. PRE-EXISTING bugs
+   become issues, not work for this run: fix one in this plan only when the
+   item can't be done without it; otherwise leave its input out of this
+   plan's tests, with a comment naming the bug. Write each bug to
+   <state>/<ID>/bug-<slug>.md, ready to file as an issue: the trigger, what
+   it returns at HEAD and at the PR base, the location and a suggested fix.
+   Add [security] when a bug is security-sensitive and [crash] when hostile
+   input can crash or hang the server through it.
 
-- a supported reproducer and causal explanation at the owning layer (for a
-  test-only gap, the supported path and credible regression mechanism);
-- restoration of the invariant, not suppression or a weakened oracle;
-- an impact matrix with no unresolved load-bearing/safety assumption, plus a
-  credible named test or complete proof for every affected contract;
-- pre-fix red evidence or its permitted substitute, and highest-risk green
-  controls; test-only gaps have a specific sensitivity probe;
-- explicit file scope, compatibility/performance tradeoffs and validation breadth.
+analysis.md starts with the verbatim item and holds the argument that the
+change is correct, the alternatives you rejected and why, and the test plan
+as a table: dimension, applies, tests or reason. Reply with only these
+lines:
+DECISION: BUILD | FIX | SKIP | ASK | BLOCK | SPLIT
+PROBLEM: <one line>
+IMPACT: <one line>
+EFFECT: <the PR body bullet; the JMH benchmark to report, if any> | none
+CHANGE: <one line, naming the files> | REASON: <one line, for SKIP or BLOCK> | QUESTIONS: <for ASK, one line each> | ITEMS: <for SPLIT, one line per sub-item: its root cause and the tests or symptoms it covers>
+WHY: <one line: why this change beats the alternatives>
+TESTS: <one line: the dimensions covered and the ones not applicable>
+OTHER: none | one line per bug: PR, PR <item ID> or PRE-EXISTING [security] [crash], file:line, problem, bug file path
+```
 
-Missing required evidence rejects the plan but does not prove a new code bug.
-The parent checks the verdict and records `PLAN_APPROVED` with plan digest and
-source/test revision identity. Routine file expansion within the authorized
-mechanism is the parent's call; product/scope decisions go to the user.
-`REVISE_PLAN` uses Step 5's bounded retry. No approval by silence or child exit
-status. This review precedes production edits; a later code review cannot
-retroactively satisfy it.
+### Check
 
-## Step 4: Implement, validate, and independently review
+```text
+Independent check of a proposed change and its test plan in <repo>. You
+didn't write them. Don't edit anything.
 
-### Implementation
+Read <state>/<ID>/analysis.md: the item, the proposed change and the
+argument that it is correct, the rejected alternatives, what else uses the
+code it changes, and the test plan. Items of this run so far: <one line per
+item: ID, commits, summary; or none>. The user's design decisions are in
+<state>/decisions.md: don't object to a choice they make. Then read the
+code and try to break the proposal:
+- Does the argument hold? Find an input the change newly lets through, or
+  a path it adds or skips, that breaks a guarantee the result depends on,
+  whether or not the argument names it.
+- What works today that the change would break? Consider other callers and
+  inputs, NULL, empty and boundary values, error paths, cleanup, object
+  reuse (toTop, clear, pools), and large data.
+- Does the item's problem stay reachable through a path the change misses?
+- Does it patch the symptom instead of the cause?
+- Does it add avoidable cost on a hot path: allocation, copying, or a call
+  or branch per row or page frame?
+- Can it race with another thread: unsafe publication, check-then-act, use
+  after close?
+- Does it reimplement something the codebase already has?
+- Is a rejected or overlooked alternative better?
+- Does it reject a query that PostgreSQL or DuckDB answer, instead of
+  returning its right rows? An existing rejection of similar queries is no
+  precedent.
+- Does it change more than the item needs, such as fixing a separate
+  pre-existing bug the item can do without?
+Then hold the test plan to CLAUDE.md "Testing":
+- a dimension that applies but is marked not applicable or covered thinly;
+- an expected result that comes from running the code under test;
+- a fuzz harness that covers the area but is not extended, or a missing
+  oracle where one exists.
+[Revision only: the previous proposal was sent back for: <REDESIGN lines,
+the build's STOPPED reason, or the bug that reopened the item>. Repeat as a
+REDESIGN line any of it this proposal leaves unresolved, including the same
+flaw reached through another input or clause.]
 
-Set `FIXING`. Launch a new fresh `worker` with the approved plan/gate artifacts,
-allowed files, earlier evidence and snapshots, and
-`output: items/<ID>/worker-round-<R>.md`. It verifies that approved inputs have
-not changed before editing. A semantic departure, new consumer/hazard, or
-expanded file set returns to (c) and the design gate; the worker cannot approve
-its own revised plan during implementation.
+Report only problems you can show in the code or the plan, with file:line or
+the dimension and the missing case. Style preferences don't count; neither
+does a wrong statement in the analysis that changes nothing about the change
+or its tests. Label each problem:
+- REDESIGN: built as planned, the change would be wrong for this item: it
+  breaks what works today, leaves the item's problem reachable, patches the
+  symptom, adds avoidable hot-path cost or a race, reimplements existing
+  code, changes more than the item needs, rejects a query PostgreSQL or
+  DuckDB answer instead of returning its rows, breaks a user's decision in
+  decisions.md, or is clearly worse than an alternative. Show how.
+- ADD: a gap in the test plan that the planned change would pass: a missing
+  test, a dimension skipped for a wrong reason, or an expected result
+  without an independent source. Name the dimension, the case, input ->
+  expected, and its source. A problem that more tests or a citation would
+  solve is ADD, never REDESIGN. A test the planned change would fail is a
+  flaw, not a gap: REDESIGN, unless it shows a separate bug the PR base has
+  too, which is ADJACENT.
+- ADJACENT: a separate bug the change neither causes nor must fix to solve
+  the item, including the same kind of bug in other code. Mark it PR when
+  this PR caused it, this run's commits included (some trigger gets a worse
+  result than on the PR base, or it is in behavior this PR adds), with the
+  ID of the item of this run whose commits caused it or contain it, if any;
+  else PRE-EXISTING. Add [security] when it is security-sensitive, and
+  [crash] when hostile input can crash or hang the server through it.
+Reply with only: OK, or at most eight lines, one per problem, each starting
+with its label, REDESIGN lines first.
+```
 
-Save pre-edit snapshots and implement only the approved changes. Then:
+### Build
 
-1. Run the exact regression command and all preservation controls. They must
-   pass without weakening assertions, excluding supported inputs, or silently
-   changing the contract.
-2. Run surrounding tests and the matrix's consumer tests, including unchanged
-   callers. Close every `PLANNED` row with executed evidence and recheck every
-   `STATIC_SAFE` proof against the actual diff. An unresolved obligation blocks.
-3. Exercise applicable WAL/non-WAL, O3/append, JIT/interpreted,
-   parallel/single-threaded, partitioned/unpartitioned, native and other matrix
-   modes. Tier 3 covers all applicable modes and high-risk combinations;
-   Tier 2 follows its approved matrix. Reuse seeded differential/property/fuzz
-   harnesses when they fit the mechanism. Record skipped modes/combinations and
-   why; a large random run is not evidence that a specific path executed.
-4. Run Maven commands sequentially. For Rust, run all `CLAUDE.md` checks:
-   `cargo fmt`, `cargo check --all-targets`, `cargo clippy --all-targets`,
-   `cargo test --lib`, zero errors/warnings; after test changes also run
-   `cargo llvm-cov --lib --text -- <module_name>` and resolve uncovered lines
-   according to `CLAUDE.md`, without introducing input-derived JNI panics.
-5. Investigate every failure. Record commands, exact revision/configuration,
-   statuses and logs. A failing mandatory test is not a green fix.
+```text
+Build one item in <repo>. Follow CLAUDE.md, including "Testing".
+The plan is <state>/<ID>/analysis.md plus the test-plan amendments in
+<state>/<ID>/amendments.md; an independent check approved it. Probes that
+reproduced the problem, if any, are in <state>/<ID>/probes/.
+Items of this run so far: <one line per item: ID, commits, summary; or none>.
+Run `git status --porcelain` first and never edit a file it lists.
 
-For test-only gaps, execute the approved sensitivity probe. Only the designated
-worker may run a temporary production mutation or pre-fix-equivalent probe,
-using saved bytes, no concurrent tests/writers, and exact before/after digest
-checks. Undo only the probe and preserve all inherited work and the fix; no Git
-reset/restore, staging or worktrees. If safe round-trip restoration cannot be
-proved, stop. Reviewers inspect artifacts; they never mutate the checkout.
+1. Write the planned tests, amendments included, and run them. They must
+   fail: for a bug, for the reason in the plan; for a feature, because the
+   behavior doesn't exist yet. Leave out an amendment that turns out wrong or
+   depends on another item, and say why on TESTS.
+   A test that passes before the change proves nothing; rework it. Each test
+   asserts the exact result - rows, value, error message and position, state -
+   and stays plain, as CLAUDE.md "Writing tests" requires (no reflection).
+   For a missing-test item, write the test, then show it can fail by briefly
+   breaking the code it protects; restore that file with
+   `git checkout -- <file>`.
+2. Build the change as planned. When it changes Rust code that Java calls,
+   run the Java tests with `-P build-rust-library` so they load the changed
+   library, and run the Rust checks CLAUDE.md requires.
+3. Run the planned tests and the existing tests of the code you changed
+   (listed in the plan) through
+   `python3 ci/incremental_compile.py -- test -Dtest=<classes>`. All must
+   pass. One Maven command at a time. A test that fails for a reason outside
+   this item stays out of the commit and goes on OTHER.
+4. Measure coverage before committing:
+   python3 ci/diff_coverage.py --base HEAD --tests <the item's test classes>
+     --paths <the production files you changed> --json <state>/<ID>/coverage.json
+   Read the lines, branches and conditions that never ran and add tests that
+   reach them, each asserting what the line does. Measure only the new tests
+   by adding `--append --tests <new test classes>` to the same command; after
+   changing production code, run the full command again. Repeat until every
+   changed line and branch runs, or prove a line unreachable and guard it with
+   an assertion.
+5. Don't weaken an existing test (CLAUDE.md "Test integrity"). If an existing
+   expectation was wrong, change it and say why on EXISTING and in the commit
+   message.
+6. Build only the design the plan describes. Stop when it turns out wrong:
+   another approach or unplanned files are needed; a planned, amended or
+   existing test that is right fails because of the change; or the change
+   needs logic the plan doesn't describe - a guard, branch, early return or
+   fallback. Don't design that logic yourself and don't ask the supervisor
+   to approve it: the analysis and the check decide a design. Restore the
+   files you modified with `git checkout --`, delete the files you created,
+   and say why on STOPPED.
+7. Commit only your files (`git add <paths>`). Commit message per CLAUDE.md:
+   title of at most 50 characters, no type prefix; body with the problem or
+   goal, the root cause or design, and the tests.
 
-The report includes cause/invariant, approved-plan identity, actual semantic
-delta, completed matrix, changed files, all validation evidence, and limitations
-or deviations. Return `CONFIRMED_FIXED` only when the full approved obligations
-pass, not just the original reproducer. Otherwise return `REVISE_PLAN`,
-`NEEDS_DECISION`, or `BLOCKED`. Keep inline output to ten lines; enumerate
-per-ID/site results in the artifact. Record better designs/adjacent weaknesses
-noticed but not implemented; do not search for unrelated improvements.
+Never push, amend, rebase, reset, stash or clean.
+Write <state>/<ID>/build.md. Reply with only these lines:
+RESULT: BUILT <sha> | STOPPED: <one line why>
+TESTS: <tests that failed first and pass now; other new tests; existing tests run>
+COVERAGE: <changed lines x/y, branches x/y; each uncovered line with its reason, or none>
+EXISTING: none | <existing tests changed: file, what and why>
+FILES: <changed files>
+OTHER: none | one line per bug, as in the analysis (write bug files the same way)
+```
 
-### Result verification and independent review
+### Test review
 
-The parent checks authorized files, index preservation, inherited hunks and
-snapshots, plan conformance, and decisive test evidence. Re-run a targeted
-check when evidence is ambiguous/stale, not every expensive suite reflexively.
+```text
+Independent review of the tests for one item in <repo>. You didn't write
+them. Don't edit anything.
 
-For every implemented Tier 2-3 item, set `REVIEWING` and launch a new fresh,
-read-only `reviewer`, writing `items/<ID>/review-round-<R>.md`. Give it the
-finding, approved cause/plan, actual diff, matrix, raw red/green/control/probe
-artifacts and earlier affected contracts. Require `PASS` or `FAIL`, covering:
+Item <ID>. The plan and its test plan are in <state>/<ID>/analysis.md, with
+amendments in <state>/<ID>/amendments.md; the diff of commit <sha> is
+<state>/<ID>/build.diff, and the coverage report is
+<state>/<ID>/coverage.json. Read them and the code the diff changes, then
+check the tests against CLAUDE.md "Testing":
+- every dimension that applies has tests, and every skipped one a sound
+  reason;
+- each test asserts the exact result of the code it covers, not merely that
+  it ran, so breaking that code would fail the test;
+- expected results come from an independent source, not from the code's
+  output;
+- every changed line, branch and condition runs, or the exception is
+  justified;
+- where a fuzz harness covers the area, its generator learned the feature
+  and a test pins the new shapes;
+- where an oracle applies, a reference query, sqllogictest file or model
+  checks the results;
+- the commit doesn't weaken an existing test;
+- the tests follow "Writing tests": plain, reusing helpers, no reflection.
+Ask only for tests whose absence leaves changed behavior unprotected; not
+more cases of a covered kind, and nothing for unchanged code.
+Reply with only: OK, or GAPS followed by one line per missing or weak test,
+most important first:
+<dimension>: <case>: <input> -> <expected>; protects <file:line>
+```
 
-- Does the invariant hold for the supported defect family, not just the example?
-- Does the actual fix match the approved design and preserve legitimate inputs?
-- Do unchanged consumers and earlier fixes retain their contracts?
-- Do assertions distinguish recurrence and plausible wrong fixes, and does the
-  evidence show the claimed production path actually executed?
-- Are any matrix rows absent, unexecuted, or supported by stale evidence?
-- Did the fix introduce correctness, NULL/boundary, concurrency, ownership,
-  cleanup, compatibility, performance/allocation/IO, or test-efficacy defects?
+### Test gaps
 
-The reviewer inspects source independently and challenges the strongest omitted
-counterexample. A checklist echo is not review. Every blocker needs exact
-source/evidence and a correction direction. Missing required validation fails
-acceptance, but does not itself prove a new Critical code defect.
+```text
+Add missing tests for one item in <repo>. Follow CLAUDE.md, including
+"Testing".
+Item <ID>: commit <sha>, item start <ITEM_START>, plan <state>/<ID>/analysis.md
+and <state>/<ID>/amendments.md. Items of this run so far: <one line per item:
+ID, commits, summary; or none>.
+An independent review found these gaps:
+<GAPS lines>
+Run `git status --porcelain` first and never edit a file it lists.
 
-Judge sufficiency, not personal design preference. A sibling violating the
-same invariant belongs in this fix's gate even outside cited files. A different
-cause with no interaction is a separate observation; unrelated redesign and
-cosmetic preferences do not fail review. Tier 1 uses the parent's mechanical
-proof/checks instead; a behavioral surprise resizes it rather than waives review.
+1. Write one simple test per gap, next to the item's tests and reusing their
+   setup; no reflection. Each asserts the exact result of the code it
+   protects. Skip a gap that can't be tested reliably and say why.
+2. Run them through `python3 ci/incremental_compile.py -- test -Dtest=<classes>`.
+   If one fails, work out the correct result from the plan and how similar
+   code behaves - never copy the actual output into the expectation.
+   A wrong test: correct it. Wrong code: don't touch it; leave the test out
+   and report the bug on OTHER.
+3. Measure the new tests' coverage on top of the build's run:
+   python3 ci/diff_coverage.py --base <ITEM_START> --append --tests <new test classes>
+     --paths <the item's production files> --json <state>/<ID>/coverage-final.json
+   If it reports no previous run, run all of the item's test classes without
+   `--append`. Close any gap it shows.
+4. Commit only the tests (`git add <paths>`). Commit message per CLAUDE.md,
+   naming the item they cover.
 
-## Step 5: Verdict and bounded reconsideration
+Never push, amend, rebase, reset, stash or clean. One Maven command at a
+time.
+Write <state>/<ID>/tests.md. Reply with only these lines:
+RESULT: ADDED <sha> | NONE: <one line why>
+COVERAGE: <changed lines x/y, branches x/y; exceptions>
+TESTS: <tests added, each with the gap it closes; gaps skipped and why>
+OTHER: none | one line per bug, as in the analysis (write bug files the same way)
+```
 
-The parent verifies review claims against source and evidence. Reject a false
-positive with its disproof, not a vote. Mark `PASSED` only when required gates
-and validation pass and no verified blocker remains. Merge the item's
-contracts/consumers/test obligations into `integration/` before the next item.
+### Risk
 
-On verified design or result failure:
+```text
+Rate the risk of one bug this PR caused in <repo>, as your definition says.
+Don't edit anything.
+PR base: <sha>. HEAD: <sha>.
+The bug: <a helper's bug file, or a review finding's finding.md> | <the
+check's line, verbatim; the item's plan is <state>/<ID>/analysis.md>.
+Write the rating to <state>/risk/<slug>.md. Reply with only the lines your
+definition asks for.
+```
 
-1. Record what was wrong in the **causal model or impact research**, not just
-   the offending new line. Which producer, invariant, consumer, or control did
-   the earlier reasoning miss? Update the matrix and validation plan first.
-2. Return to the earliest invalid stage: (a) for cause/reachability; (b) for
-   reproducer/oracle efficacy; (c) for design/impact; implementation only for a
-   mechanical departure that does not change the approved semantics.
-3. Any changed design/scope requires fresh pre-edit approval. If earlier
-   production edits already exist, keep a captured candidate diff and analyze
-   against original snapshots as well as the current tree. Do not blindly
-   stack another guard on the failed approach or reset inherited work.
-4. Keep earlier reproducers and preservation controls. New repairs must pass
-   their union. Invalidated red evidence needs new pre-fix-equivalent proof;
-   the designated worker alone performs any approved reversible probe.
-5. Promote to Tier 3. At `round == max-review-rounds`, stop `BLOCKED` with
-   attempted approaches and evidence; otherwise increment and retry. A design
-   rejection counts even when no production edits occurred.
+### Review
 
-A verified defect introduced by a fix invalidates the originating item,
-regardless of Critical/Moderate label. Attribute it to that item and reopen it;
-do not create a fresh-ID budget and declare the original fix passed. Authorized
-interacting/inseparable defects use this same loop. Other discoveries require
-scope approval before editing. `NEEDS_DECISION`, missing validation, and
-infrastructure failures never pass by exhausting a budget.
+```text
+Review round <N> of a fix-pr run in <repo>: the review the user runs before
+approving the PR. Read .pi/skills/review-pr/SKILL.md and follow it with these
+arguments:
+<PR> --range=<PR base>..<HEAD sha> --level=<review-level>
+  --block-at=<block-at> --body=<state>/pr-body.md
+  --prior=<comma-separated prior files>
+[Without a PR: --range=<PR base>..<HEAD sha> --level=<review-level>
+  --block-at=<block-at> --prior=<comma-separated prior files>]
+You are the review's parent: launch its agents yourself. Write your files to
+<state>/review<N>/.
 
-If a retry introduces another defect through the same missed invariant or
-consumer, **stop and ask for a design decision**, even with rounds remaining.
-Report the rejected approaches, persistent mechanism, and safer alternatives.
-Another symptom patch is not progress.
-
-## Final integration pass
-
-After all queued items reach a terminal disposition:
-
-1. Review the combined diff and cumulative contract/consumer matrix for
-   interactions. Run the union of affected regression, control, and consumer
-   tests sequentially on the final candidate. Widen for shared mechanisms and
-   Tier 3 risks; state scope and skipped coverage. Reuse exact-candidate runs,
-   but evidence from before an interacting fix is stale. All obligations must
-   pass before declaring completion.
-2. **Unanchored exit review:** apply the `review-pr` procedure to
-   `--range=<baseline-HEAD>..`, including relevant untracked files. Read that
-   skill, but retain this skill's no-worktree, read-only reviewer, and one-writer
-   rules. The parent owns its procedure and dispatches its reviewers through
-   the existing workflow; do not ask a child to run a nested agent workflow.
-   Required dynamic probes go to the designated worker, with artifact-only
-   review and the snapshot protections above.
-
-   On an initially dirty tree this range includes inherited changes; it is
-   **not** exactly the fix diff. Supply raw baseline patches/snapshots and
-   current revision identity for attribution, but no finding list, ledger,
-   dispositions, or worker narrative. Reviewers inspect consumers beyond the
-   diff. Select level 0 for Tier 1 only, level 1 for any Tier 2, level 2 for any
-   Tier 3, or level 3 under `--full`.
-3. Reconcile by symbol **plus mechanism**, not moved line numbers:
-   - A match to `PASSED` reopens that item with its existing round count.
-   - A challenge to a no-fix disposition triggers independent re-verification;
-     an earlier verdict is not authority over new evidence.
-   - An unmatched finding is **newly discovered, not necessarily introduced**.
-     Compare the same trigger against the captured run-entry state and relevant
-     pre-item snapshot; the PR merge base is a different attribution boundary.
-     Classify `INTRODUCED_BY_FIX`, `EXPOSED_OR_INTERACTING`, `PRE_EXISTING`, or
-     `UNRESOLVED`, with the source delta and evidence. Do not infer causation
-     from a rising finding count or assume an unmatched item came from this run.
-4. Reopen introduced defects under their originating item at **any severity**.
-   Queue verified interacting/inseparable blockers within authorization through
-   the full per-item loop. Record genuinely separate pre-existing defects and
-   ask before editing them; Adjacent labels are not automatic edit authority.
-   Unresolved attribution of a potentially blocking interaction requires
-   investigation or `BLOCKED`, not an automatic fix or a harmlessness label.
-   Optional independent Moderate/Minor observations may remain recorded; an
-   introduced regression or a reopened supplied item may not.
-5. If any edits follow exit review, invalidate affected evidence, rerun the
-   integration tests, and repeat exit review within `--max-exit-reviews`.
-   Record per cycle: reopened items, attributable introduced/exposed blockers,
-   separate discoveries, and unresolved obligations, with evidence paths.
-   Counts are a trend to investigate, not proof of causation or completion.
-
-Exactly one exit outcome applies:
-
-- **Clean:** all supplied/authorized items have verified terminal dispositions,
-  no introduced or interacting blocker remains, and required validation passes
-  on the final candidate. "No new Criticals" alone is not sufficient.
-- **Blocked:** a design/scope decision, missing required validation, or unresolved
-  blocker prevents acceptance. Preserve the candidate and evidence, do not
-  claim the fix landed.
-- **Diverging:** evidence shows a retry repeats the same causal/consumer miss,
-  or fixes create more attributable blockers than they resolve. Stop early
-  with the implicated changes and approaches; do not spend the remaining
-  cycles stacking patches. More discoveries alone do not prove divergence.
-- **Exhausted:** the exit-review or per-item budget ends with obligations open.
-  Report them and stop; never relabel this Clean.
-
-Finally inspect Git status/diff. Compare the complete staged patch byte-for-byte
-with baseline and overlapping inherited content with snapshots/digests. Confirm
-all new edits belong to authorized items, no unexpected files changed, and all
-unrelated work remains intact. An integrity mismatch is `BLOCKED`.
-
-## Final report
-
-Return a concise ledger:
-
-| ID | Tier | Disposition | Root cause / fix | Design gate | Red + preservation evidence | Consumer coverage | Rounds |
-|---|---|---|---|---|---|---|---|
-
-State files/lines changed, why the scope was necessary, the integration outcome,
-cycles and attributed regressions/reopened items, exact final validation commands
-and statuses, skipped coverage, residual risks and decisions. Distinguish a
-proven false positive, an already-fixed item, an immaterial mechanism, and an
-out-of-scope real bug; cite each disposition's evidence and independent review.
-For enumerated findings, include per-site outcomes.
-
-Under **Recommended, not implemented**, list unrelated alternatives/weaknesses
-noticed and deliberately not changed. They are observations, not the next edit
-queue. Do not describe broader research as permission for broader edits.
-
-End with the state-directory path, working-tree files changed by this run, and
-explicit confirmation that no staging, commit, or push occurred. Do not claim
-exhaustive testing or correctness from test counts, and do not claim completion
-while any supplied or authorized review-discovered blocker remains unresolved.
+When the review is done, write there:
+- report.md: the Step 4 report;
+- <ID>.md (B1, M1, A1, ... as numbered in the report): each Blocking and
+  Moderate finding, and each Adjacent finding this PR introduced (its
+  Origin), verbatim;
+- deferred-<ID>.md (D1, D2, ...): the draft of each Deferred finding, ready
+  to file;
+- issue-<slug>.md: the draft of each other Adjacent finding, ready to file;
+- pr-body.md: the body with Step 2's replacements applied (with a PR only).
+Reply with only these lines:
+VERDICT: approve | approve with comments | request changes | needs discussion
+FINDING: <ID> <Blocking <risk tier> | Adjacent> <one line>, one line each | none
+DEFERRED: <ID> <risk tier> <one line>, one line each | none
+MODERATE: <ID> <one line>, one line each | none
+ISSUE: <slug> [security] [crash] <one line>, one line each | none
+MINOR: <count>
+METADATA: OK | changed: <title, body, labels> | no PR
+COVERAGE: <changed lines x/y, branches x/y of the whole PR>
+```
