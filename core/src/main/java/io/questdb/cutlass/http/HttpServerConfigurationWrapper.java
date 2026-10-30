@@ -267,6 +267,11 @@ public class HttpServerConfigurationWrapper implements DynamicFiberWorkerPoolCon
     }
 
     @Override
+    public int getPollBlockTimeout() {
+        return getDelegate().getPollBlockTimeout();
+    }
+
+    @Override
     public long getQueueTimeout() {
         return getDelegate().getQueueTimeout();
     }

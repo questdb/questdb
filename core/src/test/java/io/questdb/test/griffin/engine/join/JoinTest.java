@@ -1721,8 +1721,8 @@ public class JoinTest extends AbstractCairoTest {
                         ('C', 'w', 40, '2024-01-01T00:00:45.000000Z')
                     """);
             execute("INSERT INTO instruments VALUES ('A', 'alpha'), ('B', 'beta')");
-            // UNION ALL gives the view no random access, so ASOF and LT joins run full-fat on it
-            execute("CREATE VIEW uq AS (SELECT * FROM (SELECT * FROM quotes UNION ALL SELECT * FROM quotes WHERE bid < 0) TIMESTAMP(ts))");
+            // A window function gives the view no random access, so ASOF and LT joins run full-fat on it
+            execute("CREATE VIEW uq AS (SELECT * FROM (SELECT sym, v, bid, ts FROM (SELECT *, row_number() OVER () rn FROM quotes)) TIMESTAMP(ts))");
 
             // the default compiler on a view slave, and the full-fat compiler flag on a table slave
             final String[] slaves = {"uq", "quotes"};
@@ -8531,9 +8531,9 @@ public class JoinTest extends AbstractCairoTest {
                         ('B', 'beta'),
                         ('C', 'gamma')
                     """);
-            // UNION ALL gives the views no random access, so ASOF and LT joins run full-fat on them
-            execute("CREATE VIEW uq AS (SELECT * FROM (SELECT * FROM q UNION ALL SELECT * FROM q WHERE bid < 0) TIMESTAMP(ts))");
-            execute("CREATE VIEW uqs AS (SELECT * FROM (SELECT * FROM qs UNION ALL SELECT * FROM qs WHERE bid < 0) TIMESTAMP(ts))");
+            // A window function gives the views no random access, so ASOF and LT joins run full-fat on them
+            execute("CREATE VIEW uq AS (SELECT * FROM (SELECT sym, bid, ts FROM (SELECT *, row_number() OVER () rn FROM q)) TIMESTAMP(ts))");
+            execute("CREATE VIEW uqs AS (SELECT * FROM (SELECT s, bid, ts FROM (SELECT *, row_number() OVER () rn FROM qs)) TIMESTAMP(ts))");
 
             // the light join on a table slave, the full-fat join on a view slave, and the full-fat
             // compiler flag on a table slave
@@ -8727,7 +8727,7 @@ public class JoinTest extends AbstractCairoTest {
                         ('2020-01-01T00:00:01.000000Z', 12, '2024-01-01T00:00:30.000000Z'),
                         ('2020-01-01T00:00:03.000000Z', 30, '2024-01-01T00:00:35.000000Z')
                     """);
-            execute("CREATE VIEW uq AS (SELECT * FROM (SELECT * FROM q UNION ALL SELECT * FROM q WHERE bid < 0) TIMESTAMP(ts))");
+            execute("CREATE VIEW uq AS (SELECT * FROM (SELECT k, bid, ts FROM (SELECT *, row_number() OVER () rn FROM q)) TIMESTAMP(ts))");
 
             final String[] slaves = {"q", "uq", "q"};
             final boolean[] isFullFatFlags = {false, false, true};
@@ -8823,7 +8823,7 @@ public class JoinTest extends AbstractCairoTest {
                         (30, '1970-01-01T00:00:00.000000Z', '1970-01-01T00:00:00.000000000Z', '2024-01-01T00:00:04.000000Z'),
                         (20, NULL, NULL, '2024-01-01T00:00:06.000000Z')
                     """);
-            execute("CREATE VIEW uq AS (SELECT * FROM (SELECT * FROM q UNION ALL SELECT * FROM q WHERE bid < 0) TIMESTAMP(ts))");
+            execute("CREATE VIEW uq AS (SELECT * FROM (SELECT bid, kk, kkn, ts FROM (SELECT *, row_number() OVER () rn FROM q)) TIMESTAMP(ts))");
 
             // HORIZON JOIN builds its own key sinks, from the same encodings
             for (String on : new String[]{"q.kk = t.kn", "q.kkn = t.k", "q.kk = t.kn AND q.kk = t.k"}) {

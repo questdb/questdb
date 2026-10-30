@@ -28,7 +28,6 @@ import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.ParquetDecodeHint;
-import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -87,20 +86,20 @@ class AsyncTopKRecordCursor implements RecordCursor, RecordCursor.RowIdSource {
     }
 
     @Override
-    public void copyParquetRowIdsTo(DirectLongList target, PageFrameAddressCache addressCache) {
-        long parquetRowCount = 0;
+    public void copyRowFilterableRowIdsTo(DirectLongList target, PageFrameAddressCache addressCache) {
+        long declaredRowCount = 0;
         for (long addr = emitStartAddr; addr < emitEndAddr; addr += entrySize) {
-            if (addressCache.getFrameFormat(Rows.toPartitionIndex(Unsafe.getLong(addr))) == PartitionFormat.PARQUET) {
-                parquetRowCount++;
+            if (addressCache.isFrameRowFilterable(Rows.toPartitionIndex(Unsafe.getLong(addr)))) {
+                declaredRowCount++;
             }
         }
-        if (parquetRowCount == 0) {
+        if (declaredRowCount == 0) {
             return;
         }
-        target.ensureCapacity(parquetRowCount);
+        target.ensureCapacity(declaredRowCount);
         for (long addr = emitStartAddr; addr < emitEndAddr; addr += entrySize) {
             final long rowId = Unsafe.getLong(addr);
-            if (addressCache.getFrameFormat(Rows.toPartitionIndex(rowId)) == PartitionFormat.PARQUET) {
+            if (addressCache.isFrameRowFilterable(Rows.toPartitionIndex(rowId))) {
                 target.add(rowId);
             }
         }

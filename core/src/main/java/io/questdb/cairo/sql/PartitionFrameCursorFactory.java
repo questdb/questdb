@@ -113,6 +113,15 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
         return false;
     }
 
+    /**
+     * Returns {@code true} when the scan's intervals are known at compile time: constants only, no
+     * bind variable or function evaluated when the cursor opens. A planner may count the rows such
+     * intervals select while it plans; intervals that depend on bind variables have no values yet.
+     */
+    default boolean isIntervalScanStatic() {
+        return false;
+    }
+
     void setPushdownFilterCondition(
             long partitionTableVersion,
             @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions

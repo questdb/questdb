@@ -249,6 +249,11 @@ public class CursorFunctionTest {
         try (
                 RecordCursorFactory externalLeaf = new EmptyTableRecordCursorFactory(new GenericRecordMetadata()) {
                     @Override
+                    public int getScanDirection() {
+                        return SCAN_DIRECTION_FORWARD;
+                    }
+
+                    @Override
                     public boolean usesExternalDataSource() {
                         return true;
                     }
@@ -262,6 +267,11 @@ public class CursorFunctionTest {
                         @Override
                         public RecordCursorFactory getBaseFactory() {
                             return externalLeaf;
+                        }
+
+                        @Override
+                        public int getScanDirection() {
+                            return SCAN_DIRECTION_FORWARD;
                         }
                     })
             ) {

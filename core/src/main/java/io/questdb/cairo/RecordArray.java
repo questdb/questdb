@@ -79,6 +79,12 @@ public class RecordArray extends RecordChain {
         }
     }
 
+    @Override
+    public long appendFixedRecords(long prevOffset, int rowCount) {
+        // records here are indexed, not linked
+        throw new UnsupportedOperationException();
+    }
+
     public long beginRecord() {
         recordOffset = varAppendOffset;
         if (auxMem != null) {

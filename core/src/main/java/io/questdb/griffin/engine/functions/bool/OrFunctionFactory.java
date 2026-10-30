@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -32,6 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.ColumnwiseBooleanOp;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -74,7 +76,7 @@ public class OrFunctionFactory implements FunctionFactory {
         return new MyBooleanFunction(leftFunc, rightFunc);
     }
 
-    private static class MyBooleanFunction extends BooleanFunction implements BinaryFunction {
+    private static class MyBooleanFunction extends BooleanFunction implements BinaryFunction, ColumnwiseBooleanOp {
         final Function left;
         final Function right;
 
@@ -86,6 +88,26 @@ public class OrFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return left.getBool(rec) || right.getBool(rec);
+        }
+
+        @Override
+        public Function getColumnwiseArg(int index) {
+            return index == 0 ? left : right;
+        }
+
+        @Override
+        public int getColumnwiseBooleanOp() {
+            return ColumnwiseBooleanOp.OP_OR;
+        }
+
+        @Override
+        public int getColumnwiseOperandType() {
+            return ColumnType.BOOLEAN;
+        }
+
+        @Override
+        public boolean isColumnwiseNegated() {
+            return false;
         }
 
         @Override

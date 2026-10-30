@@ -70,6 +70,11 @@ public class VarPopGroupByFunctionFactory implements FunctionFactory {
             return "var_pop";
         }
 
+
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
     }
 
 }

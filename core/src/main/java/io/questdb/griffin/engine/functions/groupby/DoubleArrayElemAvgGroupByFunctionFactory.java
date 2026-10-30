@@ -136,6 +136,11 @@ public class DoubleArrayElemAvgGroupByFunctionFactory implements FunctionFactory
             return "array_elem_avg";
         }
 
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
+
         private static void zeroFillLongs(long ptr, long from, long to) {
             if (to > from) {
                 Vect.setMemoryLong(ptr + from * Long.BYTES, 0, to - from);

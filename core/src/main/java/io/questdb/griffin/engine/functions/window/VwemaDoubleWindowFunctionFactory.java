@@ -46,6 +46,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
@@ -531,6 +532,26 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
             volumeArg.toTop();
             tombstoneCount = 0;
         }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(volumeArg);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(volumeArg);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(volumeArg);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(volumeArg);
+        }
     }
 
     // VWEMA with fixed alpha, no partition by
@@ -651,6 +672,26 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
             numerator = Double.NaN;
             denominator = Double.NaN;
             hasValue = false;
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(volumeArg);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(volumeArg);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(volumeArg);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(volumeArg);
         }
     }
 
@@ -942,6 +983,26 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
             volumeArg.toTop();
             tombstoneCount = 0;
         }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(volumeArg);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(volumeArg);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(volumeArg);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(volumeArg);
+        }
     }
 
     // Time-weighted VWEMA, no partition by
@@ -1078,6 +1139,26 @@ public class VwemaDoubleWindowFunctionFactory extends AbstractWindowFunctionFact
             denominator = Double.NaN;
             hasValue = false;
             prevTimestamp = Long.MIN_VALUE;
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(volumeArg);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(volumeArg);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(volumeArg);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(volumeArg);
         }
     }
 

@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
@@ -47,12 +48,16 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.BatchCallback;
+import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.FunctionParser;
+import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlOptimiser;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.ops.AlterOperationBuilder;
@@ -64,6 +69,10 @@ import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryColumn;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.QueryModelWrapper;
+import io.questdb.griffin.model.WindowExpression;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
@@ -4970,6 +4979,38 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SQL_COMPILER);
 
         Assert.assertEquals(mem, memAfter);
+    }
+
+    @Test
+    public void testFreesMemoryWhenConstructorFails() {
+        // A constructor that fails closes what it created so far. Here it fails before it creates
+        // the optimiser, so close() has no optimiser, and no PIVOT IN checks, to free.
+        Path.clearThreadLocals();
+        final long mem = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SQL_COMPILER);
+        try {
+            new SqlCompilerImpl(engine) {
+                @Override
+                protected SqlOptimiser newSqlOptimiser(
+                        CairoConfiguration configuration,
+                        CharacterStore characterStore,
+                        ObjectPool<ExpressionNode> sqlNodePool,
+                        ObjectPool<WindowExpression> windowExpressionPool,
+                        ObjectPool<QueryColumn> queryColumnPool,
+                        ObjectPool<QueryModel> queryModelPool,
+                        ObjectPool<QueryModelWrapper> queryModelWrapperPool,
+                        PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo,
+                        FunctionParser functionParser,
+                        Path path
+                ) {
+                    throw new IllegalStateException("injected optimiser failure");
+                }
+            };
+            Assert.fail("the constructor must fail");
+        } catch (IllegalStateException e) {
+            TestUtils.assertEquals("injected optimiser failure", e.getMessage());
+        }
+        Path.clearThreadLocals();
+        Assert.assertEquals(mem, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SQL_COMPILER));
     }
 
     @Test

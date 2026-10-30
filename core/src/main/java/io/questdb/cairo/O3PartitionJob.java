@@ -5732,7 +5732,25 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
 
                 final CharSequence columnName = metadata.getColumnName(i);
-                final boolean isIndexed = metadata.isColumnIndexed(i);
+                // A COVERING posting index on a pure append into an EXISTING
+                // partition is indexed by the trailing seal sweep
+                // (TableWriter#sealPostingIndexForPartition), not here: the pool
+                // IndexWriter has no covering configuration, so postings it writes
+                // carry no covered values and the seal has to regenerate the whole
+                // partition's sidecar to supply them. Leaving the appended rows
+                // unindexed here lets that seal index only the appended range and
+                // publish an incremental covered fragment - O(new rows) instead of
+                // O(partition rows) per commit. Signalled the same way an unindexed
+                // column is: no indexer and indexBlockCapacity -1. The writer owns
+                // the predicate so this can never skip a column the sweep would
+                // then ignore (which would silently lose the appended rows).
+                final boolean isIndexed = metadata.isColumnIndexed(i)
+                        // Spelled out rather than "every append mode except NEW": a
+                        // future append mode added to isOpenColumnModeForAppend would
+                        // otherwise be opted into deferral silently, which fails open.
+                        && !((openColumnMode == OPEN_MID_PARTITION_FOR_APPEND
+                        || openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND)
+                        && tableWriter.isCoveredAppendSealedByWriter(i, partitionTimestamp, srcDataMax));
                 final int indexBlockCapacity = isIndexed ? metadata.getIndexValueBlockCapacity(i) : -1;
                 final byte indexType = metadata.getColumnIndexType(i);
                 if (openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND || openColumnMode == OPEN_LAST_PARTITION_FOR_MERGE) {

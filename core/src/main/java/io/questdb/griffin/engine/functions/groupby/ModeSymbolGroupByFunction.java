@@ -168,6 +168,11 @@ public class ModeSymbolGroupByFunction extends SymbolFunction implements UnaryFu
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isSymbolTableStatic() {
         return arg.isSymbolTableStatic();
     }

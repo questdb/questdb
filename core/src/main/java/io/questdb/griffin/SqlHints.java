@@ -32,10 +32,12 @@ import org.jetbrains.annotations.Nullable;
 
 public final class SqlHints {
     public static final String ASOF_DENSE_HINT = "asof_dense";
+    public static final String ASOF_FAST_HINT = "asof_fast";
     public static final String ASOF_INDEX_HINT = "asof_index";
     public static final String ASOF_LINEAR_HINT = "asof_linear";
     public static final String ASOF_MEMOIZED_DRIVEBY_HINT = "asof_memoized_driveby";
     public static final String ASOF_MEMOIZED_HINT = "asof_memoized";
+    public static final String ASOF_PARALLEL_HINT = "asof_parallel";
     public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
     public static final String FORCE_USE_COVERING_HINT = "force_use_covering";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
@@ -43,6 +45,7 @@ public final class SqlHints {
     public static final String NO_COVERING_HINT = "no_covering";
     public static final String NO_INDEX_HINT = "no_index";
     public static final String NO_SYMBOL_PATTERN_INDEX_HINT = "no_symbol_pattern_index";
+    public static final String USE_INDEX_HINT = "use_index";
 
     public static boolean hasAsOfDenseHint(
             @NotNull IQueryModel queryModel,
@@ -50,6 +53,14 @@ public final class SqlHints {
             @Nullable CharSequence tableNameB
     ) {
         return hasHintWithParams(queryModel, ASOF_DENSE_HINT, tableNameA, tableNameB);
+    }
+
+    public static boolean hasAsOfFastHint(
+            @NotNull IQueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, ASOF_FAST_HINT, tableNameA, tableNameB);
     }
 
     public static boolean hasAsOfIndexHint(
@@ -82,6 +93,14 @@ public final class SqlHints {
             @Nullable CharSequence tableNameB
     ) {
         return hasHintWithParams(queryModel, ASOF_MEMOIZED_HINT, tableNameA, tableNameB);
+    }
+
+    public static boolean hasAsOfParallelHint(
+            @NotNull IQueryModel queryModel,
+            @Nullable CharSequence tableNameA,
+            @Nullable CharSequence tableNameB
+    ) {
+        return hasHintWithParams(queryModel, ASOF_PARALLEL_HINT, tableNameA, tableNameB);
     }
 
     // checks enable column pre-touch hint for parallel filters
@@ -136,6 +155,14 @@ public final class SqlHints {
 
     public static boolean hasNoSymbolPatternIndexHint(@NotNull IQueryModel queryModel) {
         return queryModel.getHints().keyIndex(NO_SYMBOL_PATTERN_INDEX_HINT) < 0;
+    }
+
+    /**
+     * The {@code use_index} hint: a GROUP BY over a symbol list that an index serves takes the
+     * index plan, without the per-open choice between it and a scan.
+     */
+    public static boolean hasUseIndexHint(@NotNull IQueryModel queryModel) {
+        return queryModel.getHints().keyIndex(USE_INDEX_HINT) < 0;
     }
 
     private static boolean hasHintWithParams(

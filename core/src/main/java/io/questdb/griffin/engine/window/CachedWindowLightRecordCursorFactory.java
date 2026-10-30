@@ -32,6 +32,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.RecordArray;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -49,6 +50,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
@@ -273,6 +275,16 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
     }
 
     /**
+     * Detaches the base factory, which the caller then owns: closing this factory leaves it open.
+     * Used when the planner replaces the window with a plan of its own over the same base.
+     */
+    public RecordCursorFactory stealBaseFactory() {
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        return base;
+    }
+
+    /**
      * Returns the sole window function iff this factory has EXACTLY one window function and it is a
      * row-selecting keep flag ({@link WindowFunction#isRowSelecting()}); otherwise {@code null}.
      * The keep-flag filter fusion in code generation uses this to decide whether the exact single
@@ -459,7 +471,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    class CachedWindowLightRecordCursor implements RecordCursor {
+    class CachedWindowLightRecordCursor implements RecordCursor, RecordCursor.RowIdSource {
         private final DirectLongList baseRowIds;
         private final IntList columnIndexes;
         private final LightWindowSPI lightSpi;
@@ -604,6 +616,16 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
         }
 
         @Override
+        public void copyRowFilterableRowIdsTo(DirectLongList target, PageFrameAddressCache addressCache) {
+            for (long i = 0, n = baseRowIds.size(); i < n; i++) {
+                final long rowId = baseRowIds.get(i);
+                if (addressCache.isFrameRowFilterable(Rows.toPartitionIndex(rowId))) {
+                    target.add(rowId);
+                }
+            }
+        }
+
+        @Override
         public long preComputedStateSize() {
             return size;
         }
@@ -700,6 +722,11 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                 }
             }
             size = rowIndex;
+            if (size > 0) {
+                // every later read of the base is a recordAt() of these rows: a frame that decodes
+                // by row decodes them alone
+                baseCursor.setRecordAtRows(this);
+            }
 
             if (hasOrdered) {
                 for (int i = 0; i < orderedGroupCount; i++) {

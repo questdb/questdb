@@ -165,6 +165,20 @@ class AvgDecimal256Rescale256GroupByFunction extends Decimal256Function implemen
         return false;
     }
 
+    /**
+     * True, for the reason spelled out on
+     * {@link SumDecimal256GroupByFunction#isOrderSensitive()}. This rescale sibling accumulates
+     * the same FIXED 256-bit running sum as {@link AvgDecimal256GroupByFunction}; rescaling
+     * happens once, at read time, and changes nothing about the arrival-order exposure.
+     * <p>
+     * The DECIMAL8/16/32/64/128 rescale siblings stay order-insensitive: their operands cannot
+     * exceed 10^38, so no reachable row count can drive a DECIMAL256 accumulator out of range.
+     */
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
     @Override
     public boolean isThreadSafe() {
         return false;

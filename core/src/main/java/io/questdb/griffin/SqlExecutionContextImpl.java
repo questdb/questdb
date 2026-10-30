@@ -69,6 +69,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SqlExecutionContextImpl implements SqlExecutionContext {
     private static final IntHashSet SKIP_TELEMETRY_EVENTS = new IntHashSet();
+    private static final int TIMESTAMP_NOT_REQUIRED = 0;
+    /**
+     * The consumer needs the designated timestamp column and needs the base to already scan it
+     * ascending, because it has no way to obtain that order itself.
+     */
+    private static final int TIMESTAMP_REQUIRED_ASC = 1;
+    /**
+     * The consumer needs the designated timestamp column but obtains ascending order over it itself -
+     * see {@link SqlExecutionContext#pushTimestampRequiredFlag(boolean, boolean)}.
+     */
+    private static final int TIMESTAMP_REQUIRED_ANY_ORDER = 2;
     private final CairoConfiguration cairoConfiguration;
     private final CairoEngine cairoEngine;
     private final Decimal128 decimal128 = new Decimal128();
@@ -111,11 +122,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelFilterEnabled;
     private boolean parallelGroupByEnabled;
     private boolean parallelHashJoinGroupByEnabled;
+    private boolean parallelHashJoinProbeEnabled;
     private boolean parallelReadParquetEnabled;
     private boolean parquetRowGroupPruningEnabled;
     private boolean parallelTopKEnabled;
     private boolean parallelHorizonJoinEnabled;
+    private boolean parallelWindowEnabled;
     private boolean parallelWindowJoinEnabled;
+    private boolean parallelWindowMinMaxRewriteEnabled;
     private long queryRegistryOwnerId = -1;
     private QueryFutureUpdateListener queryFutureUpdateListener = QueryFutureUpdateListener.EMPTY;
     private Rnd random;
@@ -142,9 +156,12 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled() && sharedQueryWorkerCount > 0;
         parallelGroupByEnabled = cairoConfiguration.isSqlParallelGroupByEnabled() && sharedQueryWorkerCount > 0;
         parallelHashJoinGroupByEnabled = cairoConfiguration.isSqlParallelHashJoinGroupByEnabled();
+        parallelHashJoinProbeEnabled = cairoConfiguration.isSqlParallelHashJoinProbeEnabled();
+        parallelWindowMinMaxRewriteEnabled = cairoConfiguration.isSqlParallelWindowMinMaxRewriteEnabled();
         parallelTopKEnabled = cairoConfiguration.isSqlParallelTopKEnabled() && sharedQueryWorkerCount > 0;
         parallelHorizonJoinEnabled = cairoConfiguration.isSqlParallelHorizonJoinEnabled() && sharedQueryWorkerCount > 0;
         parallelWindowJoinEnabled = cairoConfiguration.isSqlParallelWindowJoinEnabled() && sharedQueryWorkerCount > 0;
+        parallelWindowEnabled = cairoConfiguration.isSqlParallelWindowEnabled() && sharedQueryWorkerCount > 0;
         parallelReadParquetEnabled = cairoConfiguration.isSqlParallelReadParquetEnabled() && sharedQueryWorkerCount > 0;
         parquetRowGroupPruningEnabled = cairoConfiguration.isSqlParquetRowGroupPruningEnabled();
         telemetry = cairoEngine.getTelemetry();
@@ -469,6 +486,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelHashJoinProbeEnabled() {
+        return parallelHashJoinProbeEnabled && isParallelFilterEnabled() && sharedQueryWorkerCount > 0;
+    }
+
+    @Override
     public boolean isParallelHashJoinGroupByEnabled() {
         return parallelHashJoinGroupByEnabled && isParallelGroupByEnabled() && sharedQueryWorkerCount > 0;
     }
@@ -494,13 +516,28 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public boolean isParallelWindowMinMaxRewriteEnabled() {
+        return parallelWindowMinMaxRewriteEnabled && isParallelFilterEnabled() && sharedQueryWorkerCount > 0;
+    }
+
+    @Override
+    public boolean isParallelWindowEnabled() {
+        return parallelWindowEnabled;
+    }
+
+    @Override
     public boolean isParallelWindowJoinEnabled() {
         return parallelWindowJoinEnabled;
     }
 
     @Override
+    public boolean isTimestampAscOrderRequired() {
+        return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == TIMESTAMP_REQUIRED_ASC;
+    }
+
+    @Override
     public boolean isTimestampRequired() {
-        return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() == 1;
+        return timestampRequiredStack.notEmpty() && timestampRequiredStack.peek() != TIMESTAMP_NOT_REQUIRED;
     }
 
     @Override
@@ -562,7 +599,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
 
     @Override
     public void pushTimestampRequiredFlag(boolean flag) {
-        timestampRequiredStack.push(flag ? 1 : 0);
+        pushTimestampRequiredFlag(flag, true);
+    }
+
+    @Override
+    public void pushTimestampRequiredFlag(boolean flag, boolean ascOrderRequired) {
+        timestampRequiredStack.push(
+                flag
+                        ? (ascOrderRequired ? TIMESTAMP_REQUIRED_ASC : TIMESTAMP_REQUIRED_ANY_ORDER)
+                        : TIMESTAMP_NOT_REQUIRED
+        );
     }
 
     @Override
@@ -697,6 +743,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setParallelHashJoinProbeEnabled(boolean isEnabled) {
+        this.parallelHashJoinProbeEnabled = isEnabled;
+    }
+
+    @Override
     public void setParallelHashJoinGroupByEnabled(boolean isEnabled) {
         this.parallelHashJoinGroupByEnabled = isEnabled;
     }
@@ -719,6 +770,16 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled) {
         this.parallelHorizonJoinEnabled = parallelHorizonJoinEnabled;
+    }
+
+    @Override
+    public void setParallelWindowMinMaxRewriteEnabled(boolean enabled) {
+        this.parallelWindowMinMaxRewriteEnabled = enabled;
+    }
+
+    @Override
+    public void setParallelWindowEnabled(boolean parallelWindowEnabled) {
+        this.parallelWindowEnabled = parallelWindowEnabled;
     }
 
     @Override

@@ -32,16 +32,23 @@ import io.questdb.std.ObjList;
 @SuppressWarnings("resource")
 class StrCaseFunction extends StrFunction implements CaseFunction {
     private final ObjList<Function> args;
+    private final CaseBranches.Values branches;
     private final CaseFunctionPicker picker;
 
-    public StrCaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
+    public StrCaseFunction(CaseFunctionPicker picker, ObjList<Function> args, CaseBranches.Values branches) {
         this.picker = picker;
         this.args = args;
+        this.branches = branches;
     }
 
     @Override
     public ObjList<Function> args() {
         return args;
+    }
+
+    @Override
+    public CaseBranches.Values branches() {
+        return branches;
     }
 
     @Override

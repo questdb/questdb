@@ -19,7 +19,17 @@ jobs:
           jdk: "1.25"
           testset: "coverage-griffin-sub"
           includeTests: "**/griffin/**/*"
-          excludeTests: "**/griffin/*"
+          excludeTests: "**/griffin/*,**/griffin/engine/window/**,**/griffin/engine/join/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        # The parallel window and ASOF JOIN tests outgrew linux-griffin-sub's 60 minutes: run them
+        # on a leg of their own.
+        linux-griffin-window-join:
+          poolName: "hetzner-incus"
+          os: Linux
+          jdk: "1.25"
+          testset: "coverage-griffin-window-join"
+          includeTests: "**/griffin/engine/window/**,**/griffin/engine/join/**"
           javadoc_step: ""
           javadoc_profile: ""
         linux-fuzz1:

@@ -47,19 +47,26 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.Comparator;
 
-public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
+public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCursorFactory implements KeyMajorScanFactory {
     private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR = FilterOnValuesRecordCursorFactory::compareStrFunctions;
     private static final Comparator<FunctionBasedRowCursorFactory> COMPARATOR_DESC = FilterOnValuesRecordCursorFactory::compareStrFunctionsDesc;
     private final int columnIndex;
     private final int[] cursorFactoriesIdx;
     private final boolean followedOrderByAdvice;
     private final boolean heapCursorUsed;
+    private final int orderDirection;
     // Drives the cursorFactories sort and the plan's symbolOrder attribute. It keeps reading the
-    // withdrawn key-column claim on purpose: initRecordCursor sorts so that findDuplicates() sees
-    // equal symbols adjacently, and the sort direction is plan-visible, so it must not follow
-    // followedOrderByAdvice() into "false".
+    // key-column claim on purpose: initRecordCursor sorts so that findDuplicates() sees equal
+    // symbols adjacently, and the sort direction is plan-visible, so it must not follow
+    // followedOrderByAdvice() into "false" for the heap cursor.
     private final boolean symbolOrderAsc;
-    private PageFrameRecordCursorImpl cursor;
+    private AbstractPageFrameRecordCursor cursor;
+    // a single key walked forward keeps the designated timestamp's order, see setKeyMajorTimestampIndex()
+    private boolean isKeyMajorForward;
+    // what followedOrderByAdvice() answers: a key-major walk no ORDER BY asked for orders nothing
+    // the consumer can rely on
+    private boolean isOrderByAdviceFollowed;
+    private int keyMajorTimestampIndex = -1;
     private ObjList<FunctionBasedRowCursorFactory> cursorFactories;
     private Function filter;
     private RowCursorFactory rowCursorFactory;
@@ -84,6 +91,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         final int nKeyValues = keyValues.size();
         this.columnIndex = columnIndex;
         this.filter = filter;
+        this.orderDirection = orderDirection;
         this.symbolOrderAsc = (orderByKeyColumn || orderByTimestamp) && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING;
         cursorFactories = new ObjList<>(nKeyValues);
         cursorFactoriesIdx = new int[]{0};
@@ -92,31 +100,124 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         }
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !orderByTimestamp) {
             heapCursorUsed = false;
-            rowCursorFactory = new SequentialRowCursorFactory(cursorFactories, cursorFactoriesIdx);
+            final SequentialRowCursorFactory sequentialFactory = new SequentialRowCursorFactory(
+                    cursorFactories,
+                    cursorFactoriesIdx,
+                    columnIndex,
+                    indexDirection
+            );
+            rowCursorFactory = sequentialFactory;
+            if (orderByKeyColumn) {
+                // ORDER BY the key column: walk each key across all page frames, not just
+                // within one, so that the output is in key order as a whole
+                cursor = new KeyMajorPageFrameRecordCursor(
+                        configuration,
+                        metadata,
+                        sequentialFactory,
+                        partitionFrameCursorFactory.getOrder(),
+                        filter
+                );
+            } else {
+                cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
+            }
         } else {
             heapCursorUsed = true;
             rowCursorFactory = new HeapRowCursorFactory(cursorFactories, cursorFactoriesIdx);
+            cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
         }
-        cursor = new PageFrameRecordCursorImpl(configuration, metadata, rowCursorFactory, false, filter);
-        // SequentialRowCursorFactory rebuilds one cursor per key for the page frame it is handed and
-        // restarts at key 0 on the next frame, so an "ORDER BY key" claim would hold only while the
-        // scan produced a single frame. Only the timestamp claim survives frame concatenation: it
-        // forces HeapRowCursorFactory, which emits rows in row-id order within a frame, and the
-        // frames themselves arrive in timestamp order.
-        this.followedOrderByAdvice = orderByTimestamp;
+        // The heap cursor merges keys into row order, so it never follows ORDER BY the key column.
+        // The sequential cursor does only through KeyMajorPageFrameRecordCursor, which walks each
+        // key across all page frames: a per-frame SequentialRowCursorFactory restarts at key 0 on
+        // every frame, so its key order holds only within a frame.
+        this.followedOrderByAdvice = (orderByKeyColumn && !heapCursorUsed) || orderByTimestamp;
+        this.isOrderByAdviceFollowed = followedOrderByAdvice;
     }
 
     @Override
     public boolean followedOrderByAdvice() {
-        return followedOrderByAdvice;
+        return isOrderByAdviceFollowed;
+    }
+
+    /**
+     * The index of the key column in this factory's metadata.
+     */
+    public int getKeyColumnIndex() {
+        return columnIndex;
+    }
+
+    /**
+     * Adds the functions of the list's values to the sink, duplicates included, in no particular
+     * order. They stay owned by this factory.
+     */
+    public void getKeyFunctions(ObjList<Function> sink) {
+        for (int i = 0, n = cursorFactories.size(); i < n; i++) {
+            sink.add(cursorFactories.getQuick(i).getFunction());
+        }
+    }
+
+    @Override
+    public int getKeyMajorColumnIndex() {
+        return cursor instanceof KeyMajorPageFrameRecordCursor ? columnIndex : -1;
+    }
+
+    @Override
+    public int getKeyMajorKeyCount() {
+        return cursorFactories.size();
+    }
+
+    @Override
+    public boolean isKeyMajorAscending() {
+        // the values are sorted so when the cursor opens, see initRecordCursor()
+        return cursor instanceof KeyMajorPageFrameRecordCursor && followedOrderByAdvice && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING;
+    }
+
+    /**
+     * The rest of the filter this scan applies to the rows its index selects, null for none.
+     */
+    public @Nullable Function getResidualFilter() {
+        return filter;
+    }
+
+    @Override
+    public int getKeyMajorTimestampIndex() {
+        return cursor instanceof KeyMajorPageFrameRecordCursor ? keyMajorTimestampIndex : -1;
     }
 
     @Override
     public int getScanDirection() {
-        if (partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC && heapCursorUsed) {
+        if (partitionFrameCursorFactory.getOrder() == PartitionFrameCursorFactory.ORDER_ASC && (heapCursorUsed || isKeyMajorForward)) {
             return SCAN_DIRECTION_FORWARD;
         }
         return SCAN_DIRECTION_OTHER;
+    }
+
+    /**
+     * Declares the column whose values ascend within each key of a key-major walk that reads
+     * every key's rows forward, see {@link KeyMajorScanFactory#getKeyMajorTimestampIndex()}. With
+     * a single key, which the walk then reads in table order, the scan is also forward as a whole:
+     * the planner keeps the designated timestamp in the metadata.
+     *
+     * @param timestampIndex the designated timestamp's index in this factory's metadata
+     * @param singleKey      whether the scan has a single key
+     */
+    public void setKeyMajorTimestampIndex(int timestampIndex, boolean singleKey) {
+        this.keyMajorTimestampIndex = timestampIndex;
+        this.isKeyMajorForward = singleKey && timestampIndex > -1;
+    }
+
+    /**
+     * Sets what {@link #followedOrderByAdvice()} answers, for a key-major walk the planner chose
+     * for a window rather than for an ORDER BY: the walk then follows no advice the consumer gave.
+     */
+    public void setOrderByAdviceFollowed(boolean followed) {
+        this.isOrderByAdviceFollowed = followed;
+    }
+
+    @Override
+    public boolean hasDistinctKeys() {
+        // findDuplicates() leaves each distinct value once in the keys the walk visits, and
+        // distinct values are distinct symbol keys
+        return true;
     }
 
     @Override
@@ -129,6 +230,9 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         sink.type("FilterOnValues");
         if (!heapCursorUsed) { // sorting symbols makes no sense for heap factory
             sink.meta("symbolOrder").val(symbolOrderAsc ? "asc" : "desc");
+        }
+        if (cursor instanceof KeyMajorPageFrameRecordCursor) {
+            sink.attr("keyMajor").val(true);
         }
         sink.child(rowCursorFactory);
         sink.child(partitionFrameCursorFactory);
@@ -166,29 +270,23 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     }
 
     private void findDuplicates() {
-        // bind variable actual values might repeat, so to remove adjacent duplicates
-        // go through the list and if duplicate is found push it to the end of the list
-        int idx = 0;
-        int max = cursorFactories.size();
-
-        OUT:
-        while (idx < max - 1) {
-            CharSequence symbol = symbol(idx);
-            idx++;
-
-            while (equals(symbol, symbol(idx))) {
-                FunctionBasedRowCursorFactory tmp = cursorFactories.get(idx);
-                cursorFactories.remove(idx);
-                cursorFactories.add(tmp);
-
-                idx++;
-                max--;
-                if (idx >= max) {
-                    break OUT;
+        // Bind variable values may repeat. The list is sorted, so equal values are adjacent:
+        // compact the distinct values to the front, in order, and swap each duplicate behind
+        // them. The row cursor factories scan only the first cursorFactoriesIdx[0] entries.
+        // The duplicates stay in the list, so they are still closed with it.
+        final int n = cursorFactories.size();
+        int distinct = n > 0 ? 1 : 0;
+        for (int i = 1; i < n; i++) {
+            if (!equals(symbol(distinct - 1), symbol(i))) {
+                if (i != distinct) {
+                    final FunctionBasedRowCursorFactory duplicate = cursorFactories.getQuick(distinct);
+                    cursorFactories.setQuick(distinct, cursorFactories.getQuick(i));
+                    cursorFactories.setQuick(i, duplicate);
                 }
+                distinct++;
             }
         }
-        cursorFactoriesIdx[0] = max;
+        cursorFactoriesIdx[0] = distinct;
     }
 
     private CharSequence symbol(int idx) {
@@ -197,7 +295,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
 
     @Override
     protected void _close() {
-        final PageFrameRecordCursorImpl cursor = this.cursor;
+        final AbstractPageFrameRecordCursor cursor = this.cursor;
         this.cursor = null;
         final ObjList<FunctionBasedRowCursorFactory> cursorFactories = this.cursorFactories;
         this.cursorFactories = null;

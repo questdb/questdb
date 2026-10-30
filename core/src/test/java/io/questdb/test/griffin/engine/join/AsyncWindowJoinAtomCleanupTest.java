@@ -217,6 +217,11 @@ public class AsyncWindowJoinAtomCleanupTest extends AbstractCairoTest {
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
+        @Override
         public ConcurrentTimeFrameCursor newTimeFrameCursor() {
             cursorCount++;
             return new FaultyTimeFrameCursor();

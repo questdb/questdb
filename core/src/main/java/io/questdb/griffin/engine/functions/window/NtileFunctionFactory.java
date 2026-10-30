@@ -43,6 +43,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -391,6 +392,26 @@ public class NtileFunctionFactory extends AbstractWindowFunctionFactory {
         public void toTop() {
             super.toTop();
             Misc.clear(map);
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return FunctionFlags.hasPerCallState(partitionByRecord);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return FunctionFlags.isNonDeterministic(partitionByRecord);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(partitionByRecord);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return FunctionFlags.isStableWithinExecution(partitionByRecord);
         }
     }
 

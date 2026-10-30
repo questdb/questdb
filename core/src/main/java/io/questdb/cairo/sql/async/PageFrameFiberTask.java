@@ -306,12 +306,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
 
     private void completeOwnership() {
         if (orderedFrameSequence != null) {
-            try {
-                orderedSubSeq.done(orderedCursor);
-            } finally {
-                orderedFrameSequence.getReduceFinishedCounter().incrementAndGet();
-                dispatcher.signalProgress(orderedFrameSequence);
-            }
+            PageFrameSequence.releaseReducedSlot(orderedSubSeq, orderedCursor, orderedReduceTask, orderedFrameSequence, dispatcher);
         } else if (unorderedFrameSequence != null) {
             try {
                 unorderedFrameSequence.getDoneLatch().countDown();
@@ -332,14 +327,14 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
         this.orderedCursor = cursor;
         this.orderedReduceTask = reduceTask;
         this.orderedFrameSequence = frameSequence;
-        batch.addRows(reduceTask.getFrameRowCount());
+        batch.addRows(reduceTask.getTaskRowCount());
         try {
             if (frameSequence.isActive()) {
                 circuitBreaker.init(frameSequence.getCircuitBreaker());
                 PageFrameReduceJob.reduce(workerId, record, circuitBreaker, reduceTask, frameSequence, null);
             }
         } catch (Throwable th) {
-            if (frameSequence.isReducerFailureReportable(th)) {
+            if (!reduceTask.isGroupFrameFailed() && frameSequence.isReducerFailureReportable(th)) {
                 LOG.error()
                         .$("reduce error [error=").$(th)
                         .$(", id=").$(frameSequence.getId())
@@ -360,12 +355,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             try {
                 MemoryTracker.detachResourceMemoryCurrentThread();
             } finally {
-                try {
-                    subSeq.done(cursor);
-                } finally {
-                    frameSequence.getReduceFinishedCounter().incrementAndGet();
-                    dispatcher.signalProgress(frameSequence);
-                }
+                PageFrameSequence.releaseReducedSlot(subSeq, cursor, reduceTask, frameSequence, dispatcher);
             }
         }
     }

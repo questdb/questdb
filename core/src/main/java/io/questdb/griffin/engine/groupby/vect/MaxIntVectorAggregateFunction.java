@@ -111,6 +111,11 @@ public class MaxIntVectorAggregateFunction extends IntFunction implements Vector
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean merge(long pRostiA, long pRostiB) {
         return Rosti.keyedIntMaxIntMerge(pRostiA, pRostiB, valueOffset);
     }

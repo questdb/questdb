@@ -214,6 +214,11 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean hasPerCallState() {
+            return xFunc.hasPerCallState() || yFunc.hasPerCallState();
+        }
+
+        @Override
         public boolean isRandom() {
             return xFunc.isRandom() || yFunc.isRandom();
         }
@@ -362,6 +367,16 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
                     || minYFunc.isNonDeterministic()
                     || maxXFunc.isNonDeterministic()
                     || maxYFunc.isNonDeterministic();
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return xFunc.hasPerCallState()
+                    || yFunc.hasPerCallState()
+                    || minXFunc.hasPerCallState()
+                    || minYFunc.hasPerCallState()
+                    || maxXFunc.hasPerCallState()
+                    || maxYFunc.hasPerCallState();
         }
 
         @Override

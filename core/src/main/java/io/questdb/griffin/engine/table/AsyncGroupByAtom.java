@@ -33,10 +33,15 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.async.FrameDecodeAheadAtom;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
@@ -49,6 +54,8 @@ import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
+import io.questdb.griffin.engine.functions.groupby.WelfordBatchFusion;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
@@ -57,6 +64,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -69,8 +77,10 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 
 
-public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Closeable, Reopenable, Plannable {
+public class AsyncGroupByAtom implements StatefulAtom, FrameDecodeAheadAtom, PerWorkerLockOwner, Closeable, Reopenable, Plannable {
     private final int batchSize;
+    // Column-wise batch kernels, one per slot, or null when no aggregate has one or they are disabled.
+    private final GroupByBatchKernels ownerBatchKernels;
     private final AsyncFilterContext filterCtx;
     private final GroupByAllocator ownerAllocator;
     private final DirectLongList ownerBatchList;
@@ -79,6 +89,9 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
     private final ObjList<Function> ownerKeyFunctions;
     private final RecordSink ownerMapSink;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
+    private final GroupByBatchKernels.PerWorker perWorkerBatchKernels;
+    // per slot, the owner's first: see getWelfordFusion()
+    private final WelfordBatchFusion[] welfordFusions;
     private final ObjList<DirectLongList> perWorkerBatchLists;
     private final ObjList<FlyweightPackedMapValue> perWorkerBatchMapValues;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
@@ -87,11 +100,19 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
     // Initialized lazily.
     private final ObjList<DirectLongLongSortedList> perWorkerLongTopKLists;
     private final ObjList<RecordSink> perWorkerMapSinks;
+    // the indexes of the GROUP BY functions whose results finalizeShard() computes on the workers
+    private final IntList finalizableFunctionIndexes = new IntList();
+    // the finalizable functions' state past which shouldShardToFinalize()
+    private final long finalizeShardingBytes;
     private final GroupByShardingContext shardingCtx;
+    // the column index of the only GROUP BY key when it is a plain column, else -1
+    private final int singleKeyColumnIndex;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
     // Null when no per-query limit applies. Workers and operator code feed it to
     // tracker-aware Unsafe overloads to charge allocations to the active workload.
     private MemoryTracker memoryTracker;
+    // the GROUP BY keys are the index key column of an index gather, and nothing else
+    private boolean isGroupedByGatherKey;
     // Initialized lazily.
     private DirectLongLongSortedList ownerLongTopKList;
 
@@ -120,6 +141,9 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
 
         try {
             this.ownerKeyFunctions = ownerKeyFunctions;
+            this.singleKeyColumnIndex = ownerKeyFunctions.size() == 0 && listColumnFilter.getColumnCount() == 1
+                    ? listColumnFilter.getColumnIndexFactored(0)
+                    : -1;
             this.perWorkerKeyFunctions = perWorkerKeyFunctions;
             this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
@@ -149,6 +173,7 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
             }
 
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
+            finalizeShardingBytes = 10L * Double.BYTES * configuration.getGroupByShardingThreshold();
 
             final ColumnTypes storedKeyTypes = new ArrayColumnTypes().addAll(keyTypes);
             final ColumnTypes storedValueTypes = new ArrayColumnTypes().addAll(valueTypes);
@@ -161,6 +186,14 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
                     perWorkerLocks,
                     workerCount
             );
+            for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
+                if (ownerGroupByFunctions.getQuick(i).isFinalizable()) {
+                    finalizableFunctionIndexes.add(i);
+                }
+            }
+            if (finalizableFunctionIndexes.size() > 0) {
+                shardingCtx.setShardFinalizer(this::finalizeShard);
+            }
 
             final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(
                     configuration,
@@ -234,6 +267,20 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
                 perWorkerBatchLists.extendAndSet(i, new DirectLongList(batchSize, MemoryTag.NATIVE_DEFAULT, true));
                 perWorkerBatchMapValues.extendAndSet(i, new FlyweightPackedMapValue(valueTypes));
             }
+
+            // The kernels compile once; each slot gets its own evaluator of the program, which
+            // holds the slot's argument buffers and its own constant functions.
+            final GroupByBatchKernels.Program kernelProgram = configuration.isSqlParallelGroupByBatchKernelsEnabled()
+                    ? GroupByBatchKernels.compile(ownerGroupByFunctions, batchSize, workerCount + 1)
+                    : null;
+            welfordFusions = new WelfordBatchFusion[workerCount + 1];
+            ownerBatchKernels = kernelProgram != null ? kernelProgram.newInstance(ownerGroupByFunctions) : null;
+            if (ownerBatchKernels != null) {
+                // the workers' evaluators are made on each slot's first use
+                perWorkerBatchKernels = new GroupByBatchKernels.PerWorker(kernelProgram, ownerGroupByFunctions, perWorkerGroupByFunctions, workerCount);
+            } else {
+                perWorkerBatchKernels = null;
+            }
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
@@ -255,6 +302,9 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         Misc.clearObjList(perWorkerLongTopKLists);
         Misc.free(ownerBatchList);
         Misc.freeObjListAndKeepObjects(perWorkerBatchLists);
+        // the kernels' argument buffers are freed with the cursor, not kept while the factory is cached
+        Misc.clear(ownerBatchKernels);
+        Misc.clear(perWorkerBatchKernels);
         filterCtx.clear();
         memoryTracker = null;
     }
@@ -286,6 +336,8 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         cleanupFailure = closePerWorkerFunctions(cleanupFailure, perWorkerGroupByFunctions);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerBatchList);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerBatchLists);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerBatchKernels);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, perWorkerBatchKernels);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, filterCtx);
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
@@ -307,6 +359,46 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
             }
         }
         return cleanupFailure;
+    }
+
+    /**
+     * Sums the kernel counters over the slots, see {@link GroupByBatchKernels#getCounts}.
+     */
+    @TestOnly
+    public long[] getBatchKernelCounts() {
+        return GroupByBatchKernels.getCounts(ownerBatchKernels, perWorkerBatchKernels);
+    }
+
+    /**
+     * Returns the slot's fused pass over its Welford aggregates' kernels, made on its first use, so only
+     * the slot's holder may call this.
+     */
+    public WelfordBatchFusion getWelfordFusion(int slotId) {
+        final int i = slotId + 1;
+        WelfordBatchFusion fusion = welfordFusions[i];
+        if (fusion == null) {
+            welfordFusions[i] = fusion = new WelfordBatchFusion();
+        }
+        return fusion;
+    }
+
+    /**
+     * Returns the slot's column-wise batch kernels, or null when the aggregates have none. A
+     * worker slot's are made on its first use, so only the slot's holder may call this.
+     */
+    public GroupByBatchKernels getBatchKernels(int slotId) {
+        if (slotId == -1 || perWorkerBatchKernels == null) {
+            return ownerBatchKernels;
+        }
+        return perWorkerBatchKernels.get(slotId);
+    }
+
+    /**
+     * Returns the workers' kernel evaluators, or null when the aggregates have no kernels.
+     */
+    @TestOnly
+    public GroupByBatchKernels.PerWorker getPerWorkerBatchKernels() {
+        return perWorkerBatchKernels;
     }
 
     public DirectLongList getBatchList(int slotId) {
@@ -331,12 +423,36 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         return shardingCtx.getDestShards();
     }
 
+    @Override
+    public PageFrameMemoryPool getDecodeMemoryPool(int slotId) {
+        return filterCtx.getMemoryPool(slotId);
+    }
+
     public AsyncFilterContext getFilterContext() {
         return filterCtx;
     }
 
     public GroupByMapFragment getFragment(int slotId) {
         return shardingCtx.getFragment(slotId);
+    }
+
+    /**
+     * Computes the results of the finalizable GROUP BY functions for the groups of a merged shard, see
+     * {@link GroupByFunction#finalizeValue}; with the functions of the slot that merged it.
+     */
+    public void finalizeShard(int slotId, Map destShard) {
+        if (destShard.size() == 0) {
+            return;
+        }
+        final ObjList<GroupByFunction> groupByFunctions = getGroupByFunctions(slotId);
+        final RecordCursor cursor = destShard.getCursor();
+        final MapRecord record = destShard.getRecord();
+        while (cursor.hasNext()) {
+            final MapValue value = record.getValue();
+            for (int i = 0, n = finalizableFunctionIndexes.size(); i < n; i++) {
+                groupByFunctions.getQuick(finalizableFunctionIndexes.getQuick(i)).finalizeValue(value);
+            }
+        }
     }
 
     public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
@@ -432,8 +548,47 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         initPerWorkerFunctions(perWorkerGroupByFunctions, ownerGroupByFunctions, symbolTableSource, executionContext);
     }
 
+    /**
+     * Whether the grouping is exactly the key column of an index gather's scan: then every run of
+     * a key's rows is one group, which the batched probe looks up once per run.
+     */
+    public boolean isGroupedByGatherKey() {
+        return isGroupedByGatherKey;
+    }
+
+    /**
+     * The column index of the only GROUP BY key when the grouping is one plain column, else -1: a
+     * frame whose rows all hold one value of it is one group.
+     */
+    public int getSingleKeyColumnIndex() {
+        return singleKeyColumnIndex;
+    }
+
     public boolean isSharded() {
         return shardingCtx.isSharded();
+    }
+
+    /**
+     * Whether this GROUP BY, not sharded as it aggregated, merges as shards nonetheless: its finalizable
+     * functions hold more state than about ten times the sharding threshold of 8-byte values, which
+     * one thread would merge and finish one group after another, see
+     * {@link GroupByShardingContext#shardAfterAggregation()}.
+     */
+    public boolean shouldShardToFinalize() {
+        if (finalizableFunctionIndexes.size() == 0 || shardingCtx.isSharded()) {
+            return false;
+        }
+        long allocated = ownerAllocator.allocated();
+        if (perWorkerAllocators != null) {
+            for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
+                allocated += perWorkerAllocators.getQuick(i).allocated();
+            }
+        }
+        return allocated > finalizeShardingBytes;
+    }
+
+    public void setGroupedByGatherKey(boolean groupedByGatherKey) {
+        isGroupedByGatherKey = groupedByGatherKey;
     }
 
     /**
@@ -442,6 +597,7 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
      *
      * @throws io.questdb.cairo.CairoException when circuit breaker has tripped
      */
+    @Override
     public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
         if (workerId == -1 && owner) {
             return -1;
@@ -453,6 +609,7 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         shardingCtx.maybeEnableSharding(fragment, getTotalFunctionCardinality(fragment.slotId));
     }
 
+    @Override
     public void release(int slotId) {
         perWorkerLocks.releaseSlot(slotId);
     }
@@ -474,6 +631,11 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
                 allocator.reopen();
             }
         }
+        // the kernels allocate their argument buffers lazily, on a slot's first batch
+        if (ownerBatchKernels != null) {
+            ownerBatchKernels.setMemoryTracker(memoryTracker);
+            perWorkerBatchKernels.setMemoryTracker(memoryTracker);
+        }
     }
 
     public void resetLocalStats(int slotId) {
@@ -481,6 +643,11 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
             groupByFunctions.getQuick(i).resetStats();
         }
+    }
+
+    @Override
+    public void setOwnerMemoryPool(@Nullable PageFrameMemoryPool pool) {
+        filterCtx.setOwnerMemoryPoolOverride(pool);
     }
 
     @Override

@@ -1398,6 +1398,40 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
         });
     }
 
+    /**
+     * A PIVOT whose FOR values come from a subquery is kept in the select cache like any other
+     * SELECT, and every reuse re-runs the subquery: new rows under the same values keep the
+     * cached plan, a new value makes the reuse recompile, and the client always gets the columns
+     * a fresh compile would give it.
+     */
+    @Test
+    public void testPivotInSubqueryCachedPlanRechecksValues() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startServerWithRetry(
+                    PropertyKey.HTTP_QUERY_CACHE_ENABLED.getEnvVarName(), "true"
+            )) {
+                serverMain.execute("CREATE TABLE pv (cat SYMBOL, val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO pv VALUES ('a', 1, 1::TIMESTAMP), ('b', 2, 2::TIMESTAMP)");
+                serverMain.awaitTable("pv");
+                final String sql = "SELECT * FROM pv PIVOT (sum(val) FOR cat IN (SELECT DISTINCT cat FROM pv ORDER BY cat))";
+                try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
+                    client.connect();
+                    for (int i = 0; i < 3; i++) {
+                        Assert.assertEquals("a,b|1,2", printResult(client, sql));
+                    }
+                    serverMain.execute("INSERT INTO pv VALUES ('b', 5, 3::TIMESTAMP)");
+                    serverMain.awaitTable("pv");
+                    Assert.assertEquals("a,b|1,7", printResult(client, sql));
+                    serverMain.execute("INSERT INTO pv VALUES ('c', 3, 4::TIMESTAMP)");
+                    serverMain.awaitTable("pv");
+                    for (int i = 0; i < 3; i++) {
+                        Assert.assertEquals("a,b,c|1,7,3", printResult(client, sql));
+                    }
+                }
+            }
+        });
+    }
+
     @Test
     public void testRepeatedStalePlanRecompilesDoNotLeakToClient() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
@@ -2720,6 +2754,36 @@ public class QwpEgressBootstrapTest extends AbstractReusedServerQwpEgressTest {
             Os.sleep(50);
         }
         return -1;
+    }
+
+    // the result's column names, then its first row's values: "a,b|1,2"
+    private static String printResult(QwpQueryClient client, String sql) {
+        final StringBuilder names = new StringBuilder();
+        final StringBuilder values = new StringBuilder();
+        final long[] rows = {0};
+        client.execute(sql, new QwpColumnBatchHandler() {
+            @Override
+            public void onBatch(QwpColumnBatch batch) {
+                if (rows[0] == 0 && batch.getRowCount() > 0) {
+                    for (int c = 0, n = batch.getColumnCount(); c < n; c++) {
+                        names.append(c > 0 ? "," : "").append(batch.getColumnName(c));
+                        values.append(c > 0 ? "," : "").append(batch.getLongValue(c, 0));
+                    }
+                }
+                rows[0] += batch.getRowCount();
+            }
+
+            @Override
+            public void onEnd(long totalRows) {
+            }
+
+            @Override
+            public void onError(byte status, String message) {
+                Assert.fail("SELECT failed (status=" + status + "): " + message);
+            }
+        });
+        Assert.assertEquals("row count", 1L, rows[0]);
+        return names + "|" + values;
     }
 
     private void runBatchBoundary(TestServerMain serverMain, int totalRows) throws Exception {

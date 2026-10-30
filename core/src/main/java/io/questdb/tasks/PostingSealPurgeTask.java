@@ -25,10 +25,10 @@
 package io.questdb.tasks;
 
 import io.questdb.cairo.TableToken;
-import io.questdb.std.Mutable;
+import io.questdb.mp.ValueHolder;
 import io.questdb.std.str.StringSink;
 
-public class PostingSealPurgeTask implements Mutable {
+public class PostingSealPurgeTask implements ValueHolder<PostingSealPurgeTask> {
     private final StringSink indexColumnName = new StringSink();
     private long fromTableTxn;
     private int partitionBy;
@@ -44,6 +44,22 @@ public class PostingSealPurgeTask implements Mutable {
     public void clear() {
         this.tableToken = null;
         this.indexColumnName.clear();
+    }
+
+    @Override
+    public void copyTo(PostingSealPurgeTask dest) {
+        dest.of(
+                tableToken,
+                indexColumnName,
+                postingColumnNameTxn,
+                sealTxn,
+                partitionTimestamp,
+                partitionNameTxn,
+                partitionBy,
+                timestampType,
+                fromTableTxn,
+                toTableTxn
+        );
     }
 
     public long getFromTableTxn() {

@@ -25,10 +25,12 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.ColumnwiseBooleanOp;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -52,7 +54,7 @@ public class EqBooleanFunctionFactory implements FunctionFactory {
         return new EqBooleanFunctionFactory.Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends AbstractEqBinaryFunction {
+    private static class Func extends AbstractEqBinaryFunction implements ColumnwiseBooleanOp {
         public Func(Function left, Function right) {
             super(left, right);
         }
@@ -60,6 +62,26 @@ public class EqBooleanFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             return negated != (left.getBool(rec) == right.getBool(rec));
+        }
+
+        @Override
+        public Function getColumnwiseArg(int index) {
+            return index == 0 ? left : right;
+        }
+
+        @Override
+        public int getColumnwiseBooleanOp() {
+            return ColumnwiseBooleanOp.OP_EQ;
+        }
+
+        @Override
+        public int getColumnwiseOperandType() {
+            return ColumnType.BOOLEAN;
+        }
+
+        @Override
+        public boolean isColumnwiseNegated() {
+            return negated;
         }
     }
 }

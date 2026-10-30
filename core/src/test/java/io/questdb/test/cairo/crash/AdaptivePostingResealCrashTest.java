@@ -33,11 +33,12 @@ import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.mp.SCSequence;
+import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -73,6 +74,11 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
     // The sealed posting files of the covering column s and the plain column k of the three-day table.
     private static final Pattern SEALED_FILE_S_K = Pattern.compile("[sk]\\.(pv|pc\\d+)\\..*");
     private static final int SYMBOLS = 4;
+
+    @After
+    public void resetCoveringSealAppend() {
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = false;
+    }
 
     @Test
     public void testCrashBeforeNextSavePointRecoversFromLastSavePoint() throws Exception {
@@ -374,17 +380,7 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
 
     // A killed process loses its in-memory purge queue, including what a writer published at close.
     private static void discardPurgeQueue() {
-        final SCSequence subSeq = engine.getMessageBus().getPostingSealPurgeSubSeq();
-        while (true) {
-            final long cursor = subSeq.next();
-            if (cursor == -2) {
-                continue;
-            }
-            if (cursor < 0) {
-                break;
-            }
-            subSeq.done(cursor);
-        }
+        engine.getMessageBus().getPostingSealPurgeQueue().clear();
     }
 
     // A fresh process starts the purge log table with a new scoreboard.
@@ -478,6 +474,9 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
         // with merge-append on (the harness default) the index grows by a generation per commit and supersedes
         // nothing. Pin the production default.
         setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        // The native path does not reseal a pure append either: its covered tail append adds the appended rows as
+        // one more generation. Pin the reseal path; resetCoveringSealAppend() restores the default.
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = true;
         // No periodic save point inside a test.
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1_000_000_000L);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, Long.MAX_VALUE);

@@ -35,6 +35,7 @@ import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -96,6 +97,26 @@ public class CancelQueryFunctionFactory implements FunctionFactory {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(NAME).val('(').val(queryIdFunc).val(')');
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return FunctionFlags.hasPerCallState(queryIdFunc);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return FunctionFlags.isNonDeterministic(queryIdFunc);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(queryIdFunc);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return FunctionFlags.isStableWithinExecution(queryIdFunc);
         }
     }
 }

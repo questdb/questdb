@@ -419,6 +419,11 @@ public class AsyncWindowJoinFactoryConstructorTest extends AbstractCairoTest {
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
+        @Override
         public ConcurrentTimeFrameCursor newTimeFrameCursor() {
             return delegate.newTimeFrameCursor();
         }

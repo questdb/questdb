@@ -28,10 +28,13 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -45,16 +48,27 @@ import io.questdb.std.Long256;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Plannable {
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
+    // Covered sidecars make fixed-width projection decoding cheap relative to replaying
+    // their posting cursor, so late materialization needs a more conservative cutoff.
+    private static final double COVERING_SELECTIVITY_THRESHOLD = 0.01;
+    // the most bytes of gathered values an execution's tasks hold at once, see gather(): past it, a
+    // frame's rows are read where they are
+    static final long GATHER_MAX_BYTES = 256L * 1024 * 1024;
     private final IntList columnTypes;
     private final Function filter;
+    // per column of the frame, the bytes of a value the filtering threads gather for a block
+    // consumer, see gather(); 0 for a column they never gather
+    private final int[] gatherSizes;
     private final IntHashSet filterUsedColumnIndexes;
     // Shared by the owner, every reducing worker and every work-stealing thread: a thread-safe
     // filter hands out no slots, so there is no per-thread identity to key stats on. Concurrent
@@ -65,11 +79,26 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final boolean preTouchEnabled;
     private final double preTouchThreshold;
+    // false for an execution whose cursor never reads the frames' projected values: a negative LIMIT's,
+    // which reads its rows back through its own records
+    private boolean isProjecting = true;
+    // whether the filtering threads gather the filtered rows' fixed-size columns for this execution,
+    // see gather(); set by the cursor before it dispatches the frames
+    private volatile boolean isGathering;
+    // the gathered values the execution's tasks hold, see gather() and releaseGathered()
+    private final AtomicLong gatheredBytes = new AtomicLong();
+    // this execution's gatherSizes, 0 for a column its consumer does not read; see setGathering()
+    private volatile int[] executionGatherSizes;
+    private long gatherMaxBytes = GATHER_MAX_BYTES;
+    // the columns the cursor's parent reads, null for all; see setParentUsedColumns()
+    private IntHashSet parentUsedColumns;
     private IntHashSet lateMatSkipColumnIndexes;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
     // Null when no per-query limit applies. Workers and operator code feed it to
     // tracker-aware Unsafe overloads to charge allocations to the active workload.
     private MemoryTracker memoryTracker;
+    // the virtual columns of a projection over the filter, computed per frame, or null
+    private FrameProjection projection;
 
     public AsyncFilterAtom(
             @NotNull CairoConfiguration configuration,
@@ -94,12 +123,20 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
             perWorkerSelectivityStats = null;
         }
         this.columnTypes = columnTypes;
+        this.gatherSizes = new int[columnTypes.size()];
+        for (int i = 0, n = columnTypes.size(); i < n; i++) {
+            gatherSizes[i] = gatherSize(columnTypes.getQuick(i));
+        }
+        this.executionGatherSizes = gatherSizes;
         this.preTouchEnabled = preTouchEnabled;
         this.preTouchThreshold = configuration.getSqlParallelFilterPreTouchThreshold();
     }
 
     @Override
     public void clear() {
+        if (projection != null) {
+            projection.clear();
+        }
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
         memoryTracker = null;
@@ -108,7 +145,9 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
 
     @Override
     public void close() {
-        final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, perWorkerFilters);
+        Throwable cleanupFailure = Misc.freeObjListBestEffort(null, perWorkerFilters);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, projection);
+        projection = null;
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
@@ -158,6 +197,261 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
                 executionContext.setCloneSymbolTables(current);
             }
         }
+        if (projection != null) {
+            projection.init(symbolTableSource, executionContext);
+        }
+    }
+
+    public @Nullable FrameProjection getProjection() {
+        return projection;
+    }
+
+    /**
+     * The addresses of a gathered frame's columns, see {@link #gather}: column after column, each
+     * the filtered rows' values in their order, one value of the column's storage size per row,
+     * 8-byte aligned. A column whose values are not gathered, being of a type that is not gathered
+     * or absent from the frame's memory (a column top, a type cast: no page address), gets 0.
+     *
+     * @param record   a record over the frame's memory
+     * @param base     the address of the gathered values
+     * @param rowCount the frame's filtered rows
+     * @param out      per column of the frame, its values' address or 0
+     * @return the bytes the gathered values take
+     */
+    public long gatheredColumnAddresses(PageFrameMemoryRecord record, long base, long rowCount, long[] out) {
+        final int[] gatherSizes = executionGatherSizes;
+        long offset = 0;
+        for (int c = 0, n = gatherSizes.length; c < n; c++) {
+            final int size = gatherSizes[c];
+            if (size == 0 || record.getPageAddress(c) == 0) {
+                out[c] = 0;
+                continue;
+            }
+            out[c] = base + offset;
+            offset += (rowCount * size + Long.BYTES - 1) & -Long.BYTES;
+        }
+        return offset;
+    }
+
+    public int getColumnCount() {
+        return gatherSizes.length;
+    }
+
+    /**
+     * Whether a frame's columns are gathered when the cursor asks for it, see {@link #setGathering}:
+     * any column of a type the gather copies.
+     */
+    public boolean isGathering() {
+        return isGathering;
+    }
+
+    public boolean hasGatheredColumns() {
+        for (int size : gatherSizes) {
+            if (size != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether the filtering threads gather, for this execution, the filtered rows' values of the
+     * frame's fixed-size columns into the task, so that the cursor's blocks offer them as dense
+     * columns instead of scattered rows; set before the frames are dispatched.
+     */
+    public void setGathering(boolean isGathering) {
+        if (isGathering) {
+            // only the columns the consumer reads, as the parent declared them before the dispatch
+            final IntHashSet used = parentUsedColumns;
+            final int[] sizes = new int[gatherSizes.length];
+            boolean any = false;
+            for (int c = 0; c < sizes.length; c++) {
+                sizes[c] = used == null || used.contains(c) ? gatherSizes[c] : 0;
+                any |= sizes[c] != 0;
+            }
+            executionGatherSizes = sizes;
+            gatheredBytes.set(0);
+            this.isGathering = any;
+            return;
+        }
+        this.isGathering = false;
+    }
+
+    /**
+     * The cursor is done with a task's rows: gives back its gathered values, see {@link #gather}.
+     */
+    public void releaseGathered(PageFrameReduceTask task) {
+        if (!task.isGathered()) {
+            return;
+        }
+        task.setGathered(false);
+        final DirectLongList sink = task.getGatheredValues();
+        gatheredBytes.addAndGet(-sink.size() * Long.BYTES);
+        final long capacityBefore = sink.getCapacity();
+        final MemoryTracker tracker = task.getMemoryTracker();
+        // freed now rather than kept in the queue's slot until the sequence ends, so that what the
+        // tasks hold is what gatheredBytes counts; the release is the charge's, see ensureCapacity()
+        sink.setMemoryTracker(tracker);
+        try {
+            sink.resetCapacity();
+        } finally {
+            sink.setMemoryTracker(null);
+        }
+        if (tracker != null) {
+            tracker.addCoveredBytes(-(capacityBefore - sink.getCapacity()) * Long.BYTES);
+        }
+    }
+
+    @TestOnly
+    public int[] getExecutionGatherSizes() {
+        return executionGatherSizes;
+    }
+
+    @TestOnly
+    public long getGatheredBytes() {
+        return gatheredBytes.get();
+    }
+
+    @TestOnly
+    public void setGatherMaxBytes(long maxBytes) {
+        gatherMaxBytes = maxBytes;
+    }
+
+    /**
+     * Computes the projection's columns of a filtered native frame into the task, see
+     * {@link FrameProjection}. Does nothing without a projection.
+     */
+    public void project(
+            int workerId,
+            boolean owner,
+            PageFrameReduceTask task,
+            PageFrameMemoryRecord record,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        if (task.isCountOnly() || task.getFilteredRows().size() == 0
+                || task.getFrameMemory().getFrameFormat() != PartitionFormat.NATIVE) {
+            return;
+        }
+        final FrameProjection projection = this.projection;
+        if (projection != null && isProjecting) {
+            task.setProjected(projection.project(workerId, owner, record, task.getFilteredRows(), task.getProjectedValues(), task.getMemoryTracker(), circuitBreaker));
+        }
+        if (isGathering && !selectsWholeFrame(task)) {
+            task.setGathered(gather(task, record));
+        }
+    }
+
+    /**
+     * Whether the filter selected every row of the task's native frame, which has no column tops nor
+     * type casts: its columns then hold the selected rows one after another, as a gather would lay
+     * them out, and the consumer reads them where they are, see AsyncFilteredRecordCursor.
+     */
+    public static boolean selectsWholeFrame(PageFrameReduceTask task) {
+        final PageFrameMemory frameMemory = task.getFrameMemory();
+        return !task.isCountOnly()
+                && frameMemory.getFrameFormat() == PartitionFormat.NATIVE
+                && !frameMemory.hasColumnTops()
+                && !frameMemory.hasColumnTypeCasts()
+                && task.getFilteredRows().size() == task.getFrameSequence().getPageFrameAddressCache().getFrameSize(task.getFrameIndex());
+    }
+
+    /**
+     * Whether the filtering threads compute the projection's columns for this execution; set before
+     * its frames are dispatched.
+     */
+    public void setProjecting(boolean isProjecting) {
+        this.isProjecting = isProjecting;
+    }
+
+    /**
+     * Takes the projection whose columns the filtering threads compute; the atom frees it.
+     */
+    public void setProjection(FrameProjection projection) {
+        this.projection = projection;
+    }
+
+    private static int gatherSize(int type) {
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.BOOLEAN, ColumnType.BYTE -> 1;
+            case ColumnType.SHORT, ColumnType.CHAR -> 2;
+            case ColumnType.INT, ColumnType.IPv4, ColumnType.FLOAT, ColumnType.SYMBOL -> 4;
+            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE -> 8;
+            default -> 0;
+        };
+    }
+
+    // Copies the filtered rows' values of the frame's gathered columns into the task, laid out as
+    // gatheredColumnAddresses() gives them. Returns false, leaving the frame's rows to be read
+    // where they are, past the query's memory limit: the copy is only an optimisation.
+    private boolean gather(PageFrameReduceTask task, PageFrameMemoryRecord record) {
+        final int[] gatherSizes = executionGatherSizes;
+        final DirectLongList rows = task.getFilteredRows();
+        final DirectLongList sink = task.getGatheredValues();
+        final long rowCount = rows.size();
+        final int n = gatherSizes.length;
+        long bytes = 0;
+        for (int c = 0; c < n; c++) {
+            if (gatherSizes[c] != 0 && record.getPageAddress(c) != 0) {
+                bytes += (rowCount * gatherSizes[c] + Long.BYTES - 1) & -Long.BYTES;
+            }
+        }
+        sink.clear();
+        if (bytes == 0) {
+            return false;
+        }
+        // the frames the consumer has not reached yet hold at most gatherMaxBytes between them
+        if (gatheredBytes.addAndGet(bytes) > gatherMaxBytes) {
+            gatheredBytes.addAndGet(-bytes);
+            return false;
+        }
+        try {
+            FrameProjection.ensureCapacity(sink, bytes / Long.BYTES, task.getMemoryTracker());
+        } catch (CairoException e) {
+            gatheredBytes.addAndGet(-bytes);
+            if (e.isInterruption() || e.isCancellation()) {
+                throw e;
+            }
+            sink.clear();
+            return false;
+        }
+        final long rowsAddr = rows.getAddress();
+        // the layout of gatheredColumnAddresses()
+        long dst = sink.getAddress();
+        for (int c = 0; c < n; c++) {
+            if (gatherSizes[c] == 0) {
+                continue;
+            }
+            final long src = record.getPageAddress(c);
+            if (src == 0) {
+                continue;
+            }
+            final long columnDst = dst;
+            dst += (rowCount * gatherSizes[c] + Long.BYTES - 1) & -Long.BYTES;
+            switch (gatherSizes[c]) {
+                case 8 -> {
+                    for (long i = 0; i < rowCount; i++) {
+                        Unsafe.putLong(columnDst + (i << 3), Unsafe.getLong(src + (Unsafe.getLong(rowsAddr + (i << 3)) << 3)));
+                    }
+                }
+                case 4 -> {
+                    for (long i = 0; i < rowCount; i++) {
+                        Unsafe.putInt(columnDst + (i << 2), Unsafe.getInt(src + (Unsafe.getLong(rowsAddr + (i << 3)) << 2)));
+                    }
+                }
+                case 2 -> {
+                    for (long i = 0; i < rowCount; i++) {
+                        Unsafe.putShort(columnDst + (i << 1), Unsafe.getShort(src + (Unsafe.getLong(rowsAddr + (i << 3)) << 1)));
+                    }
+                }
+                default -> {
+                    for (long i = 0; i < rowCount; i++) {
+                        Unsafe.putByte(columnDst + i, Unsafe.getByte(src + Unsafe.getLong(rowsAddr + (i << 3))));
+                    }
+                }
+            }
+        }
+        sink.setPos(bytes / Long.BYTES);
+        return true;
     }
 
     /**
@@ -283,6 +577,7 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
      * rely on the happens-before edge the reduce queue provides after dispatch.
      */
     public void setParentUsedColumns(@Nullable IntHashSet columns) {
+        parentUsedColumns = columns;
         if (columns == null || filterUsedColumnIndexes == null) {
             lateMatSkipColumnIndexes = null;
             return;
@@ -297,8 +592,14 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
         lateMatSkipColumnIndexes = skipSet;
     }
 
-    public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame, boolean isCountOnly) {
-        if (!isParquetFrame) {
+    public boolean shouldUseLateMaterialization(
+            int slotId,
+            boolean isParquetFrame,
+            boolean isSingleKeyCoveredFrame,
+            boolean isCountOnly
+    ) {
+        assert !isParquetFrame || !isSingleKeyCoveredFrame;
+        if (!isParquetFrame && !isSingleKeyCoveredFrame) {
             return false;
         }
         if (filterUsedColumnIndexes == null || filterUsedColumnIndexes.size() == 0) {
@@ -307,7 +608,13 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
         if (isCountOnly) {
             return true;
         }
-        return getSelectivityStats(slotId).shouldUseLateMaterialization();
+        final SelectivityStats stats = getSelectivityStats(slotId);
+        if (isSingleKeyCoveredFrame) {
+            // Start covered frames eagerly while gathering samples. Unlike Parquet,
+            // replaying a posting cursor can cost more than decoding a narrow INCLUDE.
+            return stats.shouldUseLateMaterialization(COVERING_SELECTIVITY_THRESHOLD, false);
+        }
+        return stats.shouldUseLateMaterialization();
     }
 
     @Override

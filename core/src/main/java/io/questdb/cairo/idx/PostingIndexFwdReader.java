@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -130,6 +131,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // the reader's close() only drains freeNullCursors and would never
             // reclaim a cursor stranded mid-of().
             try {
+                nc.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 nc.of(key, minValue, indexMaxValue);
             } catch (Throwable th) {
                 nc.releaseResources();
@@ -153,6 +155,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // See the NullCursor branch above: release the cursor's native buffers
             // if of() throws so a mid-of() failure cannot strand them.
             try {
+                c.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 c.of(key, minValue, indexMaxValue);
             } catch (Throwable th) {
                 c.releaseResources();
@@ -196,6 +199,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // never in the reader's free list, so nothing else would reclaim it; release
             // its native scratch on a mid-of() failure (mirrors getCursor).
             try {
+                nc.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 nc.of(key, minValue, indexMaxValue);
             } catch (Throwable th) {
                 nc.releaseResources();
@@ -212,6 +216,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             Cursor c = new Cursor();
             c.isDetached = true;
             try {
+                c.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 c.of(key, minValue, indexMaxValue);
             } catch (Throwable th) {
                 c.releaseResources();
@@ -256,6 +261,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         private int efTotalCount;
         private int encodedBlockCount;
         private long encodedOffset;
+        // Byte extent of the key's encoded blob at encodedOffset. The ranked EF seek validates
+        // its trailer against this exact extent, so a wrong size degrades to the unranked seek
+        // instead of reading past the blob.
+        private int encodedSize;
         private long flatBaseValue;
         private int flatBitWidth;
         private long flatDataOffset;
@@ -311,7 +320,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         return false;
                     }
                     next = value;
-                    if (coverCount > 0) {
+                    if (cursorCoverCount > 0) {
                         cachedSidecarIdx = isCurrentGenDense
                                 ? sidecarStrideKeyStart + sidecarOrdinal
                                 : sidecarOrdinal;
@@ -325,7 +334,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     if (blockBufferPos < blockBufferEnd) {
                         this.next = Unsafe.getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
                         blockBufferPos++;
-                        if (coverCount > 0) {
+                        if (cursorCoverCount > 0) {
                             cachedSidecarIdx = isCurrentGenDense
                                     ? sidecarStrideKeyStart + sidecarOrdinal
                                     : sidecarOrdinal;
@@ -343,7 +352,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         }
                         if (value >= minValue) {
                             this.next = value;
-                            if (coverCount > 0) {
+                            if (cursorCoverCount > 0) {
                                 cachedSidecarIdx = isCurrentGenDense
                                         ? sidecarStrideKeyStart + sidecarOrdinal
                                         : sidecarOrdinal;
@@ -351,7 +360,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                             }
                             return true;
                         }
-                        if (coverCount > 0) sidecarOrdinal++;
+                        if (cursorCoverCount > 0) sidecarOrdinal++;
                     }
                 }
 
@@ -383,6 +392,124 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         @Override
         public long next() {
             return next - minValue;
+        }
+
+        @Override
+        public int getCoveredRunOrdinal() {
+            return isCurrentGenDense ? sidecarStrideKeyStart + sidecarOrdinal : sidecarOrdinal;
+        }
+
+        // The rows hasNext() returns one ordinal after another: a constant-delta stream's values up
+        // to the cursor's upper bound, or a decoded block's within the cursor's row range.
+        @Override
+        public int peekCoveredRun(int maxRows) {
+            if (cursorCoverCount == 0) {
+                return 0;
+            }
+            if (constantDeltaRemaining > 0) {
+                if (constantDeltaValue > maxValue) {
+                    return 0;
+                }
+                long rows = constantDeltaRemaining;
+                if (constantDeltaStep > 0) {
+                    rows = Math.min(rows, (maxValue - constantDeltaValue) / constantDeltaStep + 1);
+                }
+                return (int) Math.min(maxRows, rows);
+            }
+            final int available = Math.min(maxRows, blockBufferEnd - blockBufferPos);
+            if (bufferRangeChecked || available <= 0) {
+                return Math.max(0, available);
+            }
+            // a block that straddles the cursor's range: hasNext() skips the values below it, one
+            // ordinal each, and ends at the first above it
+            final long first = Unsafe.getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
+            if (first < minValue) {
+                return 0;
+            }
+            int rows = 0;
+            while (rows < available && Unsafe.getLong(blockBufferAddr + (long) (blockBufferPos + rows) * Long.BYTES) <= maxValue) {
+                rows++;
+            }
+            return rows;
+        }
+
+        @Override
+        public void skipCoveredRun(int rows) {
+            assert rows >= 0;
+            if (rows == 0) {
+                return;
+            }
+            if (constantDeltaRemaining > 0) {
+                assert rows <= constantDeltaRemaining;
+                this.next = constantDeltaValue + (rows - 1) * constantDeltaStep;
+                constantDeltaValue += rows * constantDeltaStep;
+                constantDeltaRemaining -= rows;
+            } else {
+                assert rows <= blockBufferEnd - blockBufferPos;
+                blockBufferPos += rows;
+                this.next = Unsafe.getLong(blockBufferAddr + (long) (blockBufferPos - 1) * Long.BYTES);
+            }
+            sidecarOrdinal += rows;
+            cachedSidecarIdx = isCurrentGenDense ? sidecarStrideKeyStart + sidecarOrdinal - 1 : sidecarOrdinal - 1;
+        }
+
+        /**
+         * {@link #hasNext()} and {@link #next()} over the decoded block in bulk: a block wholly
+         * within the cursor's row range is copied as it is; another one skips the values below
+         * the range and ends the cursor at the first above it, as {@code hasNext()} does. A
+         * constant-delta stream, a covering index's sidecar ordinals and the decoding of the next
+         * block go through {@code hasNext()}.
+         */
+        @Override
+        public long drainTo(DirectLongList sink, long rowIdBase, long maxRows) {
+            if (cursorCoverCount > 0) {
+                return RowCursor.drainRows(this, sink, rowIdBase, maxRows);
+            }
+            long n = 0;
+            while (n < maxRows) {
+                final int available = blockBufferEnd - blockBufferPos;
+                if (constantDeltaRemaining == 0 && available > 0) {
+                    final int count = (int) Math.min(available, maxRows - n);
+                    sink.ensureCapacity(count);
+                    final long dst = sink.getAppendAddress();
+                    final long src = blockBufferAddr + (long) blockBufferPos * Long.BYTES;
+                    final long min = minValue;
+                    if (bufferRangeChecked) {
+                        for (int i = 0; i < count; i++) {
+                            Unsafe.putLong(dst + (long) i * Long.BYTES, rowIdBase | (Unsafe.getLong(src + (long) i * Long.BYTES) - min));
+                        }
+                        blockBufferPos += count;
+                        sink.skip(count);
+                        n += count;
+                        continue;
+                    }
+                    final long max = maxValue;
+                    int copied = 0;
+                    for (int i = 0; i < count; i++) {
+                        final long value = Unsafe.getLong(src + (long) i * Long.BYTES);
+                        if (value > max) {
+                            // past the range: the cursor ends here, as hasNext() ends it
+                            blockBufferPos = blockBufferEnd;
+                            sink.skip(copied);
+                            return n + copied;
+                        }
+                        if (value >= min) {
+                            Unsafe.putLong(dst + (long) copied * Long.BYTES, rowIdBase | (value - min));
+                            copied++;
+                        }
+                    }
+                    blockBufferPos += count;
+                    sink.skip(copied);
+                    n += copied;
+                    continue;
+                }
+                if (!hasNext()) {
+                    break;
+                }
+                sink.add(rowIdBase | next());
+                n++;
+            }
+            return n;
         }
 
         private boolean advanceToNextRelevantGen() {
@@ -475,15 +602,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     if (minD > 0) {
                         long skip = (minValue - startValue + minD - 1) / minD;
                         if (skip >= remaining) {
-                            if (coverCount > 0) sidecarOrdinal += remaining;
+                            if (cursorCoverCount > 0) sidecarOrdinal += remaining;
                             remaining = 0;
                         } else {
                             startValue += skip * minD;
-                            if (coverCount > 0) sidecarOrdinal += (int) skip;
+                            if (cursorCoverCount > 0) sidecarOrdinal += (int) skip;
                             remaining -= (int) skip;
                         }
                     } else {
-                        if (coverCount > 0) sidecarOrdinal += remaining;
+                        if (cursorCoverCount > 0) sidecarOrdinal += remaining;
                         remaining = 0;
                     }
                 }
@@ -735,7 +862,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.totalValueCount = Unsafe.getInt(countsAddr + (long) localKey * Integer.BYTES);
             this.sidecarStrideKeyStart = 0;
             this.sidecarOrdinal = 0;
-            if (coverCount > 0) {
+            if (cursorCoverCount > 0) {
                 int deltaKeyStartCount = 0;
                 for (int k = 0; k < localKey; k++) {
                     deltaKeyStartCount += Unsafe.getInt(countsAddr + (long) k * Integer.BYTES);
@@ -744,8 +871,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
             long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
             long dataOffset = Unsafe.getLong(offsetsBase + (long) localKey * Long.BYTES);
+            long dataEndOffset = Unsafe.getLong(offsetsBase + (long) (localKey + 1) * Long.BYTES);
             int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
             this.encodedOffset = strideFileOffset + deltaHeaderSize + dataOffset;
+            this.encodedSize = (int) (dataEndOffset - dataOffset);
 
             readDeltaBlockMetadata();
         }
@@ -782,7 +911,8 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            long prefixSumAddr = valueMem.addressOf(genLookup.getGenPrefixSumOffset(gen, valueMem));
+            final long prefixSumOffset = genLookup.getGenPrefixSumOffset(gen, valueMem);
+            long prefixSumAddr = valueMem.addressOf(prefixSumOffset);
             int k = requestedKey - minKey;
             int start = Unsafe.getInt(prefixSumAddr + (long) k * Integer.BYTES);
             int end = Unsafe.getInt(prefixSumAddr + (long) (k + 1) * Integer.BYTES);
@@ -798,7 +928,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
 
-            if (coverCount > 0) {
+            if (cursorCoverCount > 0) {
                 // O(1) via the reader-scoped memo instead of an O(start) scan of
                 // counts[] on every cursor open; version-guarded on the gen
                 // snapshot. See SparseGenSidecarPrefixSum.
@@ -812,7 +942,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             this.totalValueCount = Unsafe.getInt(countsBase + (long) start * Integer.BYTES);
             long dataOffset = Unsafe.getLong(offsetsBase + (long) start * Long.BYTES);
+            long dataEndOffset = start + 1 < activeKeyCount
+                    ? Unsafe.getLong(offsetsBase + (long) (start + 1) * Long.BYTES)
+                    : prefixSumOffset - genFileOffset - headerSize;
             this.encodedOffset = genFileOffset + headerSize + dataOffset;
+            this.encodedSize = (int) (dataEndOffset - dataOffset);
 
             readDeltaBlockMetadata();
         }
@@ -844,7 +978,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
 
-            if (coverCount > 0) {
+            if (cursorCoverCount > 0) {
                 // O(1) via the reader-scoped memo instead of an O(idx) scan of
                 // counts[] on every cursor open; version-guarded on the gen
                 // snapshot. See SparseGenSidecarPrefixSum.
@@ -858,7 +992,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             this.totalValueCount = Unsafe.getInt(countsBase + (long) idx * Integer.BYTES);
             long dataOffset = Unsafe.getLong(offsetsBase + (long) idx * Long.BYTES);
+            long dataEndOffset = idx + 1 < activeKeyCount
+                    ? Unsafe.getLong(offsetsBase + (long) (idx + 1) * Long.BYTES)
+                    : genLookup.getGenPrefixSumOffset(gen, valueMem) - genFileOffset - headerSize;
             this.encodedOffset = genFileOffset + headerSize + dataOffset;
+            this.encodedSize = (int) (dataEndOffset - dataOffset);
 
             readDeltaBlockMetadata();
         }
@@ -893,6 +1031,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 blockBufferPos = 0;
                 blockBufferEnd = 0;
                 constantDeltaRemaining = 0;
+                // Mirrors the backward reader's maxValue < u - 1 guard: a blob whose first value is
+                // already >= minValue (every generation after the one holding minValue) has nothing
+                // to skip, so it starts at ordinal 0 without paying for the seek.
+                if (minValue > 0) {
+                    final long firstValue = PostingIndexUtils.efFirstValue(baseAddr + encodedOffset, encodedSize);
+                    if (firstValue < 0 || minValue > firstValue) {
+                        seekEF(baseAddr, u);
+                    }
+                }
                 return;
             }
             isEFMode = false;
@@ -936,9 +1083,16 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 startBlock = lo;
             }
 
+            // Only the covered accessors consume the skipped count (via sidecarStrideKeyStart or
+            // sidecarOrdinal, both read only when cursorCoverCount > 0), so a cursor that reads no
+            // covered column skips this O(startBlock) sum; summing it on every frame of a long list
+            // cost O(frames * blocks). cursorCoverCount is per cursor: on an INCLUDE index only a
+            // cursor opened for covered columns pays it.
             int skippedValueCount = 0;
-            for (int b = 0; b < startBlock; b++) {
-                skippedValueCount += Unsafe.getByte(baseAddr + srcValueCountsOffset + b) & 0xFF;
+            if (cursorCoverCount > 0) {
+                for (int b = 0; b < startBlock; b++) {
+                    skippedValueCount += Unsafe.getByte(baseAddr + srcValueCountsOffset + b) & 0xFF;
+                }
             }
             if (startBlock > 0) {
                 packedDataStartOffset += Unsafe.getLong(baseAddr + srcPackedOffsetsOffset + (long) startBlock * Long.BYTES);
@@ -953,7 +1107,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // On a sparse gen the accessors index by sidecarOrdinal alone, so the skip goes
             // there.
             this.sidecarStrideKeyStart += skippedValueCount;
-            if (!isCurrentGenDense && coverCount > 0) {
+            if (!isCurrentGenDense && cursorCoverCount > 0) {
                 this.sidecarOrdinal += skippedValueCount;
             }
 
@@ -972,6 +1126,69 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.currentBlock = startBlock;
             this.blockBufferPos = 0;
             this.blockBufferEnd = 0;
+        }
+
+        /**
+         * Positions the EF decode at the high word holding the first ordinal whose value is
+         * {@code >= minValue}, so a cursor opened for a page frame in the middle of the key's list
+         * does not decode (and discard) every value before the frame. Ranked blobs seek in
+         * O(log n) through the trailer's checkpoints (efLowerBound, then an O(1) step to the
+         * word holding that ordinal); legacy unranked blobs skip whole high words
+         * by popcount, which reads one word per 64 high bits instead of decoding each value.
+         * Either way the decode resumes at a word boundary with {@code efOutputCount} equal to
+         * the ordinals before that word, exactly the state a from-zero decode reaches there, and
+         * {@link #hasNext()} discards the at most 63 remaining values below minValue as before.
+         */
+        private void seekEF(long baseAddr, long universe) {
+            final long blobAddr = baseAddr + encodedOffset;
+            int word = -1;
+            int rank = 0;
+            if (minValue >= universe) {
+                word = efNumHighWords;
+                rank = efTotalCount;
+            } else {
+                final int ordinal = PostingIndexUtils.efLowerBound(blobAddr, encodedSize, minValue);
+                if (ordinal >= efTotalCount) {
+                    word = efNumHighWords;
+                    rank = efTotalCount;
+                } else if (ordinal >= 0) {
+                    final long packed = PostingIndexUtils.efLowerBoundWord(blobAddr, minValue, ordinal);
+                    // A negative result means the high word is inconsistent with the validated
+                    // ordinal (corrupt data): decoding from it would address the low bits at a
+                    // negative ordinal, outside the blob, so take the unranked walk instead.
+                    if (packed >= 0) {
+                        word = (int) (packed >>> 32);
+                        rank = (int) packed;
+                    }
+                }
+            }
+            if (word < 0) {
+                // Unranked: a word whose last value has a high part below minValue's holds
+                // only values below minValue (value < (high + 1) << L <= minValue).
+                final long targetHigh = minValue >>> efL;
+                final long highAddr = baseAddr + efHighOffset;
+                word = 0;
+                while (word < efNumHighWords && rank < efTotalCount) {
+                    final long bits = Unsafe.getLong(highAddr + (long) word * Long.BYTES);
+                    if (bits != 0) {
+                        final int ones = Long.bitCount(bits);
+                        final long lastHigh = (long) word * 64 + (63 - Long.numberOfLeadingZeros(bits)) - (rank + ones - 1);
+                        if (lastHigh >= targetHigh) {
+                            break;
+                        }
+                        rank += ones;
+                    }
+                    word++;
+                }
+                rank = Math.min(rank, efTotalCount);
+            }
+            efHighWordIdx = word;
+            efOutputCount = rank;
+            // hasNext() advances sidecarOrdinal once per value it discards below minValue; the
+            // seek discards these values without visiting them, so account for them here.
+            if (cursorCoverCount > 0) {
+                sidecarOrdinal += rank;
+            }
         }
 
         void of(int key, long minValue, long maxValue) {
@@ -1047,6 +1264,26 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 return;
             }
             releaseResources();
+        }
+
+        @Override
+        public int peekCoveredRun(int maxRows) {
+            // the NULL rows of the column top have no covered values
+            return nullPos < nullCount ? 0 : super.peekCoveredRun(maxRows);
+        }
+
+        // the NULL rows of the column top first, one at a time, then the index's rows in bulk
+        @Override
+        public long drainTo(DirectLongList sink, long rowIdBase, long maxRows) {
+            long n = 0;
+            while (n < maxRows && nullPos < nullCount) {
+                if (!hasNext()) {
+                    return n;
+                }
+                sink.add(rowIdBase | next());
+                n++;
+            }
+            return n < maxRows ? n + super.drainTo(sink, rowIdBase, maxRows - n) : n;
         }
 
         @Override

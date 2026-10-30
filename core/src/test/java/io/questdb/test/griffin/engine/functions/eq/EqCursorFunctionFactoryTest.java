@@ -415,6 +415,9 @@ public class EqCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPlanRendersEqCursor() throws Exception {
+        // keeps the comparison on the Java filter that this plan covers: by default the JIT binds
+        // the scalar sub-query and EXPLAIN reads "Async JIT Filter", see ScalarSubQueryJitTest
+        setProperty(PropertyKey.CAIRO_SQL_JIT_SCALAR_SUBQUERY_ENABLED, "false");
         assertMemoryLeak(() -> {
             execute("create table t as (select x::int i from long_sequence(10))");
             // the = cursor predicate is pushed into the async filter and renders inline, exactly

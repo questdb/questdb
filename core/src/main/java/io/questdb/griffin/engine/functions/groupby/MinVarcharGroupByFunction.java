@@ -124,6 +124,11 @@ public final class MinVarcharGroupByFunction extends VarcharFunction implements 
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

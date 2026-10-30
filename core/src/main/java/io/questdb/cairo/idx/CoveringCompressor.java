@@ -27,6 +27,7 @@ package io.questdb.cairo.idx;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * ALP (Adaptive Lossless floating-Point) compression for covering index
@@ -100,6 +101,16 @@ public class CoveringCompressor {
      */
     public static double alpDecode(long encoded, int e, int f) {
         return (double) encoded * F10[f] * IF10[e];
+    }
+
+    @TestOnly
+    public static float f10f(int f) {
+        return F10F[f];
+    }
+
+    @TestOnly
+    public static float if10f(int e) {
+        return IF10F[e];
     }
 
     public static float alpDecodeFloat(int encoded, int e, int f) {
@@ -925,6 +936,210 @@ public class CoveringCompressor {
                 Unsafe.putShort(outputAddr + (long) i * Short.BYTES, (short) forBase);
             }
         }
+    }
+
+    /**
+     * Decompresses the values {@code [lo, lo + n)} of a covering sidecar block of the given column
+     * type to {@code outputAddr}, the value at {@code lo} first: the same values the whole-block
+     * decoder ({@code decompressXxxToAddr}) writes at those positions, without decoding the rest of
+     * the block. The workspace must hold {@code n} longs. Every layout is random access: the packed
+     * offsets have a fixed bit width, the linear prediction is a function of the position, and the
+     * ALP exceptions are listed by ascending position.
+     */
+    public static void decompressRangeToAddr(int columnType, long srcAddr, int lo, int n, long outputAddr, long workspaceAddr) {
+        if (n <= 0) {
+            return;
+        }
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.DOUBLE -> decompressDoublesRangeToAddr(srcAddr, lo, n, outputAddr, workspaceAddr);
+            case ColumnType.FLOAT -> decompressFloatsRangeToAddr(srcAddr, lo, n, outputAddr, workspaceAddr);
+            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
+                    decompressLongsRangeToAddr(srcAddr, lo, n, outputAddr, workspaceAddr);
+            case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
+                    decompressIntsRangeToAddr(srcAddr, lo, n, outputAddr, workspaceAddr);
+            case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
+                    decompressShortsRangeToAddr(srcAddr, lo, n, outputAddr, workspaceAddr);
+            case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
+                    decompressBytesRangeToAddr(srcAddr, lo, n, outputAddr, workspaceAddr);
+            default -> {
+                // LONG128, UUID, DECIMAL128, LONG256, DECIMAL256: stored raw after the count
+                final int size = ColumnType.sizeOf(columnType);
+                Unsafe.copyMemory(srcAddr + 4 + (long) lo * size, outputAddr, (long) n * size);
+            }
+        }
+    }
+
+    private static void decompressBytesRangeToAddr(long srcAddr, int lo, int n, long outputAddr, long workspaceAddr) {
+        long pos = srcAddr + 4;
+        final int bw = Unsafe.getByte(pos++) & 0xFF;
+        final long forBase = Unsafe.getByte(pos++); // sign-extend
+        if (bw > 0) {
+            BitpackUtils.unpackValuesFrom(pos, lo, n, bw, forBase, workspaceAddr);
+            for (int i = 0; i < n; i++) {
+                Unsafe.putByte(outputAddr + i, (byte) Unsafe.getLong(workspaceAddr + (long) i * Long.BYTES));
+            }
+        } else {
+            Unsafe.setMemory(outputAddr, n, (byte) forBase);
+        }
+    }
+
+    private static void decompressDoublesRangeToAddr(long srcAddr, int lo, int n, long outputAddr, long workspaceAddr) {
+        long pos = srcAddr;
+        final int rawCount = Unsafe.getInt(pos);
+        if ((rawCount & RAW_BLOCK_FLAG) != 0) {
+            Unsafe.copyMemory(pos + 4 + (long) lo * Double.BYTES, outputAddr, (long) n * Double.BYTES);
+            return;
+        }
+        pos += 4;
+        final int e = Unsafe.getByte(pos++) & 0xFF;
+        final int f = Unsafe.getByte(pos++) & 0xFF;
+        final int bw = Unsafe.getByte(pos++) & 0xFF;
+        final int excCount = Unsafe.getInt(pos);
+        pos += 4;
+        final long forBase = Unsafe.getLong(pos);
+        pos += 8;
+        if (bw > 0) {
+            BitpackUtils.unpackValuesFrom(pos, lo, n, bw, forBase, workspaceAddr);
+            for (int i = 0; i < n; i++) {
+                Unsafe.putDouble(outputAddr + (long) i * Double.BYTES, alpDecode(Unsafe.getLong(workspaceAddr + (long) i * Long.BYTES), e, f));
+            }
+        } else {
+            final double value = alpDecode(forBase, e, f);
+            for (int i = 0; i < n; i++) {
+                Unsafe.putDouble(outputAddr + (long) i * Double.BYTES, value);
+            }
+        }
+        final long excPosAddr = pos + BitpackUtils.packedDataSize(rawCount, bw);
+        final long excValAddr = excPosAddr + (long) excCount * Integer.BYTES;
+        for (int i = firstExceptionAtOrAfter(excPosAddr, excCount, lo); i < excCount; i++) {
+            final int excIdx = Unsafe.getInt(excPosAddr + (long) i * Integer.BYTES);
+            if (excIdx >= lo + n) {
+                break;
+            }
+            Unsafe.putDouble(outputAddr + (long) (excIdx - lo) * Double.BYTES, Unsafe.getDouble(excValAddr + (long) i * Double.BYTES));
+        }
+    }
+
+    private static void decompressFloatsRangeToAddr(long srcAddr, int lo, int n, long outputAddr, long workspaceAddr) {
+        long pos = srcAddr;
+        final int rawCount = Unsafe.getInt(pos);
+        if ((rawCount & RAW_BLOCK_FLAG) != 0) {
+            Unsafe.copyMemory(pos + 4 + (long) lo * Float.BYTES, outputAddr, (long) n * Float.BYTES);
+            return;
+        }
+        pos += 4;
+        final int e = Unsafe.getByte(pos++) & 0xFF;
+        final int f = Unsafe.getByte(pos++) & 0xFF;
+        final int bw = Unsafe.getByte(pos++) & 0xFF;
+        final int excCount = Unsafe.getInt(pos);
+        pos += 4;
+        final int forBase = Unsafe.getInt(pos);
+        pos += 4;
+        if (bw > 0 && bw <= 32 && PostingIndexNative.isNative32Available()) {
+            PostingIndexNative.unpackAlpFloatsFrom(pos, lo, n, rawCount, bw, forBase, F10F[f], IF10F[e], outputAddr);
+        } else if (bw > 0) {
+            BitpackUtils.unpackValuesFrom(pos, lo, n, bw, forBase, workspaceAddr);
+            for (int i = 0; i < n; i++) {
+                Unsafe.putFloat(outputAddr + (long) i * Float.BYTES, alpDecodeFloat((int) Unsafe.getLong(workspaceAddr + (long) i * Long.BYTES), e, f));
+            }
+        } else {
+            final float value = alpDecodeFloat(forBase, e, f);
+            for (int i = 0; i < n; i++) {
+                Unsafe.putFloat(outputAddr + (long) i * Float.BYTES, value);
+            }
+        }
+        final long excPosAddr = pos + BitpackUtils.packedDataSize(rawCount, bw);
+        final long excValAddr = excPosAddr + (long) excCount * Integer.BYTES;
+        for (int i = firstExceptionAtOrAfter(excPosAddr, excCount, lo); i < excCount; i++) {
+            final int excIdx = Unsafe.getInt(excPosAddr + (long) i * Integer.BYTES);
+            if (excIdx >= lo + n) {
+                break;
+            }
+            Unsafe.putFloat(outputAddr + (long) (excIdx - lo) * Float.BYTES, Unsafe.getFloat(excValAddr + (long) i * Float.BYTES));
+        }
+    }
+
+    private static void decompressIntsRangeToAddr(long srcAddr, int lo, int n, long outputAddr, long workspaceAddr) {
+        long pos = srcAddr + 4;
+        final int bw = Unsafe.getByte(pos++) & 0xFF;
+        final int forBase = Unsafe.getInt(pos);
+        pos += 4;
+        if (bw > 0 && bw <= 32 && PostingIndexNative.isNative32Available()) {
+            PostingIndexNative.unpackIntsFrom(pos, lo, n, Unsafe.getInt(srcAddr), bw, forBase, outputAddr);
+        } else if (bw > 0) {
+            BitpackUtils.unpackValuesFrom(pos, lo, n, bw, 0, workspaceAddr);
+            for (int i = 0; i < n; i++) {
+                Unsafe.putInt(outputAddr + (long) i * Integer.BYTES, forBase + (int) Unsafe.getLong(workspaceAddr + (long) i * Long.BYTES));
+            }
+        } else {
+            for (int i = 0; i < n; i++) {
+                Unsafe.putInt(outputAddr + (long) i * Integer.BYTES, forBase);
+            }
+        }
+    }
+
+    private static void decompressLongsRangeToAddr(long srcAddr, int lo, int n, long outputAddr, long workspaceAddr) {
+        long pos = srcAddr + 4;
+        final int rawBw = Unsafe.getByte(pos++) & 0xFF;
+        final boolean isLinearPred = (rawBw & LINEAR_PRED_FLAG) == LINEAR_PRED_FLAG;
+        final int bw = isLinearPred ? rawBw & BW_MASK_6BIT : rawBw;
+        final long forBase = Unsafe.getLong(pos);
+        pos += 8;
+        if (isLinearPred) {
+            final long firstValue = Unsafe.getLong(pos);
+            pos += 8;
+            final long stride = Unsafe.getLong(pos);
+            pos += 8;
+            if (bw > 0) {
+                BitpackUtils.unpackValuesFrom(pos, lo, n, bw, forBase, workspaceAddr);
+            } else {
+                for (int i = 0; i < n; i++) {
+                    Unsafe.putLong(workspaceAddr + (long) i * Long.BYTES, forBase);
+                }
+            }
+            for (int i = 0; i < n; i++) {
+                Unsafe.putLong(outputAddr + (long) i * Long.BYTES,
+                        firstValue + (long) (lo + i) * stride + Unsafe.getLong(workspaceAddr + (long) i * Long.BYTES));
+            }
+        } else if (bw > 0) {
+            BitpackUtils.unpackValuesFrom(pos, lo, n, bw, forBase, outputAddr);
+        } else {
+            for (int i = 0; i < n; i++) {
+                Unsafe.putLong(outputAddr + (long) i * Long.BYTES, forBase);
+            }
+        }
+    }
+
+    private static void decompressShortsRangeToAddr(long srcAddr, int lo, int n, long outputAddr, long workspaceAddr) {
+        long pos = srcAddr + 4;
+        final int bw = Unsafe.getByte(pos++) & 0xFF;
+        final long forBase = Unsafe.getShort(pos); // sign-extend
+        pos += 2;
+        if (bw > 0) {
+            BitpackUtils.unpackValuesFrom(pos, lo, n, bw, forBase, workspaceAddr);
+            for (int i = 0; i < n; i++) {
+                Unsafe.putShort(outputAddr + (long) i * Short.BYTES, (short) Unsafe.getLong(workspaceAddr + (long) i * Long.BYTES));
+            }
+        } else {
+            for (int i = 0; i < n; i++) {
+                Unsafe.putShort(outputAddr + (long) i * Short.BYTES, (short) forBase);
+            }
+        }
+    }
+
+    // the index of the first exception whose position is lo or more; positions ascend
+    private static int firstExceptionAtOrAfter(long excPosAddr, int excCount, int lo) {
+        int l = 0;
+        int h = excCount;
+        while (l < h) {
+            final int mid = (l + h) >>> 1;
+            if (Unsafe.getInt(excPosAddr + (long) mid * Integer.BYTES) < lo) {
+                l = mid + 1;
+            } else {
+                h = mid;
+            }
+        }
+        return l;
     }
 
     public static int findBestAlpParams(long srcAddr, int count, int valueShift) {

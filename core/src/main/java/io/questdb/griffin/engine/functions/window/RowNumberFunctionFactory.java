@@ -48,6 +48,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
@@ -506,6 +507,26 @@ public class RowNumberFunctionFactory implements FunctionFactory {
             if (map.isOpen()) {
                 map.clear();
             }
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return FunctionFlags.hasPerCallState(partitionByRecord);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return FunctionFlags.isNonDeterministic(partitionByRecord);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(partitionByRecord);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return FunctionFlags.isStableWithinExecution(partitionByRecord);
         }
     }
 

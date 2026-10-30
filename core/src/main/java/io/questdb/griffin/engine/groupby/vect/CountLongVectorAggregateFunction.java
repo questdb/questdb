@@ -63,4 +63,9 @@ public class CountLongVectorAggregateFunction extends AbstractCountVectorAggrega
             return keyValueFunc.run(pRosti, keyAddress, valueAddress, frameRowCount, valueOffset);
         }
     }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
 }

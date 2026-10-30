@@ -129,6 +129,11 @@ public class MinTimestampVectorAggregateFunction extends TimestampFunction imple
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean merge(long pRostiA, long pRostiB) {
         return Rosti.keyedIntMinLongMerge(pRostiA, pRostiB, valueOffset);
     }

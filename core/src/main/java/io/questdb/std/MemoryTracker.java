@@ -56,8 +56,8 @@ public abstract class MemoryTracker implements Closeable {
     private static final int SCOPE_PROCESS = 2;
     private static final int SCOPE_QUERY = 1;
 
-    // Covered-index buffers are released by a reusable reduce-task pool after
-    // the owning query has ended. Their outstanding charge is reconciled at
+    // Covered-index buffers, and the values an Async Filter's workers project, are
+    // released by a reusable reduce-task pool after the owning query has ended. Their outstanding charge is reconciled at
     // query close so a pooled tracker cannot be credited by a later owner.
     private final AtomicLong coveredBytes = new AtomicLong();
     // One Rust QdbAllocator per native memory tag, created lazily and retained

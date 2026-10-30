@@ -76,9 +76,9 @@ public class LiveViewPercentileTest extends AbstractLiveViewTest {
 
     @Test
     public void testApproxPercentileOverLiveView() throws Exception {
-        // The multi-percentile approx_percentile does not run in parallel, so GROUP BY reads the view through
-        // its record cursor rather than through its page frames. Precision 3 picks the packed histograms,
-        // the default precision the plain ones.
+        // The view's in-memory rows (the lead) must reach the GROUP BY whether it reads the view through its
+        // record cursor or, for a multi-percentile that runs in parallel, through its page frames. Precision 3
+        // picks the packed histograms, the default precision the plain ones.
         assertMemoryLeak(() -> {
             createLiveViewWithLead();
 
@@ -91,7 +91,7 @@ public class LiveViewPercentileTest extends AbstractLiveViewTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .withPlanContaining("GroupBy vectorized: false", "LiveView", "inMemory: true")
+                    .withPlanContaining("LiveView", "inMemory: true")
                     .returns("""
                             apl\tapv\tapl1\tapv1
                             [30.0,600.0]\t[3.0009765625,60.0302734375]\t[30.0,607.0]\t[3.0625,61.9375]
@@ -99,7 +99,7 @@ public class LiveViewPercentileTest extends AbstractLiveViewTest {
             assertQuery("SELECT sym, approx_percentile(l, ARRAY[0.5, 1.0], 3) apl FROM lv ORDER BY sym")
                     .noLeakCheck()
                     .expectSize()
-                    .withPlanContaining("GroupBy vectorized: false", "LiveView")
+                    .withPlanContaining("LiveView")
                     .returns("""
                             sym\tapl
                             a\t[30.0,500.0]

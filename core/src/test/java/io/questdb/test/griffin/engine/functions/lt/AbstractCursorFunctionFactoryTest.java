@@ -59,6 +59,16 @@ abstract class AbstractCursorFunctionFactoryTest extends AbstractCairoTest {
     }
 
     /**
+     * Keeps the scalar sub-query comparison on the Java filter, the path that the plan and
+     * parallel assertions of these tests cover. By default the JIT binds an uncorrelated scalar
+     * sub-query as a constant of the execution, EXPLAIN reads "Async JIT Filter" or
+     * "Async JIT Group By", and ScalarSubQueryJitTest covers that path.
+     */
+    protected static void pinJavaComparison() {
+        setProperty(PropertyKey.CAIRO_SQL_JIT_SCALAR_SUBQUERY_ENABLED, "false");
+    }
+
+    /**
      * Asserts that a bare {@code null} literal on the right of every comparison operator compiles
      * to a scalar null-comparison (never a cursor comparison) and matches no rows. The generic
      * behavior is shared by every numeric left-operand type; type-specific rationale stays with
@@ -164,6 +174,7 @@ abstract class AbstractCursorFunctionFactoryTest extends AbstractCairoTest {
      * left-operand type.
      */
     protected final void assertParallelAsyncFilterAndKeyedSumLessThanBehavior(String qtyColumnType) throws Exception {
+        pinJavaComparison();
         runWithPool((compiler, ctx) -> {
             execute(
                     compiler,
@@ -255,6 +266,7 @@ abstract class AbstractCursorFunctionFactoryTest extends AbstractCairoTest {
      * left-operand type.
      */
     protected final void assertParallelGroupByWithCursorPredicateBehavior(String qtyColumnType) throws Exception {
+        pinJavaComparison();
         runWithPool((compiler, ctx) -> {
             execute(
                     compiler,
@@ -316,6 +328,7 @@ abstract class AbstractCursorFunctionFactoryTest extends AbstractCairoTest {
      * identical for every integer left-operand type up to the column name.
      */
     protected final void assertPlanAsyncFilterLongModeBehavior(String columnType, String columnName) throws Exception {
+        pinJavaComparison();
         assertMemoryLeak(() -> {
             execute("create table t as (select x::" + columnType + " " + columnName + " from long_sequence(10))");
             assertQuery("select " + columnName + " from t where " + columnName + " > (select max(" + columnName + ") from t)")

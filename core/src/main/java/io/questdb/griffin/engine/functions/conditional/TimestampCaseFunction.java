@@ -33,17 +33,24 @@ import io.questdb.std.ObjList;
 @SuppressWarnings("resource")
 class TimestampCaseFunction extends TimestampFunction implements CaseFunction {
     private final ObjList<Function> args;
+    private final CaseBranches.Values branches;
     private final CaseFunctionPicker picker;
 
-    public TimestampCaseFunction(CaseFunctionPicker picker, ObjList<Function> args, int columnType) {
+    public TimestampCaseFunction(CaseFunctionPicker picker, ObjList<Function> args, int columnType, CaseBranches.Values branches) {
         super(columnType);
         this.picker = picker;
         this.args = args;
+        this.branches = branches;
     }
 
     @Override
     public ObjList<Function> args() {
         return args;
+    }
+
+    @Override
+    public CaseBranches.Values branches() {
+        return branches;
     }
 
     @Override

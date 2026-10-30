@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -40,7 +41,7 @@ import io.questdb.std.Misc;
 public class EncodedSortRecordCursorFactory extends AbstractRecordCursorFactory {
     private final ListColumnFilter sortColumnFilter;
     private RecordCursorFactory base;
-    private EncodedSortRecordCursor cursor;
+    private DelegatingRecordCursor cursor;
 
     public EncodedSortRecordCursorFactory(
             CairoConfiguration configuration,
@@ -51,7 +52,10 @@ public class EncodedSortRecordCursorFactory extends AbstractRecordCursorFactory 
     ) {
         super(metadata);
         this.base = base;
-        this.cursor = new EncodedSortRecordCursor(
+        // rows of a decodable key and at most one small column sort as their entries alone
+        this.cursor = EncodedSortPayloadRecordCursor.isEligible(metadata, sortColumnFilter)
+                ? new EncodedSortPayloadRecordCursor(configuration, metadata, sortColumnFilter)
+                : new EncodedSortRecordCursor(
                 configuration,
                 metadata,
                 sortColumnFilter,
@@ -108,7 +112,7 @@ public class EncodedSortRecordCursorFactory extends AbstractRecordCursorFactory 
     protected void _close() {
         final RecordCursorFactory base = this.base;
         this.base = null;
-        final EncodedSortRecordCursor cursor = this.cursor;
+        final DelegatingRecordCursor cursor = this.cursor;
         this.cursor = null;
         Throwable failure = Misc.freeBestEffort(null, base);
         failure = Misc.freeBestEffort(failure, cursor);

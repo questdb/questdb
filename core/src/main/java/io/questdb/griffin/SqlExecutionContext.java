@@ -366,6 +366,32 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParallelTopKEnabled();
 
+    /**
+     * Whether a window partitioned by the key of a key-major index scan may run on the shared
+     * query workers. Off unless the configuration enables it and there are shared workers.
+     */
+    default boolean isParallelWindowEnabled() {
+        return false;
+    }
+
+    /**
+     * Whether a filter on {@code min|max(x) OVER (PARTITION BY ...)} may run as a parallel
+     * aggregation per partition followed by a parallel lookup filter. Off unless the configuration
+     * enables it, parallel filters are enabled and there are shared workers.
+     */
+    default boolean isParallelWindowMinMaxRewriteEnabled() {
+        return false;
+    }
+
+    /**
+     * Whether an inner hash join with a build side unique on the join key may probe on the shared
+     * query workers. Off unless the configuration enables it, parallel filters are enabled and
+     * there are shared workers.
+     */
+    default boolean isParallelHashJoinProbeEnabled() {
+        return false;
+    }
+
     boolean isParallelWindowJoinEnabled();
 
     boolean isParquetRowGroupPruningEnabled();
@@ -429,6 +455,21 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     /**
+     * Returns true when the consumer that required a designated timestamp also requires the base to
+     * already scan it ascending, because it has no way to obtain that order itself. A consumer that
+     * does have one - {@code SqlCodeGenerator.generateSampleBy}, which either restates the requirement
+     * as an ORDER BY the planner can satisfy with a merge or sorts at its own gate - pushes the
+     * requirement with {@link #pushTimestampRequiredFlag(boolean, boolean)} and
+     * {@code ascOrderRequired = false}, so the projection models between it and the base hand the base
+     * through instead of refusing on its behalf.
+     * <p>
+     * Always false when {@link #isTimestampRequired()} is false.
+     */
+    default boolean isTimestampAscOrderRequired() {
+        return isTimestampRequired();
+    }
+
+    /**
      * Returns whether a factory may keep the plan choices that its compile took from the tables'
      * row counts after the tables change size. A context that runs a factory which no holder
      * compiles again, such as a queued export, tolerates the change: a fused GROUP BY over a hash
@@ -483,6 +524,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void pushIntervalModel(RuntimeIntrinsicIntervalModel intervalModel);
 
     void pushTimestampRequiredFlag(boolean flag);
+
+    /**
+     * Pushes a designated-timestamp requirement that also says whether the consumer needs the base to
+     * already scan ascending. Pass {@code ascOrderRequired = false} when the consumer obtains that
+     * order itself; see {@link #isTimestampAscOrderRequired()}.
+     */
+    default void pushTimestampRequiredFlag(boolean flag, boolean ascOrderRequired) {
+        pushTimestampRequiredFlag(flag);
+    }
 
     /**
      * Starts a nested query with an empty window context; the caller must pop it in finally.
@@ -561,6 +611,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setParallelReadParquetEnabled(boolean parallelReadParquetEnabled);
 
     void setParallelTopKEnabled(boolean parallelTopKEnabled);
+
+    default void setParallelWindowEnabled(boolean parallelWindowEnabled) {
+    }
+
+    default void setParallelWindowMinMaxRewriteEnabled(boolean enabled) {
+    }
+
+    default void setParallelHashJoinProbeEnabled(boolean enabled) {
+    }
 
     void setParallelWindowJoinEnabled(boolean parallelWindowJoinEnabled);
 

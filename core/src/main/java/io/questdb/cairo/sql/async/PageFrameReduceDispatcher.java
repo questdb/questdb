@@ -649,17 +649,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             suppressCleanupFailure(failure, cleanupFailure);
         }
         try {
-            subSeq.done(cursor);
-        } catch (Throwable cleanupFailure) {
-            suppressCleanupFailure(failure, cleanupFailure);
-        }
-        try {
-            frameSequence.getReduceFinishedCounter().incrementAndGet();
-        } catch (Throwable cleanupFailure) {
-            suppressCleanupFailure(failure, cleanupFailure);
-        }
-        try {
-            signalProgress(frameSequence);
+            PageFrameSequence.releaseReducedSlot(subSeq, cursor, reduceTask, frameSequence, this);
         } catch (Throwable cleanupFailure) {
             suppressCleanupFailure(failure, cleanupFailure);
         }
@@ -699,12 +689,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                     LOG.info().$("cancelling in-flight query, dispatcher is quiescing [frameSequenceId=")
                             .$(frameSequence.getId()).I$();
                 }
-                try {
-                    subSeq.done(cursor);
-                } finally {
-                    frameSequence.getReduceFinishedCounter().incrementAndGet();
-                    signalProgress(frameSequence);
-                }
+                PageFrameSequence.releaseReducedSlot(subSeq, cursor, task, frameSequence, this);
             } else {
                 return cursor == -1;
             }

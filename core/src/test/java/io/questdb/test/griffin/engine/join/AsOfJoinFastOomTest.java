@@ -52,16 +52,18 @@ public class AsOfJoinFastOomTest extends AbstractOomSweepTest {
     public void testFilteredKeyedAsOfJoinCleansUpWhenCursorRunsOutOfMemory() throws Exception {
         // The filter has to sit in the slave sub-query. As a top-level WHERE it becomes a post-join
         // Filter over a plain AsOf Join Fast, and this test would silently duplicate the one below.
+        // The asof_fast hint keeps the plan on the fast keyed cursor now that keyed ASOF defaults to Dense.
         assertNoLeakOnCursorOom(
-                "SELECT m.k1, m.v, s.v FROM master m ASOF JOIN (SELECT * FROM slave WHERE v > 0) s ON (k1, k2)",
+                "SELECT /*+ asof_fast(m s) */ m.k1, m.v, s.v FROM master m ASOF JOIN (SELECT * FROM slave WHERE v > 0) s ON (k1, k2)",
                 FilteredAsOfJoinFastRecordCursorFactory.class
         );
     }
 
     @Test
     public void testKeyedAsOfJoinCleansUpWhenCursorRunsOutOfMemory() throws Exception {
+        // The asof_fast hint keeps the plan on the fast keyed cursor now that keyed ASOF defaults to Dense.
         assertNoLeakOnCursorOom(
-                "SELECT m.k1, m.v, s.v FROM master m ASOF JOIN slave s ON (k1, k2)",
+                "SELECT /*+ asof_fast(m s) */ m.k1, m.v, s.v FROM master m ASOF JOIN slave s ON (k1, k2)",
                 AsOfJoinFastRecordCursorFactory.class
         );
     }

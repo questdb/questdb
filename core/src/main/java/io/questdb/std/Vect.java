@@ -543,7 +543,29 @@ public final class Vect {
 
     public static native void sortEncodedEntries(long addr, long count, int keyLongs, long parallelThreshold);
 
+    /**
+     * Sorts {@code count} encoded entries of one key word and a row id (16 bytes each) by key, keeping
+     * the row ids' order among equal keys: a stable parallel LSD radix sort over the key bits that vary,
+     * using {@code scratchAddr} for as many entries. Applies when the row ids strictly ascend in the
+     * entries' order and the keys vary over at most 36 bits; otherwise it returns false and leaves the
+     * entries as they were, for {@link #sortEncodedEntries}.
+     */
+    public static native boolean sortEncodedEntriesLsd(long addr, long count, long scratchAddr);
+
+    /**
+     * Sorts {@code count} entries of one key word and a second word (16 bytes each) by key, stably: entries
+     * of equal keys keep their order, whatever their second words hold. An LSD radix sort over the key bits
+     * that vary, using {@code scratchAddr} for as many entries.
+     */
+    public static native void sortEncodedEntriesStable(long addr, long count, long scratchAddr);
+
     public static native void sortEncodedVarEntries(long addr, long count, long heapAddr, long parallelThreshold);
+
+    /**
+     * The threads an encoded sort uses at most (0: the hardware's); the server sets it to the shared
+     * query pool's size.
+     */
+    public static native void setEncodedSortThreads(int threads);
 
     public static native void sortLongIndexAscInPlace(long pLongData, long count);
 

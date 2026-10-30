@@ -119,4 +119,9 @@ public class CountDistinctSymbolGroupByFunction extends AbstractCountDistinctInt
     public boolean isEarlyExitSupported() {
         return true;
     }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
 }

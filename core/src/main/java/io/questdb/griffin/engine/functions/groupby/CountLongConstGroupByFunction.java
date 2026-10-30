@@ -104,6 +104,16 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     }
 
     @Override
+    public boolean isFixedSizeState() {
+        return true;
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }

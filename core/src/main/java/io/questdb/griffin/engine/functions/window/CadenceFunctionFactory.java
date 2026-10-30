@@ -40,6 +40,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
@@ -519,6 +520,26 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
             // floorMod (not Math.abs(h) % stride): Math.abs(Long.MIN_VALUE) stays negative, which
             // would return a negative offset for the one seed that hashes to it.
             return Math.floorMod(h, stride);
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(seedFunc, strideFunc);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(seedFunc, strideFunc);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(seedFunc, strideFunc);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(seedFunc, strideFunc);
         }
     }
 }

@@ -159,6 +159,11 @@ public class ArgMaxVarcharLongGroupByFunction extends VarcharFunction implements
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return false;
     }

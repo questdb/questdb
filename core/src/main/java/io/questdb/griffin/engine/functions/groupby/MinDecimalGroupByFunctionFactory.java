@@ -87,6 +87,11 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
+
+        @Override
         protected boolean shouldStoreA(Decimal128 decimal128A, Decimal128 decimal128B) {
             return decimal128A.compareTo(decimal128B) < 0;
         }
@@ -101,6 +106,11 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "min";
+        }
+
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
         }
 
         @Override
@@ -121,6 +131,11 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
+
+        @Override
         protected boolean shouldStoreA(Decimal256 decimal256A, Decimal256 decimal256B) {
             return decimal256A.compareTo(decimal256B) < 0;
         }
@@ -135,6 +150,11 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "min";
+        }
+
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
         }
 
         @Override
@@ -155,6 +175,11 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
+
+        @Override
         protected boolean shouldStoreA(long aValue, long bValue) {
             return aValue < bValue;
         }
@@ -169,6 +194,11 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "min";
+        }
+
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
         }
 
         @Override

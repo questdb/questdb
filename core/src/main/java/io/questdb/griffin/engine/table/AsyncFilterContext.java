@@ -70,6 +70,10 @@ public class AsyncFilterContext implements Closeable {
     private final ObjList<Function> perWorkerFilters;
     private final ObjList<PageFrameMemoryPool> perWorkerMemoryPools;
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
+    // Set per execution by initFilters(), see getExecutionCompiledFilter().
+    private boolean compiledFilterSuspended;
+    // a worker slot's pool the owner reads a frame through, see FrameDecodeAheadAtom
+    private PageFrameMemoryPool ownerMemoryPoolOverride;
 
     AsyncFilterContext(
             CairoConfiguration configuration,
@@ -116,6 +120,8 @@ public class AsyncFilterContext implements Closeable {
 
         try {
             ownerMemoryPool = new PageFrameMemoryPool(configuration, ownerMemoryPoolMaxBytes);
+            // the atom keeps its pools across queries and closes them with itself
+            ownerMemoryPool.setRetainsCoveringShells(true);
             ownerFilteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
             if (compiledFilter != null) {
                 ownerDataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
@@ -131,7 +137,9 @@ public class AsyncFilterContext implements Closeable {
             perWorkerAuxAddresses = new ObjList<>(slotCount);
             perWorkerSelectivityStats = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(configuration, perWorkerMemoryPoolMaxBytes));
+                final PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, perWorkerMemoryPoolMaxBytes);
+                perWorkerMemoryPools.extendAndSet(i, pool);
+                pool.setRetainsCoveringShells(true);
                 perWorkerFilteredRows.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD));
                 if (compiledFilter != null) {
                     perWorkerDataAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
@@ -157,8 +165,17 @@ public class AsyncFilterContext implements Closeable {
     }
 
     public void clear() {
-        Misc.free(ownerMemoryPool);
-        Misc.freeObjListAndKeepObjects(perWorkerMemoryPools);
+        ownerMemoryPoolOverride = null;
+        // cleared, not closed: a pool keeps its covered decode buffers' shells for the next query,
+        // see PageFrameMemoryPool.releaseCoveringBuffers(); close() frees them
+        ownerMemoryPool.clear();
+        for (int i = 0, n = perWorkerMemoryPools.size(); i < n; i++) {
+            // null once close() has freed the list
+            final PageFrameMemoryPool pool = perWorkerMemoryPools.getQuick(i);
+            if (pool != null) {
+                pool.clear();
+            }
+        }
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
         // Shrink the row-id and column-address lists back to initial capacity,
@@ -215,6 +232,17 @@ public class AsyncFilterContext implements Closeable {
         return compiledFilter;
     }
 
+    /**
+     * The compiled filter the current execution runs, or null when it must run the Java filter:
+     * either no filter was compiled, or {@link #initFilters} found a bind variable set the
+     * compiled filter cannot take for this execution (see
+     * {@link AsyncFilterUtils#prepareBindVarMemory}). {@link #getCompiledFilter()} is the static
+     * answer, for plans and {@code usesCompiledFilter()}.
+     */
+    public @Nullable CompiledFilter getExecutionCompiledFilter() {
+        return compiledFilterSuspended ? null : compiledFilter;
+    }
+
     public DirectLongList getDataAddresses(int slotId) {
         if (slotId == -1) {
             return ownerDataAddresses;
@@ -242,7 +270,8 @@ public class AsyncFilterContext implements Closeable {
 
     public PageFrameMemoryPool getMemoryPool(int slotId) {
         if (slotId == -1) {
-            return ownerMemoryPool;
+            final PageFrameMemoryPool override = ownerMemoryPoolOverride;
+            return override != null ? override : ownerMemoryPool;
         }
         return perWorkerMemoryPools.getQuick(slotId);
     }
@@ -284,7 +313,7 @@ public class AsyncFilterContext implements Closeable {
         }
         if (bindVarFunctions != null) {
             Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
-            AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
+            compiledFilterSuspended = !AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
     }
 
@@ -300,6 +329,14 @@ public class AsyncFilterContext implements Closeable {
             pool.setMemoryTracker(memoryTracker);
             pool.of(pageFrameAddressCache, ParquetDecodeHint.MONOTONIC);
         }
+    }
+
+    /**
+     * Makes {@link #getMemoryPool(int)} answer {@code pool} for the owner (slot -1) until called
+     * with null, see {@link io.questdb.cairo.sql.async.FrameDecodeAheadAtom}.
+     */
+    public void setOwnerMemoryPoolOverride(@Nullable PageFrameMemoryPool pool) {
+        ownerMemoryPoolOverride = pool;
     }
 
     public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame) {

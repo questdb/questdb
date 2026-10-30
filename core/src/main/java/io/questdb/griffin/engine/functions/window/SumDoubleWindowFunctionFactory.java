@@ -66,6 +66,18 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
     private static final ArrayColumnTypes SUM_COLUMN_TYPES;
     private static final ArrayColumnTypes SUM_COLUMN_TYPES_LV;
 
+    /**
+     * Whether a function is a running sum, {@code ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT
+     * ROW} with or without PARTITION BY, whose every row adds its argument, when finite, to its
+     * partition's sum from 0.0, in row order, and outputs it, or NULL before the first: what the
+     * parallel window's fold computes over the rows instead, see
+     * {@code AsyncWindowSplitPlan.OP_FOLD}.
+     */
+    public static boolean isRunningSum(Function function) {
+        return function.getClass() == SumOverUnboundedRowsFrameFunction.class
+                || function.getClass() == SumOverUnboundedPartitionRowsFrameFunction.class;
+    }
+
     @Override
     public String getSignature() {
         return SIGNATURE;

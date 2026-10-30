@@ -134,6 +134,18 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         return base;
     }
 
+    // Emits the group-by map's entries, not the base cursor's rows: the cursor drains a map
+    // built by MapFactory.createUnorderedMap, so the emission order is hash-slot order for the
+    // fixed-width Unordered{2,4,8,16}Map keys and key-insertion order for the OrderedMap
+    // fallback. Neither is designated-timestamp order, even when a timestamp is one of the
+    // group-by keys and the base scans forward, so this cursor cannot claim FORWARD. There is
+    // no source fix: a keyed group-by's output is map-ordered by construction, and ordering it
+    // by timestamp would mean sorting output the query never asked to sort.
+    @Override
+    public int getScanDirection() {
+        return SCAN_DIRECTION_OTHER;
+    }
+
     // Stable iff every key function and aggregate (either may evaluate arbitrary expressions,
     // for example rnd_timestamp(...) as a group key) and the base are stable.
     @Override

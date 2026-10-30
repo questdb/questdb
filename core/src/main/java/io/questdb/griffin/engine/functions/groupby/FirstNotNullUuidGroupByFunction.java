@@ -54,6 +54,11 @@ public class FirstNotNullUuidGroupByFunction extends FirstUuidGroupByFunction {
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcValLo = srcValue.getLong128Lo(valueIndex + 1);
         long srcValHi = srcValue.getLong128Hi(valueIndex + 1);

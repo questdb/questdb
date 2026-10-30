@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
@@ -167,6 +168,9 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
 
     @Test
     public void testCoveringPageFrameHeapMergeParity() throws Exception {
+        // ORDER BY the key column would otherwise take the key-major index scan, which is preferred
+        // over covering; keep this test on the covering path it guards.
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_KEYS, 0);
         // SP4 Task 2: above HEAP_MERGE_MIN_KEYS the multi-key covering PAGE-FRAME
         // cursor (parallel GROUP BY path) merges per-key heads with an O(log N)
         // heap instead of the linear O(N) min-scan. The heap must emit
@@ -175,7 +179,31 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_pf_heap (sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t_pf_heap SELECT rnd_symbol('a','b','c','d','e','f','g','h'), x::DOUBLE, timestamp_sequence(0, 1) FROM long_sequence(5000)");
-            final String q = "SELECT sym, sum(price) FROM t_pf_heap WHERE sym IN ('a','b','c','d','e','f','g','h') ORDER BY sym";
+            // NOTE on query shape -- this must keep taking the k-way MERGE path, not the
+            // per-key path, or the heap-vs-linear parity under test is never exercised:
+            //
+            // A GROUP BY whose aggregates are all order-insensitive (e.g. sum()) is now
+            // offered the opt-out from designated-timestamp order
+            // (SqlCodeGenerator#offerUnorderedScan); CoveringIndexRecordCursorFactory then
+            // emits one frame per key instead of k-way merging the per-key posting cursors,
+            // so openMergeCursors() and MergeObserver#onMergeStrategy never fire and this
+            // test passes vacuously (this happened with `SELECT sym, sum(price) ...
+            // ORDER BY sym`).
+            //
+            // Grouping by sym with first()/last() does NOT avoid it either. offerUnorderedScan
+            // always calls tryDisableTimestampOrdering(), passing the order-sensitivity flag
+            // and the consumer's grouping columns; CoveringIndexRecordCursorFactory accepts an
+            // order-sensitive aggregate when the grouping is exactly the index key, because
+            // each group then draws from that one key's own ascending posting list. So a
+            // `SELECT sym, first(price) ... GROUP BY sym` shape goes per-key today and would
+            // be vacuous here.
+            //
+            // SAMPLE BY on a TIME BUCKET sidesteps that permanently: the grouping column is a
+            // time bucket, never the index key, so groupsByIndexKeyOnly() can never hold and
+            // the offer is declined for first()/last(). And it is not merely declined -- each
+            // bucket spans rows from potentially all 8 keys, so a per-key frame layout could
+            // never satisfy this shape however the acceptance rule evolves.
+            final String q = "SELECT ts, first(price) FROM t_pf_heap WHERE sym IN ('a','b','c','d','e','f','g','h') SAMPLE BY 500U";
 
             // Guard: the aggregate query must actually route through the covering page-frame cursor.
             assertQuery(q).noLeakCheck().assertsPlanContaining("CoveringIndex");
@@ -190,8 +218,10 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
             // One eight-key min-scan per emitted row, plus the final scan that
             // discovers the partition is drained.
             Assert.assertEquals((5_000L + 1) * 8, linearObserver.pageFrameLinearComparisons);
-            // 8 symbol groups must produce 8 data rows (header + 8); proves results are non-trivial.
-            Assert.assertTrue("expected at least 9 lines (header + 8 groups), got:\n" + linear, linear.split("\n").length >= 9);
+            // ts spans [0, 4999] microseconds in 1us steps; 500us buckets split that into
+            // exactly 10 non-empty buckets -- 10 data rows (header + 10) prove the
+            // aggregate output is non-trivial.
+            Assert.assertEquals("expected 11 lines (header + 10 buckets), got:\n" + linear, 11, linear.split("\n").length);
 
             // Force heap branch (crossover 2 < 8 keys) and require identity.
             CoveringIndexRecordCursorFactory.setHeapMergeMinKeysForTesting(2);
@@ -328,6 +358,9 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
 
     @Test
     public void testOrderBySymStaysConsistent() throws Exception {
+        // ORDER BY the key column would otherwise take the key-major index scan, which is preferred
+        // over covering; keep this test on the covering path it guards.
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_KEY_MAJOR_MAX_KEYS, 0);
         // GREEN today: when the query explicitly asks for key order (or a non-ts
         // order that forces a sort), covering and oracle must agree. Confirms the
         // bug is specific to timestamp-order expectations and that key-grouping is
@@ -627,7 +660,10 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
         StringBuilder fails = new StringBuilder();
         for (String tail : tails) {
             String suffix = " WHERE " + predicate + (tail.isEmpty() ? "" : " " + tail);
-            String coveringQ = "SELECT " + projection + " FROM " + table + suffix;
+            // a single key's ORDER BY ts DESC reads the posting index backward unless the covering
+            // scan is asked for, and it is the covering scan these shapes test
+            String coveringQ = "SELECT " + (tail.contains("ORDER BY ts DESC") ? "/*+ force_use_covering */ " : "")
+                    + projection + " FROM " + table + suffix;
             String referenceQ = "SELECT /*+ no_covering */ " + projection + " FROM " + table + suffix;
 
             String covPlan = getPlan(coveringQ);

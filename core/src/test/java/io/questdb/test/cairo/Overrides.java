@@ -140,6 +140,7 @@ public class Overrides {
     private FactoryProvider factoryProvider = null;
     private FilesFacade ff;
     private boolean freeLeakedReaders = false;
+    private boolean isHashJoinProbeUniqueBuildAssumed = false;
     private boolean isHiddenTelemetryTable = false;
     private boolean mangleTableDirNames = true;
     private CairoConfiguration propsConfig;
@@ -211,6 +212,10 @@ public class Overrides {
         return adaptiveRecoveryRollForwardEnabled;
     }
 
+    public boolean isHashJoinProbeUniqueBuildAssumed() {
+        return isHashJoinProbeUniqueBuildAssumed;
+    }
+
     public boolean isHidingTelemetryTable() {
         return isHiddenTelemetryTable;
     }
@@ -241,6 +246,7 @@ public class Overrides {
         changed = true;
         spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
         freeLeakedReaders = false;
+        isHashJoinProbeUniqueBuildAssumed = false;
         adaptiveRecoveryRollForwardEnabled = true;
     }
 
@@ -254,6 +260,10 @@ public class Overrides {
 
     public void setCurrentMicros(long currentMicros) {
         this.currentMicros = currentMicros;
+    }
+
+    public void setHashJoinProbeUniqueBuildAssumed(boolean assumed) {
+        this.isHashJoinProbeUniqueBuildAssumed = assumed;
     }
 
     public void setIsHidingTelemetryTable(boolean val) {

@@ -28,6 +28,7 @@ import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -47,6 +48,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectString;
 import io.questdb.std.str.DirectUtf8String;
@@ -68,6 +70,7 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     protected long recordOffset;
     protected long varAppendOffset = 0L;
     private long nextRecordOffset = -1L;
+    private SequentialBlock block;
     private RecordChainRecord recordC;
     private SymbolTableSource symbolTableResolver;
 
@@ -125,6 +128,39 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         return mem.addressOf(offset);
     }
 
+    /**
+     * Appends {@code rowCount} records to a chain without variable-size columns, linked like
+     * {@code rowCount} calls of {@link #beginRecord}: the first after the record at
+     * {@code prevOffset}, or after none when it is -1, and each after the one before it. Their
+     * columns are left for the caller to write: record {@code r}'s column {@code c} is at
+     * {@code addressOf(first) + r * getFixedRecordStride() + getOffsetOfColumn(0, c)}, where
+     * {@code first} is the offset returned. The records lie one after another in memory, so those
+     * addresses stay valid until the chain grows again.
+     *
+     * @return the offset of the first record appended
+     */
+    public long appendFixedRecords(long prevOffset, int rowCount) {
+        assert varOffset == 0 : "the chain has a variable-size column";
+        assert rowCount > 0;
+        final long stride = getFixedRecordStride();
+        final long first = varAppendOffset;
+        final long end = first + stride * rowCount;
+        final long address = mem.appendAddressFor(first, end - first);
+        final long last = end - stride;
+        for (long offset = first; offset < last; offset += stride) {
+            Unsafe.putLong(address + (offset - first), offset + stride);
+        }
+        // no next record
+        Unsafe.putLong(address + (last - first), -1L);
+        if (prevOffset != -1) {
+            mem.putLong(prevOffset, first);
+        }
+        recordOffset = last;
+        varAppendOffset = end;
+        mem.jumpTo(end);
+        return first;
+    }
+
     public long beginRecord(long prevOffset) {
         // no next record
         mem.putLong(varAppendOffset, -1);
@@ -147,6 +183,23 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         counter.add(result);
     }
 
+    /**
+     * The chain's memory, empty or not, grows to hold at least {@code bytes} from its start, so
+     * that appending that much does not reallocate (and copy) it on the way.
+     */
+    public void reserve(long bytes) {
+        if (bytes > mem.size()) {
+            mem.extend(bytes);
+        }
+    }
+
+    /**
+     * The bytes the chain's records take, fixed and variable parts.
+     */
+    public long usedBytes() {
+        return mem.getAppendOffset();
+    }
+
     public void clear() {
         // memory will self-extend on write
         // reads are prevented by setting nextRecordOffset to -1
@@ -154,6 +207,25 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         Misc.free(mem);
         nextRecordOffset = -1L;
         varAppendOffset = 0L;
+    }
+
+    /**
+     * Forgets every record like {@link #clear()}, but keeps the memory for the next ones when no
+     * more than {@code maxKeptBytes} of it are allocated, so that refilling the chain does not
+     * fault fresh pages in. Gives it back otherwise.
+     *
+     * @return the bytes kept, 0 when the memory was given back
+     */
+    public long clearKeepingMemory(long maxKeptBytes) {
+        final long size = mem.size();
+        if (size > maxKeptBytes) {
+            clear();
+            return 0;
+        }
+        mem.jumpTo(0);
+        nextRecordOffset = -1L;
+        varAppendOffset = 0L;
+        return size;
     }
 
     @Override
@@ -165,6 +237,22 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     @Override
     public long getAddress(long recordOffset, int columnIndex) {
         return addressOf(getOffsetOfColumn(recordOffset, columnIndex));
+    }
+
+    /**
+     * The offset of the record after the one at {@code recordOffset}, or -1 for the last one. The
+     * first record of a filled chain is at offset 0.
+     */
+    public long getNextRecordOffset(long recordOffset) {
+        return mem.getLong(recordOffset);
+    }
+
+    /**
+     * The distance between two records that {@link #appendFixedRecords} appended one after the
+     * other: a record's link to the next one, then its fixed-size columns.
+     */
+    public long getFixedRecordStride() {
+        return rowToDataOffset(0) + fixOffset;
     }
 
     public long getOffsetOfColumn(long recordOffset, int columnIndex) {
@@ -210,6 +298,33 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     public long preComputedStateSize() {
         // chain just streams rows from the cache
         return 0;
+    }
+
+    /**
+     * A block over the rows that the next {@link #hasNext()} calls return, see
+     * {@link RecordCursor#peekRecordBlock(int)}, for a chain without variable-size columns whose
+     * records were appended one after another, each linked to the one before it, and are iterated
+     * in that order. Their rows then lie at a constant stride. The caller vouches for the order: a
+     * chain that links its records otherwise, such as a join's per-key chains, must not use it.
+     *
+     * @return the block, or null when the chain has a variable-size column or no row is left
+     */
+    @Nullable
+    public RecordBlock peekSequentialRecordBlock(int maxRows) {
+        if (varOffset != 0 || nextRecordOffset == -1) {
+            return null;
+        }
+        final long stride = rowToDataOffset(0) + fixOffset;
+        final long rows = (varAppendOffset - nextRecordOffset) / stride;
+        assert (varAppendOffset - nextRecordOffset) % stride == 0 : "records are not at a constant stride";
+        if (rows < 1) {
+            return null;
+        }
+        if (block == null) {
+            block = new SequentialBlock();
+        }
+        block.of(nextRecordOffset, (int) Math.min(rows, maxRows), stride);
+        return block;
     }
 
     public long put(Record record, long prevRecordOffset) {
@@ -391,6 +506,21 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     }
 
     /**
+     * Forgets the records but, unlike {@link #clear()}, keeps the memory for the next ones, and
+     * makes room for {@code recordCount} records of the fixed part's size in one allocation, so a
+     * chain whose size is known up front does not grow a page at a time.
+     */
+    public void rewind(long recordCount) {
+        if (recordCount > 0) {
+            // a record is its link to the next one, then the var-size offsets, then the fixed part
+            mem.jumpTo(recordCount * (rowToDataOffset(0) + varOffset + fixOffset));
+        }
+        mem.jumpTo(0);
+        nextRecordOffset = -1L;
+        varAppendOffset = 0L;
+    }
+
+    /**
      * Binds the per-query native memory tracker. The chain is lazy by design
      * (the inner MemoryCARW does not allocate native memory until the first
      * write), so factories can safely set the tracker between cursors as long
@@ -408,6 +538,21 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     @Override
     public long size() {
         return -1;
+    }
+
+    /**
+     * Moves the iteration past the first {@code rowCount} rows of the block
+     * {@link #peekSequentialRecordBlock(int)} returned.
+     */
+    public void skipSequentialRecordBlock(int rowCount) {
+        if (rowCount < 1) {
+            return;
+        }
+        final long stride = rowToDataOffset(0) + fixOffset;
+        final long next = nextRecordOffset + rowCount * stride;
+        assert next <= varAppendOffset;
+        assert mem.getLong(next - stride) == (next == varAppendOffset ? -1 : next) : "records are not linked in append order";
+        nextRecordOffset = next == varAppendOffset ? -1 : next;
     }
 
     @Override
@@ -443,6 +588,43 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
 
     protected long rowToDataOffset(long row) {
         return row + 8;
+    }
+
+    private class SequentialBlock implements RecordBlock {
+        private final RecordChainRecord record = newChainRecord();
+        private long firstOffset;
+        private int rowCount;
+        private long stride;
+
+        @Override
+        public long getColumnAddress(int columnIndex) {
+            // getOffsetOfColumn() less varOffset, which is 0: peekSequentialRecordBlock() offers no
+            // block over a chain with a variable-size column
+            assert varOffset == 0;
+            return mem.addressOf(rowToDataOffset(firstOffset) + columnOffsets[columnIndex]);
+        }
+
+        @Override
+        public long getColumnStride(int columnIndex) {
+            return stride;
+        }
+
+        @Override
+        public Record getRecordAt(int row) {
+            record.of(rowToDataOffset(firstOffset + row * stride));
+            return record;
+        }
+
+        @Override
+        public int getRowCount() {
+            return rowCount;
+        }
+
+        void of(long firstOffset, int rowCount, long stride) {
+            this.firstOffset = firstOffset;
+            this.rowCount = rowCount;
+            this.stride = stride;
+        }
     }
 
     protected class RecordChainRecord implements Record {

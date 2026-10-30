@@ -69,6 +69,11 @@ public class AbstractRecordCursorFactoryTest {
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
+        @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
         }
@@ -80,6 +85,12 @@ public class AbstractRecordCursorFactoryTest {
     }
 
     private static class ThrowingCloseCountingFactory extends CloseCountingFactory {
+
+        @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
         @Override
         protected void _close() {
             super._close();

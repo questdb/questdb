@@ -79,6 +79,11 @@ public class CovarSampleGroupByFunctionFactory implements FunctionFactory {
             return "covar_samp";
         }
 
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
+
         // Chan et al. [CGL82; CGL83]
         @Override
         public void merge(MapValue destValue, MapValue srcValue) {

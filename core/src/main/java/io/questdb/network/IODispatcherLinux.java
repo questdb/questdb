@@ -24,10 +24,23 @@
 
 package io.questdb.network;
 
+import io.questdb.mp.IdleParkJob;
 import io.questdb.std.Misc;
 
-public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatcher<C> {
+/**
+ * A worker that has found nothing to do may park in this dispatcher's poll instead of napping or
+ * sleeping, see {@link IdleParkJob} and {@link IODispatcherConfiguration#getPollBlockTimeout()}.
+ */
+public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatcher<C> implements IdleParkJob {
+    // How long the dispatcher must have found nothing to do before a worker may wait in its poll.
+    // Under back-to-back requests a worker that just served one spins and picks the next up at
+    // once; a worker waiting in the poll would hold the run lock and keep it from doing so, and
+    // the request would wait for that worker's wake-up instead.
+    private static final long IDLE_PARK_MIN_IDLE_NANOS = 1_000_000L;
     private final Epoll epoll;
+    private final int pollBlockTimeoutMillis;
+    // when a pass last found something to do, read and written under the run lock
+    private long lastUsefulNanos;
     private boolean pendingAccept;
 
     public IODispatcherLinux(
@@ -36,14 +49,70 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
     ) {
         super(configuration, ioContextFactory);
         this.epoll = new Epoll(configuration.getEpollFacade(), configuration.getEventCapacity());
+        this.pollBlockTimeoutMillis = Math.max(0, configuration.getPollBlockTimeout());
         registerListenerFd();
     }
 
+    @Override
+    public void cancelIdlePark() {
+        releaseRunLock();
+    }
+
+    // Call it once the worker pool that runs this dispatcher has halted, as ServerMain does: a
+    // worker waiting in the poll (see idlePark()) uses the epoll event buffer until its wait ends,
+    // at most http.net.poll.block.timeout later.
     @Override
     public void close() {
         super.close();
         Misc.free(epoll);
         LOG.info().$("closed").$();
+    }
+
+    @Override
+    public boolean idlePark(long maxParkNanos) {
+        try {
+            return runPass((int) Math.max(1, Math.min(pollBlockTimeoutMillis, maxParkNanos / 1_000_000L)));
+        } finally {
+            releaseRunLock();
+        }
+    }
+
+    /**
+     * A worker may park in the poll when blocking is configured, no accept is pending, the
+     * dispatcher is not closing, it has found nothing to do for a millisecond, every connection is
+     * armed in the poll (connection count = pending rows), and one of them asks for it, see
+     * {@link IOContext#isIdlePollTarget()} (on HTTP: a QWP connection). A connection that is not
+     * armed is out with a worker or waits on a heartbeat, and comes back through the interest
+     * queue, which cannot wake the poll: its next request would wait out the park. With every
+     * connection armed, what can need the dispatcher is a socket event, which wakes the poll, an
+     * out-of-band disconnect, or a timer (idle connections, heartbeats, the listener's), and those
+     * wait at most for the park, as they would for the worker's sleep. Without a connection that
+     * asks for it, the worker sleeps as it always did.
+     */
+    @Override
+    public boolean tryBeginIdlePark() {
+        if (pollBlockTimeoutMillis == 0 || !tryAcquireRunLock()) {
+            return false;
+        }
+        final int pendingCount = pending.size();
+        if (closed
+                || pendingAccept
+                || getConnectionCount() != pendingCount
+                || System.nanoTime() - lastUsefulNanos < IDLE_PARK_MIN_IDLE_NANOS
+                || !hasIdlePollTarget(pendingCount)) {
+            releaseRunLock();
+            return false;
+        }
+        return true;
+    }
+
+    private boolean hasIdlePollTarget(int pendingCount) {
+        for (int i = 0; i < pendingCount; i++) {
+            if (pending.get(i).isIdlePollTarget()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void enqueuePending(int watermark) {
@@ -176,6 +245,9 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                     LOG.info().$("could not find heartbeat, connection must be already closed [fd=").$(fd)
                             .$(", srcId=").$(srcOpId)
                             .I$();
+                    // Should the connection still be counted, connection count and pending rows
+                    // would differ from now on, and no worker would wait in this poll again (see
+                    // tryBeginIdlePark()): the optimisation would be lost, nothing else.
                     continue;
                 } else {
                     epollCmd = EpollAccessor.EPOLL_CTL_ADD;
@@ -240,17 +312,18 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
         epoll.listen(serverFd);
     }
 
-    @Override
-    protected boolean runSerially() {
-        // todo: introduce fairness factor
-        //  current worker impl will still proceed to execute another job even if this one was useful
-        //  we should see if we can stay inside of this method until we have a completely idle iteration
-        //  at the same time we should hog this thread in case we are always 'useful', we can probably
-        //  introduce a loop count after which we always exit
-
-        final long timestamp = clock.getTicks();
+    // One pass of the dispatcher. The poll waits for up to blockMillis for a socket event, unless
+    // the pass already found something to do.
+    private boolean runPass(int blockMillis) {
+        long timestamp = clock.getTicks();
         boolean useful = processDisconnects(timestamp);
-        final int n = epoll.poll();
+        final int n;
+        if (useful || blockMillis == 0) {
+            n = epoll.poll();
+        } else {
+            n = epoll.poll(blockMillis);
+            timestamp = clock.getTicks();
+        }
         int watermark = pending.size();
         int offset = 0;
         if (n > 0 || pendingAccept) {
@@ -300,7 +373,23 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             useful = true;
         }
 
-        return processRegistrations(timestamp) || useful;
+        if (processRegistrations(timestamp) || useful) {
+            if (pollBlockTimeoutMillis > 0) {
+                lastUsefulNanos = System.nanoTime();
+            }
+            return true;
+        }
+        return false;
+    }
+
+    @Override
+    protected boolean runSerially() {
+        // todo: introduce fairness factor
+        //  current worker impl will still proceed to execute another job even if this one was useful
+        //  we should see if we can stay inside of this method until we have a completely idle iteration
+        //  at the same time we should hog this thread in case we are always 'useful', we can probably
+        //  introduce a loop count after which we always exit
+        return runPass(0);
     }
 
     @Override

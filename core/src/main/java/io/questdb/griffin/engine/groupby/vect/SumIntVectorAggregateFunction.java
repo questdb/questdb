@@ -114,6 +114,11 @@ public class SumIntVectorAggregateFunction extends LongFunction implements Vecto
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return false;
+    }
+
+    @Override
     public boolean merge(long pRostiA, long pRostiB) {
         return Rosti.keyedIntSumIntMerge(pRostiA, pRostiB, valueOffset);
     }

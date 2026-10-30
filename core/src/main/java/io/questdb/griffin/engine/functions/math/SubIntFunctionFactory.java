@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.ColumnwiseFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.constants.IntConstant;
 import io.questdb.std.IntList;
@@ -69,7 +70,7 @@ public class SubIntFunctionFactory implements FunctionFactory {
         return new SubIntFunc(left, right);
     }
 
-    private static class SubIntFunc extends IntFunction implements ArithmeticBinaryFunction {
+    private static class SubIntFunc extends IntFunction implements ArithmeticBinaryFunction, ColumnwiseFunction {
         private final Function left;
         private final Function right;
 
@@ -77,6 +78,11 @@ public class SubIntFunctionFactory implements FunctionFactory {
             super();
             this.left = left;
             this.right = right;
+        }
+
+        @Override
+        public int getColumnwiseOp() {
+            return ColumnwiseFunction.OP_SUB;
         }
 
         @Override

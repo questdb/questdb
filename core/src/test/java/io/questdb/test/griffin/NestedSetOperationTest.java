@@ -645,6 +645,19 @@ public class NestedSetOperationTest extends AbstractCairoTest {
 
     }
 
+    // The UNION / UNION ALL pushdown tests below assert timestampUnordered("ts") rather than
+    // timestamp("ts"). What timestamp pushdown guarantees is that the timestamp(ts) clause makes ts
+    // the DESIGNATED TIMESTAMP of the set operation's metadata (and that every row survives) - it
+    // guarantees nothing about row order, because the union cursor drains branch A to exhaustion and
+    // then restarts at the first row of branch B, so the designated timestamp restarts at the branch
+    // boundary. timestamp() asserts SCAN_DIRECTION_FORWARD, i.e. ascending designated-timestamp
+    // order; these fixtures used to satisfy it only because their branches are hand-written in
+    // ascending order. Swap any two branch literals and the output stops being ascending while the
+    // pushdown under test is unchanged - so FORWARD was never what these tests meant to pin.
+    // timestampUnordered() keeps the column pin (ts must still be the metadata's timestamp index)
+    // and replaces the false ordering claim with the true one: the union declares no order.
+    // The EXCEPT/INTERSECT siblings keep timestamp("ts"): those cursors emit a subset of branch A in
+    // branch-A order, so their FORWARD declaration is honest and is left asserted as such.
     @Test
     public void testTimestampPushdownWith2UnionAllQueryReturnsAllRows0() throws Exception {
         assertQuery("select type, ts from ( " +
@@ -654,7 +667,7 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 "union all " +
                 "select 3 as id, 'st' as type, cast(3 as timestamp) ts ) timestamp(ts)  ")
                 .ddl(null)
-                .timestamp("ts")
+                .timestampUnordered("ts")
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
@@ -677,7 +690,7 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 "union " +
                 "select 3 as id, 'st' as type, cast(3 as timestamp) ts ) timestamp(ts)  ")
                 .ddl(null)
-                .timestamp("ts")
+                .timestampUnordered("ts")
                 .noRandomAccess()
                 .returns("""
                         type\tts
@@ -744,7 +757,7 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 "union all " +
                 "select 2 as id, 'st' as type, cast(2 as timestamp) ts ) timestamp(ts)  ")
                 .ddl(null)
-                .timestamp("ts")
+                .timestampUnordered("ts")
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
@@ -761,7 +774,7 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 "union all " +
                 "select 2 as id, 'st' as type, cast(2 as timestamp) ts ) timestamp(ts)  ")
                 .ddl(null)
-                .timestamp("ts")
+                .timestampUnordered("ts")
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
@@ -779,7 +792,7 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 "union all " +
                 "select 1 as id, 'st' as type, cast(1 as timestamp) ts ) timestamp(ts)  ")
                 .ddl(null)
-                .timestamp("ts")
+                .timestampUnordered("ts")
                 .noRandomAccess()
                 .expectSize()
                 .returns("""
@@ -796,7 +809,7 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 "union " +
                 "select 2 as id, 'st' as type, cast(2 as timestamp) ts ) timestamp(ts)  ")
                 .ddl(null)
-                .timestamp("ts")
+                .timestampUnordered("ts")
                 .noRandomAccess()
                 .returns("""
                         type\tts
@@ -812,7 +825,7 @@ public class NestedSetOperationTest extends AbstractCairoTest {
                 "union " +
                 "select 1 as id, 'st' as type, cast(1 as timestamp) ts ) timestamp(ts)  ")
                 .ddl(null)
-                .timestamp("ts")
+                .timestampUnordered("ts")
                 .noRandomAccess()
                 .returns("""
                         type\tts

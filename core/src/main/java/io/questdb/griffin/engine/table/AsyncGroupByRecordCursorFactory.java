@@ -55,26 +55,41 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.functions.groupby.WelfordBatchFusion;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
+
+import java.util.concurrent.atomic.LongAdder;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
+    // test-only: frames aggregateConstantKeyNonSharded() took while counting is on; a plain read of
+    // the flag per frame, the counter is touched only in tests
+    private static final LongAdder CONSTANT_KEY_FRAMES = new LongAdder();
+    private static boolean constantKeyFrameCounting;
     private static final UnorderedPageFrameReducer AGGREGATE = AsyncGroupByRecordCursorFactory::aggregate;
     private static final UnorderedPageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByRecordCursorFactory::filterAndAggregate;
+    // rows an index gather task reads per batch, see gatherAndAggregate()
+    private static final int GATHER_BATCH_ROWS = 65_536;
+    // see GroupByShardingContext.setShardingThresholdMultiplier()
+    private static final int GATHER_KEY_SHARDING_THRESHOLD_MULTIPLIER = 10;
+    private static final UnorderedPageFrameReducer GATHER_AND_AGGREGATE = AsyncGroupByRecordCursorFactory::gatherAndAggregate;
 
     private RecordCursorFactory base;
     private AsyncGroupByRecordCursor cursor;
@@ -83,6 +98,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     private @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
     private final int workerCount;
     private ObjList<AsyncGroupBySharedCursor> sharedCursors;
+    // the base reads its rows through a posting index, see IndexGatherRecordCursorFactory
+    private final boolean indexGather;
 
     public AsyncGroupByRecordCursorFactory(
             @NotNull CairoEngine engine,
@@ -140,12 +157,44 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     filter != null ? FILTER_AND_AGGREGATE : AGGREGATE,
                     workerCount
             );
-            this.cursor = new AsyncGroupByRecordCursor(engine, messageBus, recordFunctions);
+            this.indexGather = base.supportsIndexGatherFrames();
+            if (indexGather) {
+                final int gatherKeyColumn = ((IndexGatherRecordCursorFactory) base).getKeyColumnIndex();
+                boolean groupedByGatherKeyColumn = false;
+                for (int i = 0, n = listColumnFilter.getColumnCount(); i < n; i++) {
+                    groupedByGatherKeyColumn |= listColumnFilter.getColumnIndexFactored(i) == gatherKeyColumn;
+                }
+                final boolean groupedByGatherKeyOnly = groupedByGatherKeyColumn && keyFunctions.size() == 0 && listColumnFilter.getColumnCount() == 1;
+                atom.setGroupedByGatherKey(groupedByGatherKeyOnly);
+                // Grouped by the key column alone: a group per key of the list, nothing to shard.
+                // Grouped by the key column and more: the maps shard only past a larger threshold,
+                // see GroupByShardingContext.setShardingThresholdMultiplier().
+                atom.getShardingContext().setShardingAllowed(!groupedByGatherKeyOnly);
+                if (groupedByGatherKeyColumn) {
+                    atom.getShardingContext().setShardingThresholdMultiplier(GATHER_KEY_SHARDING_THRESHOLD_MULTIPLIER);
+                }
+            }
+            this.cursor = new AsyncGroupByRecordCursor(engine, messageBus, recordFunctions, indexGather ? GATHER_AND_AGGREGATE : null, base);
             this.workerCount = workerCount;
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;
         }
+    }
+
+    /**
+     * The frames aggregated as one group, see {@link #aggregateConstantKeyNonSharded}, since
+     * {@link #setConstantKeyFrameCountingForTesting(boolean)} turned counting on.
+     */
+    @TestOnly
+    public static long getConstantKeyFramesForTesting() {
+        return CONSTANT_KEY_FRAMES.sum();
+    }
+
+    @TestOnly
+    public static void setConstantKeyFrameCountingForTesting(boolean enabled) {
+        CONSTANT_KEY_FRAMES.reset();
+        constantKeyFrameCounting = enabled;
     }
 
     @Override
@@ -157,6 +206,15 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
+    }
+
+    /**
+     * How many times an index gather of this factory fell back to its serial pass, see
+     * {@code AsyncGroupByRecordCursor.gather()}.
+     */
+    @TestOnly
+    public long getSerialRetries() {
+        return cursor.getSerialRetries();
     }
 
     @Override
@@ -174,9 +232,17 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
+    // Emits the group-by map's entries, not the base cursor's rows: the cursor drains either the
+    // owner map or a ShardedMapCursor concatenating the per-shard maps, so the emission order is
+    // map order within a shard and shard order across them. That holds regardless of what the
+    // base does, which is why this must not delegate to base.getScanDirection() - forwarding the
+    // base's honest FORWARD would restate it as a false claim one level up, and that claim then
+    // propagates through SelectedRecordCursorFactory/VirtualRecordCursorFactory to the top of the
+    // query tree. As with the serial keyed group-by there is no source fix; the output is
+    // map-ordered by construction.
     @Override
     public int getScanDirection() {
-        return base.getScanDirection();
+        return SCAN_DIRECTION_OTHER;
     }
 
     @Override
@@ -214,7 +280,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
     @Override
     public void toPlan(PlanSink sink) {
-        if (usesCompiledFilter()) {
+        if (indexGather) {
+            sink.type("Async Index Group By");
+        } else if (usesCompiledFilter()) {
             sink.type("Async JIT Group By");
         } else {
             sink.type("Async Group By");
@@ -223,6 +291,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
         sink.optAttr("keyFunctions", frameSequence.getAtom().getOwnerKeyFunctions(), true);
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions(), true);
+        if (frameSequence.getAtom().getBatchKernels(-1) != null) {
+            sink.attr("batchKernels").val(true);
+        }
         sink.optAttr("filter", frameSequence.getAtom(), true);
         sink.child(base);
     }
@@ -272,7 +343,12 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
 
-            if (fragment.isNotSharded()) {
+            final int singleKeyColumn = atom.getSingleKeyColumnIndex();
+            if (fragment.isNotSharded()
+                    && singleKeyColumn != -1
+                    && frameMemoryPool.isConstantColumn(frameIndex, singleKeyColumn)) {
+                aggregateConstantKeyNonSharded(record, frameRowCount, baseRowId, atom, slotId, fragment, mapSink);
+            } else if (fragment.isNotSharded()) {
                 aggregateNonShardedBatched(record, frameRowCount, baseRowId, atom, slotId, fragment, mapSink);
             } else {
                 aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
@@ -284,6 +360,82 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 frameMemoryPool.releaseParquetBuffers();
             } finally {
                 atom.release(slotId);
+            }
+        }
+    }
+
+    /**
+     * {@link #aggregateNonShardedBatched} for a frame whose rows are all one group, such as a
+     * single-key covered frame grouped by its symbol key: the map is probed once, at the frame's
+     * first row, and the other rows go through the aggregates' non-keyed batch kernels into that
+     * group's value, in row order, as the keyed kernels would update it.
+     */
+    private static void aggregateConstantKeyNonSharded(
+            PageFrameMemoryRecord record,
+            long frameRowCount,
+            long baseRowId,
+            AsyncGroupByAtom atom,
+            int slotId,
+            GroupByMapFragment fragment,
+            RecordSink mapSink
+    ) {
+        if (constantKeyFrameCounting) {
+            CONSTANT_KEY_FRAMES.increment();
+        }
+        final Map map = fragment.reopenMap();
+        final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
+        final DirectLongList batchList = atom.getBatchList(slotId);
+        final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
+        final GroupByBatchKernels kernels = atom.getBatchKernels(slotId);
+        final int functionCount = functions.size();
+
+        batchList.ensureCapacity(atom.getBatchSize());
+        final long batchAddr = batchList.getAddress();
+        map.reserveCapacity(1);
+        // the first row creates or finds the group, and goes through the keyed path as it would
+        final long baseValueAddress = map.probeBatch(record, mapSink, 0, 1, batchAddr);
+        updateBatch(record, functions, functionCount, kernels, mapValue, baseValueAddress, batchAddr, 1, baseRowId);
+        if (frameRowCount == 1) {
+            return;
+        }
+        // no other key is inserted for this frame, so the value stays where the probe found it
+        mapValue.of(baseValueAddress + Map.decodeBatchOffset(Unsafe.getLong(batchAddr)));
+        if (kernels == null) {
+            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+            for (long r = 1; r < frameRowCount; r++) {
+                record.setRowIndex(r);
+                functionUpdater.updateExisting(mapValue, record, baseRowId + r);
+            }
+            return;
+        }
+        final int capacity = kernels.getCapacity();
+        // two or more Welford aggregates run in one pass, see WelfordBatchFusion
+        final WelfordBatchFusion fusion = WelfordBatchFusion.countFusable(functions) > 1 ? atom.getWelfordFusion(slotId) : null;
+        for (long p = 1; p < frameRowCount; p += capacity) {
+            final int n = (int) Math.min(capacity, frameRowCount - p);
+            kernels.of(record, GroupByBatchKernels.MODE_RANGE, 0, p, n);
+            if (fusion != null) {
+                fusion.clear();
+            }
+            for (int i = 0; i < functionCount; i++) {
+                final GroupByFunction function = functions.getQuick(i);
+                final GroupByBatchKernels.Args args = !kernels.isKernel(i)
+                        ? null
+                        : function.supportsRawKernelArgs() ? kernels.prepareRaw(i) : kernels.prepare(i);
+                if (fusion != null && args != null && WelfordBatchFusion.isFusable(function)) {
+                    // run with the batch's other Welford aggregates, after the loop
+                    fusion.add(function, args);
+                } else if (args != null) {
+                    function.computeBatchKernel(mapValue, n, args);
+                } else {
+                    for (long r = p, hi = p + n; r < hi; r++) {
+                        record.setRowIndex(r);
+                        function.computeNext(mapValue, record, baseRowId + r);
+                    }
+                }
+            }
+            if (fusion != null && fusion.size() > 0) {
+                fusion.run(mapValue, n);
             }
         }
     }
@@ -325,6 +477,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
         final DirectLongList batchList = atom.getBatchList(slotId);
         final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
+        final GroupByBatchKernels kernels = atom.getBatchKernels(slotId);
         final int functionCount = functions.size();
         final int batchSize = atom.getBatchSize();
         final long rowCount = rows.size();
@@ -351,16 +504,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                     batchAddr
             );
 
-            for (int i = 0; i < functionCount; i++) {
-                functions.getQuick(i).computeKeyedBatch(
-                        record,
-                        mapValue,
-                        baseValueAddress,
-                        batchAddr,
-                        batchRows,
-                        baseRowId
-                );
-            }
+            updateBatch(record, functions, functionCount, kernels, mapValue, baseValueAddress, batchAddr, batchRows, baseRowId);
         }
     }
 
@@ -401,6 +545,88 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
+    /**
+     * {@link #aggregateFilteredNonShardedBatched} for rows that come in runs of one group each:
+     * the map is probed once per run, at its first row, and the run's other rows reuse that entry.
+     * The entries are those the per-row probe would make: a new group is new at its first row only.
+     */
+    private static void aggregateKeyRunsNonShardedBatched(
+            PageFrameMemoryRecord record,
+            DirectLongList rows,
+            LongList keyRuns,
+            long baseRowId,
+            AsyncGroupByAtom atom,
+            int slotId,
+            GroupByMapFragment fragment,
+            RecordSink mapSink
+    ) {
+        final Map map = fragment.reopenMap();
+        final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
+        final DirectLongList batchList = atom.getBatchList(slotId);
+        final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
+        final GroupByBatchKernels kernels = atom.getBatchKernels(slotId);
+        final int functionCount = functions.size();
+        final int batchSize = atom.getBatchSize();
+        final long rowCount = rows.size();
+        final long rowIdsAddr = rows.getAddress();
+        final int runCount = keyRuns.size();
+
+        batchList.ensureCapacity(batchSize);
+        final long batchAddr = batchList.getAddress();
+
+        int run = 0;
+        for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize) {
+            final long batchEnd = Math.min(batchStart + batchSize, rowCount);
+            final long batchRows = batchEnd - batchStart;
+            map.reserveCapacity(batchRows);
+            long baseValueAddress = 0;
+            for (long p = batchStart; p < batchEnd; ) {
+                while (run + 1 < runCount && keyRuns.getQuick(run + 1) <= p) {
+                    run++;
+                }
+                final long runEnd = Math.min(batchEnd, run + 1 < runCount ? keyRuns.getQuick(run + 1) : rowCount);
+                final long entryAddr = batchAddr + ((p - batchStart) << 3);
+                baseValueAddress = map.probeBatchFiltered(record, mapSink, rowIdsAddr, p, p + 1, entryAddr);
+                final long offset = Map.decodeBatchOffset(Unsafe.getLong(entryAddr));
+                for (long q = p + 1; q < runEnd; q++) {
+                    Unsafe.putLong(batchAddr + ((q - batchStart) << 3), Map.encodeBatchEntry(Unsafe.getLong(rowIdsAddr + (q << 3)), offset, false));
+                }
+                p = runEnd;
+            }
+            updateBatch(record, functions, functionCount, kernels, mapValue, baseValueAddress, batchAddr, batchRows, baseRowId);
+        }
+    }
+
+    // aggregateFilteredNonShardedBatched() with Map.probeBatchFilteredRepeatingKeys()
+    private static void aggregateRepeatingKeysNonShardedBatched(
+            PageFrameMemoryRecord record,
+            DirectLongList rows,
+            long baseRowId,
+            AsyncGroupByAtom atom,
+            int slotId,
+            GroupByMapFragment fragment,
+            RecordSink mapSink
+    ) {
+        final Map map = fragment.reopenMap();
+        final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
+        final DirectLongList batchList = atom.getBatchList(slotId);
+        final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
+        final GroupByBatchKernels kernels = atom.getBatchKernels(slotId);
+        final int functionCount = functions.size();
+        final int batchSize = atom.getBatchSize();
+        final long rowCount = rows.size();
+        final long rowIdsAddr = rows.getAddress();
+        batchList.ensureCapacity(batchSize);
+        final long batchAddr = batchList.getAddress();
+        for (long batchStart = 0; batchStart < rowCount; batchStart += batchSize) {
+            final long batchEnd = Math.min(batchStart + batchSize, rowCount);
+            final long batchRows = batchEnd - batchStart;
+            map.reserveCapacity(batchRows);
+            final long baseValueAddress = map.probeBatchFilteredRepeatingKeys(record, mapSink, rowIdsAddr, batchStart, batchEnd, batchAddr);
+            updateBatch(record, functions, functionCount, kernels, mapValue, baseValueAddress, batchAddr, batchRows, baseRowId);
+        }
+    }
+
     private static void aggregateNonShardedBatched(
             PageFrameMemoryRecord record,
             long frameRowCount,
@@ -414,6 +640,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
         final DirectLongList batchList = atom.getBatchList(slotId);
         final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
+        final GroupByBatchKernels kernels = atom.getBatchKernels(slotId);
         final int functionCount = functions.size();
         final int batchSize = atom.getBatchSize();
 
@@ -436,16 +663,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             // Update phase — one call per function per sub-batch. The encoded rowIndex in each
             // batch entry is already the frame-relative row id, so computeKeyedBatch computes
             // the global row id as baseRowId + rowIndex.
-            for (int i = 0; i < functionCount; i++) {
-                functions.getQuick(i).computeKeyedBatch(
-                        record,
-                        mapValue,
-                        baseValueAddress,
-                        batchAddr,
-                        batchRows,
-                        baseRowId
-                );
-            }
+            updateBatch(record, functions, functionCount, kernels, mapValue, baseValueAddress, batchAddr, batchRows, baseRowId);
         }
     }
 
@@ -511,7 +729,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final GroupByMapFragment fragment = atom.getFragment(slotId);
-        final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
+        final CompiledFilter compiledFilter = filterCtx.getExecutionCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);
         // navigateTo() can throw; it must sit inside the try that releases the slot. See
@@ -557,6 +775,10 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 filteredMemoryRecord.of(frameMemory, record, filterCtx.getFilterUsedColumnIndexes());
                 record = filteredMemoryRecord;
                 lateMaterialized = true;
+                final GroupByBatchKernels kernels = atom.getBatchKernels(slotId);
+                if (kernels != null) {
+                    kernels.countRowPathFrame();
+                }
             }
 
             if (atom.isSharded()) {
@@ -581,6 +803,119 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 frameMemoryPool.releaseParquetBuffers();
             } finally {
                 atom.release(slotId);
+            }
+        }
+    }
+
+    /**
+     * Aggregates one task of an index gather: the rows of a slice of the list's keys within a row
+     * range, which the task reader returns a frame at a time, see {@link IndexGatherPageFrameCursor}.
+     * The rest of the filter is applied to those rows, then they take the filtered batched path.
+     * The reducer receives the task index where a frame reducer receives the frame index.
+     */
+    private static void gatherAndAggregate(
+            int workerId,
+            @NotNull PageFrameMemoryRecord record,
+            int taskIndex,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @NotNull UnorderedPageFrameSequence<?> frameSequence,
+            @Nullable UnorderedPageFrameSequence<?> stealingFrameSequence
+    ) {
+        @SuppressWarnings("unchecked") final AsyncGroupByAtom atom = ((UnorderedPageFrameSequence<AsyncGroupByAtom>) frameSequence).getAtom();
+        final IndexGatherPageFrameCursor gatherCursor = (IndexGatherPageFrameCursor) frameSequence.getPageFrameCursor();
+
+        final boolean owner = stealingFrameSequence == frameSequence;
+        final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
+        final AsyncFilterContext filterCtx = atom.getFilterContext();
+        final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
+        final DirectLongList rows = filterCtx.getFilteredRows(slotId);
+        final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+        final GroupByMapFragment fragment = atom.getFragment(slotId);
+        final Function filter = filterCtx.getFilter(slotId);
+        final RecordSink mapSink = atom.getMapSink(slotId);
+        final IndexGatherPageFrameCursor.TaskReader taskReader = gatherCursor.getTaskReader(slotId);
+        // navigateTo() can throw; it must sit inside the try that releases the slot. See
+        // aggregate() for why a leaked slot is permanent.
+        try {
+            atom.resetLocalStats(slotId);
+            if (atom.isSharded()) {
+                fragment.shard();
+            }
+            taskReader.of(taskIndex);
+            int frameIndex = -1;
+            if (gatherCursor.getTaskKind(taskIndex) == IndexGatherPageFrameCursor.TASK_SCAN) {
+                // a scan task reads the key column of its frame to pick the rows
+                frameIndex = taskReader.peekFrameIndex();
+                record.init(frameMemoryPool.navigateTo(frameIndex));
+            }
+            while (taskReader.next(rows, GATHER_BATCH_ROWS, record)) {
+                final int rowsFrameIndex = taskReader.getFrameIndex();
+                if (rowsFrameIndex != frameIndex) {
+                    frameIndex = rowsFrameIndex;
+                    record.init(frameMemoryPool.navigateTo(frameIndex));
+                }
+                if (filter != null) {
+                    IndexGatherPageFrameCursor.filterRows(filter, rows, record);
+                }
+                if (rows.size() > 0) {
+                    final long baseRowId = Rows.toRowID(frameIndex, 0);
+                    final LongList keyRuns = taskReader.getKeyRuns();
+                    if (fragment.isNotSharded() && filter == null && keyRuns.size() > 0 && atom.isGroupedByGatherKey()) {
+                        aggregateKeyRunsNonShardedBatched(record, rows, keyRuns, baseRowId, atom, slotId, fragment, mapSink);
+                    } else if (fragment.isNotSharded()) {
+                        // a key's rows come in time order, so consecutive rows often share a group
+                        aggregateRepeatingKeysNonShardedBatched(record, rows, baseRowId, atom, slotId, fragment, mapSink);
+                    } else {
+                        aggregateFilteredSharded(record, rows, baseRowId, functionUpdater, fragment, mapSink);
+                    }
+                }
+                circuitBreaker.statefulThrowExceptionIfTripped();
+            }
+            atom.maybeEnableSharding(fragment);
+        } finally {
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
+        }
+    }
+
+    static void updateBatch(
+            PageFrameMemoryRecord record,
+            ObjList<GroupByFunction> functions,
+            int functionCount,
+            @Nullable GroupByBatchKernels kernels,
+            FlyweightPackedMapValue mapValue,
+            long baseValueAddress,
+            long batchAddr,
+            long batchRows,
+            long baseRowId
+    ) {
+        if (kernels != null) {
+            // The aggregates with a batch kernel get their arguments evaluated column-wise for the
+            // whole sub-batch; the others, and a kernel whose column has no readable buffer in
+            // this frame, take computeKeyedBatch().
+            kernels.of(record, GroupByBatchKernels.MODE_PACKED, batchAddr, 0, (int) batchRows);
+            for (int i = 0; i < functionCount; i++) {
+                final GroupByFunction function = functions.getQuick(i);
+                final GroupByBatchKernels.Args args = kernels.prepare(i);
+                if (args != null) {
+                    function.computeKeyedBatchKernel(mapValue, baseValueAddress, batchAddr, (int) batchRows, args);
+                } else {
+                    function.computeKeyedBatch(record, mapValue, baseValueAddress, batchAddr, batchRows, baseRowId);
+                }
+            }
+        } else {
+            for (int i = 0; i < functionCount; i++) {
+                functions.getQuick(i).computeKeyedBatch(
+                        record,
+                        mapValue,
+                        baseValueAddress,
+                        batchAddr,
+                        batchRows,
+                        baseRowId
+                );
             }
         }
     }

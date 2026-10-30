@@ -57,6 +57,14 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      */
     boolean execute(final Operation op, SqlExecutionContext executionContext) throws SqlException, CairoException;
 
+    /**
+     * Frees the plans of PIVOT IN sub-queries that the last compile ran and no plan took over, as
+     * a compile that stops at the execution model leaves them. Nothing else the compile produced
+     * is released: a returned plan may still read the compiler's state.
+     */
+    default void freeUnclaimedPivotPlans() {
+    }
+
     ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException;
 
     /**

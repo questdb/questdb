@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.lt;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -47,6 +48,16 @@ class LtLongCursorFunction extends AbstractScalarCursorFunction {
     @Override
     public boolean getBool(Record rec) {
         return Numbers.lessThan(leftFunc.getLong(rec), value, negated);
+    }
+
+    @Override
+    public long getScalarLong() {
+        return value;
+    }
+
+    @Override
+    public int getScalarType() {
+        return ColumnType.LONG;
     }
 
     @Override

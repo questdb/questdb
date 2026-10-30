@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -368,6 +369,17 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         return pageFrameCursor;
     }
 
+    /**
+     * Page-frame transparent: a page-frame consumer asking this wrapper is served the BASE's
+     * frames, so it must be told the base's page-frame direction. Inheriting the default --
+     * which forwards to {@link #getScanDirection()} -- degrades the narrow answer back to the
+     * wide one at the first wrapper, which is exactly what the narrow answer exists to avoid.
+     */
+    @Override
+    public int getPageFrameScanDirection() {
+        return base.getPageFrameScanDirection();
+    }
+
     @Override
     public int getScanDirection() {
         return base.getScanDirection();
@@ -569,6 +581,17 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public boolean deferFrameAddresses() {
+            // the base cursor's frames pass through as they are
+            return baseCursor.deferFrameAddresses();
+        }
+
+        @Override
+        public long getFrameCountHint() {
+            return baseCursor.getFrameCountHint();
+        }
+
+        @Override
         public ColumnMapping getColumnMapping() {
             return baseCursor.getColumnMapping();
         }
@@ -735,6 +758,20 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public RecordBlock peekRecordBlock(int maxRows) {
+            try {
+                final RecordBlock block = base.peekRecordBlock(maxRows);
+                if (block != null && firstRowNanos == -1) {
+                    firstRowNanos = clock.getTicks() - beginNanos;
+                }
+                return block;
+            } catch (Throwable th) {
+                close0(th);
+                throw th;
+            }
+        }
+
+        @Override
         public long preComputedStateSize() {
             return base.preComputedStateSize();
         }
@@ -775,8 +812,23 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public void skipRecordBlock(int rowCount) {
+            try {
+                base.skipRecordBlock(rowCount);
+            } catch (Throwable th) {
+                close0(th);
+                throw th;
+            }
+        }
+
+        @Override
         public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             base.skipRows(rowCount, maxRowsAfterSkip);
+        }
+
+        @Override
+        public boolean supportsRecordBlocks() {
+            return base.supportsRecordBlocks();
         }
 
         @Override

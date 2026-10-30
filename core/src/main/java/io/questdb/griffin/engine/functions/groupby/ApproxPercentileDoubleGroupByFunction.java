@@ -47,7 +47,6 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     private int histogramIndex;
     private ObjList<DoubleHistogram> histograms = new ObjList<>();
     private boolean isShared;
-    private double percentile;
     private int valueIndex;
 
     public ApproxPercentileDoubleGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int funcPosition) {
@@ -108,7 +107,9 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
         if (histogram.getTotalCount() == 0) {
             return Double.NaN;
         }
-        return histogram.getValueAtPercentile(percentile * 100);
+        // read at read time, not cached by init(): the copy of this function that reads a shared GROUP BY
+        // cursor (the outer side of a JOIN LATERAL) is never initialised
+        return histogram.getValueAtPercentile(percentileFunc.getDouble(null) * 100);
     }
 
     @Override
@@ -135,7 +136,7 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         BinaryFunction.super.init(symbolTableSource, executionContext);
 
-        percentile = percentileFunc.getDouble(null);
+        final double percentile = percentileFunc.getDouble(null);
         if (Numbers.isNull(percentile) || percentile < 0 || percentile > 1) {
             throw SqlException.$(funcPosition, "percentile must be between 0.0 and 1.0");
         }
@@ -162,6 +163,11 @@ public class ApproxPercentileDoubleGroupByFunction extends DoubleFunction implem
     @Override
     public boolean isConstant() {
         return false;
+    }
+
+    @Override
+    public boolean isOrderSensitive() {
+        return true;
     }
 
     @Override

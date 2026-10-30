@@ -116,6 +116,11 @@ public class ArgMinDoubleDoubleGroupByFunction extends DoubleFunction implements
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return BinaryFunction.super.isThreadSafe();
     }

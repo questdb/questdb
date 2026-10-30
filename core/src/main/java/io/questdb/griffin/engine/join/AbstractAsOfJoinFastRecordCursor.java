@@ -410,11 +410,12 @@ public abstract class AbstractAsOfJoinFastRecordCursor implements NoRandomAccess
                         lookaheadTimestamp = scaleTimestamp(slaveRecA.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                         return;
                     }
+                    // The found row is the frame's last row. Go on to the next frame even when its
+                    // timestamp equals the master's: rows of that timestamp may continue at the start of
+                    // the next frame (a tie group straddling a page frame or a Parquet row group), and
+                    // ASOF wants the last of them. openSlaveFrame() comes back to this frame when the
+                    // next one starts later.
                     lookaheadTimestamp = slaveTimestamp;
-                    if (slaveTimestamp == masterTimestamp) {
-                        // We've found the row, so there is no point in checking the next partition.
-                        return;
-                    }
                 }
             }
             if (!openSlaveFrame(masterTimestamp)) {

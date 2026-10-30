@@ -41,6 +41,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastToSymbolTable;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -239,6 +240,26 @@ class LeadLagSymbolFunctionFactoryHelper {
             if (ignoreNulls) {
                 sink.val(" ignore nulls");
             }
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return FunctionFlags.hasPerCallState(arg, defaultValue);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return FunctionFlags.isNonDeterministic(arg, defaultValue);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(arg, defaultValue);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return FunctionFlags.isStableWithinExecution(arg, defaultValue);
         }
     }
 
@@ -610,6 +631,26 @@ class LeadLagSymbolFunctionFactoryHelper {
             }
             sink.val(" over ()");
         }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(partitionByRecord);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(partitionByRecord);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(partitionByRecord);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(partitionByRecord);
+        }
     }
 
     private abstract static class BasePartitionedSymbolWindowFunction extends BaseSymbolWindowFunction implements Reopenable {
@@ -702,6 +743,26 @@ class LeadLagSymbolFunctionFactoryHelper {
                 map.clear();
             }
             memory.truncate();
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(partitionByRecord);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(partitionByRecord);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(partitionByRecord);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(partitionByRecord);
         }
     }
 

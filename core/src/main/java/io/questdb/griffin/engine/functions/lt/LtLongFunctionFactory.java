@@ -25,12 +25,13 @@
 package io.questdb.griffin.engine.functions.lt;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.ColumnwiseComparison;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -58,13 +59,23 @@ public class LtLongFunctionFactory implements FunctionFactory {
         return new LtLongFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class LtLongFunction extends NegatableBooleanFunction implements BinaryFunction {
+    private static class LtLongFunction extends NegatableBooleanFunction implements ColumnwiseComparison {
         private final Function left;
         private final Function right;
 
         public LtLongFunction(Function left, Function right) {
             this.left = left;
             this.right = right;
+        }
+
+        @Override
+        public int getColumnwiseComparison() {
+            return ColumnwiseComparison.CMP_LT;
+        }
+
+        @Override
+        public int getColumnwiseOperandType() {
+            return ColumnType.LONG;
         }
 
         @Override

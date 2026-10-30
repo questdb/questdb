@@ -36,6 +36,7 @@ import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -46,6 +47,7 @@ import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.LogCapture;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -64,6 +66,11 @@ import java.util.stream.Stream;
  */
 public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
     private static final long INTERVAL_MS = 1000;
+
+    @After
+    public void resetCoveringSealAppend() {
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = false;
+    }
 
     @Test
     public void testBusyTableTakesNoExtraSavePoint() throws Exception {
@@ -591,6 +598,9 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
         // the covering index grows by a generation per commit and supersedes no value file. Pin the production
         // default.
         setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        // The native path's covered tail append grows a covering index the same way on a pure append. Pin the reseal
+        // path; resetCoveringSealAppend() restores the default.
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = true;
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 1);
         assertMemoryLeak(() -> {

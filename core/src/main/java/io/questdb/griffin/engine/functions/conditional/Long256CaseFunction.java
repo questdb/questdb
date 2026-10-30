@@ -34,16 +34,23 @@ import io.questdb.std.str.CharSink;
 @SuppressWarnings("resource")
 class Long256CaseFunction extends Long256Function implements CaseFunction {
     private final ObjList<Function> args;
+    private final CaseBranches.Values branches;
     private final CaseFunctionPicker picker;
 
-    public Long256CaseFunction(CaseFunctionPicker picker, ObjList<Function> args) {
+    public Long256CaseFunction(CaseFunctionPicker picker, ObjList<Function> args, CaseBranches.Values branches) {
         this.picker = picker;
         this.args = args;
+        this.branches = branches;
     }
 
     @Override
     public ObjList<Function> args() {
         return args;
+    }
+
+    @Override
+    public CaseBranches.Values branches() {
+        return branches;
     }
 
     @Override

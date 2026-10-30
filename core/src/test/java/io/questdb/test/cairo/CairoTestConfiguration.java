@@ -215,6 +215,11 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
+    public boolean isSqlParallelHashJoinProbeUniqueBuildAssumed() {
+        return overrides.isHashJoinProbeUniqueBuildAssumed();
+    }
+
+    @Override
     public boolean mangleTableDirNames() {
         return overrides.mangleTableDirNames();
     }

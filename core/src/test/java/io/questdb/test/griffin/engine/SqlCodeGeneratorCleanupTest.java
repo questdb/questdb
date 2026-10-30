@@ -150,6 +150,11 @@ public class SqlCodeGeneratorCleanupTest extends AbstractCairoTest {
         }
 
         @Override
+        public int getScanDirection() {
+            return delegate.getScanDirection();
+        }
+
+        @Override
         public RecordMetadata getMetadata() {
             return delegate.getMetadata();
         }
@@ -253,6 +258,11 @@ public class SqlCodeGeneratorCleanupTest extends AbstractCairoTest {
             @Override
             public RecordMetadata getMetadata() {
                 return metadata;
+            }
+
+            @Override
+            public int getScanDirection() {
+                return SCAN_DIRECTION_FORWARD;
             }
 
             @Override

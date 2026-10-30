@@ -37,6 +37,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 
 import java.util.Arrays;
 
@@ -83,6 +84,13 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     private final LongList coveredRowHis = new LongList();
     private final LongList coveredRowLos = new LongList();
     private final ByteList frameFormats = new ByteList();
+    // Per frame: 1 once its column addresses are in the flat lists, 0 while a deferred frame waits
+    // for its filler, see ensureFrameReady(). Written in order (release), read volatile (acquire).
+    private final IntList frameReady = new IntList();
+    // Per frame: the filler that computes a deferred frame's column addresses, null for any other
+    // frame. Kept per frame, not per cache, so that frames of several cursors (a wrapper that chains
+    // two) are each filled from their own reader.
+    private final ObjList<PageFrameAddressFiller> frameFillers = new ObjList<>();
     private final LongList frameSizes = new LongList();
     // The INDEX row each frame's first row sits at - a file row, which on a composite partition differs
     // from the partition row in rowIdOffsets by the piece's shift. See PageFrame#getIndexRowLo().
@@ -96,6 +104,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     // Makes it possible to determine real row id, not the one relative to the page.
     private final LongList rowIdOffsets = new LongList();
     private int columnCount;
+    // whether any frame was added deferred, see ensureFrameReady()
+    private boolean hasDeferredFrames;
     // True in case of external parquet files, false in case of table partition files.
     private boolean external;
     private boolean hasCoveredFrames;
@@ -125,6 +135,16 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
             return;
         }
         store(frameIndex, frame, true);
+    }
+
+    private void appendZeros(DirectLongList list) {
+        // a frame holds a handful of columns: a plain loop beats a native memset call
+        list.ensureCapacity(columnCount);
+        final long address = list.getAppendAddress();
+        for (int i = 0; i < columnCount; i++) {
+            Unsafe.putLong(address + (long) i * Long.BYTES, 0);
+        }
+        list.skip(columnCount);
     }
 
     /**
@@ -164,6 +184,9 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     @Override
     public void clear() {
         frameSizes.clear();
+        frameReady.clear();
+        frameFillers.clear();
+        hasDeferredFrames = false;
         frameFormats.clear();
         parquetDecoders.clear();
         parquetRowGroups.clear();
@@ -193,6 +216,53 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         pageSizes.close();
         auxPageAddresses.close();
         auxPageSizes.close();
+        // the fillers reference the frame cursors' readers, which a closed cache must not keep
+        frameFillers.clear();
+    }
+
+    /**
+     * Makes sure the column addresses of the frame are in the flat lists, computing them on this
+     * thread when the frame was added deferred (see {@link PageFrame#getDeferredAddressFiller()})
+     * and no thread has computed them yet. Every navigation to a frame calls it first, see
+     * {@link PageFrameMemoryPool}; any thread may call it, concurrently with others, once the
+     * frames are added. Two threads that meet an unfilled frame both compute it, and write the
+     * same values.
+     */
+    public void ensureFrameReady(int frameIndex) {
+        if (hasDeferredFrames && frameReady.getVolatile(frameIndex) == 0) { // acquire
+            final PageFrameAddressFiller filler = frameFillers.getQuick(frameIndex);
+            final long rowIdOffset = rowIdOffsets.getQuick(frameIndex);
+            final long partitionLo = Rows.toLocalRowID(rowIdOffset);
+            filler.fillFrameAddresses(
+                    Rows.toPartitionIndex(rowIdOffset),
+                    partitionLo,
+                    partitionLo + frameSizes.getQuick(frameIndex),
+                    this,
+                    frameIndex
+            );
+            frameReady.setOrdered(frameIndex, 1); // release
+        }
+    }
+
+    /**
+     * Whether the frame's column addresses are in the flat lists, see {@link #ensureFrameReady(int)}.
+     */
+    public boolean isFrameReady(int frameIndex) {
+        return frameReady.getVolatile(frameIndex) != 0;
+    }
+
+    /**
+     * For a {@link PageFrameAddressFiller}: one column's addresses and sizes of a deferred native
+     * frame. The aux address and size are those of a var-size column, and ignored for any other.
+     */
+    public void setFrameColumnAddresses(int frameIndex, int columnIndex, long pageAddress, long pageSize, long auxPageAddress, long auxPageSize) {
+        final long offset = (long) frameIndex * columnCount + columnIndex;
+        pageAddresses.set(offset, pageAddress);
+        pageSizes.set(offset, pageSize);
+        if (ColumnType.isVarSize(columnTypes.getQuick(columnIndex))) {
+            auxPageAddresses.set(offset, auxPageAddress);
+            auxPageSizes.set(offset, auxPageSize);
+        }
     }
 
     /**
@@ -340,6 +410,18 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     }
 
     /**
+     * Whether the frame can decode a declared subset of its rows alone, see
+     * {@link PageFrameMemoryPool#setRecordAtRows}: a Parquet or a single-key covered frame.
+     */
+    public boolean isFrameRowFilterable(int frameIndex) {
+        return getFrameFormat(frameIndex) == PartitionFormat.PARQUET || isFrameSingleKeyCovered(frameIndex);
+    }
+
+    public boolean isFrameSingleKeyCovered(int frameIndex) {
+        return isFrameCovered(frameIndex) && coveredKeys.getQuick(frameIndex) != SymbolTable.VALUE_NOT_FOUND;
+    }
+
+    /**
      * Freeze every per-partition posting reader backing a covered frame, so that
      * {@link IndexReader#reloadConditionally()} becomes a no-op and the value /
      * sidecar mmaps stay stable while async workers iterate detached covering
@@ -405,6 +487,16 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return covered != null && covered[col];
     }
 
+    /**
+     * Whether column {@code col} of {@code frameIndex} is the symbol key of a single-key covered
+     * frame: the column holds one value, the frame's key, on every row of the frame.
+     */
+    public boolean isColumnCoveredKey(int frameIndex, int col) {
+        return isFrameSingleKeyCovered(frameIndex)
+                && isColumnCovered(frameIndex, col)
+                && getCoveredIncludeIndex(frameIndex, col) == -1;
+    }
+
     public boolean isExternal() {
         return external;
     }
@@ -440,6 +532,21 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         }
         this.columnMapping.copyFrom(columnMapping);
         this.external = external;
+    }
+
+    /**
+     * Makes room for {@code frameCount} frames in the flat column lists, so that adding them does
+     * not grow the lists one doubling, and one copy, at a time; a cache closed between executions
+     * starts from its lists' initial capacities again.
+     */
+    public void reserveFrames(long frameCount) {
+        if (frameCount > 0) {
+            final long n = frameCount * columnCount;
+            pageAddresses.ensureCapacity(n);
+            pageSizes.ensureCapacity(n);
+            auxPageAddresses.ensureCapacity(n);
+            auxPageSizes.ensureCapacity(n);
+        }
     }
 
     /**
@@ -510,7 +617,25 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         boolean[] covered = null;
         int[] columnInclude = null;
         final byte format = frame.getFormat();
-        if (format == PartitionFormat.NATIVE) {
+        final PageFrameAddressFiller filler = format == PartitionFormat.NATIVE ? frame.getDeferredAddressFiller() : null;
+        if (filler != null) {
+            // the frame's columns are computed later, by the thread that first needs them: zeros
+            // hold their places, see ensureFrameReady()
+            hasDeferredFrames = true;
+            if (append) {
+                appendZeros(pageAddresses);
+                appendZeros(pageSizes);
+                appendZeros(auxPageAddresses);
+                appendZeros(auxPageSizes);
+            } else {
+                for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                    pageAddresses.set(offset + columnIndex, 0);
+                    pageSizes.set(offset + columnIndex, 0);
+                    auxPageAddresses.set(offset + columnIndex, 0);
+                    auxPageSizes.set(offset + columnIndex, 0);
+                }
+            }
+        } else if (format == PartitionFormat.NATIVE) {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
                 final long auxAddress;
                 final long auxSize;
@@ -593,6 +718,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         if (append) {
             frameSizes.add(frameSize);
             frameFormats.add(format);
+            frameReady.add(filler != null ? 0 : 1);
+            frameFillers.add(filler);
             parquetDecoders.add(decoder);
             parquetRowGroups.add(frame.getParquetRowGroup());
             parquetRowGroupLos.add(frame.getParquetRowGroupLo());
@@ -609,6 +736,10 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         } else {
             frameSizes.setQuick(frameIndex, frameSize);
             frameFormats.setQuick(frameIndex, format);
+            // ordered, as ensureFrameReady() reads it: no worker reads this pass's frames before
+            // they are added, but the write must not reorder with the zeros above
+            frameReady.setOrdered(frameIndex, filler != null ? 0 : 1);
+            frameFillers.setQuick(frameIndex, filler);
             parquetDecoders.setQuick(frameIndex, decoder);
             parquetRowGroups.setQuick(frameIndex, frame.getParquetRowGroup());
             parquetRowGroupLos.setQuick(frameIndex, frame.getParquetRowGroupLo());

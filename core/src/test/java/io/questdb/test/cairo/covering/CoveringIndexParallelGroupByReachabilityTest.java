@@ -80,6 +80,8 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, "true");
         // Many small page frames so the covered scan fans out across the worker pool.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
+        // an index scan keeps the small page frames too, as before cairo.sql.index.scan.page.frame.max.rows
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, 1);
         // Bind a real (generous, never-breached) per-query memory tracker so covered decode
         // buffers charge it — this exercises the M1 accounting path and, under -ea, makes the
         // tracker-recycle guard (PerQueryMemoryTracker.acquire asserts used==0) catch any

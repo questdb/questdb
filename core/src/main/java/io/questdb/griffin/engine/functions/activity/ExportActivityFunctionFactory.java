@@ -245,6 +245,11 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public int getScanDirection() {
+            return SCAN_DIRECTION_FORWARD;
+        }
+
+        @Override
         public boolean recordCursorSupportsRandomAccess() {
             return false;
         }

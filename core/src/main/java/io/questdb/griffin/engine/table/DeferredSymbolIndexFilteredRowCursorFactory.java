@@ -75,6 +75,7 @@ public class DeferredSymbolIndexFilteredRowCursorFactory implements FunctionBase
     @Override
     public void init(PageFrameCursor pageFrameCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
         symbolFunction.init(pageFrameCursor, sqlExecutionContext);
+        cursor.init(sqlExecutionContext.getCircuitBreaker());
     }
 
     @Override

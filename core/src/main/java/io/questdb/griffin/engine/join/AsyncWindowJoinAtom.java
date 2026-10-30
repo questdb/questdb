@@ -136,6 +136,8 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
     private final boolean vectorized;
     private final long windowHi;
     private final long windowLo;
+    // Set per execution by init(), see getCompiledMasterFilter().
+    private boolean compiledMasterFilterSuspended;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
     // Null when no per-query limit applies. Workers and operator code feed it to
     // tracker-aware Unsafe overloads to charge allocations to the active workload.
@@ -493,8 +495,13 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
         return perWorkerColumnSinks.getQuick(slotId);
     }
 
+    /**
+     * The compiled master filter the current execution runs, or null when it must run the Java
+     * filter: either none was compiled, or {@link #init} found a bind variable set the compiled
+     * filter cannot take for this execution (see {@code AsyncFilterUtils.prepareBindVarMemory}).
+     */
     public CompiledFilter getCompiledMasterFilter() {
-        return compiledMasterFilter;
+        return compiledMasterFilterSuspended ? null : compiledMasterFilter;
     }
 
     public @Nullable IntHashSet getFilterUsedColumnIndexes() {
@@ -674,7 +681,7 @@ public class AsyncWindowJoinAtom implements StatefulAtom, PerWorkerLockOwner, Re
 
         if (bindVarFunctions != null) {
             Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
-            prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
+            compiledMasterFilterSuspended = !prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
         }
     }
 

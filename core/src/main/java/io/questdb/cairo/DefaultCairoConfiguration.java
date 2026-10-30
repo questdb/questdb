@@ -34,6 +34,7 @@ import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.text.DefaultTextConfiguration;
 import io.questdb.cutlass.text.TextConfiguration;
@@ -1099,6 +1100,45 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlAsOfAdaptiveBackScanBudget() {
+        return -1;
+    }
+
+    @Override
+    public boolean isSqlAsOfAutoAlgoEnabled() {
+        return true;
+    }
+
+    @Override
+    public int getSqlAsOfIndexMaxMasterBp() {
+        return 200; // 2.00% — index wins below ~2% master/slave ratio (crossover ~1-2.5%, see bench)
+    }
+
+    @Override
+    public int getSqlAsOfIndexPostingMaxMasterBp() {
+        return 20;
+    }
+
+    @Override
+    public int getSqlAsOfMultiKeyFastMaxBackScanPct() {
+        return 25;
+    }
+
+    @Override
+    public int getSqlAsOfMultiKeyFastMaxMasterBp() {
+        return 10;
+    }
+
+    @Override
+    public int getSqlAsOfMemoizedDenseRunThreshold() {
+        // From the K sweep: fallback eliminates the dense_sym cliff (6250ms -> 11.7ms, ~530x, matches
+        // Dense) for any K below the rows-per-timestamp; sparse-ts (runs of length 1) never trips, so a
+        // low K is costless there. 1024 sits an order of magnitude below observed cliffs and above
+        // incidental small ts clusters, so it won't prematurely abandon memoization on sparse-illiquid data.
+        return 1024;
+    }
+
+    @Override
     public int getQueryRegistryPoolSize() {
         return 8;
     }
@@ -1311,6 +1351,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSqlIndexKeyMajorMaxKeys() {
+        return 1024;
+    }
+
+    @Override
+    public long getSqlIndexKeyMajorMaxPartitionPasses() {
+        return 100_000;
+    }
+
+    @Override
     public int getSqlIntervalIncrementalMergeThreshold() {
         return 256;
     }
@@ -1348,6 +1398,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public int getSqlJitMaxInListSizeThreshold() {
         return 10;
+    }
+
+    @Override
+    public int getSqlSymbolInBitsetMaxKeys() {
+        return 16 * 1024 * 1024;
     }
 
     @Override
@@ -1523,6 +1578,36 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public long getSqlSortValueMaxBytes() {
         return Long.MAX_VALUE;
+    }
+
+    @Override
+    public long getSqlParallelWindowMaxKeyRows() {
+        return 4_194_304;
+    }
+
+    @Override
+    public int getSqlParallelWindowMaxRounds() {
+        return 3;
+    }
+
+    @Override
+    public long getSqlParallelWindowPrefixRows() {
+        return 16_384;
+    }
+
+    @Override
+    public long getSqlParallelWindowMinRows() {
+        return 262_144;
+    }
+
+    @Override
+    public long getSqlParallelWindowRoundRows() {
+        return 2_097_152;
+    }
+
+    @Override
+    public long getSqlParallelWindowTaskRows() {
+        return 131_072;
     }
 
     @Override
@@ -2001,6 +2086,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlJitSymbolInBitsetEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlSymbolInBitsetEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlLatestByJitEnabled() {
         return true;
     }
@@ -2016,12 +2111,87 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelGroupByBatchKernelsEnabled() {
+        return true;
+    }
+
+    @Override
+    public double getSqlIndexScanChoiceMaxSelectivity() {
+        return 0.05;
+    }
+
+    @Override
+    public double getSqlCoveringScanChoiceMaxSelectivity() {
+        return 0.15;
+    }
+
+    @Override
+    public double getSqlCoveringGroupByScanChoiceMaxSelectivity() {
+        return 0.25;
+    }
+
+    @Override
+    public int getSqlParallelIndexGroupByFrameRows() {
+        return Map.BATCH_ROW_INDEX_MASK + 1;
+    }
+
+    @Override
+    public long getSqlParallelCoveringFrameRows() {
+        return 65_536;
+    }
+
+    @Override
+    public long getSqlParallelCoveringLocalMaxRows() {
+        return 8_192;
+    }
+
+    @Override
+    public boolean isSqlParallelFrameDispatchEnabled() {
+        return true;
+    }
+
+    @Override
+    public long getSqlParallelIndexGroupByTaskRows() {
+        return 65_536;
+    }
+
+    @Override
+    public boolean isSqlIndexScanChoiceEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelIndexGroupByEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlDistinctGroupByKeyPruningEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelApproxPercentileEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParallelGroupByEnabled() {
         return true;
     }
 
     @Override
+    public boolean isSqlPivotFuseSourceEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParallelHashJoinGroupByEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelHashJoinProbeEnabled() {
         return true;
     }
 
@@ -2041,7 +2211,37 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelWindowEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelWindowMinMaxRewriteEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlParallelWindowJoinEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelAsOfJoinEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelWindowKeyRunsEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelWindowChainEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSqlParallelWindowShardEnabled() {
         return true;
     }
 

@@ -118,6 +118,11 @@ public class ArgMaxUuidTimestampGroupByFunction extends UuidFunction implements 
     }
 
     @Override
+    public boolean isOrderSensitive() {
+        return true;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return BinaryFunction.super.isThreadSafe();
     }

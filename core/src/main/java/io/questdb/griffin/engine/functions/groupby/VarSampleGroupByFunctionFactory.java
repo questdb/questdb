@@ -70,6 +70,11 @@ public class VarSampleGroupByFunctionFactory implements FunctionFactory {
         public String getName() {
             return "var_samp";
         }
+
+        @Override
+        public boolean isOrderSensitive() {
+            return false;
+        }
     }
 
 }

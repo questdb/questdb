@@ -39,6 +39,15 @@ public interface PartitionFrameCursor extends QuietCloseable, SymbolTableSource 
     }
 
     /**
+     * Adds an upper bound on the rows of all partition frames to the counter, for a planner that
+     * wants it cheaply: an implementation may count from metadata where opening a partition would
+     * be needed for the exact number. The default counts exactly.
+     */
+    default void calculateSizeUpperBound(RecordCursor.Counter counter) {
+        calculateSize(counter);
+    }
+
+    /**
      * Returns the table reader. The same TableReader is available on each partition frame.
      *
      * @return the table reader
