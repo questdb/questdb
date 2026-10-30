@@ -36,7 +36,6 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -48,13 +47,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  * waiting in a job cannot.
  */
 public class WorkerIdleParkTest {
+    private static final long NAP_NANOS = TimeUnit.MILLISECONDS.toNanos(1);
     private static final long SLEEP_MILLIS = 50;
 
     @Test
     public void testErrorInParkDoesNotKillWorker() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             for (WorkerPoolMode mode : WorkerPoolMode.values()) {
-                final ParkJob job = new ParkJob();
+                final ParkJob job = new ParkJob(SLEEP_MILLIS);
                 job.failNext.set(true);
                 try (WorkerPool pool = newPool(mode, 2, SLEEP_MILLIS)) {
                     pool.assign(job);
@@ -70,7 +70,7 @@ public class WorkerIdleParkTest {
     public void testFiberWorkerParksInJobOnlyWithReadySibling() throws Exception {
         // alone, a fiber-hosting worker is the only fiber wake target: it never parks in a job
         TestUtils.assertMemoryLeak(() -> {
-            final ParkJob job = new ParkJob();
+            final ParkJob job = new ParkJob(SLEEP_MILLIS);
             try (WorkerPool pool = newPool(WorkerPoolMode.FIBER_HOST, 1, SLEEP_MILLIS)) {
                 pool.assign(job);
                 pool.start();
@@ -78,14 +78,14 @@ public class WorkerIdleParkTest {
                 Assert.assertEquals(0, job.parks.get());
             }
             // a legacy worker has no fiber wake-ups to miss
-            final ParkJob legacyJob = new ParkJob();
+            final ParkJob legacyJob = new ParkJob(SLEEP_MILLIS);
             try (WorkerPool pool = newPool(WorkerPoolMode.LEGACY, 1, SLEEP_MILLIS)) {
                 pool.assign(legacyJob);
                 pool.start();
                 TestUtils.assertEventually(() -> Assert.assertTrue(legacyJob.parks.get() > 3), 10);
             }
             // nor does one with a sibling
-            final ParkJob pairJob = new ParkJob();
+            final ParkJob pairJob = new ParkJob(SLEEP_MILLIS);
             try (WorkerPool pool = newPool(WorkerPoolMode.FIBER_HOST, 2, SLEEP_MILLIS)) {
                 pool.assign(pairJob);
                 pool.start();
@@ -100,8 +100,7 @@ public class WorkerIdleParkTest {
         // must wake its sibling, long before the park would end
         TestUtils.assertMemoryLeak(() -> {
             final long parkMillis = 5_000;
-            final ParkJob job = new ParkJob();
-            job.holdFullPark = true;
+            final ParkJob job = new ParkJob(parkMillis);
             try (WorkerPool pool = newPool(WorkerPoolMode.FIBER_HOST, 2, parkMillis)) {
                 pool.assign(job);
                 pool.start();
@@ -136,18 +135,21 @@ public class WorkerIdleParkTest {
     public void testParksOnlyInPlaceOfNapOrSleep() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             for (WorkerPoolMode mode : WorkerPoolMode.values()) {
-                final ParkJob job = new ParkJob();
+                final ParkJob job = new ParkJob(SLEEP_MILLIS);
                 try (WorkerPool pool = newPool(mode, 2, SLEEP_MILLIS)) {
                     pool.assign(job);
                     pool.start();
-                    // idle: the workers nap, then sleep, in the job
-                    TestUtils.assertEventually(() -> Assert.assertTrue(mode.name(), job.parks.get() > 3), 10);
-                    for (Long nanos : job.parkNanos) {
-                        Assert.assertTrue(
-                                mode + ": parked for " + nanos + "ns",
-                                nanos == 1_000_000L || nanos == TimeUnit.MILLISECONDS.toNanos(SLEEP_MILLIS)
-                        );
+                    // idle: the workers nap, then sleep, in the job, again and again
+                    TestUtils.assertEventually(
+                            () -> Assert.assertTrue(mode + ": " + job.describeParks(), job.sleepParks.get() > 3),
+                            10
+                    );
+                    if (mode == WorkerPoolMode.LEGACY) {
+                        // a fiber-hosting worker naps in the job only while its sibling happens to be parked
+                        Assert.assertTrue(mode + ": " + job.describeParks(), job.napParks.get() > 0);
                     }
+                    // for no longer than the nap or sleep
+                    Assert.assertEquals(mode + ": " + job.describeParks(), 0, job.unexpectedParks.get());
                     // busy: a worker that finds work never parks
                     job.busy = true;
                     Os.sleep(SLEEP_MILLIS * 3);
@@ -204,15 +206,28 @@ public class WorkerIdleParkTest {
         });
     }
 
+    // Stands in for a socket poll that sees no event: each park waits out maxParkNanos, as
+    // IdleParkJob requires; a park that returned at once would turn the worker's naps and sleeps
+    // into a spin. An unpark does not end the park, release does. The job counts parks by length
+    // instead of recording each one, so its memory stays flat however often a worker parks.
     private static class ParkJob implements IdleParkJob {
         final AtomicBoolean failNext = new AtomicBoolean();
         final AtomicBoolean locked = new AtomicBoolean();
-        final ConcurrentLinkedQueue<Long> parkNanos = new ConcurrentLinkedQueue<>();
+        final AtomicInteger napParks = new AtomicInteger();
         final AtomicInteger parks = new AtomicInteger();
         final CountDownLatch release = new CountDownLatch(1);
+        final AtomicInteger sleepParks = new AtomicInteger();
+        // parks neither nap- nor sleep-long
+        final AtomicInteger unexpectedParks = new AtomicInteger();
+        private final long sleepNanos;
         volatile boolean busy;
-        volatile boolean holdFullPark;
+        // a worker waits in a park longer than a nap
         volatile boolean inPark;
+        volatile long lastUnexpectedParkNanos;
+
+        ParkJob(long sleepMillis) {
+            this.sleepNanos = TimeUnit.MILLISECONDS.toNanos(sleepMillis);
+        }
 
         @Override
         public void cancelIdlePark() {
@@ -223,20 +238,24 @@ public class WorkerIdleParkTest {
         public boolean idlePark(long maxParkNanos) {
             try {
                 parks.incrementAndGet();
-                parkNanos.add(maxParkNanos);
+                if (maxParkNanos == NAP_NANOS) {
+                    napParks.incrementAndGet();
+                } else if (maxParkNanos == sleepNanos) {
+                    sleepParks.incrementAndGet();
+                } else {
+                    lastUnexpectedParkNanos = maxParkNanos;
+                    unexpectedParks.incrementAndGet();
+                }
                 if (failNext.compareAndSet(true, false)) {
                     throw new RuntimeException("injected park failure");
                 }
-                if (holdFullPark && maxParkNanos > 1_000_000L) {
-                    // like a socket poll: an unpark does not end it
-                    inPark = true;
-                    try {
-                        release.await(maxParkNanos, TimeUnit.NANOSECONDS);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                    } finally {
-                        inPark = false;
-                    }
+                inPark = maxParkNanos > NAP_NANOS;
+                try {
+                    release.await(maxParkNanos, TimeUnit.NANOSECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    inPark = false;
                 }
                 return false;
             } finally {
@@ -252,6 +271,14 @@ public class WorkerIdleParkTest {
         @Override
         public boolean tryBeginIdlePark() {
             return locked.compareAndSet(false, true);
+        }
+
+        String describeParks() {
+            return "parks [nap=" + napParks.get()
+                    + ", sleep=" + sleepParks.get()
+                    + ", unexpected=" + unexpectedParks.get()
+                    + ", lastUnexpectedNanos=" + lastUnexpectedParkNanos
+                    + ']';
         }
     }
 }
