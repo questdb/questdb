@@ -53,14 +53,6 @@ public class CairoConfigurationWrapperTest extends AbstractCairoTest {
 
     private static class StubPartitionDeltaWriter implements PartitionDeltaWriter {
         @Override
-        public void checkAttach(TableWriter writer, long partitionTimestamp, long baseRowCount, long boundsAddr) {
-        }
-
-        @Override
-        public void detach(TableWriter writer, int partitionIndex, Path detachedPartitionPath) {
-        }
-
-        @Override
         public void initialize(TableWriter writer, int partitionIndex) {
         }
 

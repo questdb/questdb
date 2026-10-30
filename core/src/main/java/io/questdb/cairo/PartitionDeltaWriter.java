@@ -36,24 +36,9 @@ public interface PartitionDeltaWriter extends QuietCloseable {
     default void cancel(Path partitionDir) {
     }
 
-    /**
-     * Checks the Delta state in the attachable directory and writes its visible timestamp bounds.
-     * Throws when it does not belong to the table, e.g. another base row count or index set.
-     *
-     * @param boundsAddr caller-owned, 8-byte-aligned 16-byte buffer for min then max;
-     *                   only accessed during this call
-     */
-    void checkAttach(TableWriter writer, long partitionTimestamp, long baseRowCount, long boundsAddr);
-
     @Override
     default void close() {
     }
-
-    /**
-     * Writes the committed catalog of a partition with Delta rows into its detached directory.
-     * The live catalog changes in place, so the detached directory needs its own copy.
-     */
-    void detach(TableWriter writer, int partitionIndex, Path detachedPartitionPath);
 
     default void dropIndex(
             TableWriter writer,

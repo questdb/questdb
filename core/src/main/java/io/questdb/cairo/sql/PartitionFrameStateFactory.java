@@ -28,7 +28,6 @@ import io.questdb.cairo.PartitionDeltaStats;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.std.QuietCloseable;
-import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -69,13 +68,8 @@ public interface PartitionFrameStateFactory extends QuietCloseable {
     long open(TableReader reader, int partitionIndex, long readerSeqTxn);
 
     /**
-     * Opens a carried catalog read-only, outside the live partition registry.
-     */
-    long openDetached(Path partitionPath, long readerSeqTxn);
-
-    /**
      * Reads the physical-source fields from the snapshot's pinned catalog base.
-     * Works with both live and detached handles, without opening physical files or binding data windows.
+     * Opens no physical files and binds no data windows.
      */
     void readSource(long state, PartitionFrameSource target);
 

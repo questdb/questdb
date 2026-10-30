@@ -322,7 +322,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             CharSequence dynamicTsColName = tsColName;
             boolean hasDelta = false;
             boolean isDeltaParquet = false;
-            long detachedSeqTxn = -1;
             path.trimTo(rootLen).$();
 
             TxReader tableTxReader = tableReader.getTxFile();
@@ -425,12 +424,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                                     int pIndex = detachedTxReader.getPartitionIndex(timestamp);
                                     // could set dynamicPartitionIndex to -pIndex
                                     numRows = detachedTxReader.getPartitionSize(pIndex);
-                                    hasDelta = detachedTxReader.getPartitionHasDelta(pIndex);
-                                    detachedSeqTxn = detachedTxReader.getSeqTxn();
-                                    isParquet = detachedTxReader.isPartitionParquet(pIndex);
-                                    if (isParquet) {
-                                        parquetFileSize = detachedTxReader.getPartitionParquetFileSize(pIndex);
-                                    }
                                     if (PartitionBy.isPartitioned(partitionBy) && numRows > 0L) {
                                         int tsIndex = detachedMetaReader.getTimestampIndex();
                                         dynamicTsColName = detachedMetaReader.getColumnName(tsIndex);
@@ -455,19 +448,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     LOG.error().$("detached partition does not have meta file [path=").$(path).I$();
                 }
                 path.parent();
-                if (hasDelta) {
-                    tableReader.readDetachedDeltaStats(path, detachedSeqTxn, numRows, deltaStats);
-                    isDeltaParquet = isDeltaParquetBase();
-                }
-                if (isDeltaParquet) {
-                    openDeltaParquetMeta(path);
-                } else if (isParquet) {
-                    openParquetMeta(path, parquetFileSize);
-                }
             }
 
             final long baseRows = numRows;
-            final int partitionPathLen = path.size();
             partitionSize = ff.getDirSize(path);
             partitionSizeSink.clear();
             SizePrettyFunctionFactory.toSizePretty(partitionSizeSink, partitionSize);
@@ -510,7 +493,6 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     maxTimestamp = Long.MIN_VALUE;
                 }
             }
-            path.trimTo(partitionPathLen);
             if (hasDelta) {
                 numRows = deltaStats.getRowCount();
                 // Preserve unknown base bounds when its timestamp source is unavailable.

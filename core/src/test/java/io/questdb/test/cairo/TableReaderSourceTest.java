@@ -249,11 +249,6 @@ public class TableReaderSourceTest extends AbstractCairoTest {
         }
 
         @Override
-        public long openDetached(Path partitionPath, long readerSeqTxn) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
         public void readSource(long state, PartitionFrameSource target) {
             Source source = states.get(state).source;
             target.of(source.kind, source.nameTxn, source.columnVersion, source.metadataBytes, source.metadataSlot);
