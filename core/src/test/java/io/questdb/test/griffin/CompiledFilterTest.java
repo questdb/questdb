@@ -24,30 +24,54 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.FactoryProvider;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.Numbers;
 import io.questdb.std.Uuid;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
+import io.questdb.test.cairo.TestTickCalendarService;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.function.UnaryOperator;
 
 /**
  * Tests for advanced features and scenarios, such as col tops, bind variables,
  * random access, record behavior, and so on.
  */
 public class CompiledFilterTest extends AbstractCairoTest {
+    // Three days in two intervals, since $yesterday and $today merge. The JIT compiles three range
+    // checks for it and pads the third. Over createTemporalDaysTable(), it holds k = 7, 8 and 10 on
+    // 2024-01-08, and k = 4, 5 and 7 on 2024-01-05.
+    private static final String DAYS_AROUND_TODAY = "'[$yesterday, $today, $today + 2d]'";
+    private static final String DAYS_AROUND_TODAY_GROUPS_5 = """
+            s\tc\tsk
+            a\t2\t12
+            b\t1\t4
+            """;
+    private static final String DAYS_AROUND_TODAY_GROUPS_8 = """
+            s\tc\tsk
+            a\t1\t7
+            b\t2\t18
+            """;
 
     @Before
     public void setUp() {
@@ -211,6 +235,437 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDateInBeforeEpochMatchesJava() throws Exception {
+        // The JIT compares a DATE key in milliseconds and rounds the bounds of a micro interval
+        // inward, as the Java filter matches a DATE d when d * 1000 lies in the interval. Before
+        // 1970 the bounds are negative, where truncation rounds toward zero rather than inward:
+        // the upper bound of 1969-12-31, -1 us, would include 1970-01-01T00:00:00.000 (k = 5).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (k INT, dt DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '1969-12-30T23:59:59.999Z', '2024-01-01T00:00:00.000000Z'),
+                    (2, '1969-12-31T00:00:00.000Z', '2024-01-01T01:00:00.000000Z'),
+                    (3, '1969-12-31T23:59:59.998Z', '2024-01-01T02:00:00.000000Z'),
+                    (4, '1969-12-31T23:59:59.999Z', '2024-01-01T03:00:00.000000Z'),
+                    (5, '1970-01-01T00:00:00.000Z', '2024-01-01T04:00:00.000000Z'),
+                    (6, NULL, '2024-01-01T05:00:00.000000Z')
+                    """);
+            assertFilterWithAndWithoutJit("dt IN '1969-12-31'", "k\n2\n3\n4\n", true);
+            assertFilterWithAndWithoutJit("dt IN ('1969-12-31')", "k\n2\n3\n4\n", true);
+            assertFilterWithAndWithoutJit("dt NOT IN '1969-12-31'", "k\n1\n5\n6\n", true);
+            assertFilterWithAndWithoutJit("dt IN '1969-12-31' OR k = 1", "k\n1\n2\n3\n4\n", true);
+            assertFilterWithAndWithoutJit("dt IN '1969-12-31T23:59:59.998'", "k\n3\n", true);
+            // [-1500 us, -501 us] holds -1 ms only, and [-500 us, 499 us] holds 0 ms only.
+            assertFilterWithAndWithoutJit("dt IN '1969-12-31T23:59:59.998500;1T'", "k\n4\n", true);
+            assertFilterWithAndWithoutJit("dt IN '1969-12-31T23:59:59.999500;1T'", "k\n5\n", true);
+
+            // CompiledFilterTickBounds rounds the bounds of a date variable the same way.
+            final long dec31At10 = -Micros.DAY_MICROS + 10 * Micros.HOUR_MICROS;
+            final long jan1At10 = 10 * Micros.HOUR_MICROS;
+            assertFilterFollowsClock("dt IN '$today'", true, dec31At10, "k\n2\n3\n4\n", jan1At10, "k\n5\n");
+            assertFilterFollowsClock("dt NOT IN '$today'", true, dec31At10, "k\n1\n5\n6\n", jan1At10, "k\n1\n2\n3\n4\n6\n");
+            assertFilterFollowsClock("dt IN '$now - 500u;1T'", true, -Micros.MILLI_MICROS, "k\n4\n", 0, "k\n5\n");
+        });
+    }
+
+    @Test
+    public void testDateInIntervalCountThreshold() throws Exception {
+        // An unparenthesised IN over a DATE key used to run on the Java filter, whose binary search
+        // outpaces the JIT's range checks past a few dozen intervals. The IN list threshold (10 by
+        // default) caps its interval count, as it caps the parenthesised form's. A TIMESTAMP or
+        // TIMESTAMP_NS key has always compiled any interval count in this form.
+        assertMemoryLeak(() -> {
+            createTemporalInTable();
+            for (String c : new String[]{"tm", "tn"}) {
+                assertFilterWithAndWithoutJit(c + " IN '2024-01-02T12:00;1m;-1d;11'", "k\n1\n", true);
+                assertFilterWithAndWithoutJit(c + " IN '2024-01-02T12:00;1m;-1d;40' OR k = 3", "k\n1\n3\n", true);
+            }
+            assertFilterWithAndWithoutJit("dt IN '2024-01-02'", "k\n1\n2\n", true);
+            assertFilterWithAndWithoutJit("dt IN '2024-01-02T12:00;1m;-1d;10'", "k\n1\n", true);
+            assertFilterWithAndWithoutJit("dt IN '2024-01-02T12:00;1m;-1d;11'", "k\n1\n", false);
+            assertFilterWithAndWithoutJit("dt NOT IN '2024-01-02T12:00;1m;-1d;11'", "k\n2\n3\n4\n5\n", false);
+            assertFilterWithAndWithoutJit("dt IN '2024-01-02T12:00;1m;-1d;40' OR k = 3", "k\n1\n3\n", false);
+        });
+    }
+
+    @Test
+    public void testDateVariableIntervalAboveInListThresholdFollowsClock() throws Exception {
+        // Eleven intervals a day, one more than cairo.sql.jit.max.in.list.size.threshold allows by
+        // default, so the Java filter runs it.
+        final String times = "[$today]T[02:00,03:00,04:00,05:00,06:00,07:00,08:00,09:00,10:00,11:00,12:00]";
+        assertMemoryLeak(() -> {
+            createTemporalDaysTable();
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                assertFilterFollowsClock(c + " IN '" + times + "'", false, jan2024(5), keys(5), jan2024(6), keys(6));
+                assertFilterFollowsClock(c + " IN ('" + times + "')", false, jan2024(5), keys(5), jan2024(6), keys(6));
+                assertFilterFollowsClock(c + " NOT IN '" + times + "'", false, jan2024(5), allDayKeysExcept(5), jan2024(6), allDayKeysExcept(6));
+            }
+            assertFollowsClock("SELECT k FROM x WHERE ts IN '" + times + "'", false, jan2024(5), keys(5), jan2024(6), keys(6));
+            assertFollowsClock("SELECT k FROM x WHERE ts IN '" + times + "' OR k = 1", false, jan2024(5), keys(1, 5), jan2024(6), keys(1, 6));
+        });
+    }
+
+    @Test
+    public void testDateVariableIntervalCountChangeFollowsClock() throws Exception {
+        // The interval count of these expressions moves with the clock: $today#workday has no
+        // interval at weekends, $today..$today+3bd splits at a weekend, and [$yesterday, 2024-01-02]
+        // merges into one interval when $yesterday reaches 2024-01-02 or the day after it. The JIT
+        // compiles a range check for each interval an expression can yield and pads the unused
+        // ones. A business-day range has no such bound, and runs on the Java filter.
+        assertMemoryLeak(() -> {
+            createTemporalDaysTable();
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                // 2024-01-05 is a Friday, 2024-01-06 a Saturday and 2024-01-08 a Monday.
+                assertFilterFollowsClock(c + " IN '$today#workday'", true, jan2024(5), keys(5), jan2024(6), keys());
+                assertFilterFollowsClock(c + " IN '$today#workday'", true, jan2024(6), keys(), jan2024(8), keys(8));
+                assertFilterFollowsClock(c + " IN ('$today#workday')", true, jan2024(5), keys(5), jan2024(6), keys());
+                assertFilterFollowsClock(c + " NOT IN '$today#workday'", true, jan2024(5), allDayKeysExcept(5), jan2024(6), allDayKeysExcept());
+                assertFilterFollowsClock("NOT " + c + " IN '$today#workday'", true, jan2024(6), allDayKeysExcept(), jan2024(5), allDayKeysExcept(5));
+                assertFilterFollowsClock(c + " IN '$today#workday' OR k = 2", true, jan2024(6), keys(2), jan2024(5), keys(2, 5));
+                assertFilterFollowsClock(c + " IN '$today#workday' AND k > 4", true, jan2024(6), keys(), jan2024(5), keys(5));
+                // From a Monday, 3 business days stay in one week. From a Friday, they cross a weekend.
+                assertFilterFollowsClock(c + " IN '$today..$today+3bd'", false, jan2024(8), keys(8, 9, 10, 11), jan2024(5), keys(5, 8, 9, 10));
+                assertFilterFollowsClock(c + " IN ('$today..$today+3bd')", false, jan2024(8), keys(8, 9, 10, 11), jan2024(5), keys(5, 8, 9, 10));
+                assertFilterFollowsClock(c + " NOT IN '$today..$today+3bd'", false, jan2024(8), allDayKeysExcept(8, 9, 10, 11), jan2024(5), allDayKeysExcept(5, 8, 9, 10));
+                assertFilterFollowsClock(c + " IN '[$yesterday, 2024-01-02]'", true, jan2024(3), keys(2), jan2024(5), keys(2, 4));
+                assertFilterFollowsClock(c + " IN '[$yesterday, 2024-01-02]'", true, jan2024(5), keys(2, 4), jan2024(4), keys(2, 3));
+                assertFilterFollowsClock(c + " NOT IN '[$yesterday, 2024-01-02]'", true, jan2024(3), allDayKeysExcept(2), jan2024(5), allDayKeysExcept(2, 4));
+            }
+        });
+    }
+
+    @Test
+    public void testDateVariableIntervalCountChangeOnDesignatedTimestampFollowsClock() throws Exception {
+        assertMemoryLeak(() -> {
+            createTemporalDaysTable();
+            // Interval scan. It leaves only k > 4 to the filter, which the JIT compiles.
+            assertFollowsClock("SELECT k FROM x WHERE ts IN '$today#workday'", false, jan2024(5), keys(5), jan2024(6), keys());
+            assertFollowsClock("SELECT k FROM x WHERE ts NOT IN '$today#workday'", false, jan2024(5), allDayKeysExcept(5), jan2024(6), allDayKeysExcept());
+            assertFollowsClock("SELECT k FROM x WHERE ts IN '$today#workday' AND k > 4", true, jan2024(6), keys(), jan2024(5), keys(5));
+            assertFollowsClock("SELECT k FROM x WHERE ts IN '$today..$today+3bd'", false, jan2024(8), keys(8, 9, 10, 11), jan2024(5), keys(5, 8, 9, 10));
+            assertFollowsClock("SELECT k FROM x WHERE ts NOT IN '$today..$today+3bd'", false, jan2024(8), allDayKeysExcept(8, 9, 10, 11), jan2024(5), allDayKeysExcept(5, 8, 9, 10));
+            assertFollowsClock("SELECT k FROM x WHERE ts IN '[$yesterday, 2024-01-02]'", false, jan2024(3), keys(2), jan2024(5), keys(2, 4));
+            // Filter.
+            assertFollowsClock("SELECT k FROM x WHERE ts IN '$today#workday' OR k = 2", true, jan2024(6), keys(2), jan2024(5), keys(2, 5));
+            assertFollowsClock("SELECT k FROM x WHERE NOT ts IN '$today#workday' OR k = 2", true, jan2024(6), allDayKeysExcept(), jan2024(5), allDayKeysExcept(5));
+            assertFollowsClock("SELECT k FROM x WHERE ts IN '$today..$today+3bd' OR k = 2", false, jan2024(8), keys(2, 8, 9, 10, 11), jan2024(5), keys(2, 5, 8, 9, 10));
+            assertFollowsClock("SELECT k FROM x WHERE ts NOT IN '$today..$today+3bd' OR k = 9", false, jan2024(8), allDayKeysExcept(8, 10, 11), jan2024(5), allDayKeysExcept(5, 8, 10));
+            assertFollowsClock("SELECT k FROM x WHERE ts IN '[$yesterday, 2024-01-02]' OR k = 1", true, jan2024(3), keys(1, 2), jan2024(5), keys(1, 2, 4));
+        });
+    }
+
+    @Test
+    public void testDateVariableIntervalInFilterFollowsClock() throws Exception {
+        // The JIT used to resolve date variables such as $today when it compiled the filter, so a
+        // cached plan kept the bounds of the moment it was compiled. The JIT now reads the bounds
+        // from bind variable slots, which the factory fills each time the cursor opens.
+        assertMemoryLeak(() -> {
+            createTemporalInTable();
+            final long jan2 = Micros.toMicros(2024, 1, 2);
+            final long hour = Micros.HOUR_MICROS;
+            final long day = Micros.DAY_MICROS;
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                assertFilterFollowsClock(c + " IN '$today'", true, jan2 + hour, "k\n1\n2\n", jan2 + day + hour, "k\n3\n");
+                assertFilterFollowsClock(c + " IN ('$today')", true, jan2 + hour, "k\n1\n2\n", jan2 + day + hour, "k\n3\n");
+                assertFilterFollowsClock(c + " NOT IN '$today'", true, jan2 + hour, "k\n3\n4\n5\n", jan2 + day + hour, "k\n1\n2\n4\n5\n");
+                assertFilterFollowsClock(c + " NOT IN ('$today')", true, jan2 + hour, "k\n3\n4\n5\n", jan2 + day + hour, "k\n1\n2\n4\n5\n");
+                assertFilterFollowsClock(c + " IN '$yesterday'", true, jan2 + hour, "k\n5\n", jan2 + day + hour, "k\n1\n2\n");
+                assertFilterFollowsClock(c + " IN '$tomorrow'", true, jan2 - day + hour, "k\n1\n2\n", jan2 + hour, "k\n3\n");
+                // 2024-01-02 is a Tuesday and 2024-01-03 a Wednesday.
+                assertFilterFollowsClock(c + " IN '[$today - 1bd]'", true, jan2 + day + hour, "k\n1\n2\n", jan2 + hour, "k\n5\n");
+                assertFilterFollowsClock(c + " IN '[$yesterday, $today]'", true, jan2 + hour, "k\n1\n2\n5\n", jan2 + day + hour, "k\n1\n2\n3\n");
+                // $now moves within the day.
+                assertFilterFollowsClock(c + " IN '$now - 1h..$now'", true, jan2 + hour / 2, "k\n2\n5\n", jan2 + 12 * hour + hour / 2, "k\n1\n");
+                assertFilterFollowsClock(c + " IN '$now - 1h..$now' AND k > 1", true, jan2 + hour / 2, "k\n2\n5\n", jan2 + 12 * hour + hour / 2, "k\n");
+                assertFilterFollowsClock(c + " IN '$today' OR k = 5", true, jan2 + hour, "k\n1\n2\n5\n", jan2 + day + hour, "k\n3\n5\n");
+                // A point in time, and a range of whole days.
+                assertFilterFollowsClock(c + " IN '$now - 12h'", true, jan2 + day, "k\n1\n", jan2 + 13 * hour, "k\n");
+                assertFilterFollowsClock(c + " IN '$today..$today+1d'", true, jan2 + hour, "k\n1\n2\n3\n", jan2 - day + hour, "k\n1\n2\n5\n");
+                // Time overrides, one interval each.
+                assertFilterFollowsClock(c + " IN '$todayT11:30;1h'", true, jan2 + hour, "k\n1\n", jan2 + day + hour, "k\n");
+                assertFilterFollowsClock(c + " IN '[$today]T[00:00,12:00];1m'", true, jan2 + hour, "k\n1\n2\n", jan2 + day + hour, "k\n3\n");
+                assertFilterFollowsClock(c + " NOT IN '[$today]T[00:00,12:00];1m'", true, jan2 + hour, "k\n3\n4\n5\n", jan2 + day + hour, "k\n1\n2\n4\n5\n");
+                // Timezones. London keeps UTC in January.
+                assertFilterFollowsClock(c + " IN '$today@+01:00'", true, jan2 + hour, "k\n1\n2\n5\n", jan2 + day + hour, "k\n3\n");
+                assertFilterFollowsClock(c + " IN '$today@Europe/London'", true, jan2 + hour, "k\n1\n2\n", jan2 + day + hour, "k\n3\n");
+                // A range of days in a named zone can split at a clock change, so its interval count
+                // has no bound the JIT relies on.
+                assertFilterFollowsClock(c + " IN '$today..$today+1d@Europe/London'", false, jan2 + hour, "k\n1\n2\n3\n", jan2 - day + hour, "k\n1\n2\n5\n");
+            }
+        });
+    }
+
+    @Test
+    public void testDateVariableIntervalInGroupByFollowsClock() throws Exception {
+        // AsyncFilterContext initializes the filter of GROUP BY and top K each time the cursor opens.
+        assertMemoryLeak(() -> {
+            createTemporalDaysTable();
+            final String groupBy = "SELECT s, count() c, sum(k) sk FROM x WHERE tm IN ";
+            final String topK = "SELECT k FROM x WHERE tm IN ";
+            // The constant interval shows that the factory compiles its filter with the JIT.
+            final String constant = "'[2024-01-05, 2024-01-08, 2024-01-09, 2024-01-10]'";
+            final String expected5 = """
+                    s\tc\tsk
+                    a\t2\t14
+                    b\t2\t18
+                    """;
+            final String expected8 = """
+                    s\tc\tsk
+                    a\t2\t20
+                    b\t2\t18
+                    """;
+            assertFollowsClock(groupBy + constant + " ORDER BY s", true, QueryAssertion::expectSize, jan2024(8), expected5, jan2024(5), expected5);
+            assertFollowsClock(groupBy + "'$today..$today+3bd' ORDER BY s", false, QueryAssertion::expectSize, jan2024(8), expected8, jan2024(5), expected5);
+            assertFollowsClock(groupBy + DAYS_AROUND_TODAY + " ORDER BY s", true, QueryAssertion::expectSize, jan2024(8), DAYS_AROUND_TODAY_GROUPS_8, jan2024(5), DAYS_AROUND_TODAY_GROUPS_5);
+            assertFollowsClock(topK + constant + " ORDER BY k DESC LIMIT 2", true, QueryAssertion::expectSize, jan2024(8), keys(10, 9), jan2024(5), keys(10, 9));
+            assertFollowsClock(topK + "'$today..$today+3bd' ORDER BY k DESC LIMIT 2", false, QueryAssertion::expectSize, jan2024(8), keys(11, 10), jan2024(5), keys(10, 9));
+            assertFollowsClock(topK + DAYS_AROUND_TODAY + " ORDER BY k DESC LIMIT 2", true, QueryAssertion::expectSize, jan2024(8), keys(10, 8), jan2024(5), keys(7, 5));
+        });
+    }
+
+    @Test
+    public void testDateVariableIntervalInHorizonJoinFollowsClock() throws Exception {
+        assertMemoryLeak(() -> {
+            createTemporalDaysTable();
+            createDaysJoinSlaveTable();
+            final String query = "SELECT t.s, count() c, sum(t.k) sk FROM x t HORIZON JOIN p ON (t.s = p.s) LIST (0s) AS h WHERE t.tm IN ";
+            // The constant interval shows that the factory compiles its filter with the JIT.
+            final String constant = "'[2024-01-05, 2024-01-08, 2024-01-09, 2024-01-10]'";
+            final String expected5 = """
+                    s\tc\tsk
+                    a\t2\t14
+                    b\t2\t18
+                    """;
+            final String expected8 = """
+                    s\tc\tsk
+                    a\t2\t20
+                    b\t2\t18
+                    """;
+            assertFollowsClock(query + constant + " ORDER BY s", true, QueryAssertion::expectSize, jan2024(8), expected5, jan2024(5), expected5);
+            assertFollowsClock(query + "'$today..$today+3bd' ORDER BY s", false, QueryAssertion::expectSize, jan2024(8), expected8, jan2024(5), expected5);
+            assertFollowsClock(query + DAYS_AROUND_TODAY + " ORDER BY s", true, QueryAssertion::expectSize, jan2024(8), DAYS_AROUND_TODAY_GROUPS_8, jan2024(5), DAYS_AROUND_TODAY_GROUPS_5);
+        });
+    }
+
+    @Test
+    public void testDateVariableIntervalInLatestOnFollowsClock() throws Exception {
+        // LatestByCompiledFilter initializes the filter each time the cursor opens.
+        assertMemoryLeak(() -> {
+            createTemporalDaysTable();
+            final String query = "SELECT s, k FROM x WHERE tm IN ";
+            // The constant interval shows that the factory compiles its filter with the JIT.
+            final String constant = "'[2024-01-05, 2024-01-08, 2024-01-09, 2024-01-10]'";
+            final String expected5 = """
+                    s\tk
+                    a\t9
+                    b\t10
+                    """;
+            final String expected8 = """
+                    s\tk
+                    b\t10
+                    a\t11
+                    """;
+            assertFollowsClock(query + constant + " LATEST ON ts PARTITION BY s", true, QueryAssertion::expectSize, jan2024(8), expected5, jan2024(5), expected5);
+            assertFollowsClock(query + "'$today..$today+3bd' LATEST ON ts PARTITION BY s", false, QueryAssertion::expectSize, jan2024(8), expected8, jan2024(5), expected5);
+            assertFollowsClock(
+                    query + DAYS_AROUND_TODAY + " LATEST ON ts PARTITION BY s",
+                    true,
+                    QueryAssertion::expectSize,
+                    jan2024(8),
+                    """
+                            s\tk
+                            a\t7
+                            b\t10
+                            """,
+                    jan2024(5),
+                    """
+                            s\tk
+                            b\t4
+                            a\t7
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testDateVariableIntervalInWindowJoinFollowsClock() throws Exception {
+        // AsyncWindowJoinAtom initializes the filter each time the cursor opens. The factory does not
+        // report whether it compiled the filter with the JIT through usesCompiledFilter(), so the
+        // test asks its atom.
+        assertMemoryLeak(() -> {
+            createTemporalDaysTable();
+            createDaysJoinSlaveTable();
+            final String query = """
+                    SELECT t.k, sum(p.v) sv
+                    FROM x t
+                    WINDOW JOIN p ON (t.s = p.s)
+                    RANGE BETWEEN 1 minute PRECEDING AND 1 minute FOLLOWING INCLUDE PREVAILING
+                    WHERE t.tm IN\s""";
+            assertFollowsClock(
+                    query + DAYS_AROUND_TODAY,
+                    false,
+                    QueryAssertion::noRandomAccess,
+                    jan2024(8),
+                    """
+                            k\tsv
+                            7\t1.0
+                            8\t2.0
+                            10\t2.0
+                            """,
+                    jan2024(5),
+                    """
+                            k\tsv
+                            4\t2.0
+                            5\t1.0
+                            7\t1.0
+                            """
+            );
+            assertWindowJoinUsesCompiledFilter(query + DAYS_AROUND_TODAY, true);
+            assertFollowsClock(
+                    query + "'$today..$today+3bd'",
+                    false,
+                    QueryAssertion::noRandomAccess,
+                    jan2024(8),
+                    """
+                            k\tsv
+                            8\t2.0
+                            9\t1.0
+                            10\t2.0
+                            11\t1.0
+                            """,
+                    jan2024(5),
+                    """
+                            k\tsv
+                            5\t1.0
+                            8\t2.0
+                            9\t1.0
+                            10\t2.0
+                            """
+            );
+            assertWindowJoinUsesCompiledFilter(query + "'$today..$today+3bd'", false);
+        });
+    }
+
+    @Test
+    public void testDateVariableIntervalOnDesignatedTimestampFollowsClock() throws Exception {
+        // The interval scan takes an IN on the designated timestamp from an AND chain, and has
+        // resolved date variables on every run since #6780. Under OR, the IN stays in the filter,
+        // which the JIT used to compile with the bounds of the moment it was compiled.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO y VALUES
+                    (1, '2024-01-01T12:00:00.000000Z'),
+                    (2, '2024-01-02T00:30:00.000000Z'),
+                    (3, '2024-01-02T12:00:00.000000Z'),
+                    (4, '2024-01-03T00:30:00.000000Z'),
+                    (5, '2024-01-03T12:00:00.000000Z')
+                    """);
+            final long jan2 = Micros.toMicros(2024, 1, 2);
+            final long hour = Micros.HOUR_MICROS;
+            final long day = Micros.DAY_MICROS;
+            final long t1 = jan2 + hour;
+            final long t2 = jan2 + day + hour;
+            // Interval scan. It leaves only k > 2 to the filter, which the JIT compiles.
+            assertFollowsClock("SELECT k FROM y WHERE ts IN '$today'", false, t1, "k\n2\n3\n", t2, "k\n4\n5\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts IN ('$today')", false, t1, "k\n2\n3\n", t2, "k\n4\n5\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts NOT IN '$today'", false, t1, "k\n1\n4\n5\n", t2, "k\n1\n2\n3\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts IN '$yesterday'", false, t1, "k\n1\n", t2, "k\n2\n3\n");
+            // A range end exactly at midnight counts as a whole day, so the $now ranges start off it.
+            final long t3 = jan2 + 45 * Micros.MINUTE_MICROS;
+            assertFollowsClock("SELECT k FROM y WHERE ts IN '$now - 1h..$now'", false, t3, "k\n2\n", jan2 + 12 * hour + hour / 2, "k\n3\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts IN '$today' AND k > 2", true, t1, "k\n3\n", t2, "k\n4\n5\n");
+            // Filter.
+            assertFollowsClock("SELECT k FROM y WHERE ts IN '$today' OR k = 1", true, t1, "k\n1\n2\n3\n", t2, "k\n1\n4\n5\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts IN ('$today') OR k = 1", true, t1, "k\n1\n2\n3\n", t2, "k\n1\n4\n5\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts NOT IN '$today' OR k = 3", true, t1, "k\n1\n3\n4\n5\n", t2, "k\n1\n2\n3\n");
+            assertFollowsClock("SELECT k FROM y WHERE ts IN '$now - 1h..$now' OR k = 1", true, t3, "k\n1\n2\n", jan2 + 12 * hour + hour / 2, "k\n1\n3\n");
+        });
+    }
+
+    @Test
+    public void testDateVariableIntervalWithExchangeCalendarFollowsClock() throws Exception {
+        // TestTickCalendarService holds the 2025 XNYS sessions: 14:30 to 21:00 UTC in January.
+        final FactoryProvider previousFactoryProvider = factoryProvider;
+        factoryProvider = new DefaultFactoryProvider() {
+            @Override
+            public @NotNull TickCalendarServiceFactory getTickCalendarServiceFactory() {
+                return () -> TestTickCalendarService.INSTANCE;
+            }
+        };
+        try {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE x (k INT, dt DATE, tm TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO x VALUES
+                        (1, '2025-01-24T10:00:00.000Z', '2025-01-24T10:00:00.000000Z', '2025-01-24T10:00:00.000000000Z', '2025-01-24T10:00:00.000000Z'),
+                        (2, '2025-01-24T15:00:00.000Z', '2025-01-24T15:00:00.000000Z', '2025-01-24T15:00:00.000000000Z', '2025-01-24T15:00:00.000000Z'),
+                        (3, '2025-01-27T15:00:00.000Z', '2025-01-27T15:00:00.000000Z', '2025-01-27T15:00:00.000000000Z', '2025-01-27T15:00:00.000000Z'),
+                        (4, NULL, NULL, NULL, '2025-01-27T22:00:00.000000Z')
+                        """);
+                // 2025-01-24 is a Friday, 2025-01-25 a Saturday and 2025-01-27 a Monday.
+                final long fri = Micros.toMicros(2025, 1, 24, 1, 0);
+                final long sat = Micros.toMicros(2025, 1, 25, 1, 0);
+                final long mon = Micros.toMicros(2025, 1, 27, 1, 0);
+                for (String c : new String[]{"dt", "tm", "tn"}) {
+                    assertFilterFollowsClock(c + " IN '$today#XNYS'", false, fri, keys(2), mon, keys(3));
+                    assertFilterFollowsClock(c + " IN ('$today#XNYS')", false, sat, keys(), mon, keys(3));
+                    assertFilterFollowsClock(c + " NOT IN '$today#XNYS'", false, fri, keys(1, 3, 4), sat, keys(1, 2, 3, 4));
+                    assertFilterFollowsClock(c + " IN '$today#XNYS' OR k = 1", false, sat, keys(1), fri, keys(1, 2));
+                }
+                assertFollowsClock("SELECT k FROM x WHERE ts IN '$today#XNYS'", false, fri, keys(2), mon, keys(3));
+                assertFollowsClock("SELECT k FROM x WHERE ts IN '$today#XNYS' OR k = 1", false, sat, keys(1), fri, keys(1, 2));
+            });
+        } finally {
+            factoryProvider = previousFactoryProvider;
+        }
+    }
+
+    @Test
+    public void testDateVariableIntervalWithManyElementsFollowsClock() throws Exception {
+        // CompiledTickExpression used to keep the element count of a date variable expression in 8
+        // bits, so the Java filter and the interval scan lost all but count % 256 of the elements.
+        assertMemoryLeak(() -> {
+            // One row a day at 10:00:30 through 2024.
+            execute("CREATE TABLE x (k INT, dt DATE, tm TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x
+                    SELECT k, t::DATE, t, t::TIMESTAMP_NS, t
+                    FROM (SELECT x::INT k, dateadd('d', (x - 1)::INT, '2024-01-01T10:00:30.000000Z'::TIMESTAMP) t FROM long_sequence(366))
+                    """);
+            // Each static element matches the row of its day. $today matches no row on 2025-06-01
+            // and the row of 2024-12-30, which no static element holds, on that day.
+            final String days336 = "2024-[01..12]-[01..28]T10:00";
+            final String days252 = "2024-[01..09]-[01..28]T10:00";
+            final String elements256 = "[$today, " + days252 + ", 2024-10-[01..03]T10:00]";
+            final long jun2025 = Micros.toMicros(2025, 6, 1, 1, 0);
+            final long dec2024 = Micros.toMicros(2024, 12, 30, 1, 0);
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                final String query = "SELECT count() FROM x WHERE " + c;
+                // The IN list threshold caps a DATE key, so the Java filter runs the 336 DATE intervals;
+                // TIMESTAMP keys keep the uncapped JIT path.
+                final boolean isJitExpected = !"dt".equals(c);
+                assertCountFollowsClock(query + " IN '[" + days336 + "]'", isJitExpected, jun2025, 336, dec2024, 336);
+                assertCountFollowsClock(query + " IN '[$today, " + days336 + "]'", false, jun2025, 336, dec2024, 337);
+                assertCountFollowsClock(query + " IN ('[$today, " + days336 + "]')", false, jun2025, 336, dec2024, 337);
+                assertCountFollowsClock(query + " NOT IN '[$today, " + days336 + "]'", false, jun2025, 30, dec2024, 29);
+                assertCountFollowsClock(query + " IN '" + elements256 + "'", false, jun2025, 255, dec2024, 256);
+                assertCountFollowsClock(query + " IN '[$today, " + days252 + "]'", false, jun2025, 252, dec2024, 253);
+            }
+            // Interval scan.
+            final String query = "SELECT count() FROM x WHERE ts";
+            assertCountFollowsClock(query + " IN '[$today, " + days336 + "]'", false, jun2025, 336, dec2024, 337);
+            assertCountFollowsClock(query + " NOT IN '[$today, " + days336 + "]'", false, jun2025, 30, dec2024, 29);
+            assertCountFollowsClock(query + " IN '" + elements256 + "'", false, jun2025, 255, dec2024, 256);
+            // Filter.
+            assertCountFollowsClock(query + " IN '[" + days336 + "]' OR k = 0", true, jun2025, 336, dec2024, 336);
+            assertCountFollowsClock(query + " IN '[$today, " + days336 + "]' OR k = 0", false, jun2025, 336, dec2024, 337);
+            assertCountFollowsClock(query + " IN '" + elements256 + "' OR k = 0", false, jun2025, 255, dec2024, 256);
+        });
+    }
+
+    @Test
     public void testDeferredSymbolConstants() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select" +
@@ -252,6 +707,46 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     .timestamp("ts")
                     .returns(expected2);
             assertSqlRunWithJit(query);
+        });
+    }
+
+    @Test
+    public void testEmptyIntervalInFilterMatchesNoRow() throws Exception {
+        // 2024-01-06 is a Saturday, so '2024-01-06#workday' holds no interval. The JIT used to push
+        // no value for it: under OR or NOT the JVM crashed, and under AND or alone the filter
+        // stored rows.
+        assertMemoryLeak(() -> {
+            createTemporalDaysTable();
+            final String empty = " IN '2024-01-06#workday'";
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                // The IN function is the constant false, and the parser folds the tree around it to
+                // a constant. The code generator then skips the scan or the filter, and with it the JIT.
+                assertFilterWithAndWithoutJit(c + empty, keys(), false);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-06#workday')", keys(), false);
+                assertFilterWithAndWithoutJit(c + empty + " AND k = 6", keys(), false);
+                assertFilterWithAndWithoutJit("NOT " + c + empty, allDayKeysExcept(), false, QueryAssertion::expectSize);
+                assertFilterWithAndWithoutJit(c + " NOT IN ('2024-01-06#workday')", allDayKeysExcept(), false, QueryAssertion::expectSize);
+                assertFilterWithAndWithoutJit(c + empty + " AND " + c + " IN '2024-01'", keys(), false);
+                // The Java filter folds to its other operand, while the JIT compiles the whole tree,
+                // the IN as a comparison that is false on every row.
+                assertFilterWithAndWithoutJit(c + empty + " OR k = 2", keys(2), true);
+                assertFilterWithAndWithoutJit(c + " NOT" + empty + " AND k < 3", keys(0, 1, 2), true);
+                assertFilterWithAndWithoutJit(c + empty + " OR " + c + " IN '2024-01-02'", keys(2), true);
+            }
+            // The interval scan takes an IN on the designated timestamp only from an AND chain.
+            assertFilterWithAndWithoutJit("ts" + empty + " OR k = 2", keys(2), true);
+            assertFilterWithAndWithoutJit("NOT ts" + empty + " OR k = 2", allDayKeysExcept(), false, QueryAssertion::expectSize);
+
+            assertQuery("SELECT k FROM x WHERE tm" + empty + " AND k = 6").noLeakCheck().assertsPlan("""
+                    SelectedRecord
+                        Empty table
+                    """);
+            assertQuery("SELECT k FROM x WHERE tm NOT" + empty).noLeakCheck().assertsPlan("""
+                    SelectedRecord
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: x
+                    """);
         });
     }
 
@@ -353,6 +848,67 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInIntervalComparisonCountsEachInAgainstThreshold() throws Exception {
+        // The IN list threshold (10 by default) caps the interval count of each IN. Two INs of six
+        // intervals each under one comparison stay within it, so the JIT compiles the filter.
+        assertMemoryLeak(() -> {
+            createTwoTemporalKeysTable();
+            for (String c : new String[]{"d", "t", "n"}) {
+                assertFilterWithAndWithoutJit(
+                        "(" + c + "1 IN ('2024-01-10T10:00;1m;1d;6')) = (" + c + "2 IN ('2024-02-01T10:00;1m;1d;6'))",
+                        keys(4, 5),
+                        true
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testInIntervalComparisonOfTwoKeys() throws Exception {
+        // `=` and `!=` hold both INs in one predicate. The JIT used to compile the second IN it
+        // serialized, the left one, with the intervals of both.
+        assertMemoryLeak(() -> {
+            createTwoTemporalKeysTable();
+            for (String c : new String[]{"d", "t", "n"}) {
+                final String a = c + "1";
+                final String b = c + "2";
+                assertFilterWithAndWithoutJit("(" + a + " IN '2024-01') = (" + b + " IN '2024-02')", keys(2, 4, 5), true);
+                assertFilterWithAndWithoutJit("(" + a + " IN '2024-01') != (" + b + " IN '2024-02')", keys(1, 3), true);
+                assertFilterWithAndWithoutJit("(" + a + " IN '2024-01') <> (" + b + " IN '2024-02')", keys(1, 3), true);
+                assertFilterWithAndWithoutJit("(" + a + " IN ('2024-01')) = (" + b + " IN ('2024-02'))", keys(2, 4, 5), true);
+                assertFilterWithAndWithoutJit("(" + a + " IN ('2024-01')) != (" + b + " IN ('2024-02'))", keys(1, 3), true);
+                assertFilterWithAndWithoutJit("(" + b + " IN '2024-02-02') = (" + b + " IN '2024-02-06')", keys(1, 4, 5), true);
+                assertFilterWithAndWithoutJit("(" + b + " IN ('2024-02-02')) != (" + b + " IN ('2024-02-06'))", keys(2, 3), true);
+                // 2024-01-06 is a Saturday, so the left IN holds no interval and matches no row.
+                assertFilterWithAndWithoutJit("(" + a + " IN '2024-01-06#workday') = (" + b + " IN '2024-02')", keys(1, 4, 5), true);
+            }
+        });
+    }
+
+    @Test
+    public void testInIntervalOverTwoKeysMatchesJava() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwoTemporalKeysTable();
+            // $today is 2024-02-06
+            setCurrentMicros(Micros.toMicros(2024, 2, 6, 1, 0));
+            for (String c : new String[]{"d", "t", "n"}) {
+                final String a = c + "1";
+                final String b = c + "2";
+                assertFilterWithAndWithoutJit(a + " IN '2024-01'", keys(1, 2), true);
+                assertFilterWithAndWithoutJit(b + " IN ('2024-02')", keys(2, 3), true);
+                // AND and OR are not predicate roots, and the optimiser pushes NOT down to each IN, so each IN is a predicate of its own.
+                assertFilterWithAndWithoutJit(a + " IN '2024-01' AND " + b + " IN '2024-02'", keys(2), true);
+                assertFilterWithAndWithoutJit(a + " IN ('2024-01') OR " + b + " IN ('2024-02')", keys(1, 2, 3), true);
+                assertFilterWithAndWithoutJit("NOT (" + a + " IN '2024-01' AND " + b + " IN '2024-02')", keys(1, 3, 4, 5), true);
+                assertFilterWithAndWithoutJit(a + " IN '2024-01-06#workday' OR " + b + " IN '2024-02'", keys(2, 3), true);
+                // A date variable compiles its own intervals.
+                assertFilterWithAndWithoutJit("(" + a + " IN '2024-01') = (" + b + " IN '$today')", keys(4, 5), true);
+                assertFilterWithAndWithoutJit("(" + a + " IN '$today') = (" + b + " IN '2024-02')", keys(1, 4, 5), true);
+            }
+        });
+    }
+
+    @Test
     public void testInShortCircuitDoesNotLeakColumnCacheAfterEndSc() throws Exception {
         assertMemoryLeak(() -> {
             // Multi-value IN() in a scalar AND chain emits BEGIN_SC, EQ pairs
@@ -395,6 +951,135 @@ public class CompiledFilterTest extends AbstractCairoTest {
 
             try (RecordCursorFactory factory = select(sql)) {
                 Assert.assertTrue("predicate must still JIT", factory.usesCompiledFilter());
+            }
+        });
+    }
+
+    @Test
+    public void testInTimestampCompiledDayFilterBracketExpansionOverMaxIntervals() throws Exception {
+        // A date variable compiles the list. Its static element holds 1,056 Mondays above the cap of
+        // 1,024 with 20[03..24], and 1,008 with 20[04..24].
+        assertMemoryLeak(() -> {
+            createDayFilterTable();
+            try {
+                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
+                    sqlExecutionContext.setJitMode(jitMode);
+                    final String sql = "SELECT k FROM x WHERE ts IN '[$today,20[03..24]-[01..12]-[01..28]]#mon'";
+                    assertExceptionNoLeakCheck(sql, sql.indexOf("'["), "Bracket expansion produces too many intervals (max 1024)");
+                    assertQuery("SELECT k FROM x WHERE ts IN '[$today,20[04..24]-[01..12]-[01..28]]#mon'")
+                            .noLeakCheck()
+                            .returns("""
+                                    k
+                                    3
+                                    6
+                                    """);
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            }
+        });
+    }
+
+    @Test
+    public void testInTimestampDateListDayFilterRepeatedElements() throws Exception {
+        // Each element holds 240 days, so together they exceed the list's incremental merge
+        // threshold (256) when counted unfiltered. Each element filters its own days before any
+        // union.
+        assertMemoryLeak(() -> {
+            createDayFilterTable();
+            try {
+                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED}) {
+                    sqlExecutionContext.setJitMode(jitMode);
+                    assertQuery("SELECT k FROM x WHERE ts IN '[2024-[01..12]-[01..20],2024-[01..12]-[01..20]]#mon'")
+                            .noLeakCheck()
+                            .returns("""
+                                    k
+                                    3
+                                    6
+                                    """);
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            }
+        });
+    }
+
+    @Test
+    public void testInTimestampDateVariableRangeElementDayFilter() throws Exception {
+        // the six days from $today, the Monday 2024-01-08, hold one Monday (row 3)
+        assertMemoryLeak(() -> {
+            createDayFilterTable();
+            final String monday = """
+                    k
+                    3
+                    """;
+            bindVariableService.clear();
+            bindVariableService.setStr("p", "[$today..$today+5d#mon]");
+            assertQuery("SELECT k FROM x WHERE ts IN :p").noLeakCheck().returns(monday);
+            assertQuery("SELECT k FROM x WHERE ts NOT IN :p").noLeakCheck().returns("""
+                    k
+                    1
+                    2
+                    4
+                    5
+                    6
+                    """);
+            // the element filter overrides the global one
+            bindVariableService.setStr("p", "[$today..$today+5d#mon]#tue");
+            assertQuery("SELECT k FROM x WHERE ts IN :p").noLeakCheck().returns(monday);
+            bindVariableService.setStr("p", "[$today..$today+5d]#mon");
+            assertQuery("SELECT k FROM x WHERE ts IN :p").noLeakCheck().returns(monday);
+        });
+    }
+
+    @Test
+    public void testInTimestampDayFilterAboveMergeThreshold() throws Exception {
+        // 336 bracket values reach the incremental merge threshold (256) of the bracket expansion.
+        // The row filter runs the IN on a timestamp that is not designated.
+        assertMemoryLeak(() -> {
+            createDayFilterTable();
+            assertFilterWithAndWithoutJit("ts IN '2024-[01..12]-[01..28]#mon'", "k\n3\n6\n", true);
+            assertFilterWithAndWithoutJit("ts NOT IN '2024-[01..12]-[01..28]#mon'", "k\n1\n2\n4\n5\n", true);
+            // control below the merge threshold
+            assertFilterWithAndWithoutJit("ts IN '2024-[01..09]-[01..28]#mon'", "k\n3\n6\n", true);
+        });
+    }
+
+    @Test
+    public void testInTimestampDayFilterBracketExpansionOverMaxIntervals() throws Exception {
+        // 22 years x 12 months x 4 Mondays among days 1-28 make 1,056 intervals, above the cap of
+        // 1,024; one year less makes 1,008
+        assertMemoryLeak(() -> {
+            createDayFilterTable();
+            final String overCap = "[2003..2024]-[01..12]-[01..28]#mon";
+            final String overCapError = "Bracket expansion produces too many intervals (max 1024)";
+            try {
+                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED}) {
+                    sqlExecutionContext.setJitMode(jitMode);
+                    bindVariableService.clear();
+                    // the error points at the tick string literal
+                    assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts IN '" + overCap + "'", 28, overCapError);
+                    assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts NOT IN '" + overCap + "'", 32, overCapError);
+                    assertQuery("SELECT k FROM x WHERE ts IN '[2004..2024]-[01..12]-[01..28]#mon'")
+                            .noLeakCheck()
+                            .returns("""
+                                    k
+                                    3
+                                    6
+                                    """);
+                    // The row filter parses a bind string when the cursor opens, and any parse error
+                    // fails the query at position 0.
+                    bindVariableService.setStr("p", "2024-13-45");
+                    assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts IN :p", 0, "Invalid date: 2024-13-45");
+                    bindVariableService.setStr("p", overCap);
+                    assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts IN :p", 0, overCapError);
+                    assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts NOT IN :p", 0, overCapError);
+                    // the check after each day of a date variable range reports its own message
+                    bindVariableService.setStr("p", "[$today..$today+5000d]T[00,12]:00#mon;1h");
+                    assertExceptionNoLeakCheck("SELECT k FROM x WHERE ts IN :p", 0, "Date range expansion produces too many intervals (max 1024)");
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
             }
         });
     }
@@ -1662,6 +2347,42 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSingleStringInMatchesWholeInterval() throws Exception {
+        // InTimestampTimestampFunctionFactory treats an IN whose only element is a string as an
+        // interval search on a DATE, TIMESTAMP or TIMESTAMP_NS key. The JIT used to compare the
+        // key with the start of the interval only.
+        assertMemoryLeak(() -> {
+            createTemporalInTable();
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02')", "k\n1\n2\n", true);
+                assertFilterWithAndWithoutJit(c + " IN '2024-01-02'", "k\n1\n2\n", true);
+                assertFilterWithAndWithoutJit(c + " NOT IN ('2024-01-02')", "k\n3\n4\n5\n", true);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01')", "k\n1\n2\n3\n5\n", true);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02') AND k > 1", "k\n2\n", true);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02') OR k = 3", "k\n1\n2\n3\n", true);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02T00:00:00.000000Z')", "k\n2\n", true);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02T00:00:00.000500')", "k\n", true);
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02T12:00;1m;1d;2')", "k\n1\n", true);
+                assertFilterWithAndWithoutJit(c + " IN ('[2024-01-02,2024-01-03]')", "k\n1\n2\n3\n", true);
+                // More intervals than the IN list threshold allows run on the Java filter.
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02T12:00;1m;-1d;11')", "k\n1\n", false);
+                assertFilterWithAndWithoutJit(c + " IN (NULL)", "k\n4\n", true);
+                // Two or more elements are points.
+                assertFilterWithAndWithoutJit(c + " IN ('2024-01-02', '2024-01-03')", "k\n2\n3\n", true);
+            }
+            assertFilterWithAndWithoutJit("tm IN ('2024-01-02T12') OR dt IN ('2024-01-03') OR tn IN ('2024-01-01')", "k\n1\n3\n5\n", true);
+            // The interval scan takes an IN on the designated timestamp only from an AND chain, so under
+            // OR the JIT compiles it.
+            assertFilterWithAndWithoutJit("ts IN ('2024-01-01T01') OR k = 5", "k\n2\n5\n", true);
+            assertFilterWithAndWithoutJit("ts NOT IN ('2024-01-01T01') OR k = 2", "k\n1\n2\n3\n4\n5\n", true);
+            // The Java filter runs an interval search over a timestamp expression, which the JIT used
+            // to compile as an equality.
+            assertFilterWithAndWithoutJit("(tm + 1) IN ('2024-01-02')", "k\n1\n2\n5\n", false);
+            assertFilterWithAndWithoutJit("(tn + 1) IN ('2024-01-02')", "k\n1\n2\n5\n", false);
+        });
+    }
+
+    @Test
     public void testSymbolBindVariable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table x as (select" +
@@ -1803,6 +2524,51 @@ public class CompiledFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTemporalInUnquotedIntegerMatchesJava() throws Exception {
+        // InTimestampTimestampFunctionFactory reads an unquoted integer as a point in the key's
+        // unit: 2024 is the 2024th microsecond to a TIMESTAMP, the 2024th nanosecond to a
+        // TIMESTAMP_NS, and no DATE holds it, since a DATE compares in whole milliseconds. The JIT
+        // used to parse it as a tick expression, where four digits are a year.
+        assertMemoryLeak(() -> {
+            createTemporalInTable();
+            execute("""
+                    INSERT INTO x VALUES
+                    (6, '1970-01-01T00:00:02.024Z', '1970-01-01T00:00:00.002024Z', '1970-01-01T00:00:00.000002024Z', '2024-01-01T05:00:00.000000Z')
+                    """);
+            // A quoted string is an interval, and NULL a point, in every engine.
+            for (String c : new String[]{"dt", "tm", "tn"}) {
+                assertFilterWithAndWithoutJit(c + " IN '2024'", "k\n1\n2\n3\n5\n", true);
+                assertFilterWithAndWithoutJit(c + " NOT IN '2024'", "k\n4\n6\n", true);
+                assertFilterWithAndWithoutJit(c + " IN NULL", "k\n4\n", true);
+            }
+            // The parenthesised form compiles the same point as the Java filter.
+            assertFilterWithAndWithoutJit("tm IN (2024)", "k\n6\n", true);
+            assertFilterWithAndWithoutJit("tn IN (2024)", "k\n6\n", true);
+            // A string bind variable runs on the Java filter.
+            bindVariableService.clear();
+            bindVariableService.setStr("s", "2024");
+            assertFilterWithAndWithoutJit("tm IN :s", "k\n1\n2\n3\n5\n", false);
+
+            assertFilterWithAndWithoutJit("dt IN 2024", "k\n", false);
+            assertFilterWithAndWithoutJit("dt IN 1970", "k\n", false);
+            assertFilterWithAndWithoutJit("NOT (dt IN 2024)", "k\n1\n2\n3\n4\n5\n6\n", false);
+            assertFilterWithAndWithoutJit("dt NOT IN 2024", "k\n1\n2\n3\n4\n5\n6\n", false);
+            assertFilterWithAndWithoutJit("dt IN 2024 OR k = 1", "k\n1\n", false);
+            assertFilterWithAndWithoutJit("dt IN 2024_000", "k\n6\n", false);
+            for (String c : new String[]{"tm", "tn"}) {
+                assertFilterWithAndWithoutJit(c + " IN 2024", "k\n6\n", false);
+                assertFilterWithAndWithoutJit(c + " IN 1970", "k\n", false);
+                assertFilterWithAndWithoutJit("NOT (" + c + " IN 2024)", "k\n1\n2\n3\n4\n5\n", false);
+                assertFilterWithAndWithoutJit(c + " NOT IN 2024", "k\n1\n2\n3\n4\n5\n", false);
+                assertFilterWithAndWithoutJit(c + " IN 2024 OR k = 1", "k\n1\n6\n", false);
+            }
+            // The interval scan takes an IN on the designated timestamp only from an AND chain, so
+            // under OR the IN stays in the filter.
+            assertFilterWithAndWithoutJit("ts IN 2024 OR k = 1", "k\n1\n", false);
+        });
+    }
+
+    @Test
     public void testUuid() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -1915,6 +2681,107 @@ public class CompiledFilterTest extends AbstractCairoTest {
         });
     }
 
+    private static String allDayKeysExcept(int... excluded) {
+        final StringBuilder sb = new StringBuilder("k\n");
+        for (int k = 0; k <= 14; k++) {
+            boolean isExcluded = false;
+            for (int e : excluded) {
+                isExcluded |= e == k;
+            }
+            if (!isExcluded) {
+                sb.append(k).append('\n');
+            }
+        }
+        return sb.toString();
+    }
+
+    // 01:00 UTC on the given day of January 2024. 2024-01-01 is a Monday.
+    private static long jan2024(int day) {
+        return Micros.toMicros(2024, 1, day, 1, 0);
+    }
+
+    private static String keys(int... keys) {
+        final StringBuilder sb = new StringBuilder("k\n");
+        for (int k : keys) {
+            sb.append(k).append('\n');
+        }
+        return sb.toString();
+    }
+
+    private void assertCountFollowsClock(String query, boolean isJitExpected, long micros1, long count1, long micros2, long count2) throws Exception {
+        assertFollowsClock(query, isJitExpected, q -> q.expectSize().noRandomAccess(), micros1, "count\n" + count1 + "\n", micros2, "count\n" + count2 + "\n");
+    }
+
+    private void assertFilterFollowsClock(String filter, boolean isJitExpected, long micros1, String expected1, long micros2, String expected2) throws Exception {
+        assertFollowsClock("SELECT k FROM x WHERE " + filter, isJitExpected, micros1, expected1, micros2, expected2);
+    }
+
+    private void assertFilterWithAndWithoutJit(String filter, String expected, boolean isJitExpected) throws Exception {
+        assertFilterWithAndWithoutJit(filter, expected, isJitExpected, UnaryOperator.identity());
+    }
+
+    // The options configure the factory properties that QueryAssertion checks.
+    private void assertFilterWithAndWithoutJit(
+            String filter,
+            String expected,
+            boolean isJitExpected,
+            UnaryOperator<QueryAssertion> options
+    ) throws Exception {
+        final String query = "SELECT k FROM x WHERE " + filter;
+        try {
+            for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_DISABLED}) {
+                sqlExecutionContext.setJitMode(mode);
+                options.apply(assertQuery(query).noLeakCheck()).returns(expected);
+                try (RecordCursorFactory factory = select(query)) {
+                    Assert.assertEquals(query + ", jit mode " + mode, isJitExpected && mode != SqlJitMode.JIT_MODE_DISABLED, factory.usesCompiledFilter());
+                }
+            }
+        } finally {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        }
+    }
+
+    private void assertFollowsClock(String query, boolean isJitExpected, long micros1, String expected1, long micros2, String expected2) throws Exception {
+        assertFollowsClock(query, isJitExpected, UnaryOperator.identity(), micros1, expected1, micros2, expected2);
+    }
+
+    // Compiles the query once at micros1 and runs it at micros1 and at micros2, as a plan from the
+    // query cache runs. A filter that holds the bounds of the compile time fails the second run. It
+    // does so in every JIT mode, and isJitExpected tells whether the factory compiles its filter with
+    // the JIT when the mode allows it. The options configure the factory properties that
+    // QueryAssertion checks.
+    private void assertFollowsClock(
+            String query,
+            boolean isJitExpected,
+            UnaryOperator<QueryAssertion> options,
+            long micros1,
+            String expected1,
+            long micros2,
+            String expected2
+    ) throws Exception {
+        try {
+            for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_DISABLED}) {
+                sqlExecutionContext.setJitMode(mode);
+                final String label = query + ", jit mode " + mode;
+                try {
+                    setCurrentMicros(micros1);
+                    try (RecordCursorFactory factory = select(query)) {
+                        Assert.assertEquals("uses compiled filter", isJitExpected && mode != SqlJitMode.JIT_MODE_DISABLED, factory.usesCompiledFilter());
+                        options.apply(assertFactory(factory).withContext(sqlExecutionContext)).returns(expected1);
+                        setCurrentMicros(micros2);
+                        options.apply(assertFactory(factory).withContext(sqlExecutionContext)).returns(expected2);
+                    }
+                    // A plan compiled at micros2 returns the same rows.
+                    options.apply(assertQuery(query).noLeakCheck()).returns(expected2);
+                } catch (AssertionError e) {
+                    throw new AssertionError(label, e);
+                }
+            }
+        } finally {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+        }
+    }
+
     private void assertSymbolFilter(String filter, String expected) throws Exception {
         final String query = "SELECT v FROM x WHERE " + filter;
         execute("TRUNCATE TABLE x");
@@ -1928,6 +2795,90 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 (6, 6, 'x')
                 """).returns("v\n", expected);
         assertSqlRunWithJit(query);
+    }
+
+    private void assertWindowJoinUsesCompiledFilter(String query, boolean isJitExpected) throws Exception {
+        try (RecordCursorFactory factory = select(query)) {
+            RecordCursorFactory base = factory;
+            while (!(base instanceof AsyncWindowJoinFastRecordCursorFactory windowJoin)) {
+                base = base.getBaseFactory();
+            }
+            Assert.assertEquals(query, isJitExpected, windowJoin.getAtom().getCompiledMasterFilter() != null);
+        }
+    }
+
+    // A timestamp that is not designated, so the row filter runs every IN on it. Row 1 is a Friday,
+    // 2 a Saturday, 3 the Monday 2024-01-08, 4 a Tuesday, 5 a Sunday and 6 the Monday 2024-09-02.
+    private void createDayFilterTable() throws SqlException {
+        execute("CREATE TABLE x (k INT, ts TIMESTAMP)");
+        execute("""
+                INSERT INTO x VALUES
+                (1, '2024-01-05T12:00:00.000000Z'),
+                (2, '2024-01-06T12:00:00.000000Z'),
+                (3, '2024-01-08T12:00:00.000000Z'),
+                (4, '2024-01-09T04:30:00.000000Z'),
+                (5, '2024-09-01T12:00:00.000000Z'),
+                (6, '2024-09-02T12:00:00.000000Z')
+                """);
+        // $today is the Monday 2024-01-08
+        setCurrentMicros(Micros.toMicros(2024, 1, 8, 1, 0));
+    }
+
+    private void createDaysJoinSlaveTable() throws SqlException {
+        execute("CREATE TABLE p (s SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO p VALUES
+                ('a', 1.0, '2023-12-31T00:00:00.000000Z'),
+                ('b', 2.0, '2023-12-31T00:00:00.000000Z')
+                """);
+    }
+
+    // One row a day at noon from Monday 2024-01-01 (k = 1) to Sunday 2024-01-14 (k = 14), with s = 'a'
+    // for odd k and 'b' for even k, and a row of NULLs (k = 0) at the designated timestamp
+    // 2023-12-31T12:00. The designated timestamp holds the same instants as dt, tm and tn.
+    private void createTemporalDaysTable() throws SqlException {
+        execute("CREATE TABLE x (k INT, s SYMBOL, dt DATE, tm TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO x
+                SELECT
+                    k,
+                    CASE WHEN k = 0 THEN NULL WHEN k % 2 = 0 THEN 'b' ELSE 'a' END,
+                    CASE WHEN k > 0 THEN t::DATE END,
+                    CASE WHEN k > 0 THEN t END,
+                    CASE WHEN k > 0 THEN t::TIMESTAMP_NS END,
+                    t
+                FROM (SELECT (x - 1)::INT k, dateadd('d', (x - 1)::INT, '2023-12-31T12:00:00.000000Z'::TIMESTAMP) t FROM long_sequence(15))
+                """);
+    }
+
+    private void createTemporalInTable() throws SqlException {
+        execute("CREATE TABLE x (k INT, dt DATE, tm TIMESTAMP, tn TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO x VALUES
+                (1, '2024-01-02T12:00:00.000Z', '2024-01-02T12:00:00.000000Z', '2024-01-02T12:00:00.000000000Z', '2024-01-01T00:00:00.000000Z'),
+                (2, '2024-01-02T00:00:00.000Z', '2024-01-02T00:00:00.000000Z', '2024-01-02T00:00:00.000000000Z', '2024-01-01T01:00:00.000000Z'),
+                (3, '2024-01-03T00:00:00.000Z', '2024-01-03T00:00:00.000000Z', '2024-01-03T00:00:00.000000000Z', '2024-01-01T02:00:00.000000Z'),
+                (4, NULL, NULL, NULL, '2024-01-01T03:00:00.000000Z'),
+                (5, '2024-01-01T23:59:59.999Z', '2024-01-01T23:59:59.999999Z', '2024-01-01T23:59:59.999999999Z', '2024-01-01T04:00:00.000000Z')
+                """);
+    }
+
+    // Two keys of each temporal type, k1 and k2 for k in d (DATE), t (TIMESTAMP) and n (TIMESTAMP_NS).
+    // Row 4 has a NULL second key, and row 5 two NULL keys.
+    private void createTwoTemporalKeysTable() throws SqlException {
+        execute("CREATE TABLE x (k INT, d1 DATE, d2 DATE, t1 TIMESTAMP, t2 TIMESTAMP, n1 TIMESTAMP_NS, n2 TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO x VALUES
+                (1, '2024-01-10T10:00:00.000Z', '2024-01-12T10:00:00.000Z', '2024-01-10T10:00:00.000000Z', '2024-01-12T10:00:00.000000Z',
+                    '2024-01-10T10:00:00.000000000Z', '2024-01-12T10:00:00.000000000Z', '2024-01-10T10:00:00.000000Z'),
+                (2, '2024-01-30T10:00:00.000Z', '2024-02-02T10:00:00.000Z', '2024-01-30T10:00:00.000000Z', '2024-02-02T10:00:00.000000Z',
+                    '2024-01-30T10:00:00.000000000Z', '2024-02-02T10:00:00.000000000Z', '2024-01-30T10:00:00.000000Z'),
+                (3, '2024-02-05T10:00:00.000Z', '2024-02-06T10:00:00.000Z', '2024-02-05T10:00:00.000000Z', '2024-02-06T10:00:00.000000Z',
+                    '2024-02-05T10:00:00.000000000Z', '2024-02-06T10:00:00.000000000Z', '2024-02-05T10:00:00.000000Z'),
+                (4, '2024-02-27T10:00:00.000Z', NULL, '2024-02-27T10:00:00.000000Z', NULL,
+                    '2024-02-27T10:00:00.000000000Z', NULL, '2024-02-27T10:00:00.000000Z'),
+                (5, NULL, NULL, NULL, NULL, NULL, NULL, '2024-02-28T10:00:00.000000Z')
+                """);
     }
 
     private void indexBindVariableReplacedContext(boolean jit) throws SqlException {

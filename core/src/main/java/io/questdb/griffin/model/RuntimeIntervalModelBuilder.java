@@ -31,6 +31,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
@@ -229,7 +230,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // so that cached queries always use the current time.
         // compileTickExpr() validates the expression at compile time and returns
         // a CompiledTickExpression that re-evaluates on each query execution.
-        if (containsDateVariable(seq, lo, lim)) {
+        if (DateExpressionEvaluator.containsDateVariable(seq, lo, lim)) {
             CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                     timestampDriver, configuration, seq, lo, lim, position);
             intersectCompiledTickExpr(compiled);
@@ -238,16 +239,21 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         final int size = staticIntervals.size();
         final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        final boolean isResolvedStatically = noDynamicIntervals || hasTickFilterMarker(seq, lo, lim);
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.INTERSECT, sink, noDynamicIntervals);
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.INTERSECT, sink, isResolvedStatically);
             if (noDynamicIntervals) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
                     IntervalUtils.intersectInPlace(staticIntervals, size);
                 }
-            } else {
+            } else if (!isResolvedStatically) {
                 appendParsedDynamicIntervals();
+            } else if (parsedIntervals.size() == 0) {
+                intersectEmpty();
+            } else {
+                appendStaticIntervalsIntersection();
             }
             intervalApplied = true;
         } finally {
@@ -603,7 +609,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
         // so that cached queries always use the current time.
-        if (containsDateVariable(seq, lo, lim)) {
+        if (DateExpressionEvaluator.containsDateVariable(seq, lo, lim)) {
             CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                     timestampDriver, configuration, seq, lo, lim, position);
             subtractCompiledTickExpr(compiled);
@@ -612,17 +618,26 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         final int size = staticIntervals.size();
         final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        final boolean isResolvedStatically = noDynamicIntervals || hasTickFilterMarker(seq, lo, lim);
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.SUBTRACT, sink, noDynamicIntervals);
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.SUBTRACT, sink, isResolvedStatically);
             if (noDynamicIntervals) {
                 staticIntervals.add(parsedIntervals);
                 IntervalUtils.invert(staticIntervals, size);
                 if (intervalApplied) {
                     IntervalUtils.intersectInPlace(staticIntervals, size);
                 }
-            } else {
+            } else if (!isResolvedStatically) {
                 appendParsedDynamicIntervals();
+            } else {
+                // NOT IN S keeps the complement of S, so the inverted list encodes as an intersection.
+                IntervalUtils.invert(parsedIntervals, 0);
+                if (parsedIntervals.size() == 0) {
+                    intersectEmpty();
+                } else {
+                    appendStaticIntervalsIntersection();
+                }
             }
             intervalApplied = true;
         } finally {
@@ -673,7 +688,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
         // so that cached queries always use the current time.
-        if (containsDateVariable(seq, lo, lim)) {
+        if (DateExpressionEvaluator.containsDateVariable(seq, lo, lim)) {
             CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                     timestampDriver, configuration, seq, lo, lim, position);
             unionCompiledTickExpr(compiled);
@@ -683,16 +698,19 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         // Parse and expand the interval string (may produce multiple pairs for periodic intervals).
         final int size = staticIntervals.size();
         final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
+        final boolean isResolvedStatically = noDynamicIntervals || hasTickFilterMarker(seq, lo, lim);
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.UNION, sink, noDynamicIntervals);
+            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.UNION, sink, isResolvedStatically);
             if (noDynamicIntervals) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
                     IntervalUtils.unionInPlace(staticIntervals, size);
                 }
-            } else {
+            } else if (!isResolvedStatically) {
                 appendParsedDynamicIntervals();
+            } else {
+                appendStaticIntervalsUnion();
             }
             intervalApplied = true;
         } finally {
@@ -784,13 +802,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return result;
     }
 
-    private static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
-        for (int i = lo; i < lim - 1; i++) {
-            if (seq.charAt(i) == '$' && DateExpressionEvaluator.isDateVariable(seq, i, lim)) {
-                return true;
-            }
-        }
-        return false;
+    /**
+     * Reports whether a static tick string may carry a '#' day filter or tick calendar. The
+     * dynamic encoding stores such a filter lossily, so the builder resolves these strings with
+     * the static parser even after a dynamic interval. The string then resolves through the same
+     * static parser in either AND/OR operand order. The scan covers the global marker as well as
+     * per-element markers inside brackets, which the parser's own marker search skips.
+     */
+    private static boolean hasTickFilterMarker(CharSequence seq, int lo, int lim) {
+        return Chars.indexOf(seq, lo, lim, '#') >= 0;
     }
 
     private static long subtractSaturating(long value, long offset) {
@@ -830,6 +850,20 @@ public class RuntimeIntervalModelBuilder implements Mutable {
                     PeriodType.NONE,
                     1,
                     i == 0 ? IntervalOperation.INTERSECT_INTERVALS : IntervalOperation.NONE,
+                    staticIntervals
+            );
+            addDynamicFunction(null, 0, false);
+        }
+    }
+
+    private void appendStaticIntervalsUnion() {
+        final int intervalCount = parsedIntervals.size() / 2;
+        reserveEncodedIntervals(intervalCount, 0);
+        for (int i = 0; i < intervalCount; i++) {
+            IntervalUtils.encodeInterval(
+                    parsedIntervals.getQuick(i * 2),
+                    parsedIntervals.getQuick(i * 2 + 1),
+                    IntervalOperation.UNION,
                     staticIntervals
             );
             addDynamicFunction(null, 0, false);

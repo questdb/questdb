@@ -93,6 +93,11 @@ public class CountLongConstGroupByFunction extends LongFunction implements Group
     }
 
     @Override
+    public boolean hasNonNullEmptyValue() {
+        return true;
+    }
+
+    @Override
     public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
     }
