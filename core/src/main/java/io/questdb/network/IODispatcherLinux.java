@@ -75,9 +75,11 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
     private boolean handleSocketOperation(long id) {
         // find row in pending for two reasons:
         // 1. find payload
-        // 2. remove row from pending, remaining rows will be timed out
+        // 2. mark the row for removal from pending, which runSerially() completes after
+        //    handling all the polled events; remaining rows will be timed out
         final int row = pending.binarySearch(id, OPM_ID);
-        if (row < 0) {
+        // a marked row belongs to an event that was already handled
+        if (row < 0 || pending.isMarked(row)) {
             LOG.critical().$("internal error: epoll returned unexpected id [id=").$(id).I$();
             return false;
         }
@@ -92,18 +94,18 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
             // If the socket is also ready for another operation type, do it.
             if (context.getSocket().tlsIO(tlsIOFlags(requestedOp, readyForRead, readyForWrite)) < 0) {
                 doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
-                pending.deleteRow(row);
+                pending.markDeleted(row);
                 return true;
             }
             publishOperation(requestedOp, context);
-            pending.deleteRow(row);
+            pending.markDeleted(row);
             return true;
         }
 
         // It's something different from the requested operation.
         if (context.getSocket().tlsIO(tlsIOFlags(readyForRead, readyForWrite)) < 0) {
             doDisconnect(context, DISCONNECT_SRC_TLS_ERROR);
-            pending.deleteRow(row);
+            pending.markDeleted(row);
             return true;
         }
         rearmEpoll(context, id, requestedOp);
@@ -269,7 +271,6 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                     useful = true;
                 } else if (handleSocketOperation(id)) {
                     useful = true;
-                    watermark--;
                 }
             }
 
@@ -280,6 +281,10 @@ public class IODispatcherLinux<C extends IOContext<C>> extends AbstractIODispatc
                 useful = true;
             }
         }
+
+        // remove the rows of all the handled events in one pass; every marked row lies below the
+        // watermark, so the watermark drops by the number of rows removed
+        watermark -= pending.deleteMarked();
 
         // process rows over watermark (new connections)
         if (watermark < pending.size()) {
