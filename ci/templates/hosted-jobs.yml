@@ -1,8 +1,34 @@
+# Hosted macOS/Windows jobs. The Rust library is compiled once per OS by a build job;
+# every test leg of that OS downloads it instead of compiling the crate itself.
 jobs:
-  - job: RunOn
-    displayName: "on"
-    strategy:
-      matrix:
+  - template: rust-build-job.yml
+    parameters:
+      name: RustBuildMac
+      displayName: "mac-rust-build"
+      pool:
+        vmImage: "macOS-15-arm64"
+        name: "Azure Pipelines"
+      artifact: qdbr-native-darwin-aarch64
+      libName: libquestdbr.dylib
+      expectedArch: arm64
+      isHosted: true
+  - template: rust-build-job.yml
+    parameters:
+      name: RustBuildWindows
+      displayName: "windows-rust-build"
+      pool:
+        vmImage: "windows-latest"
+        name: "Azure Pipelines"
+      artifact: qdbr-native-windows-x86-64
+      libName: questdbr.dll
+      expectedArch: x86_64
+      isHosted: true
+  - template: hosted-test-job.yml
+    parameters:
+      name: RunOnMac
+      dependsOn: RustBuildMac
+      prebuiltRustArtifact: qdbr-native-darwin-aarch64
+      legs:
         # macOS legs run on Apple Silicon: the plain macOS-14/15/26 Azure images
         # are Intel x64, and x86-64 macOS is not a supported platform - aarch64 is
         # the only macOS build we ship. Shard layout is unchanged from those legs.
@@ -100,6 +126,12 @@ jobs:
           excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
           javadoc_step: ""
           javadoc_profile: ""
+  - template: hosted-test-job.yml
+    parameters:
+      name: RunOnWindows
+      dependsOn: RustBuildWindows
+      prebuiltRustArtifact: qdbr-native-windows-x86-64
+      legs:
         windows-griffin-base:
           WEB_CONSOLE_PROFILE: ""
           imageName: "windows-latest"
@@ -261,39 +293,3 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
 
-    pool:
-      vmImage: $(imageName)
-      name: $(poolName)
-    # 100, not 60: must stay above the 90-minute "Run tests" task ceiling passed to
-    # steps.yml below, with headroom for the checkout/cache/compile steps that run
-    # before it. A job ceiling at or below the task ceiling cancels the job before
-    # the task's own timeout can report which step overran.
-    timeoutInMinutes: 100
-    variables:
-      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
-      RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
-      COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
-      CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
-      DIFF_COVER_THRESHOLD_PCT: 50
-      ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
-      MAVEN_OPTS: "-Xmx2g -XX:+UseParallelGC"
-      # Hosted groups only run core-module tests; compile just core and its deps.
-      TEST_REACTOR_ARGS: "-pl core -am"
-    steps:
-      - template: steps.yml
-        parameters:
-          # Each run puts one OS on ADAPTIVE and the other on NOSYNC, and the next
-          # run swaps them, so two consecutive runs give each OS both modes.
-          testCommitModeGroup: "macOS Windows"
-          testCommitModeMember: $(os)
-          # 90, not the 55 default: the adaptive commit mode, which Windows runs
-          # every other run, msyncs the sequencer log on every
-          # transaction, and the hosted Windows agents pay the most for that. In
-          # build 269349 windows-cairo-1, windows-cairo-2 and windows-fuzz2, all
-          # on adaptive, hit the old cap (49 / 23 / 32
-          # min on master) and every shard that did finish ran 1.5-1.8x its
-          # master time. The matrix job is shared with macOS, so the cap rises
-          # there too; it is a ceiling, not a target. When a Windows leg nears
-          # 75-80 minutes, split another shard rather than raise this cap
-          # (windows-cairo-3 and windows-fuzz3 came from that, Oct 2026).
-          testTimeoutInMinutes: 90
