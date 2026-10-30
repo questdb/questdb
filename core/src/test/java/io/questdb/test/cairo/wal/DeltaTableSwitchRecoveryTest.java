@@ -335,10 +335,12 @@ public class DeltaTableSwitchRecoveryTest extends AbstractCairoTest {
                     Assert.assertTrue(configuration.getFilesFacade().exists(path.trimTo(rootLen).concat(Integer.toString(part)).$()));
                 }
                 drainPurgeJob();
-                for (int part = 0; part < 3; part++) {
-                    Assert.assertEquals("only the SWITCH part must survive [part=" + part + "]", part == 2,
-                            configuration.getFilesFacade().exists(path.trimTo(rootLen).concat(Integer.toString(part)).$()));
-                }
+                Assert.assertFalse("an old part below the adaptive recovery floor must be purged",
+                        configuration.getFilesFacade().exists(path.trimTo(rootLen).concat("0").$()));
+                // Adaptive commit may also retain part 1 for its older save point. The switch part itself must
+                // survive regardless: mode/provider publication still needs the sequencer record after restart.
+                Assert.assertTrue("the SWITCH part must survive",
+                        configuration.getFilesFacade().exists(path.trimTo(rootLen).concat("2").$()));
             }
             Assert.assertTrue(engine.getTableSequencerAPI().releaseAll());
             Assert.assertEquals(seqTxn, engine.getTableSequencerAPI().getPendingDeltaTableSwitch(token));
