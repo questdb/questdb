@@ -126,20 +126,20 @@ public class TemporalStreamJoinTest extends AbstractCairoTest {
                 Assert.assertEquals(RecordCursorFactory.SCAN_DIRECTION_FORWARD, copy.getScanDirection());
                 context.setMemoryTracker(tracker);
                 try {
+                    final long initialMemory = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
                     try (RecordCursor cursor = copy.getCursor(context)) {
                         Assert.assertTrue(cursor.hasNext());
                         final long firstId = cursor.getRecord().getRowId();
                         final Record recordB = cursor.getRecordB();
                         cursor.recordAt(recordB, firstId);
                         TestUtils.assertEquals("alpha", recordB.getVarcharA(2));
-                        final long initialMemory = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
                         int count = 1;
                         while (cursor.hasNext()) {
                             count++;
                         }
                         Assert.assertEquals(10_000, count);
-                        final long copiedMemory = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
-                        Assert.assertTrue(copiedMemory > initialMemory + 256);
+                        final long copiedMemory = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN) - initialMemory;
+                        Assert.assertTrue(copiedMemory > 10_000 * Long.BYTES);
                         Assert.assertTrue(tracker.getUsed() >= copiedMemory);
                         cursor.recordAt(recordB, firstId);
                         Assert.assertEquals(0, recordB.getTimestamp(0));
