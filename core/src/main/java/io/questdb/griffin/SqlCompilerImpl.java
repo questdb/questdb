@@ -6055,7 +6055,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     /**
      * Rejects, before WAL submission, CONVERT PARTITION or DETACH PARTITION of a delta-active
-     * partition, and DETACH PARTITION of a read-only one that is not a soft link. TableWriter
+     * partition, and DETACH PARTITION of a read-only one, soft links included. TableWriter
      * refuses them too, and WAL apply would skip the whole ALTER. A delta-active base already in
      * the target format stays the usual no-op. Checks the partitions that {@code filter}
      * selects, or else the one at {@code listedTimestamp}.
@@ -6093,15 +6093,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             if (!selected) {
                 continue;
-            }
-            if (!isDeltaActive) {
-                // A read-only soft link detaches by unlink, and its target keeps the data.
-                path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                TableUtils.setPathForNativePartition(path, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(),
-                        partitionTimestamp, txFile.getPartitionNameTxn(i));
-                if (ff.isSoftLink(path.$())) {
-                    continue;
-                }
             }
             throw SqlException.position(position)
                     .put(switch (action) {

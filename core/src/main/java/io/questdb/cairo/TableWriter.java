@@ -2707,9 +2707,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return AttachDetachStatus.DETACH_ERR_DELTA;
         }
 
-        // Read-only is replicated, so every instance refuses a sealed partition alike, whether its copy is local
-        // or cold. A read-only soft link detaches by unlink, and its target keeps the data.
-        if (txWriter.isPartitionReadOnly(partitionIndex) && !isPartitionSoftLink(partitionIndex)) {
+        // Read-only is replicated, so every instance refuses a read-only partition alike, whatever its copy is: a
+        // local directory, a soft link, a restored plain directory or a cold one. DROP PARTITION removes a soft link
+        // and keeps its target.
+        if (txWriter.isPartitionReadOnly(partitionIndex)) {
             LOG.error().$("cannot detach read-only partition [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, timestamp).I$();
             return AttachDetachStatus.DETACH_ERR_READ_ONLY;
@@ -2743,67 +2744,70 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 return AttachDetachStatus.DETACH_ERR_MISSING_PARTITION_DIR;
             }
 
-            final int detachedPathLen;
             AttachDetachStatus attachDetachStatus;
-            if (ff.isSoftLink(path.$())) {
-                detachedPathLen = 0;
-                attachDetachStatus = AttachDetachStatus.OK;
-                LOG.info().$("detaching partition via unlink [path=").$substr(pathRootSize, path).I$();
-            } else {
-                detachedPath.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                int detachedRootLen = detachedPath.size();
-                // detachedPath: detached partition folder
-                if (!ff.exists(detachedPath.slash$())) {
-                    // the detached and standard folders can have different roots
-                    // (server.conf: cairo.sql.detached.root)
-                    if (0 != ff.mkdirs(detachedPath, detachedMkDirMode)) {
-                        LOG.error().$("could no create detached partition folder [errno=").$(ff.errno())
-                                .$(", path=").$(detachedPath)
-                                .I$();
-                        return AttachDetachStatus.DETACH_ERR_MKDIR;
-                    }
+            detachedPath.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+            int detachedRootLen = detachedPath.size();
+            // detachedPath: detached partition folder
+            if (!ff.exists(detachedPath.slash$())) {
+                // the detached and standard folders can have different roots
+                // (server.conf: cairo.sql.detached.root)
+                if (0 != ff.mkdirs(detachedPath, detachedMkDirMode)) {
+                    LOG.error().$("could no create detached partition folder [errno=").$(ff.errno())
+                            .$(", path=").$(detachedPath)
+                            .I$();
+                    return AttachDetachStatus.DETACH_ERR_MKDIR;
                 }
-                setPathForNativePartition(detachedPath.trimTo(detachedRootLen), timestampType, partitionBy, timestamp, -1L);
-                detachedPath.put(DETACHED_DIR_MARKER);
-                if (ff.exists(detachedPath.$())) {
-                    LOG.error().$("detached partition folder already exist [path=").$(detachedPath).I$();
-                    return AttachDetachStatus.DETACH_ERR_ALREADY_DETACHED;
-                }
-                // The partition takes its .detached name only once this commit is final; until then a temporary name
-                // that carries the commit's txn, which writer open removes when the commit did not survive.
-                setPathForNativePartition(detachedPath.trimTo(detachedRootLen), timestampType, partitionBy, timestamp, -1L);
-                detachedPath.put('.').put(detachTxn).put(DETACHING_DIR_MARKER);
-                detachedPathLen = detachedPath.size();
-                if (ff.exists(detachedPath.$())) {
-                    ff.rmdir(detachedPath);
-                }
+            }
+            setPathForNativePartition(detachedPath.trimTo(detachedRootLen), timestampType, partitionBy, timestamp, -1L);
+            detachedPath.put(DETACHED_DIR_MARKER);
+            if (ff.exists(detachedPath.$())) {
+                LOG.error().$("detached partition folder already exist [path=").$(detachedPath).I$();
+                return AttachDetachStatus.DETACH_ERR_ALREADY_DETACHED;
+            }
+            // The partition takes its .detached name only once this commit is final; until then a temporary name
+            // that carries the commit's txn, which writer open removes when the commit did not survive.
+            setPathForNativePartition(detachedPath.trimTo(detachedRootLen), timestampType, partitionBy, timestamp, -1L);
+            detachedPath.put('.').put(detachTxn).put(DETACHING_DIR_MARKER);
+            final int detachedPathLen = detachedPath.size();
+            if (ff.exists(detachedPath.$())) {
+                ff.rmdir(detachedPath);
+            }
 
-                // Hard link partition folder recursive to partition.detached
-                undoDetachedPathLen = detachedPathLen;
-                if (ff.hardLinkDirRecursive(path, detachedPath, detachedMkDirMode) != 0) {
-                    if (ff.isCrossDeviceCopyError(ff.errno())) {
-                        // Cross drive operation. Make full copy to another device.
-                        if (ff.copyRecursive(path, detachedPath, detachedMkDirMode) != 0) {
-                            LOG.critical().$("could not copy detached partition [errno=").$(ff.errno())
-                                    .$(", from=").$(path)
-                                    .$(", to=").$(detachedPath)
-                                    .I$();
-                            return AttachDetachStatus.DETACH_ERR_COPY;
-                        }
-                    } else {
-                        LOG.critical().$("could not create hard link to detached partition [errno=").$(ff.errno())
+            // Hard link partition folder recursive to partition.detached
+            undoDetachedPathLen = detachedPathLen;
+            if (ff.hardLinkDirRecursive(path, detachedPath, detachedMkDirMode) != 0) {
+                if (ff.isCrossDeviceCopyError(ff.errno())) {
+                    // Cross drive operation. Make full copy to another device.
+                    if (ff.copyRecursive(path, detachedPath, detachedMkDirMode) != 0) {
+                        LOG.critical().$("could not copy detached partition [errno=").$(ff.errno())
                                 .$(", from=").$(path)
                                 .$(", to=").$(detachedPath)
                                 .I$();
-                        return AttachDetachStatus.DETACH_ERR_HARD_LINK;
+                        return AttachDetachStatus.DETACH_ERR_COPY;
                     }
+                } else {
+                    LOG.critical().$("could not create hard link to detached partition [errno=").$(ff.errno())
+                            .$(", from=").$(path)
+                            .$(", to=").$(detachedPath)
+                            .I$();
+                    return AttachDetachStatus.DETACH_ERR_HARD_LINK;
                 }
+            }
 
-                // copy _meta, _cv and _txn to partition.detached _meta, _cv and _txn
-                other.of(path).trimTo(pathSize).concat(META_FILE_NAME).$(); // exists already checked
-                detachedPath.trimTo(detachedPathLen).concat(META_FILE_NAME).$();
+            // copy _meta, _cv and _txn to partition.detached _meta, _cv and _txn
+            other.of(path).trimTo(pathSize).concat(META_FILE_NAME).$(); // exists already checked
+            detachedPath.trimTo(detachedPathLen).concat(META_FILE_NAME).$();
 
-                attachDetachStatus = AttachDetachStatus.OK;
+            attachDetachStatus = AttachDetachStatus.OK;
+            if (-1 == copyOverwrite(detachedPath)) {
+                attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY_META;
+                LOG.critical().$("could not copy [errno=").$(ff.errno())
+                        .$(", from=").$(other)
+                        .$(", to=").$(detachedPath)
+                        .I$();
+            } else {
+                other.parent().concat(COLUMN_VERSION_FILE_NAME).$();
+                detachedPath.parent().concat(COLUMN_VERSION_FILE_NAME).$();
                 if (-1 == copyOverwrite(detachedPath)) {
                     attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY_META;
                     LOG.critical().$("could not copy [errno=").$(ff.errno())
@@ -2811,41 +2815,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .$(", to=").$(detachedPath)
                             .I$();
                 } else {
-                    other.parent().concat(COLUMN_VERSION_FILE_NAME).$();
-                    detachedPath.parent().concat(COLUMN_VERSION_FILE_NAME).$();
+                    other.parent().concat(TXN_FILE_NAME).$();
+                    detachedPath.parent().concat(TXN_FILE_NAME).$();
                     if (-1 == copyOverwrite(detachedPath)) {
                         attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY_META;
                         LOG.critical().$("could not copy [errno=").$(ff.errno())
                                 .$(", from=").$(other)
                                 .$(", to=").$(detachedPath)
                                 .I$();
-                    } else {
-                        other.parent().concat(TXN_FILE_NAME).$();
-                        detachedPath.parent().concat(TXN_FILE_NAME).$();
-                        if (-1 == copyOverwrite(detachedPath)) {
-                            attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY_META;
-                            LOG.critical().$("could not copy [errno=").$(ff.errno())
-                                    .$(", from=").$(other)
-                                    .$(", to=").$(detachedPath)
-                                    .I$();
-                        } else if (CommitMode.isPowerLossDurable(getFlushCommitMode())) {
-                            // Make the copied files and both directory-entry sets durable before _txn names them.
-                            try {
-                                DurableEpochManifest.fsyncDirectoryFiles(
-                                        configuration,
-                                        detachedPath.trimTo(detachedPathLen),
-                                        detachedPathLen,
-                                        false
-                                );
-                                TableUtils.fsyncDirDurable(ff, other.trimTo(pathSize).$());
-                            } catch (CairoException e) {
-                                attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY;
-                                LOG.critical().$("could not sync detached partition [path=").$(detachedPath)
-                                        .$(", e=").$((Throwable) e).I$();
-                                if (engine.isDataSyncFailureFatal(e)) {
-                                    distressed = true;
-                                    engine.handleDataSyncFailure(e);
-                                }
+                    } else if (CommitMode.isPowerLossDurable(getFlushCommitMode())) {
+                        // Make the copied files and both directory-entry sets durable before _txn names them.
+                        try {
+                            DurableEpochManifest.fsyncDirectoryFiles(
+                                    configuration,
+                                    detachedPath.trimTo(detachedPathLen),
+                                    detachedPathLen,
+                                    false
+                            );
+                            TableUtils.fsyncDirDurable(ff, other.trimTo(pathSize).$());
+                        } catch (CairoException e) {
+                            attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY;
+                            LOG.critical().$("could not sync detached partition [path=").$(detachedPath)
+                                    .$(", e=").$((Throwable) e).I$();
+                            if (engine.isDataSyncFailureFatal(e)) {
+                                distressed = true;
+                                engine.handleDataSyncFailure(e);
                             }
                         }
                     }
@@ -2882,14 +2876,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                     metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
                 }
-                if (detachedPathLen > 0) {
-                    if (defersPartitionMoves()) {
-                        detachesAfterSavePoint.add(timestamp, detachTxn);
-                    } else if (!finishDetach(timestamp, detachTxn)) {
-                        namingErrno = ff.errno();
-                        isNamingFailed = true;
-                        detachesAfterSavePoint.add(timestamp, detachTxn);
-                    }
+                if (defersPartitionMoves()) {
+                    detachesAfterSavePoint.add(timestamp, detachTxn);
+                } else if (!finishDetach(timestamp, detachTxn)) {
+                    namingErrno = ff.errno();
+                    isNamingFailed = true;
+                    detachesAfterSavePoint.add(timestamp, detachTxn);
                 }
                 // return at the end of the method after removing partition directory
             } else {
