@@ -60,7 +60,7 @@ public final class SqlExecutionRequirements implements Mutable {
     private String disclosingName;
     private int disclosingPosition = -1;
     private String disclosingViewName;
-    private String enterpriseSecurityContextFunctionName;
+    private String enterpriseSecurityContextName;
     private int enterpriseSecurityContextPosition = -1;
     private int flags;
     private boolean isDisclosingStatement;
@@ -111,7 +111,7 @@ public final class SqlExecutionRequirements implements Mutable {
     ) {
         flags |= requirements;
         if ((requirements & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0 && enterpriseSecurityContextPosition < 0) {
-            enterpriseSecurityContextFunctionName = Chars.toString(name);
+            enterpriseSecurityContextName = Chars.toString(name);
             enterpriseSecurityContextPosition = position;
             isEnterpriseSecurityContextStatement = isStatement;
         }
@@ -140,7 +140,7 @@ public final class SqlExecutionRequirements implements Mutable {
             checkStoredView0(
                     REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
                     enterpriseSecurityContextPosition,
-                    enterpriseSecurityContextFunctionName,
+                    enterpriseSecurityContextName,
                     isEnterpriseSecurityContextStatement,
                     null,
                     false,
@@ -165,7 +165,7 @@ public final class SqlExecutionRequirements implements Mutable {
         disclosingName = null;
         disclosingPosition = -1;
         disclosingViewName = null;
-        enterpriseSecurityContextFunctionName = null;
+        enterpriseSecurityContextName = null;
         enterpriseSecurityContextPosition = -1;
         flags = NONE;
         isDisclosingStatement = false;
