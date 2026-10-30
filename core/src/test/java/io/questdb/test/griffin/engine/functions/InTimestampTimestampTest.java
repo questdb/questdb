@@ -652,6 +652,33 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidDurationUnitFailsInDropPartitionWhere() throws Exception {
+        // ALTER TABLE ... DROP PARTITION WHERE compiles its condition with FunctionParser, without the
+        // query code generator. The literal with a date variable dropped every partition before $today.
+        assertMemoryLeak(() -> {
+            createHourlyTable();
+            execute("CREATE TABLE tw AS (SELECT * FROM t) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-02T10:00:00.000000Z"));
+            try {
+                for (String table : new String[]{"t", "tw"}) {
+                    assertInvalidDurationUnitFails("ALTER TABLE " + table + " DROP PARTITION WHERE ts IN %s");
+                    // a WAL table drops the partitions of an ALTER when it applies its WAL
+                    drainWalQueue();
+                    // the 4 daily partitions of 24 hourly rows remain
+                    assertQuery("SELECT count() FROM " + table)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n96\n");
+                }
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testInvalidDurationUnitFailsInEverySqlContext() throws Exception {
         // A tick expression with a duration unit that TimestampDriver.add() does not know fails the
         // query at its position wherever the query holds it, the same as the expression without a date
