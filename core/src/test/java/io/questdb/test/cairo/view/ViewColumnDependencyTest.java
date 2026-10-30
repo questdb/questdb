@@ -28,9 +28,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.view.ViewDefinition;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.ObjList;
@@ -43,6 +45,7 @@ import org.junit.Test;
 
 import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.function.IntFunction;
 
 /**
  * A view's dependency map lists, for every table the view reads, the columns the view reads from it.
@@ -206,6 +209,30 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                         .withContext(context)
                         .noLeakCheck()
                         .failsWith("permission denied [table=x, columns=e]");
+            }
+        });
+    }
+
+    @Test
+    public void testNestedLateralJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                // The optimiser shares the left side of a LATERAL join with the sub-query that decorrelates its
+                // right side, so the walk of the columns the plan reads reaches the models of the inner joins
+                // along a number of paths that doubles with each join. Nothing reads the column the right sides
+                // select, so the plan reads no column of y.
+                assertLateralJoinDependencies(compiler, count -> lateralJoins("SELECT k, a FROM x", count), "{x=[a, k], y=[]}");
+                // the optimiser keeps every column of the left side of a LATERAL join
+                assertLateralJoinDependencies(compiler, count -> lateralJoins("SELECT * FROM x", count), "{x=[*, a, b, k, ts], y=[]}");
+                // It also keeps every column of a sub-query whose columns the query above it names none of. The
+                // search for the scan of x under the sub-query of the wildcard goes through the LATERAL joins
+                // before it reaches the scan.
+                assertLateralJoinDependencies(
+                        compiler,
+                        count -> "SELECT count() FROM (SELECT * FROM (SELECT * FROM x) w CROSS JOIN (" + lateralJoins("SELECT k, a FROM x", count) + ") c)",
+                        "{x=[*, a, b, k, ts], y=[]}"
+                );
             }
         });
     }
@@ -446,6 +473,36 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     "{x=[a, k], y=[]}",
                     "permission denied [table=y, columns=k,c]"
             );
+        });
+    }
+
+    @Test
+    public void testTableReplacedWhileViewCompiles() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // the table that takes the name of x: its designated timestamp is ts2, and ts is a plain column
+            execute("CREATE TABLE x2 (ts LONG, ts2 TIMESTAMP, k SYMBOL, a LONG, b LONG) TIMESTAMP(ts2) PARTITION BY DAY WAL");
+            execute("INSERT INTO x2 VALUES (1, 0, 'k1', 1, 2), (2, 3_600_000_000, 'k1', 3, 4)");
+            drainWalQueue();
+            // CREATE VIEW plans a read of ts, the timestamp of x the ASOF JOIN requires, and x2 takes the name
+            // of x before the plan opens it. The statement compiles the SELECT again, into a plan that reads
+            // ts2 instead, and the view lists no column only the first plan reads, so a reader that overrides
+            // @c does not read ts.
+            final String viewSql = "DECLARE OVERRIDABLE @c := a SELECT t.v, u.c FROM (SELECT k, @c AS v FROM x) t ASOF JOIN y u ON (k)";
+            final TableReplacingSecurityContext securityContext = new TableReplacingSecurityContext();
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null)) {
+                securityContext.replaceTableOnce();
+                execute("CREATE VIEW v AS (" + viewSql + ")", context);
+                drainWalAndViewQueues();
+                Assert.assertFalse(securityContext.isReplacementPending());
+            }
+            assertViewDependencies(viewSql, "{x=[a, k, ts2], y=[c, k, ts]}", null, "CREATE VIEW");
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                assertQuery("DECLARE @c := ts SELECT * FROM v")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .failsWith("permission denied [table=x, columns=ts]");
+            }
         });
     }
 
@@ -771,6 +828,20 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         });
     }
 
+    // Asserts the dependencies CREATE VIEW records for the SELECT of a view with 8 and with 16 LATERAL joins,
+    // and the ones ALTER VIEW and CREATE OR REPLACE VIEW record, and that the walks of the optimised SELECT
+    // reach about twice as many models with twice as many joins. A walk of every path to the models reaches
+    // 2^8 times as many with 16 joins as with 8.
+    private static void assertLateralJoinDependencies(
+            SqlCompilerImpl compiler,
+            IntFunction<String> viewSql,
+            String expectedDependencies
+    ) throws Exception {
+        final long visits8 = recordViewDependencies(compiler, viewSql.apply(8), expectedDependencies);
+        final long visits16 = recordViewDependencies(compiler, viewSql.apply(16), expectedDependencies);
+        Assert.assertTrue(visits16 + " visits with 16 LATERAL joins, " + visits8 + " with 8", visits16 < 3 * visits8);
+    }
+
     private static void createTables() throws Exception {
         execute("CREATE TABLE x (ts TIMESTAMP, k SYMBOL, a LONG, b LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("CREATE TABLE y (ts TIMESTAMP, k SYMBOL, c LONG, d LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -792,7 +863,10 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     private static String dependenciesOf(String viewName) {
         final ViewDefinition viewDefinition = getViewDefinition(viewName);
         Assert.assertNotNull(viewDefinition);
-        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = viewDefinition.getDependencies();
+        return dependenciesOf(viewDefinition.getDependencies());
+    }
+
+    private static String dependenciesOf(LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies) {
         final TreeMap<String, TreeSet<String>> sorted = new TreeMap<>();
         final ObjList<CharSequence> tableNames = dependencies.keys();
         for (int i = 0, n = tableNames.size(); i < n; i++) {
@@ -833,8 +907,38 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         drainWalAndViewQueues();
     }
 
+    // The SELECT of count LATERAL joins, each in the left side of the next, the innermost over the SELECT
+    // innermost. The number of paths to the models of a LATERAL join doubles with each one around it.
+    private static String lateralJoins(String innermost, int count) {
+        String sql = innermost;
+        for (int i = 0; i < count; i++) {
+            sql = "SELECT t.k, t.a, count() n FROM (" + sql + ") t CROSS JOIN LATERAL (SELECT c + t.a v FROM y u LIMIT 1) l";
+        }
+        return sql;
+    }
+
     private static String print(SqlExecutionContext context, String sql) throws Exception {
         return TestUtils.printSqlToString(engine, context, sql, new StringSink());
+    }
+
+    // Records the SELECT as the definition of the view v with CREATE VIEW, and as the definition ALTER VIEW and
+    // CREATE OR REPLACE VIEW give a view, both on the compiler, asserts the dependencies they record, and
+    // returns the number of times the walks of the optimised SELECT reached a model.
+    private static long recordViewDependencies(SqlCompilerImpl compiler, String viewSql, String expectedDependencies) throws Exception {
+        final long visitCount = compiler.getViewDependencyVisitCountForTesting();
+        try (Operation operation = compiler.compile("CREATE VIEW v AS (" + viewSql + ")", sqlExecutionContext).getOperation()) {
+            compiler.execute(operation, sqlExecutionContext);
+        }
+        drainWalAndViewQueues();
+        Assert.assertEquals("CREATE VIEW: " + viewSql, expectedDependencies, dependenciesOf("v"));
+        execute("DROP VIEW v");
+        drainWalAndViewQueues();
+
+        // the compilation ALTER VIEW and CREATE OR REPLACE VIEW run, see SqlCompilerImpl.alterViewExecution()
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+        compiler.generateViewExecutionModel(viewSql, sqlExecutionContext, dependencies);
+        Assert.assertEquals("ALTER VIEW: " + viewSql, expectedDependencies, dependenciesOf(dependencies));
+        return compiler.getViewDependencyVisitCountForTesting() - visitCount;
     }
 
     private void assertDependencies(String viewSql, String expectedDependencies) throws Exception {
@@ -966,6 +1070,36 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                 e.put(columnNames.getQuick(i));
             }
             throw e.put(']');
+        }
+    }
+
+    /**
+     * Grants everything, and gives the name of x to x2 the first time a statement authorizes a read of x
+     * after {@link #replaceTableOnce()}. A statement authorizes the read as it opens the cursor of its plan,
+     * which then finds that x is no longer the table it planned to read.
+     */
+    private static final class TableReplacingSecurityContext extends AllowAllSecurityContext {
+        private boolean isReplacementPending;
+
+        @Override
+        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+            if (isReplacementPending && "x".equals(tableToken.getTableName())) {
+                isReplacementPending = false;
+                try {
+                    execute("RENAME TABLE x TO x_replaced");
+                    execute("RENAME TABLE x2 TO x");
+                } catch (SqlException e) {
+                    throw new AssertionError(e);
+                }
+            }
+        }
+
+        private boolean isReplacementPending() {
+            return isReplacementPending;
+        }
+
+        private void replaceTableOnce() {
+            isReplacementPending = true;
         }
     }
 }

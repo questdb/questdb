@@ -67,6 +67,7 @@ import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 import io.questdb.std.Uuid;
@@ -80,6 +81,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.ArrayDeque;
 
@@ -384,23 +386,28 @@ public class SqlUtil {
      * again. Another scan of the table, elsewhere in the plan or under the same sub-query, such as the
      * other side of a self-join, can have enumerated the columns after the ALTER TABLE, so the check
      * leaves it out.
+     * <p>
+     * The optimiser shares a model between several places of the SELECT, as it does the left side of a
+     * LATERAL join, so the number of paths to a model can double with each LATERAL join nested in the
+     * left side of another. A walk of the optimised SELECT visits a model only along the first path that
+     * reaches it, see {@link ViewWildcardSources}.
      *
      * @param engine          the engine, which resolves the table names
      * @param model           the SELECT of the view, after optimisation
      * @param depMap          the dependency map of the view
      * @param wildcardSources the tables {@link #collectTableAndColumnReferences(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources)}
-     *                        collected from the parsed SELECT, or null
+     *                        collected from the parsed SELECT, if any, and the state of the walks of
+     *                        the optimised SELECT
      */
     public static void collectTableColumnReads(
             @NotNull CairoEngine engine,
             @NotNull IQueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap,
-            @Nullable ViewWildcardSources wildcardSources
+            @NotNull ViewWildcardSources wildcardSources
     ) {
+        wildcardSources.clearReads();
         collectTableColumnReads(engine, model, depMap, wildcardSources, false);
-        if (wildcardSources != null) {
-            collectKeptWildcardReferences(engine, model, depMap, wildcardSources);
-        }
+        collectKeptWildcardReferences(engine, model, depMap, wildcardSources);
     }
 
     /**
@@ -2226,7 +2233,7 @@ public class SqlUtil {
             // a model the optimised model no longer reaches has no top-down columns, kept or not
             if (sourceModel == null
                     || (sourceModel.getTopDownColumns().size() > 0 && sourceModel.allowsColumnsChange())
-                    || !isReachable(model, sourceModel)) {
+                    || !wildcardSources.isReachable(model, sourceModel)) {
                 continue;
             }
             final TableToken tableToken = engine.getTableTokenIfExists(wildcardSources.tableNames.getQuick(i));
@@ -2317,7 +2324,7 @@ public class SqlUtil {
             @NotNull CairoEngine engine,
             @NotNull IQueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap,
-            @Nullable ViewWildcardSources wildcardSources,
+            @NotNull ViewWildcardSources wildcardSources,
             boolean isTimestampRequired
     ) {
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
@@ -2344,14 +2351,18 @@ public class SqlUtil {
         collectTableColumnReads(engine, model.getNestedModel(), depMap, wildcardSources, isNestedTimestampRequired);
     }
 
+    // What the walk records under a model depends only on the model and on whether the plan requires a
+    // timestamp of it, so the walk stops at a model it has visited under the same requirement. The optimiser
+    // shares models, and a walk of every path to them would take time in proportion to the number of paths,
+    // which can double with each LATERAL join, see collectTableColumnReads().
     private static void collectTableColumnReads(
             @NotNull CairoEngine engine,
             @Nullable IQueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap,
-            @Nullable ViewWildcardSources wildcardSources,
+            @NotNull ViewWildcardSources wildcardSources,
             boolean isTimestampRequired
     ) {
-        if (model == null) {
+        if (model == null || !wildcardSources.visit(model, isTimestampRequired)) {
             return;
         }
         // The walk skips the sub-queries of expressions: they read their tables as the reader, and the
@@ -2412,13 +2423,13 @@ public class SqlUtil {
 
     // Collects the columns the scan of a table model reads: its top-down columns, which
     // SqlCodeGenerator.buildQueryMetadata() reads, and the timestamp it adds when the plan requires one.
-    // Records the scan in wildcardSources, when given, for collectKeptWildcardReferences().
+    // Records the scan in wildcardSources for collectKeptWildcardReferences().
     private static void collectTableScanColumns(
             @NotNull CairoEngine engine,
             @NotNull IQueryModel model,
             @NotNull CharSequence tableName,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap,
-            @Nullable ViewWildcardSources wildcardSources,
+            @NotNull ViewWildcardSources wildcardSources,
             boolean isTimestampRequired
     ) {
         CharSequence name = tableName;
@@ -2434,9 +2445,7 @@ public class SqlUtil {
         for (int i = 0, n = topDownColumns.size(); i < n; i++) {
             columns.add(Chars.toString(topDownColumns.getQuick(i).getName()));
         }
-        if (wildcardSources != null) {
-            wildcardSources.addScan(model);
-        }
+        wildcardSources.addScan(model);
         if (!isTimestampRequired && !SqlCodeGenerator.joinsRequiringTimestamp[model.getJoinType()]) {
             return;
         }
@@ -2665,24 +2674,6 @@ public class SqlUtil {
         return aliasExpr != null && Chars.equalsIgnoreCase(unquote(aliasExpr.token), unquote(qualifiedName.subSequence(0, dot)));
     }
 
-    // Whether the optimised model reaches target. A model of the parsed SELECT can drop out of it, when
-    // optimisation replaces the models around it.
-    private static boolean isReachable(@Nullable IQueryModel root, @NotNull IQueryModel target) {
-        if (root == null) {
-            return false;
-        }
-        if (root == target) {
-            return true;
-        }
-        final ObjList<IQueryModel> joinModels = root.getJoinModels();
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
-            if (isReachable(joinModels.getQuick(i), target)) {
-                return true;
-            }
-        }
-        return isReachable(root.getNestedModel(), target) || isReachable(root.getUnionModel(), target);
-    }
-
     // Whether a wildcard of the SELECT list selects every column of a source of its FROM clause: an
     // unqualified one selects every column of every source, and a qualified one, such as t.*, every
     // column of the source it names.
@@ -2750,24 +2741,43 @@ public class SqlUtil {
      * reads it once optimisation has rewritten the SELECT, which keeps the holders and the models of the
      * sources, and records the scans of the optimised SELECT in it, which tell the columns of each table
      * the plan is built on.
+     * <p>
+     * It also keeps the models the walks of the optimised SELECT have visited. The optimiser shares a
+     * model between several places of the SELECT, as it does the left side of a LATERAL join, so a walk
+     * can reach a model along many paths, and visits it only along the first of them. The walk of the
+     * columns the plan reads visits a model at most once with the plan requiring a timestamp of it, and at
+     * most once without.
      */
     public static final class ViewWildcardSources implements Mutable {
         // the holders of the sub-queries the walk of the parsed SELECT is in, outermost first
         private final ObjList<IQueryModel> holderStack = new ObjList<>();
         private final ObjList<IQueryModel> holders = new ObjList<>();
+        // the models the current search of isReachable() has visited
+        private final ObjHashSet<IQueryModel> reachedModels = new ObjHashSet<>();
         // the models of the optimised SELECT that scan a table
-        private final ObjList<IQueryModel> scans = new ObjList<>();
+        private final ObjHashSet<IQueryModel> scans = new ObjHashSet<>();
         // the sources of the parsed FROM clauses the wildcards select the tables from, at the same index
         private final ObjList<IQueryModel> sources = new ObjList<>();
         private final ObjList<String> tableNames = new ObjList<>();
+        // the models of the optimised SELECT the walk of its reads has visited, with the plan requiring no
+        // timestamp of them, and with the plan requiring one
+        private final ObjHashSet<IQueryModel> visitedModels = new ObjHashSet<>();
+        private final ObjHashSet<IQueryModel> visitedTimestampModels = new ObjHashSet<>();
+        // the number of times the walks of optimised SELECTs have reached a model, for the tests of their cost
+        private long visitCount;
 
         @Override
         public void clear() {
             holderStack.clear();
             holders.clear();
-            scans.clear();
             sources.clear();
             tableNames.clear();
+            clearReads();
+        }
+
+        @TestOnly
+        long getVisitCount() {
+            return visitCount;
         }
 
         // Adds the table under every holder from holderLo up the holder stack: the optimiser keeping every
@@ -2785,6 +2795,15 @@ public class SqlUtil {
             scans.add(scan);
         }
 
+        // Forgets what the walks of an optimised SELECT recorded, and keeps the tables the walk of the parsed
+        // SELECT recorded.
+        private void clearReads() {
+            reachedModels.clear();
+            scans.clear();
+            visitedModels.clear();
+            visitedTimestampModels.clear();
+        }
+
         // Whether the plan scans the source under sourceModel, and the plan reads every column the optimiser
         // enumerated for that scan from the metadata of the table, the columns the wildcard sourceModel keeps
         // expands to. The optimiser enumerates the columns of each scan of the table separately, so another
@@ -2797,19 +2816,51 @@ public class SqlUtil {
                 IQueryModel source,
                 LowerCaseCharSequenceHashSet readColumns
         ) {
-            for (int i = 0, n = scans.size(); i < n; i++) {
-                final IQueryModel scan = scans.getQuick(i);
-                if (scan == source && isReachable(sourceModel, scan)) {
-                    final ObjList<CharSequence> columnNames = scan.getWildcardColumnNames();
-                    for (int j = 0, m = columnNames.size(); j < m; j++) {
-                        if (readColumns.excludes(columnNames.getQuick(j))) {
-                            return false;
-                        }
-                    }
+            if (!scans.contains(source) || !isReachable(sourceModel, source)) {
+                return false;
+            }
+            final ObjList<CharSequence> columnNames = source.getWildcardColumnNames();
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                if (readColumns.excludes(columnNames.getQuick(i))) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Whether root reaches target. A model of the parsed SELECT can drop out of the optimised one, when
+        // optimisation replaces the models around it. The optimiser shares models, and the search stops at one
+        // it has visited: it returns as soon as it finds target, so target is not under that model.
+        private boolean isReachable(@NotNull IQueryModel root, @NotNull IQueryModel target) {
+            reachedModels.clear();
+            return isReachable0(root, target);
+        }
+
+        private boolean isReachable0(@Nullable IQueryModel model, @NotNull IQueryModel target) {
+            if (model == null) {
+                return false;
+            }
+            visitCount++;
+            if (!reachedModels.add(model)) {
+                return false;
+            }
+            if (model == target) {
+                return true;
+            }
+            final ObjList<IQueryModel> joinModels = model.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                if (isReachable0(joinModels.getQuick(i), target)) {
                     return true;
                 }
             }
-            return false;
+            return isReachable0(model.getNestedModel(), target) || isReachable0(model.getUnionModel(), target);
+        }
+
+        // Whether the walk of the columns the plan reads reaches the model for the first time under the
+        // timestamp requirement, and so visits it, which this records.
+        private boolean visit(IQueryModel model, boolean isTimestampRequired) {
+            visitCount++;
+            return (isTimestampRequired ? visitedTimestampModels : visitedModels).add(model);
         }
     }
 

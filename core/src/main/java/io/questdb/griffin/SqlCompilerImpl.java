@@ -629,6 +629,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return functionParser.getFunctionFactoryCache();
     }
 
+    /**
+     * Returns how many times the walks that record the columns a view reads have reached a model of the
+     * view's optimised SELECT over the life of this compiler, a model reached twice counting twice. Tests
+     * check with it that the walks reach each model a bounded number of times, see
+     * {@link SqlUtil#collectTableColumnReads(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, SqlUtil.ViewWildcardSources)}.
+     */
+    @TestOnly
+    public long getViewDependencyVisitCountForTesting() {
+        return viewWildcardSources.getVisitCount();
+    }
+
     @TestOnly
     public int getWhereClauseParserPoolSizeForTesting() {
         return codeGenerator.getWhereClauseParserPoolSizeForTesting();
@@ -4644,6 +4655,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final IQueryModel queryModel;
             final boolean cacheable;
             final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = createViewOp.getViewDefinition().getDependencies();
+            // The map lists what the plan this compiles reads, and no plan before it: executeCreateView()
+            // compiles the SELECT again when a table changes under the plan, and the earlier plan may have
+            // read a column of the table the new one does not.
+            dependencies.clear();
             try {
                 try {
                     final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
@@ -4653,7 +4668,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // The parser recorded the objects and the wildcards of the view, see
                     // SqlParser.parseCreateView(), but whether a wildcard under a SELECT list that names its
                     // columns reads every column only the optimised model tells. The walk of the parsed model
-                    // that collects such wildcards records the same objects and wildcards again.
+                    // that collects such wildcards records the same objects and wildcards into the map again.
                     SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) executionModel, dependencies, viewWildcardSources);
                     queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
                 } catch (SqlException e) {
