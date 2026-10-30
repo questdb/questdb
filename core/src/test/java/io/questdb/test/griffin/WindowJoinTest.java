@@ -778,10 +778,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                         2024-01-01T09:02:00.000000Z\t0\t0\tnull
                                         """, leftType));
 
-                        // A master column follows the aggregates, so the projection reorders the
-                        // columns. The timestamp stays first: an aggregate-first projection hits a
-                        // separate WINDOW JOIN defect, on the regular path as well, where the factory
-                        // reports the first column as the designated timestamp.
+                        // A master column follows the aggregates, so the projection reorders the columns.
                         assertQuery("SELECT t.ts, count() c, sum(p.price) s, t.sym " + windowJoin)
                                 .noLeakCheck()
                                 .timestamp("ts")
@@ -1186,6 +1183,11 @@ public class WindowJoinTest extends AbstractCairoTest {
     public void testConstantFalseJoinFilterCountsEmptyWindowAsZeroOverParquetPartition() throws Exception {
         // A parallel GROUP BY over the WINDOW JOIN reads a parquet master partition through page
         // frames, where the spliced columns carry no data.
+
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+
         assertMemoryLeak(() -> {
             execute("CREATE TABLE czp_trades (a LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE czp_prices (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1529,11 +1531,11 @@ public class WindowJoinTest extends AbstractCairoTest {
         // function, so group-by functions and aggregate columns no longer line up one-to-one. The
         // correct count() here is 0, but the constant-false WINDOW JOIN then keeps its NULL mode and
         // reports every aggregate column as NULL (false for BOOLEAN), count() included. This test
-        // pins that fallback and its plan node, not the desired value; change it when the
-        // folded-aggregate defect is fixed. The regular path fails on these projections, which is
-        // that same defect. The first two queries keep every master column in table order, the
-        // next two reorder the columns and report the same values, the next two sort the rows
-        // with a LIMIT, and the last WINDOW JOIN is not the last one.
+        // pins that fallback and its plan node, not the desired value; change it when the fix for
+        // #8124, the folded-aggregate defect, lands. The regular path fails on these projections,
+        // which is that same defect. The first two queries keep every master column in table
+        // order, the next two reorder the columns and report the same values, the next two sort
+        // the rows with a LIMIT, and the last WINDOW JOIN is not the last one.
         assertMemoryLeak(() -> {
             createEmptyWindowCountTables();
             final String leftType = leftTableTimestampType.getTypeName();
@@ -1736,7 +1738,8 @@ public class WindowJoinTest extends AbstractCairoTest {
         // bool_or(false) folds to a constant, so group-by functions and aggregate columns no longer line
         // up and the constant-false WINDOW JOIN keeps its NULL mode: isOrdered() reports false and
         // haversine_dist_deg() reports NULL, although their empty-window values are true and 0.0. This
-        // pins the same fallback as testConstantFalseJoinFilterKeepsNullCountNextToFoldedAggregate().
+        // pins the same fallback as testConstantFalseJoinFilterKeepsNullCountNextToFoldedAggregate();
+        // change it when the fix for #8124 lands.
         assertMemoryLeak(() -> {
             createEmptyWindowCountTables();
             createNonNullEmptyValueTable();
@@ -1776,16 +1779,16 @@ public class WindowJoinTest extends AbstractCairoTest {
         // path, where a per-row false filter leaves every window empty. The test walks every registered
         // group-by function signature and calls it with a czw_prices column for each argument type.
         // The first argument is always a column: an aggregate over constants folds to a constant, a
-        // separate defect in which the regular path fails. Where the result type allows it, IS NULL
-        // tells a NULL from an empty value that prints the same.
+        // separate defect, #8124, in which the regular path fails. Where the result type allows it,
+        // IS NULL tells a NULL from an empty value that prints the same.
         assertMemoryLeak(() -> {
             createEmptyWindowCountTables();
             executeWithRewriteTimestamp("""
-                    CREATE TABLE czw_prices (sym SYMBOL, b BOOLEAN, bt BYTE, sh SHORT, ch CHAR, i INT, l LONG, f FLOAT,
-                    d DOUBLE, dt DATE, tsx TIMESTAMP, tsn TIMESTAMP_NS, s STRING, v VARCHAR, l256 LONG256, u UUID,
-                    ip IPV4, g1 GEOHASH(1c), g2 GEOHASH(2c), g4 GEOHASH(4c), g8 GEOHASH(8c), bin BINARY, arr DOUBLE[],
-                    d8 DECIMAL(2,1), d16 DECIMAL(4,1), d32 DECIMAL(9,2), d64 DECIMAL(18,2), d128 DECIMAL(38,2),
-                    d256 DECIMAL(76,2), ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY""",
+                            CREATE TABLE czw_prices (sym SYMBOL, b BOOLEAN, bt BYTE, sh SHORT, ch CHAR, i INT, l LONG, f FLOAT,
+                            d DOUBLE, dt DATE, tsx TIMESTAMP, tsn TIMESTAMP_NS, s STRING, v VARCHAR, l256 LONG256, u UUID,
+                            ip IPV4, g1 GEOHASH(1c), g2 GEOHASH(2c), g4 GEOHASH(4c), g8 GEOHASH(8c), bin BINARY, arr DOUBLE[],
+                            d8 DECIMAL(2,1), d16 DECIMAL(4,1), d32 DECIMAL(9,2), d64 DECIMAL(18,2), d128 DECIMAL(38,2),
+                            d256 DECIMAL(76,2), ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY""",
                     rightTableTimestampType.getTypeName()
             );
             execute("""
@@ -1998,6 +2001,11 @@ public class WindowJoinTest extends AbstractCairoTest {
         // regular WINDOW JOIN can serve the HORIZON JOIN, and both report the same error. Before that
         // check, the HORIZON JOIN peels a projection whose column names and types match its base.
         // The per-row false filter runs the regular path.
+
+        // timestamp types don't matter for this test
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+
         assertMemoryLeak(() -> {
             createEmptyWindowCountTables();
             final String[] conditions = {

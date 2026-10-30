@@ -3405,7 +3405,7 @@ public class TickExprTest {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         final String interval = "[$today..$today+1d#mon]";
         out.clear();
-        IntervalUtils.parseTickExpr(timestampDriver, configuration, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, new StringSink(), false, mondayNow());
+        parseTickExprWithNow(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, false, mondayNow());
         Assert.assertEquals(2 * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL, out.size());
         // bit 0 is Monday
         Assert.assertEquals(1, IntervalUtils.decodeDayFilterMask(out, 0));

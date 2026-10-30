@@ -362,9 +362,9 @@ public class CompiledFilterTest extends AbstractCairoTest {
         // from bind variable slots, which the factory fills each time the cursor opens.
         assertMemoryLeak(() -> {
             createTemporalInTable();
-            final long jan2 = 1_704_153_600_000_000L;
-            final long hour = 3_600_000_000L;
-            final long day = 24 * hour;
+            final long jan2 = Micros.toMicros(2024, 1, 2);
+            final long hour = Micros.HOUR_MICROS;
+            final long day = Micros.DAY_MICROS;
             for (String c : new String[]{"dt", "tm", "tn"}) {
                 assertFilterFollowsClock(c + " IN '$today'", true, jan2 + hour, "k\n1\n2\n", jan2 + day + hour, "k\n3\n");
                 assertFilterFollowsClock(c + " IN ('$today')", true, jan2 + hour, "k\n1\n2\n", jan2 + day + hour, "k\n3\n");
@@ -562,9 +562,9 @@ public class CompiledFilterTest extends AbstractCairoTest {
                     (4, '2024-01-03T00:30:00.000000Z'),
                     (5, '2024-01-03T12:00:00.000000Z')
                     """);
-            final long jan2 = 1_704_153_600_000_000L;
-            final long hour = 3_600_000_000L;
-            final long day = 24 * hour;
+            final long jan2 = Micros.toMicros(2024, 1, 2);
+            final long hour = Micros.HOUR_MICROS;
+            final long day = Micros.DAY_MICROS;
             final long t1 = jan2 + hour;
             final long t2 = jan2 + day + hour;
             // Interval scan. It leaves only k > 2 to the filter, which the JIT compiles.
@@ -573,7 +573,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
             assertFollowsClock("SELECT k FROM y WHERE ts NOT IN '$today'", false, t1, "k\n1\n4\n5\n", t2, "k\n1\n2\n3\n");
             assertFollowsClock("SELECT k FROM y WHERE ts IN '$yesterday'", false, t1, "k\n1\n", t2, "k\n2\n3\n");
             // A range end exactly at midnight counts as a whole day, so the $now ranges start off it.
-            final long t3 = jan2 + 45 * 60_000_000L;
+            final long t3 = jan2 + 45 * Micros.MINUTE_MICROS;
             assertFollowsClock("SELECT k FROM y WHERE ts IN '$now - 1h..$now'", false, t3, "k\n2\n", jan2 + 12 * hour + hour / 2, "k\n3\n");
             assertFollowsClock("SELECT k FROM y WHERE ts IN '$today' AND k > 2", true, t1, "k\n3\n", t2, "k\n4\n5\n");
             // Filter.
