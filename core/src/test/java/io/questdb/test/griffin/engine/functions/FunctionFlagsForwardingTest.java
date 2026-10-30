@@ -58,6 +58,11 @@ import java.util.stream.Stream;
  * declares the last of its function fields, or below it: an override in a base class does not
  * know the fields a subclass adds (lag()'s default value over BaseWindowFunction's arg). An
  * anonymous class's captured locals (val$x) count as its fields.
+ * <p>
+ * {@link Function#isStableWithinExecution()} is held to the same rule wherever a class overrides
+ * it, as BaseWindowFunction does for its arg: an override must read every function field. A class
+ * may inherit Function's default, which derives stability from {@link Function#isNonDeterministic()}
+ * and so from the forward of that one.
  */
 public class FunctionFlagsForwardingTest {
     private static final Map<String, String> ALLOWED = new HashMap<>();
@@ -74,7 +79,9 @@ public class FunctionFlagsForwardingTest {
         // built from keyBranches, which the forward reads
         ALLOWED_FIELDS.put("io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory$SymbolSwitchPicker#intMap", "alias of keyBranches");
     }
-    private static final String[] METHODS = {"hasPerCallState", "isRandom", "isNonDeterministic"};
+    // methods whose Function default derives from the ones above, so a class may inherit it
+    private static final String[] DERIVED_METHODS = {"isStableWithinExecution"};
+    private static final String[] METHODS = {"hasPerCallState", "isRandom", "isNonDeterministic", "isStableWithinExecution"};
 
     @Test
     public void testFunctionsHoldingFunctionsForwardTheirFlags() throws Exception {
@@ -104,7 +111,9 @@ public class FunctionFlagsForwardingTest {
                 for (String m : METHODS) {
                     final Class<?> declaring = declaringClass(clazz, m);
                     if (declaring == Function.class) {
-                        missing.add(name + "." + m + "() inherits Function's default, holds " + held);
+                        if (!isDerived(m)) {
+                            missing.add(name + "." + m + "() inherits Function's default, holds " + held);
+                        }
                     } else if (!declaring.isInterface()) {
                         final String unread = unreadFields(declaring, m);
                         if (unread != null) {
@@ -211,6 +220,15 @@ public class FunctionFlagsForwardingTest {
                 if (holdsFunction(bound)) {
                     return true;
                 }
+            }
+        }
+        return false;
+    }
+
+    private static boolean isDerived(String m) {
+        for (String derived : DERIVED_METHODS) {
+            if (derived.equals(m)) {
+                return true;
             }
         }
         return false;
