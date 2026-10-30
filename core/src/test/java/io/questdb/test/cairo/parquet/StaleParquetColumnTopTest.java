@@ -87,9 +87,16 @@ import java.util.zip.ZipInputStream;
  * <p>
  * {@code stale_top~10} is {@code bitmap_absent} plus {@code dedup enable upsert keys(ts, s)}, for the dedup and
  * CONVERT TO NATIVE tests.
+ * <p>
+ * {@code compacted_absent~9} is {@code bitmap_absent} written by 10.0.1 and then compacted by QuestDB Enterprise
+ * 4.1.0 (docker image {@code questdb-enterprise:4.1.0-trial}, started on the 10.0.1 data directory with
+ * {@code QDB_CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT=1s}, {@code ..._CHECK_INTERVAL=1000} and
+ * {@code ..._DEAD_MIN_SIZE=0}). That compaction dropped the dead bytes the merge left but kept the stale {@code _cv}
+ * top, so only the stale top makes the partition not compact.
  */
 public class StaleParquetColumnTopTest extends AbstractCairoTest {
     private static final long DAY1 = parseTimestamp("2024-01-01T00:00:00.000000Z");
+    private static final String ROW_A = "ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n";
     private static final String STALE_INDEX_ERROR = "index does not cover parquet partition data, partition compaction rebuilds it [table=";
 
     @Test
@@ -164,6 +171,30 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
                             ts\tx\tv\ts
                             2024-01-01T05:05:00.000000Z\t-10\t99\ta
                             """);
+        });
+    }
+
+    @Test
+    public void testCompactionRepairsStaleColumnTopsWithoutDeadBytes() throws Exception {
+        // A pre-repair compaction left the stale top and no dead bytes: the stale top alone must have it rebuilt.
+        assertMemoryLeak(() -> {
+            loadFixture("compacted_absent~9");
+            final TableToken token = engine.verifyTableName("compacted_absent");
+            assertNoDeadBytes(token);
+            assertExceptionNoLeakCheck(
+                    "select ts, x, v, s from compacted_absent where s = 'a'",
+                    -1,
+                    STALE_INDEX_ERROR + "compacted_absent, partition=2024-01-01, index=s, column=s]",
+                    sqlExecutionContext
+            );
+
+            compactDay1("compacted_absent");
+
+            Assert.assertEquals(0, getColumnTop(token, DAY1, "s"));
+            assertQuery("select ts, x, v, s from compacted_absent where s = 'a'")
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: s")
+                    .returns(ROW_A);
         });
     }
 
@@ -298,8 +329,9 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
     public void testSweepRepairsStaleColumnTops() throws Exception {
         // The background sweep, not just a request, picks the stale partition although it has no dead bytes.
         assertMemoryLeak(() -> {
-            loadFixture("bitmap_top~10");
-            final TableToken token = engine.verifyTableName("bitmap_top");
+            loadFixture("compacted_absent~9");
+            final TableToken token = engine.verifyTableName("compacted_absent");
+            assertNoDeadBytes(token);
             Assert.assertFalse(isParquetPartitionCompact(token, 0));
 
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
@@ -312,10 +344,50 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
             engine.releaseAllWriters();
 
             Assert.assertTrue(isParquetPartitionCompact(token, 0));
-            assertQuery("select ts, x, v, s from bitmap_top where s = 'a' and ts in '2024-01-01'")
+            Assert.assertEquals(0, getColumnTop(token, DAY1, "s"));
+            assertQuery("select ts, x, v, s from compacted_absent where s = 'a' and ts in '2024-01-01'")
                     .timestamp("ts")
-                    .returns("ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n");
+                    .returns(ROW_A);
         });
+    }
+
+    /**
+     * Unpacks a fixture table directory from {@code resources/parquet-stale-cv-top} into the db root and registers it.
+     */
+    public static void loadFixture(String tableDirName) throws Exception {
+        final byte[] buffer = new byte[1024 * 1024];
+        final File root = new File(configuration.getDbRoot().toString());
+        try (InputStream is = StaleParquetColumnTopTest.class.getResourceAsStream("/parquet-stale-cv-top/" + tableDirName + ".zip")) {
+            Assert.assertNotNull(is);
+            try (ZipInputStream zip = new ZipInputStream(is)) {
+                ZipEntry ze;
+                while ((ze = zip.getNextEntry()) != null) {
+                    final File dest = new File(root, ze.getName());
+                    if (!ze.isDirectory()) {
+                        final File dir = dest.getParentFile();
+                        if (!dir.exists()) {
+                            Assert.assertTrue(dir.mkdirs());
+                        }
+                        try (FileOutputStream fos = new FileOutputStream(dest)) {
+                            int n;
+                            while ((n = zip.read(buffer, 0, buffer.length)) > 0) {
+                                fos.write(buffer, 0, n);
+                            }
+                        }
+                    }
+                    zip.closeEntry();
+                }
+            }
+        }
+        engine.reloadTableNames();
+        engine.reconcileTableNameRegistryState();
+    }
+
+    private static void assertNoDeadBytes(TableToken token) {
+        try (TableReader reader = engine.getReader(token)) {
+            reader.openPartition(0);
+            Assert.assertEquals("the fixture must have no dead row-group bytes", 0, reader.getAndInitParquetPartitionDecoder(0).metadata().getUnusedBytes());
+        }
     }
 
     private static void compactDay1(String table) {
@@ -353,35 +425,6 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
                     reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata()
             );
         }
-    }
-
-    private static void loadFixture(String tableDirName) throws Exception {
-        final byte[] buffer = new byte[1024 * 1024];
-        final File root = new File(configuration.getDbRoot().toString());
-        try (InputStream is = StaleParquetColumnTopTest.class.getResourceAsStream("/parquet-stale-cv-top/" + tableDirName + ".zip")) {
-            Assert.assertNotNull(is);
-            try (ZipInputStream zip = new ZipInputStream(is)) {
-                ZipEntry ze;
-                while ((ze = zip.getNextEntry()) != null) {
-                    final File dest = new File(root, ze.getName());
-                    if (!ze.isDirectory()) {
-                        final File dir = dest.getParentFile();
-                        if (!dir.exists()) {
-                            Assert.assertTrue(dir.mkdirs());
-                        }
-                        try (FileOutputStream fos = new FileOutputStream(dest)) {
-                            int n;
-                            while ((n = zip.read(buffer, 0, buffer.length)) > 0) {
-                                fos.write(buffer, 0, n);
-                            }
-                        }
-                    }
-                    zip.closeEntry();
-                }
-            }
-        }
-        engine.reloadTableNames();
-        engine.reconcileTableNameRegistryState();
     }
 
     private static long parseTimestamp(String timestamp) {
