@@ -61,6 +61,17 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
     };
 
     @Test
+    public void testChunkedCopierCountsConversionsWithinTag() throws Exception {
+        // generateChunkedCopier() sizes each chunk with estimateColumnBytecodeSize(); a conversion the
+        // estimate misses lets a chunk method outgrow the method size limit
+        assertMemoryLeak(() -> {
+            assertWideInsertSelect("GEOHASH(5c)", "GEOHASH(1c)", "#u33d8", "u");
+            assertWideInsertSelect("GEOHASH(5c)", "GEOHASH(4c)", "#u33d8", "u33d");
+            assertWideInsertSelect("TIMESTAMP", "TIMESTAMP_NS", "'2024-01-01T00:00:00.000001Z'::TIMESTAMP", "2024-01-01T00:00:00.000001000Z");
+        });
+    }
+
+    @Test
     public void testCompareAllCopiersWithWideTable() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> {
@@ -856,6 +867,33 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
 
     private static int randomCopierType(Rnd rnd) {
         return COPIER_TYPES[rnd.nextInt(COPIER_TYPES.length)];
+    }
+
+    private void assertWideInsertSelect(String fromType, String toType, String fromValue, String expectedValue) throws Exception {
+        final int columnCount = 1000;
+        final StringBuilder fromColumns = new StringBuilder();
+        final StringBuilder toColumns = new StringBuilder();
+        for (int i = 0; i < columnCount; i++) {
+            if (i > 0) {
+                fromColumns.append(", ");
+                toColumns.append(", ");
+            }
+            fromColumns.append(fromValue).append(" c").append(i);
+            toColumns.append('c').append(i).append(' ').append(toType);
+        }
+        execute("CREATE TABLE src AS (SELECT " + fromColumns + " FROM long_sequence(1))");
+        execute("CREATE TABLE dst (" + toColumns + ")");
+        assertQuery("SELECT typeOf(c0) t FROM src")
+                .noLeakCheck()
+                .expectSize()
+                .returns("t\n" + fromType + "\n");
+        execute("INSERT INTO dst SELECT * FROM src");
+        assertQuery("SELECT c0, c999 FROM dst")
+                .noLeakCheck()
+                .expectSize()
+                .returns("c0\tc999\n" + expectedValue + "\t" + expectedValue + "\n");
+        execute("DROP TABLE src");
+        execute("DROP TABLE dst");
     }
 
     private RecordToRowCopier generateCopier(int fromType, int toType) {
