@@ -53,6 +53,7 @@ import io.questdb.preferences.SettingsStore;
 import io.questdb.std.CharSequenceLongHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -63,6 +64,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -93,7 +95,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final AtomicLong startedAtTimestamp = new AtomicLong(Numbers.LONG_NULL); // Numbers.LONG_NULL means no ongoing checkpoint
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
     private final TxReader txReader;
+    private boolean hasRecoveredCheckpoint;
+    private boolean hasRecoveredCheckpointTrigger;
     private boolean isBackupCheckpoint; // protected with #lock
+    private String recoveredCheckpointDir;
     private volatile boolean ownsWalPurgeJobRunLock = false;
 
     DatabaseCheckpointAgent(CairoEngine engine) {
@@ -188,6 +193,83 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             } else {
                 LOG.info().$("_preferences~store restored from checkpoint").$();
             }
+        }
+    }
+
+    /**
+     * Runs syncfs(2) on the filesystem holding {@code dir}. Only meaningful where
+     * {@link FilesFacade#isSyncfsFileSystemWide()}: there it flushes the whole filesystem and reports its
+     * writeback errors.
+     */
+    private static void syncFileSystemOf(FilesFacade ff, LPSZ dir) {
+        final long fd = TableUtils.openRO(ff, dir, LOG);
+        try {
+            ff.syncfs(fd);
+        } finally {
+            ff.close(fd);
+        }
+    }
+
+    /**
+     * Makes durable what a checkpoint restore step changed under {@code dir}: the restored files, or the
+     * removal of the trigger or of the checkpoint directory. A restore writes through many code paths, so
+     * this flushes whole filesystems rather than a tracked set of files. {@link RecoveryCoordinator} also
+     * calls it on a start outside adaptive, where syncfs(2) is filesystem-wide, to make the live files of the
+     * tables that leave adaptive durable before it removes their save points.
+     * <ul>
+     *     <li>Linux: syncfs(2) on the filesystem holding {@code dir} and, with {@code includeVolumes}, on
+     *     every volume a table directory under {@code dir} links to. Unlike sync(2), syncfs(2) reports
+     *     writeback errors, so a restore that did not reach the device fails recovery.</li>
+     *     <li>Windows has no sync(2): {@code Files.sync()} is a stub that always returns -1, and flushing a
+     *     whole volume needs administrator rights. The OS writes the restored files back in its own
+     *     time.</li>
+     *     <li>Elsewhere: sync(2), which flushes every filesystem.</li>
+     * </ul>
+     */
+    public static void syncRestoredState(FilesFacade ff, Path dir, boolean includeVolumes) {
+        if (ff.isSyncfsFileSystemWide()) {
+            final int dirLen = dir.size();
+            syncFileSystemOf(ff, dir.$());
+            if (includeVolumes) {
+                syncVolumes(ff, dir, dirLen);
+            }
+            return;
+        }
+        if (ff.isRestrictedFileSystem()) {
+            LOG.info().$("no filesystem-wide sync on this platform, leaving restored state to OS write-back [dir=")
+                    .$(dir).I$();
+            return;
+        }
+        if (ff.sync() != 0) {
+            final int errno = ff.errno();
+            // dir is the restored root: it names the engine that owns the failure
+            throw CairoException.dataSyncFailure(ff, dir.toString(), errno, "sync", "sync() failed during checkpoint recovery [errno=" + errno + ']');
+        }
+    }
+
+    /**
+     * Runs syncfs(2) once per volume that a table directory under {@code dir} links to. A table created
+     * IN VOLUME is a soft link to a directory on that volume, so the link target's parent names the
+     * volume, and every table on it shares one flush.
+     */
+    private static void syncVolumes(FilesFacade ff, Path dir, int dirLen) {
+        final ObjHashSet<String> volumes = new ObjHashSet<>();
+        try (Path target = new Path()) {
+            ff.iterateDir(dir.trimTo(dirLen).$(), (pUtf8NameZ, type) -> {
+                // A file system that reports no entry type (DT_UNKNOWN) is asked whether the entry is a link.
+                final boolean isLink = type == Files.DT_LNK
+                        || (type == Files.DT_UNKNOWN && Files.notDots(pUtf8NameZ) && ff.isSoftLink(dir.trimTo(dirLen).concat(pUtf8NameZ).$()));
+                if (isLink && ff.isDirOrSoftLinkDirNoDots(dir, dirLen, pUtf8NameZ, Files.DT_LNK)) {
+                    target.trimTo(0);
+                    // A link that cannot be read still leads to its volume, since open() follows it.
+                    volumes.add(ff.readLink(dir, target) ? target.parent().toString() : dir.toString());
+                }
+            });
+            for (int i = 0, n = volumes.size(); i < n; i++) {
+                syncFileSystemOf(ff, target.of(volumes.get(i)).$());
+            }
+        } finally {
+            dir.trimTo(dirLen);
         }
     }
 
@@ -551,6 +633,15 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                                         path.trimTo(rootLen).concat(TableUtils.META_FILE_NAME);
                                         mem.smallFile(ff, path.$(), MemoryTag.MMAP_DEFAULT);
                                         reader.getMetadata().dumpTo(mem);
+                                        // The checkpoint image is a second producer of a (_meta, _txn) pair, so it owns the
+                                        // invariant COMPOSITE_PARTITIONS.md relies on: _meta stamps MAX_STORAGE_VERSION
+                                        // whenever _txn carries composite partition references. Derive the stamp from the
+                                        // _txn this image ships rather than trusting the bytes dumpTo() copied - a pooled
+                                        // reader copy keeps a private _meta snapshot that TableWriter's in-place storage
+                                        // version write never reaches, so those bytes can lag their own _txn.
+                                        mem.putInt(TableUtils.META_OFFSET_VERSION, reader.getTxFile().hasCompositePartitions()
+                                                ? ColumnType.MAX_STORAGE_VERSION
+                                                : ColumnType.VERSION);
                                         mem.close(false);
                                         // Copy _txn file.
                                         path.trimTo(rootLen).concat(TXN_FILE_NAME);
@@ -959,7 +1050,40 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
+    void completeRecovery() {
+        if (!hasRecoveredCheckpoint || recoveredCheckpointDir == null) {
+            return;
+        }
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            // Remove the trigger and make its removal durable first. A crash after this point can leave an inert
+            // checkpoint directory, but never a trigger that points at a deleted checkpoint.
+            path.of(configuration.getInstallRoot()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
+            if (hasRecoveredCheckpointTrigger
+                    && ff.exists(path.$())
+                    && !ff.removeQuiet(path.$())
+                    && ff.exists(path.$())) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not remove restore trigger file. file permission issues? [file=").put(path).put(']');
+            }
+            syncRestoredState(ff, path.of(configuration.getInstallRoot()), false);
+
+            path.of(recoveredCheckpointDir);
+            if (ff.exists(path.$()) && !ff.rmdir(path)) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not remove checkpoint dir [dir=").put(path)
+                        .put(", errno=").put(ff.errno()).put(']');
+            }
+            syncRestoredState(ff, path.of(recoveredCheckpointDir).parent(), false);
+            recoveredCheckpointDir = null;
+            hasRecoveredCheckpointTrigger = false;
+        }
+    }
+
     void recover() {
+        hasRecoveredCheckpoint = false;
+        recoveredCheckpointDir = null;
+        hasRecoveredCheckpointTrigger = false;
         if (!configuration.isCheckpointRecoveryEnabled()) {
             return;
         }
@@ -1107,6 +1231,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             }
 
             recoveryAgent.finalizeParallelTasks();
+            hasRecoveredCheckpoint = true;
             LOG.info()
                     .$("checkpoint recovered [metaFilesCount=").$(recoveredMetaFiles.get())
                     .$(", walFilesCount=").$(recoveredWalFiles.get())
@@ -1120,20 +1245,13 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 LOG.critical().$("checkpoint listener failed on restore complete [error=").$(ex).I$();
             }
 
-            // Delete the checkpoint directory to avoid recovery on the next restart.
+            // Make the restored cut durable, but keep the checkpoint and the trigger until RecoveryCoordinator
+            // has run (completeRecovery() removes them), so a crash in between repeats the restore.
             srcPath.trimTo(checkpointRootLen).$();
             memFile.close();
-            if (!ff.rmdir(srcPath)) {
-                throw CairoException.critical(ff.errno())
-                        .put("could not remove checkpoint dir [dir=").put(srcPath)
-                        .put(", errno=").put(ff.errno())
-                        .put(']');
-            }
-            dstPath.of(installRoot).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
-            if (triggerExists && !ff.removeQuiet(dstPath.$())) {
-                throw CairoException.critical(ff.errno())
-                        .put("could not remove restore trigger file. file permission issues? [file=").put(dstPath).put(']');
-            }
+            syncRestoredState(ff, dstPath.trimTo(rootLen), true);
+            recoveredCheckpointDir = srcPath.toString();
+            hasRecoveredCheckpointTrigger = triggerExists;
         }
     }
 }

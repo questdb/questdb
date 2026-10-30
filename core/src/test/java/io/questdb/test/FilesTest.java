@@ -43,6 +43,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -62,7 +63,9 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -88,6 +91,38 @@ public class FilesTest {
                     Assert.assertEquals(10, Files.length(path.$()));
                     Files.allocate(fd, 120);
                     Assert.assertEquals(120, Files.length(path.$()));
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAllocateFromKnownLength() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            TestUtils.writeStringToFile(temp, "abcde");
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                long fd = Files.openRW(path.$());
+                try {
+                    // Grows from the length the caller knows the file has, and keeps what is below it.
+                    Assert.assertTrue(Files.allocate(fd, 5, 4096));
+                    Assert.assertEquals(4096, Files.length(path.$()));
+                    Assert.assertTrue(Files.allocate(fd, 4096, 3 * 4096));
+                    Assert.assertEquals(3 * 4096, Files.length(path.$()));
+                    // A size at or below the known length is a no-op, never a shrink.
+                    Assert.assertTrue(Files.allocate(fd, 3 * 4096, 4096));
+                    Assert.assertEquals(3 * 4096, Files.length(path.$()));
+                    final long buf = Unsafe.malloc(5, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        Assert.assertEquals(5, Files.read(fd, buf, 5, 0));
+                        for (int i = 0; i < 5; i++) {
+                            Assert.assertEquals('a' + i, Unsafe.getByte(buf + i));
+                        }
+                    } finally {
+                        Unsafe.free(buf, 5, MemoryTag.NATIVE_DEFAULT);
+                    }
                 } finally {
                     Files.close(fd);
                 }
@@ -178,6 +213,40 @@ public class FilesTest {
                         Assert.assertEquals(M100 + i, Files.length(path.$()));
                     }
                 } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAllocateRange() throws Exception {
+        assertMemoryLeak(() -> {
+            File temp = temporaryFolder.newFile();
+            TestUtils.writeStringToFile(temp, "abcde");
+            try (Path path = new Path().of(temp.getAbsolutePath())) {
+                final long fd = Files.openRW(path.$());
+                final long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Assert.assertTrue(Files.allocate(fd, Files.PAGE_SIZE));
+                    Assert.assertEquals(Files.PAGE_SIZE, Files.length(path.$()));
+
+                    Assert.assertTrue(Files.allocate(fd, Files.PAGE_SIZE, 3 * Files.PAGE_SIZE));
+                    Assert.assertEquals(3 * Files.PAGE_SIZE, Files.length(path.$()));
+                    if (Os.isLinux() || Os.isFreeBSD()) {
+                        // posix_fallocate: a range that ends inside the file neither shrinks it nor fails.
+                        // macOS and Windows delegate to allocate(), which sets the length to size, as at base.
+                        Assert.assertTrue(Files.allocate(fd, Files.PAGE_SIZE, 2 * Files.PAGE_SIZE));
+                        Assert.assertEquals(3 * Files.PAGE_SIZE, Files.length(path.$()));
+                    }
+
+                    // the bytes below the range stay intact
+                    Assert.assertEquals(5, Files.read(fd, buf, 5, 0));
+                    for (int i = 0; i < 5; i++) {
+                        Assert.assertEquals('a' + i, Unsafe.getByte(buf + i));
+                    }
+                } finally {
+                    Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                     Files.close(fd);
                 }
             }
@@ -305,6 +374,123 @@ public class FilesTest {
                         TestUtils.assertFileContentsEquals(src, dst);
                     } finally {
                         Files.rmdir(p2, true);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * A recursive copy or hard link whose destination directory, or its copy of a subdirectory, cannot be created
+     * must close the source listing it has already opened. It used to return before the block that closes it,
+     * leaving one open directory per failed call, which neither the fd count nor the memory tags show.
+     */
+    @Test
+    public void testCopyRecursiveAndHardLinkRecursiveCloseListingWhenMkdirFails() throws Exception {
+        assertMemoryLeak(() -> {
+            final int mkdirMode = 509;
+            final AtomicInteger openListings = new AtomicInteger();
+            final AtomicReference<String> failingMkdir = new AtomicReference<>();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long findClose(long findPtr) {
+                    if (findPtr > 0) {
+                        openListings.decrementAndGet();
+                    }
+                    return super.findClose(findPtr);
+                }
+
+                @Override
+                public long findFirst(LPSZ path) {
+                    final long findPtr = super.findFirst(path);
+                    if (findPtr > 0) {
+                        openListings.incrementAndGet();
+                    }
+                    return findPtr;
+                }
+
+                @Override
+                public int mkdir(LPSZ path, int mode) {
+                    return Utf8s.stringFromUtf8Bytes(path).equals(failingMkdir.get()) ? -1 : super.mkdir(path, mode);
+                }
+            };
+            final java.nio.file.Path root = temporaryFolder.newFolder().toPath().toRealPath();
+            final java.nio.file.Path srcDir = root.resolve("src");
+            java.nio.file.Files.createDirectories(srcDir.resolve("subdir"));
+            java.nio.file.Files.writeString(srcDir.resolve("file"), "abcde");
+            java.nio.file.Files.writeString(srcDir.resolve("subdir").resolve("file2"), "efgh");
+            final int attempts = 10;
+            try (Path src = new Path(); Path dst = new Path()) {
+                for (boolean isHardLink : new boolean[]{false, true}) {
+                    for (boolean isNested : new boolean[]{false, true}) {
+                        final int descriptorsBefore = countOpenDescriptorsUnder(srcDir);
+                        for (int i = 0; i < attempts; i++) {
+                            final java.nio.file.Path dstDir = root.resolve("dst-" + isHardLink + "-" + isNested + "-" + i);
+                            failingMkdir.set((isNested ? dstDir.resolve("subdir") : dstDir).toString());
+                            src.of(srcDir.toString());
+                            dst.of(dstDir.toString());
+                            final int rc = isHardLink ? ff.hardLinkDirRecursive(src, dst, mkdirMode) : ff.copyRecursive(src, dst, mkdirMode);
+                            Assert.assertEquals(-1, rc);
+                        }
+                        // /proc/self/fd is the operating system's own count, on Linux; the facade count holds everywhere
+                        Assert.assertEquals("descriptors left open under the source [hardLink=" + isHardLink + ", nested=" + isNested + ']',
+                                descriptorsBefore, countOpenDescriptorsUnder(srcDir));
+                        Assert.assertEquals("source listings left open [hardLink=" + isHardLink + ", nested=" + isNested + ']',
+                                0, openListings.get());
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * On a file system that reports no entry types (XFS without ftype, some FUSE and network file systems) the
+     * recursive copy and hard link must ask whether an entry is a directory; they used to open every file as a
+     * directory and fail with ENOTDIR. A file system that reports types must not pay for the question.
+     */
+    @Test
+    public void testCopyRecursiveAndHardLinkRecursiveWhenEntryTypesAreUnknown() throws Exception {
+        assertMemoryLeak(() -> {
+            final int mkdirMode = 509;
+            final AtomicBoolean isEntryTypeUnknown = new AtomicBoolean();
+            final AtomicInteger dirChecks = new AtomicInteger();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public int findType(long findPtr) {
+                    return isEntryTypeUnknown.get() ? Files.DT_UNKNOWN : super.findType(findPtr);
+                }
+
+                @Override
+                public boolean isDirOrSoftLinkDir(LPSZ path) {
+                    dirChecks.incrementAndGet();
+                    return super.isDirOrSoftLinkDir(path);
+                }
+            };
+            final java.nio.file.Path root = temporaryFolder.newFolder().toPath();
+            final java.nio.file.Path srcDir = root.resolve("src");
+            java.nio.file.Files.createDirectories(srcDir.resolve("subdir").resolve("nested"));
+            java.nio.file.Files.writeString(srcDir.resolve("file"), "abcde");
+            java.nio.file.Files.writeString(srcDir.resolve("subdir").resolve("file2"), "efgh");
+            java.nio.file.Files.writeString(srcDir.resolve("subdir").resolve("nested").resolve("file3"), "ij");
+            try (Path src = new Path(); Path dst = new Path()) {
+                for (boolean isUnknown : new boolean[]{false, true}) {
+                    for (boolean isHardLink : new boolean[]{false, true}) {
+                        final java.nio.file.Path dstDir = root.resolve("dst-" + isUnknown + "-" + isHardLink);
+                        src.of(srcDir.toString());
+                        dst.of(dstDir.toString());
+                        dirChecks.set(0);
+                        isEntryTypeUnknown.set(isUnknown);
+                        final int rc;
+                        try {
+                            rc = isHardLink ? ff.hardLinkDirRecursive(src, dst, mkdirMode) : ff.copyRecursive(src, dst, mkdirMode);
+                        } finally {
+                            isEntryTypeUnknown.set(false);
+                        }
+                        Assert.assertEquals(0, rc);
+                        Assert.assertEquals("one directory check per entry listed as unknown, none for typed entries", isUnknown ? 5 : 0, dirChecks.get());
+                        Assert.assertEquals("abcde", java.nio.file.Files.readString(dstDir.resolve("file")));
+                        Assert.assertEquals("efgh", java.nio.file.Files.readString(dstDir.resolve("subdir").resolve("file2")));
+                        Assert.assertEquals("ij", java.nio.file.Files.readString(dstDir.resolve("subdir").resolve("nested").resolve("file3")));
                     }
                 }
             }
@@ -1018,6 +1204,33 @@ public class FilesTest {
     }
 
     @Test
+    public void testOpenRWExistingNeverCreates() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(new File(temporaryFolder.getRoot(), "missing").getAbsolutePath())) {
+                Assert.assertEquals(-1, Files.openRWExisting(path.$()));
+                Assert.assertTrue(Files.isErrnoFileDoesNotExist(Os.errno()));
+                Assert.assertFalse("a failed open must not create the file", Files.exists(path.$()));
+
+                final File existing = temporaryFolder.newFile();
+                TestUtils.writeStringToFile(existing, "abcde");
+                path.of(existing.getAbsolutePath());
+                final long fd = Files.openRWExisting(path.$());
+                Assert.assertTrue(fd > -1);
+                final long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().putByte(buf, (byte) 'f');
+                    Assert.assertEquals("the handle must be writable", 1, Files.write(fd, buf, 1, 5));
+                    Assert.assertEquals(0, Files.fsync(fd));
+                } finally {
+                    Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
+                    Files.close(fd);
+                }
+                Assert.assertEquals(6, Files.length(path.$()));
+            }
+        });
+    }
+
+    @Test
     public void testOpenRWFailsWhenCalledOnDir() throws Exception {
         assertMemoryLeak(() -> {
             long fd = -1;
@@ -1582,6 +1795,27 @@ public class FilesTest {
         if (Files.getFileSystemStatus(Path.getThreadLocal(path).$()) == Files.TMPFS_MAGIC) {
             throw new AssumptionViolatedException("Path is on tmpfs: " + path);
         }
+    }
+
+    // Open descriptors of this process whose target is dir or lies under it; 0 where /proc/self/fd does not exist.
+    private static int countOpenDescriptorsUnder(java.nio.file.Path dir) throws IOException {
+        final java.nio.file.Path fdDir = java.nio.file.Paths.get("/proc/self/fd");
+        if (!java.nio.file.Files.isDirectory(fdDir)) {
+            return 0;
+        }
+        int count = 0;
+        try (java.nio.file.DirectoryStream<java.nio.file.Path> fds = java.nio.file.Files.newDirectoryStream(fdDir)) {
+            for (java.nio.file.Path fd : fds) {
+                try {
+                    if (java.nio.file.Files.readSymbolicLink(fd).startsWith(dir)) {
+                        count++;
+                    }
+                } catch (IOException ignore) {
+                    // the descriptor closed while it was listed
+                }
+            }
+        }
+        return count;
     }
 
     private static void createSoftLink(Path coldRoot, Path srcFilePath, Path softLinkFilePath) {

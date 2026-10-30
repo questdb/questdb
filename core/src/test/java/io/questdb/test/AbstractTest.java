@@ -29,6 +29,7 @@ import io.questdb.Metrics;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.WriterInvariantChecker;
 import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewTimerJob;
 import io.questdb.cairo.view.ViewCompilerJob;
@@ -44,13 +45,16 @@ import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Rule;
 import org.junit.rules.TemporaryFolder;
 import org.junit.rules.TestName;
+import org.junit.rules.TestRule;
 import org.junit.runner.OrderWith;
+import org.junit.runners.model.Statement;
 
 import java.util.Collections;
 import java.util.Set;
@@ -61,14 +65,49 @@ import java.util.concurrent.atomic.AtomicInteger;
 @OrderWith(RandomOrder.class)
 public class AbstractTest {
     public static final Set<QuietCloseable> CLOSEABLE = Collections.newSetFromMap(new ConcurrentHashMap<>());
-
+    /**
+     * Records the thread the test class runs on. A test that runs on another thread runs under a timeout rule,
+     * on a thread of its own that ends with the test.
+     */
+    @ClassRule
+    public static final TestRule classThreadRule = (base, description) -> new Statement() {
+        @Override
+        public void evaluate() throws Throwable {
+            classThread = Thread.currentThread();
+            base.evaluate();
+        }
+    };
     @ClassRule
     public static final TemporaryFolder temp = new TemporaryFolder();
     protected static final Log LOG = LogFactory.getLog(AbstractTest.class);
     protected static final AtomicInteger OFF_POOL_READER_ID = new AtomicInteger();
+    private static final long TEST_THREAD_EXIT_GRACE_MILLIS = 2_000;
     protected static String root;
+    private static volatile Thread classThread;
+    private static volatile Thread reportedAbandonedThread;
+    private static volatile Thread testThread;
+    private static volatile String testThreadName;
     @Rule
     public final TestName testName = new TestName();
+    /**
+     * Fails the test on any writer invariant violation (debug.cairo.writer.invariant.check.enabled) reported while it
+     * ran. A rule rather than a tearDown() assertion: it wraps every @Before and @After, so it also sees violations
+     * reported while a subclass's tearDown closes its writers, and failing here skips none of that cleanup. Covers
+     * tests that do not run inside assertMemoryLeak, whose LeakCheck does the same.
+     */
+    @Rule
+    public final TestRule writerInvariantCheck = (base, _) -> new Statement() {
+        @Override
+        public void evaluate() throws Throwable {
+            final long violationsBefore = WriterInvariantChecker.getViolationCount();
+            base.evaluate();
+            final long violations = WriterInvariantChecker.getViolationCount() - violationsBefore;
+            if (violations > 0) {
+                Assert.fail("writer invariant violated " + violations + " time(s), last: "
+                        + WriterInvariantChecker.getLastViolation());
+            }
+        }
+    };
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -89,6 +128,12 @@ public class AbstractTest {
 
     @Before
     public void setUp() {
+        failIfAbandonedTestThreadRuns();
+        final Thread current = Thread.currentThread();
+        if (current != classThread) {
+            testThreadName = getClass().getSimpleName() + '#' + testName.getMethodName();
+            testThread = current;
+        }
         LOG.info().$("Starting test ").$safe(getClass().getSimpleName()).$('#').$safe(testName.getMethodName()).$();
         TestUtils.createTestPath(root);
         Metrics.ENABLED.clear();
@@ -101,6 +146,9 @@ public class AbstractTest {
         TestUtils.removeTestPath(root);
         OFF_POOL_READER_ID.set(0);
         SqlCodeGenerator.ALLOW_FUNCTION_MEMOIZATION = false;
+        if (testThread == Thread.currentThread()) {
+            testThread = null;
+        }
     }
 
     /**
@@ -204,5 +252,32 @@ public class AbstractTest {
 
     protected static TableReader newOffPoolReader(CairoConfiguration configuration, CharSequence tableName, CairoEngine engine) {
         return new TableReader(OFF_POOL_READER_ID.getAndIncrement(), configuration, engine.verifyTableName(tableName), engine.getTxnScoreboardPool());
+    }
+
+    /**
+     * Fails the test while the thread of an earlier test still runs. A timeout rule fails a test that runs too
+     * long but cannot stop its thread, which keeps writing under the shared test root and mapping memory, so every
+     * later test in this JVM would report what it does as its own failure: a memory leak, a table that already
+     * exists. Only the thread of a test that did not reach {@link #tearDown()} is suspect, and it gets a short grace
+     * to exit.
+     */
+    private static void failIfAbandonedTestThreadRuns() {
+        final Thread previous = testThread;
+        if (previous == null || previous == Thread.currentThread()) {
+            return;
+        }
+        if (previous != reportedAbandonedThread) {
+            try {
+                previous.join(TEST_THREAD_EXIT_GRACE_MILLIS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        if (previous.isAlive()) {
+            reportedAbandonedThread = previous;
+            Assert.fail("test " + testThreadName + " timed out and its thread is still running; this test would share"
+                    + " the test root, its tables and the memory accounting with it");
+        }
+        testThread = null;
     }
 }

@@ -917,6 +917,66 @@ public class WriterPoolTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGetAfterPoolClosedReturnDoesNotSpin() throws Exception {
+        // returnToPool's pool-closed re-grab (the EV_OUT_OF_POOL_CLOSE branch) CASes the entry back to a
+        // positive owner id and returns false. Nothing releases or re-stamps that entry afterwards:
+        // releaseAll() skips it because its owner is not UNALLOCATED, and TableWriter.doClose() only nulls
+        // the writer. A get() that passed checkClosed() before the pool closed therefore reaches a busy
+        // entry whose ownership reason never arrives. awaitOwnershipReason() must report the entry as busy
+        // instead of spinning on it.
+        assertWithPool(pool -> {
+            final AtomicBoolean sawOutOfPoolClose = new AtomicBoolean();
+            pool.setPoolListener((factoryType, thread, name, event, segment, position) -> {
+                if (event == PoolListener.EV_OUT_OF_POOL_CLOSE) {
+                    sawOutOfPoolClose.set(true);
+                }
+            });
+
+            final TableWriter owner = pool.get(zTableToken, "owner");
+            // Close the pool while the writer is checked out, then return it: that return takes the
+            // re-grab branch and abandons the entry.
+            pool.close();
+            owner.close();
+            Assert.assertTrue("returnToPool did not take the pool-closed re-grab path", sawOutOfPoolClose.get());
+
+            // getWriterEntry() runs checkClosed() once on entry and none of its loop's continue paths
+            // re-run it, so a get() that started before the close never observes the closed flag - it just
+            // keeps retrying the acquire. reopen() puts the getter thread in exactly that position
+            // deterministically; everything from the owner CAS onwards is the production path.
+            Assert.assertTrue(pool.reopen());
+
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            final SOCountDownLatch done = new SOCountDownLatch(1);
+            final Thread getter = new Thread(() -> {
+                try {
+                    pool.get(zTableToken, "racer").close();
+                } catch (Throwable t) {
+                    error.set(t);
+                } finally {
+                    Path.clearThreadLocals();
+                    done.countDown();
+                }
+            });
+            // Daemon: when the spin is present nothing can stop this thread, so let the JVM outlive it
+            // rather than hanging the suite on a join.
+            getter.setDaemon(true);
+            getter.start();
+
+            // Bounded wait, so the defect surfaces as a failed assertion instead of a hung suite.
+            Assert.assertTrue(
+                    "get() spun forever on the entry abandoned by the pool-closed return",
+                    done.await(TimeUnit.SECONDS.toNanos(30))
+            );
+            getter.join();
+
+            Assert.assertTrue(
+                    "expected the abandoned entry to be reported busy, got: " + error.get(),
+                    error.get() instanceof EntryUnavailableException
+            );
+        });
+    }
+
+    @Test
     public void testGetAndCloseRace() throws Exception {
         TableModel model = new TableModel(configuration, "xyz", PartitionBy.NONE).col("ts", ColumnType.DATE);
         AbstractCairoTest.create(model);
@@ -1561,6 +1621,46 @@ public class WriterPoolTest extends AbstractCairoTest {
             Assert.assertEquals(PoolListener.EV_UNEXPECTED_CLOSE, x.ev);
             Assert.assertEquals(0, pool.getBusyCount());
         });
+    }
+
+    @Test
+    public void testWriterOpenErrorReleasesEntry() throws Exception {
+        final TestFilesFacade ff = new TestFilesFacade() {
+            boolean isFailed;
+
+            @Override
+            public long openRWNoCache(LPSZ name, int opts) {
+                if (!isFailed && Utf8s.endsWithAscii(name, zTableToken.getDirName() + ".lock")) {
+                    isFailed = true;
+                    throw new Error("writer construction failure");
+                }
+                return super.openRWNoCache(name, opts);
+            }
+
+            @Override
+            public boolean wasCalled() {
+                return isFailed;
+            }
+        };
+        DefaultCairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public @NotNull FilesFacade getFilesFacade() {
+                return ff;
+            }
+        };
+        assertWithPool(pool -> {
+            try (TableWriter ignored = pool.get(zTableToken, "testing")) {
+                Assert.fail("writer construction must fail");
+            } catch (Error e) {
+                Assert.assertEquals("writer construction failure", e.getMessage());
+            }
+            Assert.assertEquals(0, pool.getBusyCount());
+            try (TableWriter ignored = pool.get(zTableToken, "testing")) {
+                Assert.assertEquals(1, pool.getBusyCount());
+            }
+            Assert.assertEquals(0, pool.getBusyCount());
+        }, configuration);
+        Assert.assertTrue(ff.wasCalled());
     }
 
     @Test

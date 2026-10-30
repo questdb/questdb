@@ -31,7 +31,9 @@ import io.questdb.cairo.ColumnTaskJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeConverter;
 import io.questdb.cairo.ColumnVersionWriter;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -46,6 +48,7 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.Sequence;
 import io.questdb.std.BoolList;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.Clock;
@@ -81,11 +84,16 @@ public class ConvertOperatorImpl implements Closeable {
         }
     };
     private final Path path;
+    private final LongList pieceRowCounts = new LongList();
+    private final LongList pieceRowOffsets = new LongList();
     private final PurgingOperator purgingOperator;
     private final int rootLen;
     private final TableWriter tableWriter;
     private final Clock timer;
     private CharSequence columnName;
+    private volatile int dataSyncFailureErrno;
+    // Non-null once a conversion task fails a data-sync barrier.
+    private volatile String dataSyncFailureOperation;
     private long fixedFd;
     private int partitionUpdated;
     private SymbolMapReaderImpl symbolMapReader;
@@ -180,9 +188,14 @@ public class ConvertOperatorImpl implements Closeable {
             }
         }
 
-        if (checkStatus && asyncProcessingErrorCount.get() > 0) {
-            throw CairoException.critical(0)
-                    .put("column conversion failed, see logs for details [table=").put(tableWriter.getTableToken())
+        // A task's failed data-sync barrier is rethrown even when the caller has its own error to rethrow,
+        // so that the caller stops the engine
+        if ((checkStatus || dataSyncFailureOperation != null) && asyncProcessingErrorCount.get() > 0) {
+            final String dataSyncOperation = dataSyncFailureOperation;
+            final CairoException ex = dataSyncOperation != null
+                    ? CairoException.dataSyncFailureCarry(dataSyncFailureErrno, dataSyncOperation)
+                    : CairoException.critical(0);
+            throw ex.put("column conversion failed, see logs for details [table=").put(tableWriter.getTableToken())
                     .put(", tableDir=").put(tableWriter.getTableToken().getDirName())
                     .put(", column=").put(columnName)
                     .put(']');
@@ -219,6 +232,7 @@ public class ConvertOperatorImpl implements Closeable {
             int queueCount = 0;
             countDownLatch.reset();
             asyncProcessingErrorCount.set(0);
+            dataSyncFailureOperation = null;
             long start = timer.getTicks();
             long totalRows = 0;
             boolean hasNullTopRows = false;
@@ -237,10 +251,12 @@ public class ConvertOperatorImpl implements Closeable {
             // force a full-partition rewrite at ALTER time; the first O3 merge re-encodes them
             // with the new type anyway.
             //
-            // Each per-partition convert is performed without committing; a single batched
-            // commit at the end of the loop publishes them atomically. If any partition
-            // throws midway, the loop exits without commit and the writer becomes distressed,
-            // so the in-memory updates are discarded and the on-disk state stays unchanged.
+            // Each per-partition convert is performed without committing. The batch is published
+            // by the ALTER's final commit together with the new _meta: it must not get its own
+            // _txn write, because the writer already carries the ALTER's seqTxn and an
+            // intermediate _txn would bind it to the old column type. If any partition throws
+            // midway, the loop exits and the writer becomes distressed, so the in-memory updates
+            // are discarded and the on-disk state stays unchanged.
             boolean hasPriorConversion = tableWriter.getMetadata()
                     .getColumnMetadata(existingColIndex).getReplacingIndex() >= 0;
             boolean isTargetSymbol = ColumnType.isSymbol(newType);
@@ -296,7 +312,7 @@ public class ConvertOperatorImpl implements Closeable {
                 }
             }
             if (hasAnyPartitionConverted) {
-                tableWriter.commitPendingParquetToNativeConversions();
+                tableWriter.applyPendingParquetToNativeConversions();
             }
 
             for (int partitionIndex = 0, n = tableWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
@@ -322,7 +338,12 @@ public class ConvertOperatorImpl implements Closeable {
                     }
                     try {
                         final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
-                        final long maxRow = tableWriter.getPartitionSize(partitionIndex);
+                        // The conversion rewrites a FILE, so it spans the rows the file spans - E, not the live row
+                        // count.
+                        final long maxRow = Math.max(
+                                tableWriter.getPartitionSize(partitionIndex),
+                                tableWriter.getPartitionPhysicalRowCount(partitionIndex)
+                        );
 
                         final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, existingColIndex);
                         hasNullTopRows |= (columnTop > -1 ? columnTop : maxRow) > 0;
@@ -341,6 +362,18 @@ public class ConvertOperatorImpl implements Closeable {
                                 );
                                 int pathTrimToLen = path.size();
 
+                                // A composite partition's dead space (a relocated piece's old, superseded copy) must
+                                // never be read - it can be short, missing, or simply garbage relative to what this.
+                                final boolean srcPieceable = ColumnType.isFixedSize(existingType) || existingType == ColumnType.STRING || existingType == ColumnType.VARCHAR;
+                                final boolean dstFixed = ColumnType.isFixedSize(newType);
+                                final boolean dstVarStringy = newType == ColumnType.STRING || newType == ColumnType.VARCHAR;
+                                final boolean pieceWalkable = srcPieceable && (dstFixed || dstVarStringy);
+                                // Those four only read the column types, so they cannot throw and belong outside the
+                                // descriptor guard. The geometry lookup they gate CAN throw, so it goes inside it -
+                                // otherwise it would run after the catch closes and before an owner takes the four
+                                // descriptors, and a throw there would leak all four.
+                                final int pieceCount;
+
                                 long srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;
                                 try {
                                     openColumnsRO(columnName, partitionTimestamp, existingColIndex, existingType, pathTrimToLen);
@@ -350,6 +383,13 @@ public class ConvertOperatorImpl implements Closeable {
                                     openColumnsRW(columnName, partitionTimestamp, columnIndex, newType, pathTrimToLen);
                                     dstFixFd = this.fixedFd;
                                     dstVarFd = this.varFd;
+                                    if (tableWriter.getEffectiveCommitMode() == CommitMode.SYNC) {
+                                        // Make the new column files' names durable before the ALTER's commit.
+                                        // A dispatched conversion task also fsyncs their data; the piece-walk
+                                        // paths below close the files without an fsync, the known SYNC gap
+                                        // #7843 (adaptive-commit-mode.md section 7.6).
+                                        TableUtils.fsyncDirDurable(ff, path.trimTo(pathTrimToLen).$());
+                                    }
 
                                     LOG.info().$("converting column [at=").$safe(path.trimTo(pathTrimToLen))
                                             .$(", column=").$safe(columnName)
@@ -358,12 +398,40 @@ public class ConvertOperatorImpl implements Closeable {
                                             .$(", rowCount=").$(rowCount)
                                             .I$();
                                     totalRows += rowCount;
+                                    pieceCount = pieceWalkable
+                                            ? tableWriter.getGeometry().getPieceCount(partitionIndex)
+                                            : 1;
                                 } catch (Throwable th) {
                                     closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
                                     throw th;
                                 }
 
-                                if (dispatchConvertColumnPartitionTask(
+                                if (dstFixed && pieceWalkable && pieceCount > 1) {
+                                    // For a fixed-width destination, walk the partition's own pieces (its live
+                                    // sections) instead of the flat [columnTop, maxRow) range: convert each piece from
+                                    try {
+                                        convertToFixedDestByPieces(
+                                                partitionIndex, pieceCount, columnTop, maxRow,
+                                                existingType, newType, srcFixFd, srcVarFd, dstFixFd
+                                        );
+                                    } finally {
+                                        // These two paths own the four descriptors outright - unlike
+                                        // dispatchConvertColumnPartitionTask, which hands them to
+                                        closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
+                                    }
+                                } else if (dstVarStringy && pieceWalkable && pieceCount > 1) {
+                                    // Same piece walk, for a STRING/VARCHAR destination: the aux (index) vector
+                                    // is padded like a live write would extend it, but the data vector is not -
+                                    // a dead piece's rows contribute no bytes to the converted data file.
+                                    try {
+                                        convertToVarDestByPieces(
+                                                partitionIndex, pieceCount, columnTop, maxRow,
+                                                existingType, newType, srcFixFd, srcVarFd, dstFixFd, dstVarFd
+                                        );
+                                    } finally {
+                                        closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
+                                    }
+                                } else if (dispatchConvertColumnPartitionTask(
                                         existingType, newType, srcFixFd, srcVarFd, dstFixFd, dstVarFd, rowCount, partitionTimestamp)
                                 ) {
                                     queueCount++;
@@ -423,6 +491,129 @@ public class ConvertOperatorImpl implements Closeable {
         }
     }
 
+    /**
+     * Fills {@link #pieceRowOffsets} / {@link #pieceRowCounts} with this partition's own pieces, clipped to the
+     * column's own span and sorted into file (row) order - pieces are recorded in ascending tsLo order, not file-row
+     * order, because a merge-append relocates a piece to the tail, so the two diverge, and a piece walk has to go in
+     */
+    private void collectPieces(int partitionIndex, int pieceCount, long columnTop, long maxRow) {
+        final PartitionGeometry geometry = tableWriter.getGeometry();
+        pieceRowOffsets.clear();
+        pieceRowCounts.clear();
+        for (int p = 0; p < pieceCount; p++) {
+            final long pieceRowOffset = geometry.getPieceRowOffset(partitionIndex, p);
+            final long pieceRowCount = geometry.getPieceRowCount(partitionIndex, p);
+            // Clip to what this column actually spans - a piece wholly below columnTop predates the
+            // column entirely and contributes nothing, not even a gap (the walk below never starts
+            // before columnTop in the first place).
+            final long lo = Math.max(pieceRowOffset, columnTop);
+            final long hi = Math.min(pieceRowOffset + pieceRowCount, maxRow);
+            if (hi > lo) {
+                pieceRowOffsets.add(lo);
+                pieceRowCounts.add(hi - lo);
+            }
+        }
+        sortPiecesByRowOffset(pieceRowOffsets, pieceRowCounts);
+    }
+
+    private void convertToFixedDestByPieces(
+            int partitionIndex,
+            int pieceCount,
+            long columnTop,
+            long maxRow,
+            int existingType,
+            int newType,
+            long srcFixFd,
+            long srcVarFd,
+            long dstFixFd
+    ) {
+        collectPieces(partitionIndex, pieceCount, columnTop, maxRow);
+        final boolean srcIsVar = ColumnType.isVarSize(existingType);
+
+        long cursor = columnTop;
+        for (int i = 0, n = pieceRowOffsets.size(); i < n; i++) {
+            final long pieceLo = pieceRowOffsets.getQuick(i);
+            final long pieceRowCount = pieceRowCounts.getQuick(i);
+            if (pieceLo > cursor) {
+                ColumnTypeConverter.padFixedGap(cursor - columnTop, pieceLo - cursor, newType, dstFixFd, ff);
+            }
+            final long segmentOffset = pieceLo - columnTop;
+            if (!srcIsVar) {
+                ColumnTypeConverter.convertFixedToFixed(
+                        pieceRowCount, segmentOffset, segmentOffset, srcFixFd, dstFixFd, existingType, newType, ff, noopConversionOffsetSink
+                );
+            } else if (existingType == ColumnType.STRING) {
+                ColumnTypeConverter.convertStringToFixedPiece(segmentOffset, pieceRowCount, srcFixFd, srcVarFd, dstFixFd, newType, ff);
+            } else {
+                ColumnTypeConverter.convertVarcharToFixedPiece(segmentOffset, pieceRowCount, srcFixFd, srcVarFd, dstFixFd, newType, ff);
+            }
+            cursor = pieceLo + pieceRowCount;
+        }
+        if (cursor < maxRow) {
+            ColumnTypeConverter.padFixedGap(cursor - columnTop, maxRow - cursor, newType, dstFixFd, ff);
+        }
+    }
+
+    private void convertToVarDestByPieces(
+            int partitionIndex,
+            int pieceCount,
+            long columnTop,
+            long maxRow,
+            int existingType,
+            int newType,
+            long srcFixFd,
+            long srcVarFd,
+            long dstFixFd,
+            long dstVarFd
+    ) {
+        collectPieces(partitionIndex, pieceCount, columnTop, maxRow);
+        final boolean srcIsVar = ColumnType.isVarSize(existingType);
+
+        if (newType == ColumnType.STRING) {
+            ColumnTypeConverter.seedStringAuxVector(dstFixFd, ff);
+        }
+
+        long cursor = columnTop;
+        for (int i = 0, n = pieceRowOffsets.size(); i < n; i++) {
+            final long pieceLo = pieceRowOffsets.getQuick(i);
+            final long pieceRowCount = pieceRowCounts.getQuick(i);
+            if (pieceLo > cursor) {
+                ColumnTypeConverter.padVarGap(cursor - columnTop, pieceLo - cursor, newType, dstFixFd, dstVarFd, ff);
+            }
+            final long segmentOffset = pieceLo - columnTop;
+            if (!srcIsVar) {
+                if (newType == ColumnType.VARCHAR) {
+                    ColumnTypeConverter.convertFixedToVarcharPiece(segmentOffset, pieceRowCount, srcFixFd, existingType, dstFixFd, dstVarFd, ff, appendPageSize);
+                } else {
+                    ColumnTypeConverter.convertFixedToStringPiece(segmentOffset, pieceRowCount, srcFixFd, existingType, dstFixFd, dstVarFd, ff, appendPageSize);
+                }
+            } else if (existingType == ColumnType.STRING) {
+                ColumnTypeConverter.convertStringToVarcharPiece(segmentOffset, pieceRowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, ff, appendPageSize);
+            } else {
+                ColumnTypeConverter.convertVarcharToStringPiece(segmentOffset, pieceRowCount, srcFixFd, srcVarFd, dstFixFd, dstVarFd, ff, appendPageSize);
+            }
+            cursor = pieceLo + pieceRowCount;
+        }
+        if (cursor < maxRow) {
+            ColumnTypeConverter.padVarGap(cursor - columnTop, maxRow - cursor, newType, dstFixFd, dstVarFd, ff);
+        }
+    }
+
+    private static void sortPiecesByRowOffset(LongList rowOffsets, LongList rowCounts) {
+        for (int i = 1, n = rowOffsets.size(); i < n; i++) {
+            final long keyOffset = rowOffsets.getQuick(i);
+            final long keyCount = rowCounts.getQuick(i);
+            int j = i - 1;
+            while (j >= 0 && rowOffsets.getQuick(j) > keyOffset) {
+                rowOffsets.setQuick(j + 1, rowOffsets.getQuick(j));
+                rowCounts.setQuick(j + 1, rowCounts.getQuick(j));
+                j--;
+            }
+            rowOffsets.setQuick(j + 1, keyOffset);
+            rowCounts.setQuick(j + 1, keyCount);
+        }
+    }
+
     private void cthConvertPartitionHandler(
             int existingType,
             int newType,
@@ -464,9 +655,26 @@ public class ConvertOperatorImpl implements Closeable {
                             .$(", partition ").$ts(ColumnType.getTimestampDriver(tableWriter.getTimestampType()), partitionTimestamp)
                             .I$();
                     asyncProcessingErrorCount.incrementAndGet();
+                } else if (CommitMode.isPowerLossDurable(tableWriter.getFlushCommitMode())) {
+                    // fsync converted column files before closeFds (data before aux)
+                    if (dstVarFd != -1) {
+                        ff.fsync(dstVarFd);
+                    }
+                    if (dstFixFd != -1) {
+                        ff.fsync(dstFixFd);
+                    }
                 }
             }
         } catch (Throwable th) {
+            // The task may run on another thread: keep what the engine's fail-stop needs for the converting
+            // thread to rethrow
+            for (Throwable cursor = th; cursor != null; cursor = cursor.getCause()) {
+                if (cursor instanceof CairoException e && e.isDataSyncFailure()) {
+                    dataSyncFailureErrno = e.getErrno();
+                    dataSyncFailureOperation = e.getDataSyncOperation();
+                    break;
+                }
+            }
             asyncProcessingErrorCount.incrementAndGet();
             LogRecord log = LOG.critical().$("failed to convert column, column is corrupt [at=")
                     .$(tableWriter.getTableToken())
