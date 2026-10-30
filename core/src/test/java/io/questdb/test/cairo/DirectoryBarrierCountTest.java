@@ -97,7 +97,7 @@ import java.util.stream.Stream;
  *   <li>A change that adds names to an existing partition directory (RENAME COLUMN and DROP INDEX link the
  *   column's files and the covering values of the indexes that INCLUDE it under a new name txn, UPDATE writes
  *   new column versions, links the columns of the indexes it rebuilds and rebuilds them) fsyncs that directory
- *   under SYNC only; UPDATE also fsyncs the column files it writes.</li>
+ *   under SYNC only; UPDATE also fdatasyncs the column files it writes.</li>
  * </ul>
  * The crash tests that prove these are enough are in {@code DirectoryBarrierCrashTest}.
  */
@@ -403,12 +403,13 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
 
                 // UPDATE writes the column under a new name txn in each of the two partitions it touches, links the
                 // column of the index that INCLUDEs it under a new name txn and rebuilds the index there, the same way.
-                // Under SYNC it also fsyncs the rewritten column file of each of the two partitions.
+                // Under SYNC it also fdatasyncs the rewritten column file of each of the two partitions.
                 ff.clear();
                 execute("UPDATE " + table + " SET w = w + 1 WHERE ts < '2024-01-03'");
                 drainWalQueue();
                 if (exact) {
-                    Assert.assertEquals("update" + ff.dump(), isSync ? 2 : 0, ff.countOther());
+                    Assert.assertEquals("update" + ff.dump(), 0, ff.countOther());
+                    Assert.assertEquals("update" + ff.dump(), isSync ? 2 : 0, ff.countPartitionDataSyncs(tableDir));
                     Assert.assertEquals("update" + ff.dump(), isSync ? 2 : 0, ff.countChildren(tableDir));
                 }
 
@@ -728,13 +729,16 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
      * Counts fsyncs of directories by path. A directory fsync opens the directory with
      * {@code openRONoCache}, so that is where the facade learns which descriptors are directories. Also counts
      * fsyncs of the {@code _meta.swp} and {@code _todo_} files of a metadata swap, which it opens with
-     * {@code openRWNoCache}, the fsyncs of every other file, and renames by target path.
+     * {@code openRWNoCache}, the fsyncs of every other file, the fdatasyncs of the files opened with
+     * {@code openRW} by path, and renames by target path.
      */
     private static class DirFsyncCountingFacade extends TestFilesFacadeImpl {
         private final Map<String, Integer> counts = new HashMap<>();
+        private final Map<String, Integer> dataSyncCounts = new HashMap<>();
         private final Map<Long, String> dirFds = new HashMap<>();
         private final Map<Long, String> fileFds = new HashMap<>();
         private final Map<String, Integer> renameCounts = new HashMap<>();
+        private final Map<Long, String> rwFds = new HashMap<>();
         private int emptyCount;
         private volatile String failRenameTo;
         private int otherCount;
@@ -743,7 +747,19 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
         public synchronized boolean close(long fd) {
             dirFds.remove(fd);
             fileFds.remove(fd);
+            rwFds.remove(fd);
             return super.close(fd);
+        }
+
+        @Override
+        public void fdatasync(long fd) {
+            synchronized (this) {
+                final String path = rwFds.get(fd);
+                if (path != null) {
+                    dataSyncCounts.merge(path, 1, Integer::sum);
+                }
+            }
+            super.fdatasync(fd);
         }
 
         @Override
@@ -767,6 +783,18 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
                     synchronized (this) {
                         dirFds.put(fd, path);
                     }
+                }
+            }
+            return fd;
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            if (fd > -1) {
+                final String path = toPathString(name);
+                synchronized (this) {
+                    rwFds.put(fd, path);
                 }
             }
             return fd;
@@ -832,6 +860,7 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
             Assert.assertEquals(COUNT_PROPERTIES.getProperty(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath()), CommitMode.toString(cfg.getCommitMode()));
             Assert.assertEquals(3_600_000, cfg.getAdaptiveEpochIntervalMs());
             counts.clear();
+            dataSyncCounts.clear();
             renameCounts.clear();
             emptyCount = 0;
             otherCount = 0;
@@ -871,12 +900,30 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
             return otherCount;
         }
 
+        /**
+         * fdatasyncs of the files directly inside the partitions of the table directory {@code dir}.
+         */
+        synchronized int countPartitionDataSyncs(String dir) {
+            int total = 0;
+            for (Map.Entry<String, Integer> e : dataSyncCounts.entrySet()) {
+                final String path = e.getKey();
+                if (path.startsWith(dir + "/")) {
+                    final String name = path.substring(dir.length() + 1);
+                    final int slash = name.indexOf('/');
+                    if (slash > 0 && name.indexOf('/', slash + 1) < 0 && Character.isDigit(name.charAt(0))) {
+                        total += e.getValue();
+                    }
+                }
+            }
+            return total;
+        }
+
         synchronized int countRenamesTo(String path) {
             return renameCounts.getOrDefault(path, 0);
         }
 
         synchronized String dump() {
-            return " fsyncs=" + counts + ", renames=" + renameCounts;
+            return " fsyncs=" + counts + ", dataSyncs=" + dataSyncCounts + ", renames=" + renameCounts;
         }
 
         synchronized int total() {

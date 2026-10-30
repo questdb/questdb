@@ -673,6 +673,25 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testSyncUpdateCoveredColumnNonWalFailedColumnMsyncFailsStatement() throws Exception {
+        // Off Linux the column flush must first write the mapped pages into the file. FilesFacadeImpl reports a
+        // failed async msync as a critical error, not a data-sync failure, so the UPDATE fails and rolls back
+        // before its commit, and the engine keeps taking writes.
+        assertSyncFailure("sync", false, COVERED_COLUMN_TABLE, null, () -> execute("UPDATE x SET v = v + 10 WHERE ts < '2024-01-03'"),
+                new FsyncFailureFacade("syncUpdatedColumns", 0, true, true) {
+                    @Override
+                    public boolean isSyncfsFileSystemWide() {
+                        return false;
+                    }
+
+                    @Override
+                    CairoException msyncFailure() {
+                        return CairoException.critical(5).put("injected msync failure");
+                    }
+                }, false);
+    }
+
+    @Test
     public void testSyncUpdateCoveredColumnNonWalSurvivesCrash() throws Exception {
         assertSyncCoveredColumnChangeSurvivesCrash(false, "UPDATE x SET v = v + 10 WHERE ts < '2024-01-03'", this::assertUpdatedCoveredColumn);
     }
@@ -1857,7 +1876,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         void create(boolean wal) throws Exception;
     }
 
-    private static final class FsyncFailureFacade extends TestFilesFacadeImpl {
+    private static class FsyncFailureFacade extends TestFilesFacadeImpl {
         private final String caller;
         private final boolean isAsyncMsync;
         private final boolean isMsync;
@@ -1897,9 +1916,13 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         @Override
         public void msync(long addr, long len, boolean async) {
             if (isMsync && async == isAsyncMsync && isFailureDue()) {
-                throw CairoException.dataSyncFailure(this, 5, "msync", "injected msync failure");
+                throw msyncFailure();
             }
             super.msync(addr, len, async);
+        }
+
+        CairoException msyncFailure() {
+            return CairoException.dataSyncFailure(this, 5, "msync", "injected msync failure");
         }
 
         private boolean isFailureDue() {

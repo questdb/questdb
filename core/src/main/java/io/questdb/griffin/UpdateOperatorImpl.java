@@ -940,15 +940,17 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
     /**
      * Under SYNC, makes the column files this update wrote in the partition durable before the commit that names
      * them, data before aux: an aux that became durable before its data could point past the end of the durable
-     * data after a power loss. A failed flush is a data-sync failure.
+     * data after a power loss. The update writes these files through their mappings, so it flushes them with
+     * {@link MemoryCMARW#flushFile(boolean)}, which off Linux writes the mapped pages into the file first. A failed
+     * flush is a data-sync failure.
      */
     private void syncUpdatedColumns(int affectedColumnCount) {
         for (int i = 0; i < affectedColumnCount; i++) {
             final MemoryCMARW dstVarMem = dstColumns.get(2 * i + 1);
             if (dstVarMem != null) {
-                ff.fsync(dstVarMem.getFd());
+                dstVarMem.flushFile(false);
             }
-            ff.fsync(dstColumns.get(2 * i).getFd());
+            dstColumns.get(2 * i).flushFile(false);
         }
     }
 }
