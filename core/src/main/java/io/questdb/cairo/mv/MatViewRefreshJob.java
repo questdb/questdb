@@ -1032,17 +1032,32 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
             final long iteratorMinTs = intervalIterator.getMinTimestamp();
             final long iteratorMaxTs = intervalIterator.getMaxTimestamp();
-            LOG.info().$("refreshing materialized view [view=").$(viewToken)
-                    .$(", baseTable=").$(baseTableToken)
-                    .$(", fromTxn=").$(lastRefreshTxn)
-                    .$(", toTxn=").$(refreshContext.toBaseTxn)
-                    .$(", periodHi=").$ts(driver, refreshContext.periodHi)
-                    .$(", iteratorMinTs=").$ts(driver, iteratorMinTs)
-                    .$(", iteratorMaxTs=").$ts(driver, iteratorMaxTs)
-                    .$("), iteratorStep=").$(step)
-                    .I$();
-
-            refreshContext.intervalIterator = intervalIterator;
+            // The iterator may yield no intervals even for a non-empty range: it skips buckets that no txn
+            // interval intersects, and the period and refresh limit may trim all txn intervals away. Leave
+            // the iterator null in that case, so that insertAsSelect() commits the watermark without running
+            // the query; otherwise, the view would stay 'refreshing' forever (#7772). Calling next() here
+            // is safe since insertAsSelect() rewinds the iterator before using it.
+            if (intervalIterator.next()) {
+                LOG.info().$("refreshing materialized view [view=").$(viewToken)
+                        .$(", baseTable=").$(baseTableToken)
+                        .$(", fromTxn=").$(lastRefreshTxn)
+                        .$(", toTxn=").$(refreshContext.toBaseTxn)
+                        .$(", periodHi=").$ts(driver, refreshContext.periodHi)
+                        .$(", iteratorMinTs=").$ts(driver, iteratorMinTs)
+                        .$(", iteratorMaxTs=").$ts(driver, iteratorMaxTs)
+                        .$("), iteratorStep=").$(step)
+                        .I$();
+                refreshContext.intervalIterator = intervalIterator;
+            } else {
+                LOG.info().$("no intervals to refresh in materialized view [view=").$(viewToken)
+                        .$(", baseTable=").$(baseTableToken)
+                        .$(", fromTxn=").$(lastRefreshTxn)
+                        .$(", toTxn=").$(refreshContext.toBaseTxn)
+                        .$(", periodHi=").$ts(driver, refreshContext.periodHi)
+                        .$(", iteratorMinTs=").$ts(driver, iteratorMinTs)
+                        .$(", iteratorMaxTs=").$ts(driver, iteratorMaxTs)
+                        .I$();
+            }
         } else {
             LOG.info().$("no intervals to refresh in materialized view [view=").$(viewToken)
                     .$(", baseTable=").$(baseTableToken)
@@ -1463,31 +1478,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
         // If we don't have intervals to query, we may still need to bump base table txn or last period hi.
         if (intervalIterator == null) {
-            final long commitBaseTxn = refreshContext.toBaseTxn != -1 ? refreshContext.toBaseTxn : viewState.getLastRefreshBaseTxn();
-            final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
-            // Only commit when the watermark actually advances. Committing an unchanged watermark
-            // writes a no-op replace-range WAL transaction; when the base table apply lags, the
-            // self-re-enqueueing refresh loop can emit millions of these, flooding the view's WAL
-            // and stalling replicas that apply them.
-            if (commitBaseTxn > viewState.getLastRefreshBaseTxn() || commitPeriodHi > viewState.getLastPeriodHi()) {
-                refreshSuccessNoRows(
-                        viewState,
-                        walWriter,
-                        microsecondClock.getTicks(),
-                        refreshTriggerTimestamp,
-                        commitBaseTxn,
-                        commitPeriodHi
-                );
-                return true;
-            }
-            // The watermark did not advance, so we skip the no-op WAL commit, leaving the persisted
-            // refresh finish timestamp behind the in-memory start timestamp bumped above. Since
-            // materialized_views reads the start from memory and the finish from the persisted state
-            // file, the view would report the "refreshing" status forever. Restore the start timestamp.
-            viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestamp);
-            return false;
+            return refreshNoIntervals(viewState, walWriter, refreshContext, prevRefreshStartTimestamp, refreshTriggerTimestamp);
         }
 
+        boolean hasIntervals = true;
         try {
             factory = viewState.acquireRecordFactory();
             copier = viewState.getRecordToRowCopier();
@@ -1699,6 +1693,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             pendingScanSampleNanos = 0L;
                             pendingScanRangeTsUnits = 0L;
                         }
+                    } else if (replacementTimestampLo == Long.MIN_VALUE) {
+                        // The iterator yielded no intervals, so no commitMatView() call returned the factory
+                        // to the view state. findRefreshIntervals() never hands out such an iterator, but if
+                        // it does, free the factory and commit the watermark as in the no-intervals case.
+                        hasIntervals = false;
                     }
                     break;
                 } catch (TableReferenceOutOfDateException e) {
@@ -1785,6 +1784,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
+        if (!hasIntervals) {
+            Misc.free(factory);
+            return refreshNoIntervals(viewState, walWriter, refreshContext, prevRefreshStartTimestamp, refreshTriggerTimestamp);
+        }
         return true;
     }
 
@@ -2589,6 +2592,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             @Nullable WalWriter walWriter,
             @NotNull Throwable th
     ) {
+        // Do not turn a fatal flush failure into a view invalidation and a later fence refusal.
+        engine.handleDataSyncFailure(th);
         errorMsgSink.clear();
         if (th instanceof Sinkable) {
             ((Sinkable) th).toSink(errorMsgSink);
@@ -2750,6 +2755,40 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 engine.attachReader(baseTableReader);
             }
         }
+    }
+
+    // Completes a refresh that has no intervals to query. It may still need to bump the base table txn
+    // or the last period hi.
+    private boolean refreshNoIntervals(
+            MatViewState viewState,
+            WalWriter walWriter,
+            RefreshContext refreshContext,
+            long prevRefreshStartTimestamp,
+            long refreshTriggerTimestamp
+    ) {
+        final long commitBaseTxn = refreshContext.toBaseTxn != -1 ? refreshContext.toBaseTxn : viewState.getLastRefreshBaseTxn();
+        final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
+        // Only commit when the watermark actually advances. Committing an unchanged watermark
+        // writes a no-op replace-range WAL transaction; when the base table apply lags, the
+        // self-re-enqueueing refresh loop can emit millions of these, flooding the view's WAL
+        // and stalling replicas that apply them.
+        if (commitBaseTxn > viewState.getLastRefreshBaseTxn() || commitPeriodHi > viewState.getLastPeriodHi()) {
+            refreshSuccessNoRows(
+                    viewState,
+                    walWriter,
+                    microsecondClock.getTicks(),
+                    refreshTriggerTimestamp,
+                    commitBaseTxn,
+                    commitPeriodHi
+            );
+            return true;
+        }
+        // The watermark did not advance, so we skip the no-op WAL commit, leaving the persisted
+        // refresh finish timestamp behind the in-memory start timestamp that insertAsSelect() bumped.
+        // Since materialized_views reads the start from memory and the finish from the persisted state
+        // file, the view would report the "refreshing" status forever. Restore the start timestamp.
+        viewState.setLastRefreshStartTimestampUs(prevRefreshStartTimestamp);
+        return false;
     }
 
     private void refreshSuccessNoRows(

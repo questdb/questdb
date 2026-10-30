@@ -105,6 +105,11 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         // Handle pending segment roll, similar to what newRow() does.
         // This is needed when columns are added while rollSegmentOnNextRow is true,
         // since addColumn defers opening column files until the segment is rolled.
+        // The roll opens an empty segment without copying rows, so it must never
+        // find uncommitted rows: the flag is set only after a commit and by
+        // rollUncommittedToNewSegment with nothing uncommitted. QWP commit batching
+        // keeps rows uncommitted across blocks and relies on this.
+        assert !walWriter.rollSegmentOnNextRow || walWriter.getUncommittedRowCount() == 0;
         try {
             if (walWriter.rollSegmentOnNextRow) {
                 walWriter.rollSegment();
@@ -520,124 +525,16 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
     public void putFixedColumn(
             int columnIndex, long valuesAddress, int valueCount, int valueSize, long nullBitmapAddress, int rowCount
     ) {
+        // Kept small so the JIT can inline it into its callers' per-column loops;
+        // the null-expanding switch lives in putFixedColumnWithNulls.
         checkInColumnarWrite();
-
-        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
-        int columnType = walWriter.getMetadata().getColumnType(columnIndex);
-
         if (nullBitmapAddress == 0) {
-            // Fast path: no nulls, direct memory copy
-            dataMem.putBlockOfBytes(valuesAddress, (long) valueCount * valueSize);
+            // No nulls: a direct copy.
+            walWriter.getDataColumn(columnIndex).putBlockOfBytes(valuesAddress, (long) valueCount * valueSize);
+            walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
         } else {
-            // Expand sparse to dense, inserting null sentinels
-            int valueIdx = 0;
-            switch (ColumnType.tagOf(columnType)) {
-                case ColumnType.BYTE -> {
-                    for (int row = 0; row < rowCount; row++) {
-                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                            dataMem.putByte((byte) 0);
-                        } else {
-                            dataMem.putByte(Unsafe.getByte(valuesAddress + valueIdx));
-                            valueIdx++;
-                        }
-                    }
-                }
-                case ColumnType.SHORT, ColumnType.CHAR -> {
-                    for (int row = 0; row < rowCount; row++) {
-                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                            dataMem.putShort((short) 0);
-                        } else {
-                            dataMem.putShort(Unsafe.getShort(valuesAddress + (long) valueIdx * 2));
-                            valueIdx++;
-                        }
-                    }
-                }
-                case ColumnType.INT -> {
-                    for (int row = 0; row < rowCount; row++) {
-                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                            dataMem.putInt(Numbers.INT_NULL);
-                        } else {
-                            dataMem.putInt(Unsafe.getInt(valuesAddress + (long) valueIdx * 4));
-                            valueIdx++;
-                        }
-                    }
-                }
-                case ColumnType.IPv4 -> {
-                    for (int row = 0; row < rowCount; row++) {
-                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                            dataMem.putInt(Numbers.IPv4_NULL);
-                        } else {
-                            dataMem.putInt(Unsafe.getInt(valuesAddress + (long) valueIdx * 4));
-                            valueIdx++;
-                        }
-                    }
-                }
-                case ColumnType.FLOAT -> {
-                    for (int row = 0; row < rowCount; row++) {
-                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                            dataMem.putFloat(Float.NaN);
-                        } else {
-                            dataMem.putFloat(Unsafe.getFloat(valuesAddress + (long) valueIdx * 4));
-                            valueIdx++;
-                        }
-                    }
-                }
-                case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP -> {
-                    for (int row = 0; row < rowCount; row++) {
-                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                            dataMem.putLong(Numbers.LONG_NULL);
-                        } else {
-                            dataMem.putLong(Unsafe.getLong(valuesAddress + (long) valueIdx * 8));
-                            valueIdx++;
-                        }
-                    }
-                }
-                case ColumnType.DOUBLE -> {
-                    for (int row = 0; row < rowCount; row++) {
-                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                            dataMem.putDouble(Double.NaN);
-                        } else {
-                            dataMem.putDouble(Unsafe.getDouble(valuesAddress + (long) valueIdx * 8));
-                            valueIdx++;
-                        }
-                    }
-                }
-                case ColumnType.UUID, ColumnType.LONG128 -> {
-                    for (int row = 0; row < rowCount; row++) {
-                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                            dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL);
-                        } else {
-                            long addr = valuesAddress + (long) valueIdx * 16;
-                            dataMem.putLong128(
-                                    Unsafe.getLong(addr),
-                                    Unsafe.getLong(addr + 8)
-                            );
-                            valueIdx++;
-                        }
-                    }
-                }
-                case ColumnType.LONG256 -> {
-                    for (int row = 0; row < rowCount; row++) {
-                        if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
-                            dataMem.putLong256(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
-                        } else {
-                            long addr = valuesAddress + (long) valueIdx * 32;
-                            dataMem.putLong256(
-                                    Unsafe.getLong(addr),
-                                    Unsafe.getLong(addr + 8),
-                                    Unsafe.getLong(addr + 16),
-                                    Unsafe.getLong(addr + 24)
-                            );
-                            valueIdx++;
-                        }
-                    }
-                }
-                default -> throw CairoException.nonCritical()
-                        .put("unsupported column type for direct copy: ").put(ColumnType.nameOf(columnType));
-            }
+            putFixedColumnWithNulls(columnIndex, valuesAddress, nullBitmapAddress, rowCount);
         }
-
-        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     @Override
@@ -1936,7 +1833,6 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
         }
     }
 
-
     /**
      * Writes the appropriate null sentinel value for the given decimal column type.
      */
@@ -1999,6 +1895,119 @@ public class WalColumnarRowAppender implements ColumnarRowAppender, QuietCloseab
 
     private QwpParseException geoHashParseError(DirectUtf8Sequence value, int columnIndex) {
         return stringParseError("geohash", value, columnIndex);
+    }
+
+    private void putFixedColumnWithNulls(int columnIndex, long valuesAddress, long nullBitmapAddress, int rowCount) {
+        // Expand sparse to dense, inserting null sentinels
+        MemoryMA dataMem = walWriter.getDataColumn(columnIndex);
+        int valueIdx = 0;
+        final int columnType = walWriter.getMetadata().getColumnType(columnIndex);
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BYTE -> {
+                for (int row = 0; row < rowCount; row++) {
+                    if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                        dataMem.putByte((byte) 0);
+                    } else {
+                        dataMem.putByte(Unsafe.getByte(valuesAddress + valueIdx));
+                        valueIdx++;
+                    }
+                }
+            }
+            case ColumnType.SHORT, ColumnType.CHAR -> {
+                for (int row = 0; row < rowCount; row++) {
+                    if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                        dataMem.putShort((short) 0);
+                    } else {
+                        dataMem.putShort(Unsafe.getShort(valuesAddress + (long) valueIdx * 2));
+                        valueIdx++;
+                    }
+                }
+            }
+            case ColumnType.INT -> {
+                for (int row = 0; row < rowCount; row++) {
+                    if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                        dataMem.putInt(Numbers.INT_NULL);
+                    } else {
+                        dataMem.putInt(Unsafe.getInt(valuesAddress + (long) valueIdx * 4));
+                        valueIdx++;
+                    }
+                }
+            }
+            case ColumnType.IPv4 -> {
+                for (int row = 0; row < rowCount; row++) {
+                    if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                        dataMem.putInt(Numbers.IPv4_NULL);
+                    } else {
+                        dataMem.putInt(Unsafe.getInt(valuesAddress + (long) valueIdx * 4));
+                        valueIdx++;
+                    }
+                }
+            }
+            case ColumnType.FLOAT -> {
+                for (int row = 0; row < rowCount; row++) {
+                    if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                        dataMem.putFloat(Float.NaN);
+                    } else {
+                        dataMem.putFloat(Unsafe.getFloat(valuesAddress + (long) valueIdx * 4));
+                        valueIdx++;
+                    }
+                }
+            }
+            case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP -> {
+                for (int row = 0; row < rowCount; row++) {
+                    if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                        dataMem.putLong(Numbers.LONG_NULL);
+                    } else {
+                        dataMem.putLong(Unsafe.getLong(valuesAddress + (long) valueIdx * 8));
+                        valueIdx++;
+                    }
+                }
+            }
+            case ColumnType.DOUBLE -> {
+                for (int row = 0; row < rowCount; row++) {
+                    if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                        dataMem.putDouble(Double.NaN);
+                    } else {
+                        dataMem.putDouble(Unsafe.getDouble(valuesAddress + (long) valueIdx * 8));
+                        valueIdx++;
+                    }
+                }
+            }
+            case ColumnType.UUID, ColumnType.LONG128 -> {
+                for (int row = 0; row < rowCount; row++) {
+                    if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                        dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL);
+                    } else {
+                        long addr = valuesAddress + (long) valueIdx * 16;
+                        dataMem.putLong128(
+                                Unsafe.getLong(addr),
+                                Unsafe.getLong(addr + 8)
+                        );
+                        valueIdx++;
+                    }
+                }
+            }
+            case ColumnType.LONG256 -> {
+                for (int row = 0; row < rowCount; row++) {
+                    if (QwpNullBitmap.isNull(nullBitmapAddress, row)) {
+                        dataMem.putLong256(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+                    } else {
+                        long addr = valuesAddress + (long) valueIdx * 32;
+                        dataMem.putLong256(
+                                Unsafe.getLong(addr),
+                                Unsafe.getLong(addr + 8),
+                                Unsafe.getLong(addr + 16),
+                                Unsafe.getLong(addr + 24)
+                        );
+                        valueIdx++;
+                    }
+                }
+            }
+            default -> throw CairoException.nonCritical()
+                    .put("unsupported column type for direct copy: ").put(ColumnType.nameOf(columnType));
+        }
+
+        walWriter.setRowValueNotNullColumnar(columnIndex, startRowId + rowCount - 1);
     }
 
     private QwpParseException stringParseError(CharSequence typeName, DirectUtf8Sequence value, int columnIndex) {
