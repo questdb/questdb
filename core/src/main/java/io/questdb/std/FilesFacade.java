@@ -24,10 +24,12 @@
 
 package io.questdb.std;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.log.Log;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.MutableUtf8Sink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8Sequence;
 
 public interface FilesFacade {
     long MAP_FAILED = -1;
@@ -77,9 +79,73 @@ public interface FilesFacade {
 
     int findType(long findPtr);
 
+    void fdatasync(long fd);
+
+    /**
+     * Ordering barrier only, see {@link Files#barrierFsync(long)}. A commit is not durable on this alone;
+     * pair it with {@link #fdatasync(long)} at the commit point. The default calls {@link #fdatasync(long)},
+     * the stronger barrier.
+     */
+    default void barrierFsync(long fd) {
+        fdatasync(fd);
+    }
+
     void fsync(long fd);
 
+    /**
+     * {@link #fsync(long)} semantics (data and metadata) with the device write cache flushed. Not
+     * interchangeable with {@link #fdatasync(long)}, which may skip metadata not needed to read the data
+     * back. The default calls {@link #fsync(long)}.
+     */
+    default void fsyncDurable(long fd) {
+        fsync(fd);
+    }
+
     void fsyncAndClose(long fd);
+
+    /**
+     * Linux sync_file_range(2): starts writeback of the file's page-cache pages over
+     * {@code [offset, offset+nbytes)} to the device cache without a device flush (see the
+     * {@code Files.SYNC_FILE_RANGE_*} flags). A no-op returning 0 off Linux; durability still needs a
+     * following device flush.
+     */
+    default int syncFileRange(long fd, long offset, long nbytes, int flags) {
+        return Files.syncFileRange(fd, offset, nbytes, flags);
+    }
+
+    /**
+     * Linux syncfs(2): makes the filesystem containing {@code fd} durable in one device flush. It writes back
+     * all dirty data and journals every pending metadata change (including ext4 extent conversions), then
+     * flushes the device cache. Off Linux it flushes {@code fd} only (see {@link #isSyncfsFileSystemWide()}
+     * and {@link Files#syncfs(long)}).
+     */
+    default void syncfs(long fd) {
+        int res = Files.syncfs(fd);
+        if (res == 0) {
+            return;
+        }
+        throw CairoException.dataSyncFailureOfFd(this, fd, Os.errno(), "syncfs", "could not syncfs");
+    }
+
+    /**
+     * Returns whether {@link #syncfs(long)} flushes the entire filesystem containing {@code fd}.
+     * Linux provides that guarantee; the macOS and Windows implementations flush only the supplied file.
+     */
+    default boolean isSyncfsFileSystemWide() {
+        return Os.isLinux();
+    }
+
+    /**
+     * Whether {@link #syncFileRange(long, long, long, int)} is worth issuing against {@code root}. On ZFS
+     * the page-cache model does not match (durability is a txg commit), so the call buys nothing and is
+     * skipped; callers must still take a real barrier afterwards regardless.
+     *
+     * @param root an existing path on the filesystem in question
+     * @return {@code true} if a drain pass is likely to help
+     */
+    default boolean isSyncFileRangeEffective(Utf8Sequence root) {
+        return Os.isLinux();
+    }
 
     long getDirSize(Path path);
 
@@ -158,6 +224,11 @@ public interface FilesFacade {
 
     long openRW(LPSZ name, int opts);
 
+    /**
+     * Opens an existing file for reading and writing without creating it; see {@link Files#openRWExisting}.
+     */
+    long openRWExisting(LPSZ name);
+
     long openRWNoCache(LPSZ name, int opts);
 
     long read(long fd, long buf, long size, long offset);
@@ -177,6 +248,16 @@ public interface FilesFacade {
     boolean removeQuiet(LPSZ name);
 
     int rename(LPSZ from, LPSZ to);
+
+    /**
+     * The publish-by-rename barrier: the rename is durable when this returns. On POSIX this is
+     * {@link #rename(LPSZ, LPSZ)}, with the caller fsyncing the parent directory afterwards; Windows asks the
+     * move itself to write through. The default calls {@link #rename(LPSZ, LPSZ)}, so a facade that
+     * intercepts {@code rename} intercepts this too.
+     */
+    default int renameDurable(LPSZ from, LPSZ to) {
+        return rename(from, to);
+    }
 
     boolean rmdir(Path name);  // Implementation-specific laziness.
 
