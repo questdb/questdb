@@ -671,6 +671,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // prepareKeyMajorWindowRequest()
     private KeyMajorWindowRequest keyMajorWindowRequest;
     private int whereClauseParserDepth;
+    // Greater than zero while compilePerWorkerInnerProjectionFunctions() or
+    // compileWorkerFiltersConditionally() compile the per-worker copies of functions or a filter.
+    // A copy takes the state of its sub-queries over from the function it copies
+    // (Function.offerStateTo()) before it inits, so the plans its compile generates for them never
+    // run: a vectorized GROUP BY among them starts with the hash tables a run leaves behind, not the
+    // configured capacity, see GroupByRecordCursorFactory.ROSTI_MINIMIZED_SIZE.
+    private int workerCopyDepth;
     @Nullable
     private UnionSymbolProjectionTestHook unionSymbolProjectionTestHook;
 
@@ -2790,6 +2797,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // only when its flag occurs; with no shared workers both views stay empty.
         final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions = groupByFunctionCount > 0 ? new ObjList<>(workerCount) : null;
         final ObjList<ObjList<Function>> perWorkerKeyFunctions = keyFunctionCount > 0 ? new ObjList<>(workerCount) : null;
+        workerCopyDepth++;
         try {
             for (int i = 0; i < workerCount; i++) {
                 PerWorkerFunctionList<GroupByFunction> workerGroupByFunctions = null;
@@ -2841,6 +2849,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
             throw th;
+        } finally {
+            workerCopyDepth--;
         }
         return new WorkerFunctionLists(perWorkerGroupByFunctions, perWorkerKeyFunctions);
     }
@@ -2918,6 +2928,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (filter != null && !filter.isThreadSafe() && sharedQueryWorkerCount > 0) {
             assert filterExpr != null;
             ObjList<Function> workerFilters = new ObjList<>();
+            workerCopyDepth++;
             try {
                 for (int i = 0; i < sharedQueryWorkerCount; i++) {
                     restoreWhereClause(filterExpr); // restore original filters in node query models
@@ -2928,6 +2939,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             } catch (Throwable th) {
                 Misc.freeObjList(workerFilters);
                 throw th;
+            } finally {
+                workerCopyDepth--;
             }
             return workerFilters;
         }
@@ -13412,6 +13425,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     factory,
                                     meta,
                                     arrayColumnTypes,
+                                    // a plan a per-worker copy generates never runs, see workerCopyDepth
+                                    workerCopyDepth > 0 ? GroupByRecordCursorFactory.ROSTI_MINIMIZED_SIZE : configuration.getGroupByMapCapacity(),
                                     executionContext.getSharedQueryWorkerCount(),
                                     tempVaf,
                                     tempKeyIndexesInBase.getQuick(0),

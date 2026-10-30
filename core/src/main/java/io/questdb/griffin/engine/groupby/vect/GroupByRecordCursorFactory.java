@@ -82,8 +82,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
+    // The capacity the hash tables shrink to once an execution is done with them, and the one a
+    // plan that never runs starts with. 16 is the minimum size usable on arm.
+    public static final int ROSTI_MINIMIZED_SIZE = 16;
     private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);
-    private final static int ROSTI_MINIMIZED_SIZE = 16; // 16 is the minimum size usable on arm
 
     private final AsyncQueryErrorState aggregateError = new AsyncQueryErrorState();
     private final RostiRecordCursor cursor;
@@ -109,12 +111,20 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private ObjList<RostiSharedCursor> sharedCursors;
     private ObjList<VectorAggregateFunction> vafList;
 
+    /**
+     * @param rostiCapacity the capacity each worker's hash table starts with: the configured one
+     *                      ({@link CairoConfiguration#getGroupByMapCapacity()}) for a plan that
+     *                      runs, {@link #ROSTI_MINIMIZED_SIZE} for one that never does, such as the
+     *                      plan of a sub-query in a per-worker copy of a function, which takes the
+     *                      sub-query's result over from the function it copies
+     */
     public GroupByRecordCursorFactory(
             CairoEngine engine,
             CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordMetadata metadata,
             @Transient ColumnTypes columnTypes,
+            int rostiCapacity,
             int workerCount,
             @Transient ObjList<VectorAggregateFunction> vafList,
             int keyColumnIndexInBase,
@@ -146,7 +156,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.vafList.addAll(vafList);
             raf = configuration.getRostiAllocFacade();
             for (int i = 0; i < workerCount; i++) {
-                long ptr = raf.alloc(columnTypes, configuration.getGroupByMapCapacity());
+                long ptr = raf.alloc(columnTypes, rostiCapacity);
                 if (ptr == 0) {
                     for (int k = i - 1; k > -1; k--) {
                         raf.free(pRosti[k]);

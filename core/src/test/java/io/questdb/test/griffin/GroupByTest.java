@@ -24,8 +24,16 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ArrayColumnTypes;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
+import io.questdb.std.Rosti;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -1943,6 +1951,64 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByCursorSubQueryWorkerCopiesStartLean() throws Exception {
+        // A parallel GROUP BY compiles a sub-query in a key, an aggregate argument or a filter
+        // again for each worker's copy of the function or filter that holds it. The copy takes the
+        // sub-query's result over from the function it copies, so the plans its compile generates
+        // never run, and their vectorized GROUP BYs start with the hash tables a run leaves
+        // behind, whatever the configured capacity. The memory the plans hold once a cursor has
+        // run and closed is then the same at the default capacity and at a large one.
+        assertMemoryLeak(() -> {
+            createCursorSubQueryTables();
+            final String innerScalar = "(SELECT m FROM (SELECT v, min(cts) m FROM tc2 GROUP BY v) ORDER BY m LIMIT 1)";
+            final String intKeySet = "(SELECT m::SYMBOL FROM (SELECT v, max(c1) m FROM tb2 WHERE rts > " + innerScalar + " GROUP BY v))";
+            final String[] queries = {
+                    "SELECT s IN " + intKeySet + " k, count() c, sum(v) sv FROM tsym GROUP BY k ORDER BY k",
+                    "SELECT v, sum(CASE WHEN s IN " + intKeySet + " THEN 1 ELSE 0 END) n FROM tsym GROUP BY v ORDER BY v",
+                    "SELECT count() c, sum(v) sv FROM tsym WHERE s IN " + intKeySet,
+            };
+            final String[] expected = {
+                    """
+                    k\tc\tsv
+                    false\t2\t17
+                    true\t1\t20
+                    """,
+                    """
+                    v\tn
+                    7\t0
+                    10\t0
+                    20\t1
+                    """,
+                    """
+                    c\tsv
+                    1\t20
+                    """,
+            };
+            final int[] capacities = {1024, 65_536};
+            final SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine, 4);
+            context.setParallelGroupByEnabled(true);
+            context.setParallelFilterEnabled(true);
+            final StringSink sink = new StringSink();
+            for (int i = 0; i < queries.length; i++) {
+                final long[] held = new long[capacities.length];
+                for (int c = 0; c < capacities.length; c++) {
+                    setProperty(PropertyKey.CAIRO_SQL_GROUPBY_MAP_CAPACITY, capacities[c]);
+                    final long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
+                    try (RecordCursorFactory factory = select(queries[i], context)) {
+                        sink.clear();
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            println(factory.getMetadata(), cursor, sink);
+                        }
+                        TestUtils.assertEquals(queries[i], expected[i], sink);
+                        held[c] = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI) - before;
+                    }
+                }
+                Assert.assertEquals(queries[i], held[0], held[1]);
+            }
+        });
+    }
+
+    @Test
     public void testGroupByDuplicateColumn() throws Exception {
         assertQuery("select key1 as k1, key2 as k2, count(*) from t group by k2, k1, k2 order by 1, 2")
                 .ddl("create table t as ( select x%2 key1, x%4 key2, x as value from long_sequence(10));")
@@ -2528,6 +2594,35 @@ public class GroupByTest extends AbstractCairoTest {
                         8\t98
                         9\t99
                         """);
+    }
+
+    @Test
+    public void testGroupByVectorizedStartsAtConfiguredCapacity() throws Exception {
+        // A vectorized GROUP BY that runs starts with one hash table per worker, each of the
+        // configured capacity.
+        assertMemoryLeak(() -> {
+            createCursorSubQueryTables();
+            setProperty(PropertyKey.CAIRO_SQL_GROUPBY_MAP_CAPACITY, 4096);
+            final long pRosti = Rosti.alloc(new ArrayColumnTypes().add(ColumnType.INT).add(ColumnType.INT), 4096);
+            final long tableSize = Rosti.getAllocMemory(pRosti);
+            Rosti.free(pRosti);
+            final SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine, 4);
+            context.setParallelGroupByEnabled(true);
+            final long before = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
+            try (RecordCursorFactory factory = select("SELECT v, max(c1) m FROM tb2 GROUP BY v ORDER BY v", context)) {
+                Assert.assertEquals(4 * tableSize, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI) - before);
+                final StringSink sink = new StringSink();
+                try (RecordCursor cursor = factory.getCursor(context)) {
+                    println(factory.getMetadata(), cursor, sink);
+                }
+                TestUtils.assertEquals("""
+                        v\tm
+                        0\t20
+                        5\t10
+                        100\t30
+                        """, sink);
+            }
+        });
     }
 
     @Test
