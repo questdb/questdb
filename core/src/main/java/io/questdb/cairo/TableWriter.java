@@ -3561,6 +3561,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.isPartitionReadOnly(partitionIndex);
     }
 
+    /**
+     * An O3 split shrinks the parent's row count but leaves the moved rows in its column files.
+     * Returns true while a reader or durable save point in [parentNameTxn + 1, splitNameTxn] can still read them,
+     * so the parent's tail must not be written in place. Rewrites of the split move its name txn
+     * forward, so the range may include readers that never saw the moved rows: a needless merge,
+     * never a missed reader.
+     */
+    public boolean isPartitionTailPinned(long partitionTimestamp) {
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        assert partitionIndex > -1 : "partition does not exist [timestamp=" + partitionTimestamp + ']';
+        return scanPartitionTailHolders(partitionIndex) != TxnScoreboard.RANGE_FREE;
+    }
+
     public boolean isSymbolMapWriterCached(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex).isCached();
     }
@@ -3905,6 +3918,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnVersionWriter.commit();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
         }
+    }
+
+    public void notifyPartitionAppend(long partitionTimestamp, long partitionNameTxn, long fromRow) {
+        engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, timestampType, partitionTimestamp, partitionNameTxn, fromRow);
     }
 
     public void o3BumpErrorCount(Throwable failure) {
@@ -6858,47 +6875,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 inOrderMinTimestamp,
                 blockSize > 0 ? walBlockBudget.of(blockSize) : null
         );
-    }
-
-    private boolean canSquashOverwritePartitionTail(int partitionIndex) {
-        // A durable-epoch holder forces the copy route but does not prevent the squash. Readers and checkpoints do.
-        return (scanSquashRangeHolders(partitionIndex) & TxnScoreboard.RANGE_HELD_BY_OTHER) == 0;
-    }
-
-    /**
-     * Who holds this partition's squash range. A {@link TxnScoreboard#RANGE_HELD_BY_EPOCH} pin blocks an
-     * in-place overwrite but not a copy: the copy writes a new partition version and only queues the old one,
-     * whose removal goes back through the epoch-protected check. {@link TxnScoreboard#RANGE_HELD_BY_OTHER}, a
-     * reader or a checkpoint, blocks both, because something reads those files.
-     * <p>
-     * One scan answers both questions. Under ADAPTIVE the epoch pin sits at the last cut, at least one txn
-     * behind the {@code toTxn} the gate asks about, so it is always inside the range, at every epoch cadence;
-     * without the distinction ADAPTIVE would never squash a split partition.
-     */
-    private int scanSquashRangeHolders(int partitionIndex) {
-        final long fromTxn = squashRangeFromTxn(partitionIndex);
-        final long toTxn = squashRangeToTxn(partitionIndex, fromTxn);
-        final int holders = txnScoreboard.scanRangeHolders(fromTxn, toTxn);
-        return isEpochPinnedInRange(fromTxn, toTxn) ? holders | TxnScoreboard.RANGE_HELD_BY_EPOCH : holders;
-    }
-
-    private long squashRangeFromTxn(int partitionIndex) {
-        long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
-        return fromTxn < 0 ? 0 : fromTxn;
-    }
-
-    private long squashRangeToTxn(int partitionIndex, long fromTxn) {
-        long toTxn = txWriter.getTxn();
-        if (partitionIndex + 1 < txWriter.getPartitionCount()) {
-            // If the next partition is a split partition part of same logical partition
-            // for example if the partition is '2020-01-01' and the next partition is '2020-01-01T12.3'
-            // then if there are no readers between transaction range [0, 3) the partition is unlocked to append.
-            if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex)) ==
-                    txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1))) {
-                toTxn = Math.max(fromTxn + 1, getPartitionNameTxn(partitionIndex + 1) + 1);
-            }
-        }
-        return toTxn;
     }
 
     private void cancelRowAndBump() {
@@ -18326,6 +18302,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Pins on the rows left in a split parent's physical tail. Epoch pins require a copy when
+     * squashing; reader and checkpoint pins also defer an ordinary squash.
+     */
+    private int scanPartitionTailHolders(int partitionIndex) {
+        if (partitionIndex + 1 >= txWriter.getPartitionCount()) {
+            return TxnScoreboard.RANGE_FREE;
+        }
+        final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long nextPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex + 1);
+        if (txWriter.getLogicalPartitionTimestamp(partitionTimestamp) != txWriter.getLogicalPartitionTimestamp(nextPartitionTimestamp)) {
+            return TxnScoreboard.RANGE_FREE;
+        }
+        // A partition named N is first visible at txn N + 1, including to a durable save point.
+        final long fromTxn = txWriter.getPartitionNameTxn(partitionIndex) + 1;
+        final long toTxn = txWriter.getPartitionNameTxn(partitionIndex + 1) + 1;
+        final int holders = txnScoreboard.scanRangeHolders(fromTxn, toTxn);
+        return isEpochPinnedInRange(fromTxn, toTxn) ? holders | TxnScoreboard.RANGE_HELD_BY_EPOCH : holders;
+    }
+
     private void scheduleRemoveAllPartitions() {
         for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
             long timestamp = txWriter.getPartitionTimestampByIndex(i);
@@ -18917,7 +18913,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long smallestRows = Long.MAX_VALUE;
             for (int i = partitionIndexLo; i < partitionIndexHi - 1; i++) {
                 if ((!isAllCold && (!isColdSquashPartition(i, lastCommitTxn) || !isColdSquashPartition(i + 1, lastCommitTxn)))
-                        || !canSquashOverwritePartitionTail(i)
+                        || (scanPartitionTailHolders(i) & TxnScoreboard.RANGE_HELD_BY_OTHER) != 0
                         || (i + 2 == txWriter.getPartitionCount() && txWriter.isPartitionComposite(i + 1))) {
                     continue;
                 }
@@ -19035,7 +19031,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Move targetPartitionIndex to the first unlocked partition in the range.
         int targetPartitionIndex = partitionIndexLo;
         for (int n = partitionIndexHi - 1; targetPartitionIndex < n; targetPartitionIndex++) {
-            final int holders = scanSquashRangeHolders(targetPartitionIndex);
+            final int holders = scanPartitionTailHolders(targetPartitionIndex);
             boolean canOverwrite = holders == TxnScoreboard.RANGE_FREE;
             // A durable-epoch pin blocks the overwrite but not the copy. Squashing by copy here
             // keeps ADAPTIVE's partition layout the same as every other mode's; skipping would
@@ -21160,7 +21156,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
         int target = lo;
-        while (target < hi - 1 && !canSquashOverwritePartitionTail(target)) {
+        while (target < hi - 1 && (scanPartitionTailHolders(target) & TxnScoreboard.RANGE_HELD_BY_OTHER) != 0) {
             target++;
         }
         final int squashCount = Math.min(hi - target - 1, hi - lo - optimalCount);
