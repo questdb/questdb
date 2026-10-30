@@ -902,22 +902,6 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
-    public void readDetachedDeltaStats(Path partitionPath, long seqTxn, long baseRows, PartitionDeltaStats target) {
-        if (partitionFrameStateFactory == null) {
-            partitionFrameStateFactory = configuration.newPartitionFrameStateFactory(tableToken);
-        }
-        if (partitionFrameStateFactory == null) {
-            target.of(baseRows, Long.MAX_VALUE, Long.MIN_VALUE);
-            return;
-        }
-        final long state = partitionFrameStateFactory.openDetached(partitionPath, seqTxn);
-        try {
-            partitionFrameStateFactory.readStats(state, target);
-        } finally {
-            partitionFrameStateFactory.destroy(state);
-        }
-    }
-
     public boolean reload() {
         if (acquireTxn()) {
             return false;

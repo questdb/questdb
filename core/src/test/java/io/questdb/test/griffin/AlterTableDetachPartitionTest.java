@@ -1369,6 +1369,54 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
+    public void testCannotAttachPartitionWithDelta() throws Exception {
+        // DETACH refuses a delta-active partition, so a _delta folder marks a directory ATTACH refuses.
+        assertMemoryLeak(() -> {
+            String tableName = "tabAttachDelta";
+            TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createPopulateTable(
+                    tab.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    10,
+                    "2022-06-01",
+                    2
+            );
+            execute("ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            renameDetachedToAttachable(tableName, "2022-06-01");
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            TableToken tableToken = engine.verifyTableName(tableName);
+            path.of(configuration.getDbRoot()).concat(tableToken)
+                    .concat("2022-06-01").put(configuration.getAttachPartitionSuffix())
+                    .concat(DELTA_DIR_NAME).slash$();
+            Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
+            final int deltaDirLen = path.size();
+            Assert.assertTrue(ff.touch(path.concat(DELTA_CATALOG_FILE_NAME).$()));
+
+            assertFailure(
+                    "ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'",
+                    "could not attach partition [table=" + tableName + ", detachStatus=ATTACH_ERR_DELTA"
+            );
+            assertQuery("SELECT count() FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n5\n");
+            Assert.assertTrue(ff.exists(path.$()));
+
+            // Without _delta the directory attaches as an ordinary partition.
+            Assert.assertTrue(ff.rmdir(path.trimTo(deltaDirLen)));
+            execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2022-06-01'", sqlExecutionContext);
+            assertQuery("SELECT count() FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n10\n");
+        });
+    }
+
+    @Test
     public void testCannotCopyColumnVersions() throws Exception {
         assertCannotCopyMeta("testCannotCopyColumnVersions", 2);
     }
@@ -1390,6 +1438,46 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                 "ALTER TABLE tab17 DETACH PARTITION LIST '2022-06-05'",
                 "could not detach partition [table=tab17, detachStatus=DETACH_ERR_ACTIVE"
         );
+    }
+
+    @Test
+    public void testCannotDetachDeltaActivePartition() throws Exception {
+        // The Delta catalog changes in place, so DETACH refuses the partition, at SQL time and in the writer.
+        assertMemoryLeak(() -> {
+            String tableName = "tabDetachDelta";
+            TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
+            createPopulateTable(
+                    tab.timestamp("ts", timestampType.getTimestampType())
+                            .col("i", ColumnType.INT)
+                            .col("l", ColumnType.LONG),
+                    10,
+                    "2022-06-01",
+                    2
+            );
+            final long timestamp = timestampType.getDriver().parseFloorLiteral("2022-06-01");
+            try (TableWriter writer = getWriter(tableName)) {
+                writer.getTxWriter().setPartitionDeltaActiveByTimestamp(timestamp);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+
+            assertFailure(
+                    "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'",
+                    "cannot detach partition, partition is delta-active [table=" + tableName + ", partition=2022-06-01]"
+            );
+            try (TableWriter writer = getWriter(tableName)) {
+                Assert.assertEquals(DETACH_ERR_DELTA, writer.detachPartition(timestamp));
+                Assert.assertTrue(writer.getTxWriter().isPartitionDeltaActive(0));
+            }
+            assertQuery("SELECT count() FROM " + tableName)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n10\n");
+            path.of(configuration.getDbRoot()).concat(engine.verifyTableName(tableName))
+                    .concat("2022-06-01").put(DETACHED_DIR_MARKER).$();
+            Assert.assertFalse(configuration.getFilesFacade().exists(path.$()));
+        });
     }
 
     @Test

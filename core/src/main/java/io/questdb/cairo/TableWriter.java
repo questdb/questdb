@@ -1408,7 +1408,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         boolean forceRenamePartitionDir = partitionSize < 0;
         boolean checkPassed = false;
         boolean isSoftLink;
-        boolean hasDelta;
         boolean keepsAttachable = false;
         long parquetFileSize = -1L;
         try {
@@ -1424,6 +1423,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (hasParquetMeta && !hasParquetData) {
                     LOG.error().$("cannot attach partition, parquet metadata present but data file missing [path=").$(detachedPath).I$();
                     return AttachDetachStatus.ATTACH_ERR_MISSING_PARQUET_DATA;
+                }
+
+                // DETACH refuses a delta-active partition, so a _delta folder belongs to no detached partition.
+                detachedPath.trimTo(detachedRootLen).concat(DELTA_DIR_NAME);
+                final boolean hasDelta = ff.exists(detachedPath.$());
+                detachedPath.trimTo(detachedRootLen);
+                if (hasDelta) {
+                    LOG.error().$("cannot attach partition with delta state [path=").$(detachedPath).I$();
+                    return AttachDetachStatus.ATTACH_ERR_DELTA;
                 }
 
                 // detached metadata files validation
@@ -1448,15 +1456,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // the main columnVersionWriter is now aligned with the detached partition values read from the partition _cv file
                 // in case of an error it has to be clean up
-
-                // A partition detached with Delta rows carries its Delta state in _delta/.
-                // The checks above already refuse another table or another schema.
-                detachedPath.trimTo(detachedRootLen).concat(DELTA_DIR_NAME).concat(DELTA_CATALOG_FILE_NAME);
-                hasDelta = ff.exists(detachedPath.$());
-                detachedPath.trimTo(detachedRootLen);
-                if (hasDelta && !checkAttachDelta(timestamp, partitionSize, isSoftLink)) {
-                    return AttachDetachStatus.ATTACH_ERR_DELTA;
-                }
 
                 final boolean isCopied = forceRenamePartitionDir && configuration.attachPartitionCopy() && !isSoftLink; // soft links are read-only, no copy involved
                 // A rename moves the source whole or not at all. A copy or a link builds the destination file by file,
@@ -1598,10 +1597,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.setPartitionParquet(timestamp, parquetFileSize);
             } else {
                 txWriter.setPartitionNative(timestamp, txWriter.getSeqTxn());
-            }
-            if (hasDelta) {
-                txWriter.setPartitionDeltaActiveByTimestamp(timestamp);
-                txWriter.setPartitionHasDelta(txWriter.getPartitionIndex(timestamp), true);
             }
 
             txWriter.bumpTruncateVersion();
@@ -2687,6 +2682,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return AttachDetachStatus.DETACH_ERR_REMOTE;
         }
 
+        // The partition's Delta catalog changes in place, so a detached copy cannot carry it.
+        if (txWriter.isPartitionDeltaActive(partitionIndex)) {
+            LOG.error().$("cannot detach delta-active partition [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, timestamp).I$();
+            return AttachDetachStatus.DETACH_ERR_DELTA;
+        }
+
         // Detach hard-links the directory into <ts>.detached with its pieces intact, while attach reads
         // every column file as one flat [0, liveRows) range from byte 0 - so make it plain first.
         compactPartitionToPlain(partitionIndex, "detach");
@@ -2800,27 +2802,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     .$(", from=").$(other)
                                     .$(", to=").$(detachedPath)
                                     .I$();
-                        } else {
-                            // The Delta catalog copy goes first, so the flush below covers its directory entry.
-                            attachDetachStatus = detachDelta(partitionIndex, detachedPath, detachedPathLen);
-                            if (attachDetachStatus == AttachDetachStatus.OK && CommitMode.isPowerLossDurable(getFlushCommitMode())) {
-                                // Make the copied files and both directory-entry sets durable before _txn names them.
-                                try {
-                                    DurableEpochManifest.fsyncDirectoryFiles(
-                                            configuration,
-                                            detachedPath.trimTo(detachedPathLen),
-                                            detachedPathLen,
-                                            false
-                                    );
-                                    TableUtils.fsyncDirDurable(ff, other.trimTo(pathSize).$());
-                                } catch (CairoException e) {
-                                    attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY;
-                                    LOG.critical().$("could not sync detached partition [path=").$(detachedPath)
-                                            .$(", e=").$((Throwable) e).I$();
-                                    if (engine.isDataSyncFailureFatal(e)) {
-                                        distressed = true;
-                                        engine.handleDataSyncFailure(e);
-                                    }
+                        } else if (CommitMode.isPowerLossDurable(getFlushCommitMode())) {
+                            // Make the copied files and both directory-entry sets durable before _txn names them.
+                            try {
+                                DurableEpochManifest.fsyncDirectoryFiles(
+                                        configuration,
+                                        detachedPath.trimTo(detachedPathLen),
+                                        detachedPathLen,
+                                        false
+                                );
+                                TableUtils.fsyncDirDurable(ff, other.trimTo(pathSize).$());
+                            } catch (CairoException e) {
+                                attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY;
+                                LOG.critical().$("could not sync detached partition [path=").$(detachedPath)
+                                        .$(", e=").$((Throwable) e).I$();
+                                if (engine.isDataSyncFailureFatal(e)) {
+                                    distressed = true;
+                                    engine.handleDataSyncFailure(e);
                                 }
                             }
                         }
@@ -7136,34 +7134,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         masterRef++;
     }
 
-    // Delta state requires a Delta-enabled WAL table without deduplication or soft links.
-    private boolean checkAttachDelta(long timestamp, long partitionSize, boolean isSoftLink) {
-        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
-        final boolean isDedupEnabled = isDeduplicationEnabled();
-        if (deltaWriter == null || !tableToken.isWal() || isSoftLink || isDedupEnabled) {
-            LOG.error().$("cannot attach partition with delta [table=").$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, timestamp)
-                    .$(", deltaWriter=").$(deltaWriter != null)
-                    .$(", wal=").$(tableToken.isWal())
-                    .$(", softLink=").$(isSoftLink)
-                    .$(", dedup=").$(isDedupEnabled)
-                    .I$();
-            return false;
-        }
-        try {
-            deltaWriter.checkAttach(this, timestamp, partitionSize, tempMem16b);
-            attachMinTimestamp = Math.min(attachMinTimestamp, Unsafe.getLong(tempMem16b));
-            attachMaxTimestamp = Math.max(attachMaxTimestamp, Unsafe.getLong(tempMem16b + Long.BYTES));
-            return true;
-        } catch (CairoException e) {
-            LOG.error().$("cannot attach partition with delta [table=").$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, timestamp)
-                    .$(", error=").$safe(e.getFlyweightMessage())
-                    .I$();
-            return false;
-        }
-    }
-
     private void checkColumnName(CharSequence name) {
         if (!isValidColumnName(name, configuration.getMaxFileNameLength())) {
             throw CairoException.nonCritical().put("invalid column name [table=").put(tableToken.getTableName()).put(", column=").putAsPrintable(name).put(']');
@@ -9438,39 +9408,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // at once.
     private boolean defersPartitionMoves() {
         return enrolledAdaptive && mayHaveSavePoint();
-    }
-
-    // The hard link shares the live catalog, which changes in place; give the detached directory
-    // a copy of the committed catalog. Without Delta rows, drop a leftover catalog instead.
-    private AttachDetachStatus detachDelta(int partitionIndex, Path detachedPath, int detachedPathLen) {
-        try {
-            if (txWriter.getPartitionHasDelta(partitionIndex)) {
-                final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
-                if (deltaWriter == null) {
-                    LOG.critical().$("cannot detach partition with delta, no delta writer [table=").$(tableToken)
-                            .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(partitionIndex))
-                            .I$();
-                    return AttachDetachStatus.DETACH_ERR_DELTA;
-                }
-                deltaWriter.detach(this, partitionIndex, detachedPath.trimTo(detachedPathLen));
-                return AttachDetachStatus.OK;
-            }
-            detachedPath.trimTo(detachedPathLen).concat(DELTA_DIR_NAME);
-            if (ff.exists(detachedPath.$()) && !ff.rmdir(detachedPath)) {
-                LOG.critical().$("could not remove detached delta directory [errno=").$(ff.errno())
-                        .$(", path=").$(detachedPath)
-                        .I$();
-                return AttachDetachStatus.DETACH_ERR_DELTA;
-            }
-            return AttachDetachStatus.OK;
-        } catch (CairoException e) {
-            LOG.critical().$("could not detach partition delta [path=").$(detachedPath)
-                    .$(", error=").$safe(e.getFlyweightMessage())
-                    .I$();
-            return AttachDetachStatus.DETACH_ERR_DELTA;
-        } finally {
-            detachedPath.trimTo(detachedPathLen);
-        }
     }
 
     // A committed DETACH whose rename to .detached failed: the partition is detached and its files are under the

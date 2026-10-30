@@ -1757,9 +1757,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
                 throw SqlException.$(pos, "table is not partitioned");
             }
-            // Conversion checks partition layout before WAL; a WAL table has no reader yet.
+            // Conversion and DETACH check partition layout before WAL; a WAL table has no reader yet.
             TableReader deltaCheckReader = null;
-            if ((action == PartitionAction.CONVERT_TO_PARQUET || action == PartitionAction.CONVERT_TO_NATIVE)
+            if ((action == PartitionAction.CONVERT_TO_PARQUET || action == PartitionAction.CONVERT_TO_NATIVE
+                    || action == PartitionAction.DETACH)
                     && !isPartitionLayoutCheckSkipped(executionContext, tableToken)) {
                 if (reader == null) {
                     layoutReader = executionContext.getReader(tableToken);
@@ -1799,8 +1800,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         if (function != null && ColumnType.isBoolean(function.getType())) {
                             function.init(null, executionContext);
                             if (deltaCheckReader != null) {
-                                rejectDeltaPartitionConversion(deltaCheckReader, tableToken, function, Long.MIN_VALUE,
-                                        action == PartitionAction.CONVERT_TO_PARQUET, functionPosition);
+                                rejectDeltaPartitionChange(deltaCheckReader, tableToken, function, Long.MIN_VALUE,
+                                        action, functionPosition);
                             }
                             if (reader != null) {
                                 int affected = filterPartitions(function, functionPosition, reader, alterOperationBuilder);
@@ -1905,8 +1906,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 int hi = action == PartitionAction.FORCE_DROP ? partitionName.length() : -1;
                 long timestamp = PartitionBy.parsePartitionDirName(partitionName, timestampType, partitionBy, 0, hi);
                 if (deltaCheckReader != null) {
-                    rejectDeltaPartitionConversion(deltaCheckReader, tableToken, null, timestamp,
-                            action == PartitionAction.CONVERT_TO_PARQUET, lastPosition);
+                    rejectDeltaPartitionChange(deltaCheckReader, tableToken, null, timestamp,
+                            action, lastPosition);
                 }
                 alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
             } catch (CairoException e) {
@@ -6063,25 +6064,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Rejects CONVERT PARTITION of a delta-active partition before WAL submission. TableWriter
-     * cannot convert a delta-active base, and WAL apply would skip the whole ALTER. A delta-active
-     * base already in the target format stays the usual no-op. Checks the partitions that
-     * {@code filter} selects, or else the one at {@code listedTimestamp}.
+     * Rejects CONVERT PARTITION or DETACH PARTITION of a delta-active partition before WAL
+     * submission. TableWriter refuses both, and WAL apply would skip the whole ALTER. A
+     * delta-active base already in the target format stays the usual no-op. Checks the
+     * partitions that {@code filter} selects, or else the one at {@code listedTimestamp}.
      */
-    private void rejectDeltaPartitionConversion(
+    private void rejectDeltaPartitionChange(
             TableReader reader,
             TableToken tableToken,
             @Nullable Function filter,
             long listedTimestamp,
-            boolean toParquet,
+            int action,
             int position
     ) throws SqlException {
         final TxReader txFile = reader.getTxFile();
         if (!txFile.hasAnyDeltaActive()) {
             return;
         }
+        final boolean isDetach = action == PartitionAction.DETACH;
+        final boolean toParquet = action == PartitionAction.CONVERT_TO_PARQUET;
         for (int i = 0, n = txFile.getPartitionCount(); i < n; i++) {
-            if (!txFile.isPartitionDeltaActive(i) || txFile.isPartitionParquet(i) == toParquet) {
+            if (!txFile.isPartitionDeltaActive(i) || (!isDetach && txFile.isPartitionParquet(i) == toParquet)) {
                 continue;
             }
             final long logicalTimestamp = txFile.getPartitionFloor(txFile.getPartitionTimestampByIndex(i));
@@ -6094,9 +6097,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             if (selected) {
                 throw SqlException.position(position)
-                        .put(toParquet
-                                ? "cannot convert partition to parquet, partition is delta-active [table="
-                                : "cannot convert parquet partition to native, partition is delta-active [table=")
+                        .put(switch (action) {
+                            case PartitionAction.DETACH -> "cannot detach partition, partition is delta-active [table=";
+                            case PartitionAction.CONVERT_TO_PARQUET -> "cannot convert partition to parquet, partition is delta-active [table=";
+                            default -> "cannot convert parquet partition to native, partition is delta-active [table=";
+                        })
                         .put(tableToken.getTableName())
                         .put(", partition=").put(formatPartitionName(reader, logicalTimestamp))
                         .put(']');
