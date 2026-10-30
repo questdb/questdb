@@ -27,6 +27,7 @@ package io.questdb.test.std;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DedupColumnCommitAddresses;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.TableWriterSegmentCopyInfo;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
@@ -560,6 +561,7 @@ public class VectFuzzTest {
                                     address,
                                     0,
                                     ColumnType.SYMBOL,
+                                    NullPolicy.SENTINEL,
                                     4,
                                     0
                             );
@@ -638,6 +640,7 @@ public class VectFuzzTest {
                                 block,
                                 0,
                                 ColumnType.STRING,
+                                NullPolicy.SENTINEL,
                                 -1, // var-len marker
                                 0   // column top
                         );
@@ -1762,6 +1765,7 @@ public class VectFuzzTest {
                                 dedupColBuffPtr,
                                 k,
                                 ColumnType.SYMBOL,
+                                NullPolicy.SENTINEL,
                                 4,
                                 0
                         );

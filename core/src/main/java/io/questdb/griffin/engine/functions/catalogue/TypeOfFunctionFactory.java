@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -32,7 +33,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.std.IntList;
-import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
@@ -40,7 +40,6 @@ import static io.questdb.cairo.ColumnType.*;
 
 public class TypeOfFunctionFactory implements FunctionFactory {
     private static final Function NULL = new StrConstant("NULL");
-    private static final IntObjHashMap<Function> TYPE_NAMES = new IntObjHashMap<>();
 
     @Override
     public String getSignature() {
@@ -61,19 +60,9 @@ public class TypeOfFunctionFactory implements FunctionFactory {
             if (argType == UNDEFINED) {
                 throw SqlException.$(position, "bind variables are not supported");
             }
-            final Function result;
-            if (isNull(argType)) {
-                result = NULL;
-            } else if (isDecimal(argType)) {
-                // there are thousands of DECIMAL(p,s) types, resolve the name on demand
-                result = new StrConstant(nameOf(argType));
-            } else {
-                result = TYPE_NAMES.get(argType);
-            }
-            if (result != null) {
-                // the returned constant keeps no argument, so this branch owns it
-                Misc.free(arg);
-            }
+            final Function result = typeName(argType, position);
+            // the returned constant keeps no argument, so this branch owns it
+            Misc.free(arg);
             return result;
         }
         throw SqlException.$(position, "exactly one argument expected");
@@ -84,41 +73,20 @@ public class TypeOfFunctionFactory implements FunctionFactory {
         throw SqlException.$(sqlPos, "bind variables are not supported");
     }
 
-    static {
-        TYPE_NAMES.put(BOOLEAN, new StrConstant(nameOf(BOOLEAN)));
-        TYPE_NAMES.put(BYTE, new StrConstant(nameOf(BYTE)));
-        TYPE_NAMES.put(SHORT, new StrConstant(nameOf(SHORT)));
-        TYPE_NAMES.put(CHAR, new StrConstant(nameOf(CHAR)));
-        TYPE_NAMES.put(INT, new StrConstant(nameOf(INT)));
-        TYPE_NAMES.put(LONG, new StrConstant(nameOf(LONG)));
-        TYPE_NAMES.put(DATE, new StrConstant(nameOf(DATE)));
-        TYPE_NAMES.put(TIMESTAMP_MICRO, new StrConstant(nameOf(TIMESTAMP_MICRO)));
-        TYPE_NAMES.put(TIMESTAMP_NANO, new StrConstant(nameOf(TIMESTAMP_NANO)));
-        TYPE_NAMES.put(FLOAT, new StrConstant(nameOf(FLOAT)));
-        TYPE_NAMES.put(DOUBLE, new StrConstant(nameOf(DOUBLE)));
-        TYPE_NAMES.put(STRING, new StrConstant(nameOf(STRING)));
-        TYPE_NAMES.put(SYMBOL, new StrConstant(nameOf(SYMBOL)));
-        TYPE_NAMES.put(LONG256, new StrConstant(nameOf(LONG256)));
-        TYPE_NAMES.put(BINARY, new StrConstant(nameOf(BINARY)));
-        TYPE_NAMES.put(PARAMETER, new StrConstant(nameOf(PARAMETER)));
-        TYPE_NAMES.put(CURSOR, new StrConstant(nameOf(CURSOR)));
-        TYPE_NAMES.put(VAR_ARG, new StrConstant(nameOf(VAR_ARG)));
-        TYPE_NAMES.put(UUID, new StrConstant(nameOf(UUID)));
-
-        TYPE_NAMES.put(GEOBYTE, new StrConstant("null(GEOBYTE)"));
-        TYPE_NAMES.put(GEOSHORT, new StrConstant("null(GEOSHORT)"));
-        TYPE_NAMES.put(GEOINT, new StrConstant("null(GEOINT)"));
-        TYPE_NAMES.put(GEOLONG, new StrConstant("null(GEOLONG)"));
-
-        for (int b = 1; b <= GEOLONG_MAX_BITS; b++) {
-            final int type = getGeoHashTypeWithBits(b);
-            TYPE_NAMES.put(type, new StrConstant(nameOf(type)));
+    // the name of the argument's type, as the type driver gives it; a bare geohash tag, which
+    // names no width, answers in its own form
+    private static Function typeName(int argType, int position) throws SqlException {
+        if (isNull(argType)) {
+            return NULL;
         }
-
-        TYPE_NAMES.put(IPv4, new StrConstant(nameOf(IPv4)));
-        TYPE_NAMES.put(VARCHAR, new VarcharConstant(nameOf(VARCHAR)));
-        TYPE_NAMES.put(INTERVAL_RAW, new StrConstant(nameOf(INTERVAL)));
-        TYPE_NAMES.put(INTERVAL_TIMESTAMP_MICRO, new StrConstant(nameOf(INTERVAL)));
-        TYPE_NAMES.put(INTERVAL_TIMESTAMP_NANO, new StrConstant(nameOf(INTERVAL)));
+        final short tag = tagOf(argType);
+        if (argType == tag && tag >= GEOBYTE && tag <= GEOLONG) {
+            return new StrConstant("null(" + ColumnTypeTag.of(tag).name() + ")");
+        }
+        final String name = nameOf(argType);
+        if (UNKNOWN_NAME.equals(name)) {
+            throw SqlException.$(position, "typeOf: the argument's type has no name [type=").put(argType).put(']');
+        }
+        return argType == VARCHAR ? new VarcharConstant(name) : new StrConstant(name);
     }
 }

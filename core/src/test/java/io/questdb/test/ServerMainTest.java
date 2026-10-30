@@ -362,6 +362,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
     @Test
     public void testConcurrentCloseWaitsForCurrentAttempt() throws Exception {
         assertMemoryLeak(() -> {
+            final Thread startThread = Thread.currentThread();
             final AtomicInteger closeAttempts = new AtomicInteger();
             final SOCountDownLatch closeThreadsDone = new SOCountDownLatch(2);
             final SOCountDownLatch firstCloseEntered = new SOCountDownLatch(1);
@@ -377,9 +378,13 @@ public class ServerMainTest extends AbstractBootstrapTest {
                     return new io.questdb.lifecycle.LifecycleOrchestrator(log, workerPoolManager, tokioRuntime) {
                         @Override
                         public void close() {
-                            if (!isStopComplete() && closeAttempts.incrementAndGet() == 1) {
+                            // On a boot failure run() closes on the thread that called start(),
+                            // which must not wait for a release that only it could give
+                            final boolean isStartThread = Thread.currentThread() == startThread;
+                            if (!isStartThread && !isStopComplete() && closeAttempts.incrementAndGet() == 1) {
                                 firstCloseEntered.countDown();
-                                releaseFirstClose.await();
+                                final boolean isReleased = releaseFirstClose.await(TimeUnit.SECONDS.toNanos(30));
+                                Assert.assertTrue("first close was not released", isReleased);
                             }
                             super.close();
                         }
@@ -471,7 +476,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                         -1,
                                         null
                                 )) {
-                            latch.await();
+                            latch.await(30, TimeUnit.SECONDS);
                             serverMain.getEngine().execute("drop table test" + threadId, sqlExecutionContext);
                             tableMap.remove(threadId);
                         } catch (Throwable e) {
@@ -488,7 +493,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                         Thread insertThread = new Thread(() -> {
                             ObjList<WalWriter> writerObjList = new ObjList<>();
                             try {
-                                latch.await();
+                                latch.await(30, TimeUnit.SECONDS);
                                 TableToken tableToken = serverMain.getEngine().getTableTokenIfExists("test" + threadId);
                                 if (tableToken != null) {
                                     for (int in = 0; in < insertThreadCount; in++) {
@@ -708,7 +713,10 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 serverMain.start();
 
                 // Wait for hydration to complete (deterministic via callback)
-                hydrationLatch.await();
+                Assert.assertTrue(
+                        "recent write tracker hydration did not complete",
+                        hydrationLatch.await(TimeUnit.SECONDS.toNanos(30))
+                );
 
                 RecentWriteTracker tracker = serverMain.getEngine().getRecentWriteTracker();
                 Assert.assertNotNull("Tracker should be available", tracker);

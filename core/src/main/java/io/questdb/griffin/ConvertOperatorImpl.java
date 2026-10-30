@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeConverter;
 import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.SymbolMapReaderImpl;
@@ -94,8 +95,12 @@ public class ConvertOperatorImpl implements Closeable {
     private volatile int dataSyncFailureErrno;
     // Non-null once a conversion task fails a data-sync barrier.
     private volatile String dataSyncFailureOperation;
+    // the NULL policies of the column being converted and of its target, set before any
+    // conversion task is published
+    private NullPolicy dstNullPolicy;
     private long fixedFd;
     private int partitionUpdated;
+    private NullPolicy srcNullPolicy;
     private SymbolMapReaderImpl symbolMapReader;
     private SymbolMapper symbolMapper;
     private final TableWriter.ColumnTaskHandler cthConvertPartitionHandler = this::cthConvertPartitionHandler;
@@ -138,6 +143,10 @@ public class ConvertOperatorImpl implements Closeable {
     ) {
         clear();
         partitionUpdated = 0;
+        srcNullPolicy = tableWriter.getMetadata().getColumnNullPolicy(existingColIndex);
+        // the target column joins the metadata only after the conversion, so its NULL policy comes
+        // from its type driver
+        dstNullPolicy = ColumnType.getTypeDriver(newType).getNullPolicy();
         convertColumn0(columnName, existingColIndex, existingType, existingIndexType, columnIndex, newType);
     }
 
@@ -367,7 +376,14 @@ public class ConvertOperatorImpl implements Closeable {
                                 final boolean srcPieceable = ColumnType.isFixedSize(existingType) || existingType == ColumnType.STRING || existingType == ColumnType.VARCHAR;
                                 final boolean dstFixed = ColumnType.isFixedSize(newType);
                                 final boolean dstVarStringy = newType == ColumnType.STRING || newType == ColumnType.VARCHAR;
-                                final boolean pieceWalkable = srcPieceable && (dstFixed || dstVarStringy);
+                                // The piece converters read a NULL from the source value and write one as a
+                                // target value, as ColumnTypeConverter.convertColumn's converters do. A policy
+                                // that keeps NULLs outside the values needs piece converters of its own.
+                                final boolean pieceWalkable = srcPieceable && (dstFixed || dstVarStringy) && switch (srcNullPolicy) {
+                                    case SENTINEL, NONE -> switch (dstNullPolicy) {
+                                        case SENTINEL, NONE -> true;
+                                    };
+                                };
                                 // Those four only read the column types, so they cannot throw and belong outside the
                                 // descriptor guard. The geometry lookup they gate CAN throw, so it goes inside it -
                                 // otherwise it would run after the catch closes and before an owner takes the four
@@ -632,10 +648,12 @@ public class ConvertOperatorImpl implements Closeable {
                         0,
                         rowCount,
                         existingType,
+                        srcNullPolicy,
                         srcFixFd,
                         srcVarFd,
                         symbolTable,
                         newType,
+                        dstNullPolicy,
                         dstFixFd,
                         dstVarFd,
                         symbolMapper,

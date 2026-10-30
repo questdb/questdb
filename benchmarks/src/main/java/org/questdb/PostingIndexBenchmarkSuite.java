@@ -187,6 +187,46 @@ public class PostingIndexBenchmarkSuite {
     // Summary: structured output for feedback/iteration cycles
     // ==================================================================================
 
+    /**
+     * The covering index over an INT column added after {@code columnTop} of the partition's rows:
+     * every row below the top reads NULL. {@code seal} writes the sidecar in one sealing pass, which
+     * fills each key's rows below the top; {@code commit} writes it a commit at a time, a value per
+     * row. Measures the NULL fill against a column with no top (columnTop = 0).
+     */
+    @Benchmark
+    public void coveringColumnTop(ColumnTopState s) {
+        String dir = System.getProperty("java.io.tmpdir") + File.separator + "suite_coltop_" + System.nanoTime();
+        new File(dir).mkdirs();
+        try (Path path = new Path().of(dir)) {
+            try (PostingIndexWriter writer = new PostingIndexWriter(s.config, path, "test", COLUMN_NAME_TXN_NONE)) {
+                writer.configureCovering(
+                        new long[]{s.colAddr},
+                        new long[]{s.columnTop},
+                        new int[]{2},
+                        new int[]{2},
+                        new int[]{ColumnType.INT},
+                        1
+                );
+                final int rowsPerCommit = "commit".equals(s.path) ? ColumnTopState.ROWS / 64 : ColumnTopState.ROWS;
+                for (int rowId = 0; rowId < ColumnTopState.ROWS; ) {
+                    final int hi = Math.min(rowId + rowsPerCommit, ColumnTopState.ROWS);
+                    for (; rowId < hi; rowId++) {
+                        writer.add(s.keyAssignment[rowId], rowId);
+                    }
+                    writer.setMaxValue(rowId - 1);
+                    if ("commit".equals(s.path)) {
+                        writer.commit();
+                    }
+                }
+                if ("seal".equals(s.path)) {
+                    writer.seal();
+                }
+            }
+        } finally {
+            deleteDir(dir);
+        }
+    }
+
     @Benchmark
     public void decode(DecodeState s) {
         BitpackUtils.unpackValuesFrom(s.packedAddr, 0, s.batchSize, s.bitWidth, s.minValue, s.destAddr);
@@ -1131,6 +1171,42 @@ public class PostingIndexBenchmarkSuite {
      * 512 keys, 56 commits, 128 values per key per commit = 3.67M rows.
      * Measures the full add→commit→seal cycle cost.
      */
+    @State(Scope.Benchmark)
+    @BenchmarkMode(Mode.AverageTime)
+    @OutputTimeUnit(TimeUnit.MILLISECONDS)
+    public static class ColumnTopState {
+        static final int KEYS = 64;
+        static final int ROWS = 1_000_000;
+        // the column top, in rows: none, half the partition, all of it
+        @Param({"0", "500000", "1000000"})
+        public int columnTop;
+        @Param({"seal", "commit"})
+        public String path;
+        long colAddr;
+        CairoConfiguration config;
+        int[] keyAssignment;
+
+        @Setup(Level.Trial)
+        public void setup() {
+            config = benchConfig(System.getProperty("java.io.tmpdir"));
+            keyAssignment = new int[ROWS];
+            final Random rng = new Random(42);
+            for (int i = 0; i < ROWS; i++) {
+                keyAssignment[i] = rng.nextInt(KEYS);
+            }
+            // the column's values above the top, row columnTop + i at offset i
+            colAddr = Unsafe.malloc((long) ROWS * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            for (int i = 0; i < ROWS; i++) {
+                Unsafe.putInt(colAddr + (long) i * Integer.BYTES, i);
+            }
+        }
+
+        @TearDown(Level.Trial)
+        public void tearDown() {
+            Unsafe.free(colAddr, (long) ROWS * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
     @State(Scope.Benchmark)
     @BenchmarkMode(Mode.SingleShotTime)
     @OutputTimeUnit(TimeUnit.MILLISECONDS)

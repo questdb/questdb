@@ -27,6 +27,7 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
+import io.questdb.cairo.PhysicalDescriptor;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Record;
@@ -35,8 +36,8 @@ import io.questdb.cairo.vm.api.MemoryR;
 
 /**
  * Typed read/write of fixed-width column slots for live-view checkpoint
- * snapshot/restore. Each column is dispatched by {@link ColumnType#tagOf} to a
- * fixed-width primitive serialiser. Used for two distinct slot kinds:
+ * snapshot/restore. Each column is dispatched by its accessor family
+ * ({@link PhysicalDescriptor#accessorOpcodeOf}) to a fixed-width primitive serialiser. Used for two distinct slot kinds:
  * <ul>
  *     <li>Partition-key columns of a window function's hash map - the
  *     classic key codec.</li>
@@ -67,6 +68,12 @@ import io.questdb.cairo.vm.api.MemoryR;
  * </pre>
  * No length prefix on the entry itself - callers know the slot shape from the
  * function's stored {@link ColumnTypes}.
+ * <p>
+ * {@link #isAllTypesSupported}, {@link #isAllTypesFixedWidth} and
+ * {@link LiveViewFunctionSnapshot}'s key validation all decide support through
+ * {@link #byteSizeOfType}. A column reaches the per-row switches below only
+ * after one of these checks accepted its type, so their {@code default} arms
+ * throw only for a caller that skipped the check.
  */
 public final class LiveViewSnapshotKeyCodec {
 
@@ -122,8 +129,8 @@ public final class LiveViewSnapshotKeyCodec {
      */
     public static long readKey(MapKey dst, MemoryR source, long offset, ColumnTypes keyTypes) {
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
-            final int type = ColumnType.tagOf(keyTypes.getColumnType(i));
-            switch (type) {
+            final int columnType = keyTypes.getColumnType(i);
+            switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
                 case ColumnType.BYTE:
                 case ColumnType.GEOBYTE:
                     dst.putByte(source.getByte(offset));
@@ -178,7 +185,7 @@ public final class LiveViewSnapshotKeyCodec {
                     }
                     break;
                 default:
-                    throw unsupportedType(type);
+                    throw unsupportedType(ColumnType.tagOf(columnType));
             }
         }
         return offset;
@@ -189,8 +196,8 @@ public final class LiveViewSnapshotKeyCodec {
      */
     public static long readKey(MapKey dst, LiveViewStatePageReader source, long offset, ColumnTypes keyTypes) {
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
-            final int type = ColumnType.tagOf(keyTypes.getColumnType(i));
-            switch (type) {
+            final int columnType = keyTypes.getColumnType(i);
+            switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
                 case ColumnType.BYTE:
                 case ColumnType.GEOBYTE:
                     dst.putByte(source.getByte(offset));
@@ -241,7 +248,7 @@ public final class LiveViewSnapshotKeyCodec {
                     offset += Integer.BYTES + (strLen < 0 ? 0L : (long) strLen * Character.BYTES);
                     break;
                 default:
-                    throw unsupportedType(type);
+                    throw unsupportedType(ColumnType.tagOf(columnType));
             }
         }
         return offset;
@@ -253,8 +260,8 @@ public final class LiveViewSnapshotKeyCodec {
      */
     public static long validateKey(LiveViewStatePageReader source, long offset, ColumnTypes keyTypes) {
         for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
-            final int type = ColumnType.tagOf(keyTypes.getColumnType(i));
-            switch (type) {
+            final int columnType = keyTypes.getColumnType(i);
+            switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
                 case ColumnType.BYTE:
                 case ColumnType.GEOBYTE:
                     source.getByte(offset);
@@ -296,7 +303,7 @@ public final class LiveViewSnapshotKeyCodec {
                     offset += Integer.BYTES + (strLen < 0 ? 0L : (long) strLen * Character.BYTES);
                     break;
                 default:
-                    throw unsupportedType(type);
+                    throw unsupportedType(ColumnType.tagOf(columnType));
             }
         }
         return offset;
@@ -323,8 +330,8 @@ public final class LiveViewSnapshotKeyCodec {
     public static long readValueSlots(MapValue dst, int slotStartIndex, MemoryR source, long offset, ColumnTypes slotTypes) {
         for (int i = 0, n = slotTypes.getColumnCount(); i < n; i++) {
             final int slotIndex = slotStartIndex + i;
-            final int type = ColumnType.tagOf(slotTypes.getColumnType(i));
-            switch (type) {
+            final int columnType = slotTypes.getColumnType(i);
+            switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
                 case ColumnType.BYTE:
                 case ColumnType.GEOBYTE:
                     dst.putByte(slotIndex, source.getByte(offset));
@@ -372,7 +379,7 @@ public final class LiveViewSnapshotKeyCodec {
                     offset += Double.BYTES;
                     break;
                 default:
-                    throw unsupportedType(type);
+                    throw unsupportedType(ColumnType.tagOf(columnType));
             }
         }
         return offset;
@@ -399,17 +406,24 @@ public final class LiveViewSnapshotKeyCodec {
     public static void writeKey(MemoryA sink, Record record, ColumnTypes types, int startIndex) {
         for (int i = 0, n = types.getColumnCount(); i < n; i++) {
             final int columnIndex = startIndex + i;
-            final int type = ColumnType.tagOf(types.getColumnType(i));
-            switch (type) {
+            final int columnType = types.getColumnType(i);
+            switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
                 case ColumnType.BYTE:
+                    sink.putByte(record.getByte(columnIndex));
+                    break;
                 case ColumnType.GEOBYTE:
+                    // getByte, not getGeoByte: every Map record and MapValue that reaches this
+                    // codec implements getGeoByte as getByte, so the two read the same slot.
                     sink.putByte(record.getByte(columnIndex));
                     break;
                 case ColumnType.BOOLEAN:
                     sink.putByte((byte) (record.getBool(columnIndex) ? 1 : 0));
                     break;
                 case ColumnType.SHORT:
+                    sink.putShort(record.getShort(columnIndex));
+                    break;
                 case ColumnType.GEOSHORT:
+                    // getShort, not getGeoShort; see GEOBYTE above.
                     sink.putShort(record.getShort(columnIndex));
                     break;
                 case ColumnType.CHAR:
@@ -447,7 +461,7 @@ public final class LiveViewSnapshotKeyCodec {
                     sink.putStr(record.getStrA(columnIndex));
                     break;
                 default:
-                    throw unsupportedType(type);
+                    throw unsupportedType(ColumnType.tagOf(columnType));
             }
         }
     }
@@ -461,8 +475,8 @@ public final class LiveViewSnapshotKeyCodec {
     ) {
         for (int i = 0, n = slotTypes.getColumnCount(); i < n; i++) {
             final int slotIndex = slotStartIndex + i;
-            final int type = ColumnType.tagOf(slotTypes.getColumnType(i));
-            switch (type) {
+            final int columnType = slotTypes.getColumnType(i);
+            switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
                 case ColumnType.BYTE:
                 case ColumnType.GEOBYTE:
                     dst.putByte(slotIndex, source.getByte(offset));
@@ -510,7 +524,7 @@ public final class LiveViewSnapshotKeyCodec {
                     offset += Double.BYTES;
                     break;
                 default:
-                    throw unsupportedType(type);
+                    throw unsupportedType(ColumnType.tagOf(columnType));
             }
         }
         return offset;
@@ -522,17 +536,23 @@ public final class LiveViewSnapshotKeyCodec {
     public static void writeKey(LiveViewStatePageWriter sink, Record record, ColumnTypes types, int startIndex) {
         for (int i = 0, n = types.getColumnCount(); i < n; i++) {
             final int columnIndex = startIndex + i;
-            final int type = ColumnType.tagOf(types.getColumnType(i));
-            switch (type) {
+            final int columnType = types.getColumnType(i);
+            switch (PhysicalDescriptor.accessorOpcodeOf(columnType)) {
                 case ColumnType.BYTE:
+                    sink.putByte(record.getByte(columnIndex));
+                    break;
                 case ColumnType.GEOBYTE:
+                    // getByte, not getGeoByte; see writeKey(MemoryA, ...).
                     sink.putByte(record.getByte(columnIndex));
                     break;
                 case ColumnType.BOOLEAN:
                     sink.putByte((byte) (record.getBool(columnIndex) ? 1 : 0));
                     break;
                 case ColumnType.SHORT:
+                    sink.putShort(record.getShort(columnIndex));
+                    break;
                 case ColumnType.GEOSHORT:
+                    // getShort, not getGeoShort; see writeKey(MemoryA, ...).
                     sink.putShort(record.getShort(columnIndex));
                     break;
                 case ColumnType.CHAR:
@@ -567,36 +587,32 @@ public final class LiveViewSnapshotKeyCodec {
                     sink.putDouble(record.getDouble(columnIndex));
                     break;
                 default:
-                    throw unsupportedType(type);
+                    throw unsupportedType(ColumnType.tagOf(columnType));
             }
         }
     }
 
-    private static int byteSizeOfType(int columnType) {
-        switch (ColumnType.tagOf(columnType)) {
-            case ColumnType.BYTE:
-            case ColumnType.BOOLEAN:
-            case ColumnType.GEOBYTE:
-                return Byte.BYTES;
-            case ColumnType.SHORT:
-            case ColumnType.CHAR:
-            case ColumnType.GEOSHORT:
-                return Short.BYTES;
-            case ColumnType.INT:
-            case ColumnType.SYMBOL:
-            case ColumnType.IPv4:
-            case ColumnType.GEOINT:
-            case ColumnType.FLOAT:
-                return Integer.BYTES;
-            case ColumnType.LONG:
-            case ColumnType.TIMESTAMP:
-            case ColumnType.DATE:
-            case ColumnType.GEOLONG:
-            case ColumnType.DOUBLE:
-                return Long.BYTES;
-            default:
-                return -1;
+    /**
+     * The byte width of a fixed-width codec slot, or -1 when the codec has no fixed-width arm for
+     * the type. The per-row switches above have an arm for exactly the types this sizes, plus
+     * STRING, whose slot is variable-width and which {@link #isSupportedKeyType} admits separately.
+     * A function or anchor map that keys on any other -1 type (a var-size type other than STRING,
+     * LONG256, UUID, LONG128, a DECIMAL, INTERVAL, or a pseudo type) takes the head-miss path
+     * instead of a checkpoint.
+     */
+    static int byteSizeOfType(int columnType) {
+        final PhysicalDescriptor.Accessor accessor = PhysicalDescriptor.accessorOf(columnType);
+        if (accessor == null) {
+            return -1;
         }
+        return switch (accessor) {
+            case BYTE, BOOLEAN, GEOBYTE -> Byte.BYTES;
+            case SHORT, CHAR, GEOSHORT -> Short.BYTES;
+            case INT, SYMBOL, IPv4, GEOINT, FLOAT -> Integer.BYTES;
+            case LONG, TIMESTAMP, DATE, GEOLONG, DOUBLE -> Long.BYTES;
+            case STRING, LONG256, BINARY, UUID, LONG128, VARCHAR, ARRAY, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                 DECIMAL128, DECIMAL256, INTERVAL -> -1;
+        };
     }
 
     /**
@@ -607,7 +623,7 @@ public final class LiveViewSnapshotKeyCodec {
      * SYMBOL-partitioned LVs ride STRING keys end-to-end).
      */
     private static boolean isSupportedKeyType(int columnType) {
-        if (ColumnType.tagOf(columnType) == ColumnType.STRING) {
+        if (PhysicalDescriptor.accessorOpcodeOf(columnType) == ColumnType.STRING) {
             return true;
         }
         return byteSizeOfType(columnType) >= 0;

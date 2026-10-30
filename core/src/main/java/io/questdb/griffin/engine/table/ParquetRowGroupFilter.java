@@ -268,7 +268,12 @@ public final class ParquetRowGroupFilter {
                                             supported = false;
                                         }
                                         break;
-                                    default:
+                                    case ColumnType.BYTE:
+                                    case ColumnType.CHAR:
+                                    case ColumnType.STRING:
+                                    case ColumnType.VARCHAR:
+                                    case ColumnType.BOOLEAN:
+                                    case ColumnType.NULL:
                                         // CHAR lands here too, and must. A CHAR bound on a BYTE column
                                         // resolves to EqShortFunctionFactory (CHAR does not overload to
                                         // BYTE), so the row filter reads it as CharFunction.getShort ->
@@ -276,7 +281,14 @@ public final class ParquetRowGroupFilter {
                                         // takes the same castCharToNumber route and agrees. Pushing
                                         // getChar()'s code point 53 instead prunes every group whose
                                         // BYTE stats miss 53. The SHORT arm has always routed CHAR here.
+                                        // A NULL literal in an IN list arrives as NullConstant, whose
+                                        // getByte() is 0.
                                         filterValues.putInt(f.getByte(null));
+                                        break;
+                                    default:
+                                        // A value type this arm does not name declines the condition:
+                                        // its getByte() may answer something the row filter does not.
+                                        supported = false;
                                 }
                                 // A break inside the switch above leaves the switch, not this loop, so
                                 // the remaining values would keep evaluating and appending after the
@@ -306,8 +318,18 @@ public final class ParquetRowGroupFilter {
                                             supported = false;
                                         }
                                         break;
-                                    default:
+                                    case ColumnType.BYTE:
+                                    case ColumnType.SHORT:
+                                    case ColumnType.CHAR:
+                                    case ColumnType.STRING:
+                                    case ColumnType.VARCHAR:
+                                    case ColumnType.BOOLEAN:
+                                    case ColumnType.NULL:
                                         filterValues.putInt(f.getShort(null));
+                                        break;
+                                    default:
+                                        // See the BYTE arm: an unnamed value type declines.
+                                        supported = false;
                                 }
                                 // See the BYTE arm: break out of the value loop, not just the switch.
                                 if (!supported) {

@@ -27,10 +27,12 @@ package io.questdb.cutlass.text.types;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableWriter;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.str.DirectUtf8Sequence;
 
 /**
- * Note: this class only supports ASCII chars.
+ * Detection takes a single ASCII letter only; write() stores any value that decodes to one UTF-16
+ * character.
  */
 public final class CharAdapter extends AbstractTypeAdapter {
 
@@ -54,6 +56,8 @@ public final class CharAdapter extends AbstractTypeAdapter {
 
     @Override
     public void write(TableWriter.Row row, int column, DirectUtf8Sequence value) {
-        row.putChar(column, SqlKeywords.isNullKeyword(value) ? (char) 0 : (char) value.byteAt(0));
+        // a value that is not one character (two or more, a code point above U+FFFF, malformed
+        // UTF-8) throws ImplicitCastException, which the importers count as a bad value
+        row.putChar(column, SqlKeywords.isNullKeyword(value) ? (char) 0 : SqlUtil.implicitCastVarcharAsChar(value));
     }
 }

@@ -45,6 +45,7 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
@@ -105,7 +106,6 @@ import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
-import io.questdb.std.Decimals;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
@@ -5473,88 +5473,50 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private static void configureNullSetters(ObjList<Runnable> nullers, int columnType, MemoryA dataMem, MemoryA auxMem, int columnIndex, ObjList<MapWriter> symbolWriters) {
-        short columnTag = ColumnType.tagOf(columnType);
-        if (ColumnType.isVarSize(columnTag)) {
-            final ColumnTypeDriver typeDriver = ColumnType.getDriver(columnTag);
-            nullers.add(() -> typeDriver.appendNull(auxMem, dataMem));
-        } else {
-            switch (columnTag) {
-                case ColumnType.BOOLEAN:
-                case ColumnType.BYTE:
-                    nullers.add(() -> dataMem.putByte((byte) 0));
-                    break;
-                case ColumnType.DOUBLE:
-                    nullers.add(() -> dataMem.putDouble(Double.NaN));
-                    break;
-                case ColumnType.FLOAT:
-                    nullers.add(() -> dataMem.putFloat(Float.NaN));
-                    break;
-                case ColumnType.INT:
-                    nullers.add(() -> dataMem.putInt(Numbers.INT_NULL));
-                    break;
-                case ColumnType.IPv4:
-                    nullers.add(() -> dataMem.putInt(Numbers.IPv4_NULL));
-                    break;
-                case ColumnType.LONG:
-                case ColumnType.DATE:
-                case ColumnType.TIMESTAMP:
-                    nullers.add(() -> dataMem.putLong(Numbers.LONG_NULL));
-                    break;
-                case ColumnType.LONG128:
-                    // fall through
-                case ColumnType.UUID:
-                    nullers.add(() -> dataMem.putLong128(Numbers.LONG_NULL, Numbers.LONG_NULL));
-                    break;
-                case ColumnType.LONG256:
-                    nullers.add(() -> dataMem.putLong256(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL));
-                    break;
-                case ColumnType.SHORT:
-                    nullers.add(() -> dataMem.putShort((short) 0));
-                    break;
-                case ColumnType.CHAR:
-                    nullers.add(() -> dataMem.putChar((char) 0));
-                    break;
-                case ColumnType.SYMBOL:
-                    nullers.add(() -> {
-                        symbolWriters.getQuick(columnIndex).updateNullFlag(true);
-                        dataMem.putInt(SymbolTable.VALUE_IS_NULL);
-                    });
-                    break;
-                case ColumnType.GEOBYTE:
-                    nullers.add(() -> dataMem.putByte(GeoHashes.BYTE_NULL));
-                    break;
-                case ColumnType.GEOSHORT:
-                    nullers.add(() -> dataMem.putShort(GeoHashes.SHORT_NULL));
-                    break;
-                case ColumnType.GEOINT:
-                    nullers.add(() -> dataMem.putInt(GeoHashes.INT_NULL));
-                    break;
-                case ColumnType.GEOLONG:
-                    nullers.add(() -> dataMem.putLong(GeoHashes.NULL));
-                    break;
-                case ColumnType.DECIMAL8:
-                    nullers.add(() -> dataMem.putByte(Decimals.DECIMAL8_NULL));
-                    break;
-                case ColumnType.DECIMAL16:
-                    nullers.add(() -> dataMem.putShort(Decimals.DECIMAL16_NULL));
-                    break;
-                case ColumnType.DECIMAL32:
-                    nullers.add(() -> dataMem.putInt(Decimals.DECIMAL32_NULL));
-                    break;
-                case ColumnType.DECIMAL64:
-                    nullers.add(() -> dataMem.putLong(Decimals.DECIMAL64_NULL));
-                    break;
-                case ColumnType.DECIMAL128:
-                    nullers.add(() -> dataMem.putDecimal128(Decimals.DECIMAL128_HI_NULL, Decimals.DECIMAL128_LO_NULL));
-                    break;
-                case ColumnType.DECIMAL256:
-                    nullers.add(() -> dataMem.putDecimal256(Decimals.DECIMAL256_HH_NULL, Decimals.DECIMAL256_HL_NULL, Decimals.DECIMAL256_LH_NULL, Decimals.DECIMAL256_LL_NULL));
-                    break;
-                default:
-                    nullers.add(NOOP);
-            }
+    private static void configureNullSetters(
+            ObjList<Runnable> nullers,
+            int columnType,
+            @Nullable NullPolicy nullPolicy,
+            MemoryA dataMem,
+            MemoryA auxMem,
+            int columnIndex,
+            ObjList<MapWriter> symbolWriters
+    ) {
+        if (columnType < 0) {
+            // removed column: configureColumn still registers it, with NullMemory; nothing is ever written
+            nullers.add(NOOP);
+            return;
         }
+        short columnTag = ColumnType.tagOf(columnType);
+        if (columnTag == ColumnType.SYMBOL) {
+            nullers.add(() -> {
+                symbolWriters.getQuick(columnIndex).updateNullFlag(true);
+                dataMem.putInt(SymbolTable.VALUE_IS_NULL);
+            });
+        } else if (ColumnType.isPersisted(columnTag)) {
+            assert nullPolicy != null;
+            // the type driver's appender writes the column's NULL as a value: the sentinel, or, for
+            // a type without NULL, the value stored instead
+            nullers.add(switch (nullPolicy) {
+                case SENTINEL, NONE -> ColumnType.getTypeDriver(columnType).newNullAppender(dataMem, auxMem);
+            });
+        } else {
+            // a non-persisted type never reaches a table column
+            nullers.add(NOOP);
+        }
+    }
+
+    // The frame comparison of the identical-commit shortcuts reads a column-top row as its type's
+    // NULL value. That holds for every policy that keeps NULL in the values; a policy that keeps
+    // NULLs elsewhere answers false here, which turns the shortcut off for its columns.
+    private static boolean hasNullsInValues(RecordMetadata metadata, int columnIndex) {
+        if (metadata.getColumnType(columnIndex) < 0) {
+            // a removed column compares as identical
+            return true;
+        }
+        return switch (metadata.getColumnNullPolicy(columnIndex)) {
+            case SENTINEL, NONE -> true;
+        };
     }
 
     /**
@@ -5767,7 +5729,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long nullFixBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_TABLE_WRITER);
         try {
-            TableUtils.setNull(columnType, nullFixBuf, rowCount);
+            ColumnType.getTypeDriver(columnType).setNull(nullFixBuf, rowCount);
+            // validity batch site: a column with a validity bitmap would mark these rows NULL here
             appendBuffer(dstFixFd, nullFixBuf, fixSize);
         } finally {
             Unsafe.free(nullFixBuf, fixSize, MemoryTag.NATIVE_TABLE_WRITER);
@@ -7937,9 +7900,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3MemColumns1.extendAndSet(baseIndex + 1, o3AuxMem1);
         o3MemColumns2.extendAndSet(baseIndex, o3DataMem2);
         o3MemColumns2.extendAndSet(baseIndex + 1, o3AuxMem2);
-        configureNullSetters(nullSetters, type, dataMem, auxMem, index, symbolMapWriters);
-        configureNullSetters(o3NullSetters1, type, o3DataMem1, o3AuxMem1, index, symbolMapWriters);
-        configureNullSetters(o3NullSetters2, type, o3DataMem2, o3AuxMem2, index, symbolMapWriters);
+        // a removed column has no NULL policy; nothing is written to it
+        final NullPolicy nullPolicy = type > 0 ? metadata.getColumnNullPolicy(index) : null;
+        configureNullSetters(nullSetters, type, nullPolicy, dataMem, auxMem, index, symbolMapWriters);
+        configureNullSetters(o3NullSetters1, type, nullPolicy, o3DataMem1, o3AuxMem1, index, symbolMapWriters);
+        configureNullSetters(o3NullSetters2, type, nullPolicy, o3DataMem2, o3AuxMem2, index, symbolMapWriters);
 
         if (IndexType.isIndexed(indexType) && type > 0) {
             indexers.extendAndSet(index, new SymbolColumnIndexer(configuration, indexType));
@@ -9041,6 +9006,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 dedupCommitAddr,
                                 dedupKeyIndex++,
                                 columnType,
+                                metadata.getColumnNullPolicy(i),
                                 ColumnType.isVarSize(columnType) ? -1 : ColumnType.sizeOf(columnType),
                                 0L
                         );
@@ -14973,6 +14939,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     dedupCommitAddr,
                                     dedupKeyIndex++,
                                     columnType,
+                                    metadata.getColumnNullPolicy(i),
                                     valueSizeBytes,
                                     0L
                             );
@@ -15638,9 +15605,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 try {
                                     final int convColumnTop = (int) rowGroupBuffers.getChunkColumnTop(columnIndex);
                                     if (ColumnType.isVarchar(tableColumnType)) {
-                                        ParquetColumnTypeConverter.convertFixedColumnToVarchar(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf8Sink);
+                                        ParquetColumnTypeConverter.convertFixedColumnToVarchar(parquetColumnType, parquetMetadata.getColumnNullPolicy(parquetIdx), srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf8Sink);
                                     } else {
-                                        ParquetColumnTypeConverter.convertFixedColumnToString(parquetColumnType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf16Sink);
+                                        ParquetColumnTypeConverter.convertFixedColumnToString(parquetColumnType, parquetMetadata.getColumnNullPolicy(parquetIdx), srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf16Sink);
                                     }
 
                                     // Compute actual bytes from the aux vector *before* shifting,
@@ -15721,13 +15688,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             }
                         } else {
                             // Same type, or fixed->fixed conversion handled by Rust post_convert.
-                            final int dstTagFixed = ColumnType.tagOf(tableColumnType);
-                            final boolean noNullSentinel = dstTagFixed == ColumnType.BOOLEAN
-                                    || dstTagFixed == ColumnType.BYTE
-                                    || dstTagFixed == ColumnType.SHORT
-                                    || dstTagFixed == ColumnType.CHAR;
+                            final boolean hasInBandColumnTop = switch (this.metadata.getColumnNullPolicy(tableColIdx)) {
+                                case SENTINEL -> false;
+                                case NONE -> true;
+                            };
                             final int colTopRows = (int) rowGroupBuffers.getChunkColumnTop(columnIndex);
-                            if (noNullSentinel && colTopRows > 0) {
+                            if (hasInBandColumnTop && colTopRows > 0) {
                                 // No-sentinel columns (BOOLEAN/BYTE/SHORT/CHAR) decode their
                                 // column-top rows to an in-band 0/false the reader cannot tell
                                 // from a real value. Reconstruct the parquet column top in the
@@ -19696,7 +19662,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // before the _txn that exposes the new row count. Under SYNC msync blocks; under ASYNC
         // it only schedules writeback, so the order is best effort. Under NOSYNC syncColumns()
         // never calls this method, and recovery's torn-tail guard (VarcharTypeDriver and
-        // StringTypeDriver setAppendPosition) is the only crash protection.
+        // NPlusOneAuxTypeDriver setAppendPosition) is the only crash protection.
         for (int i = 0; i < columnCount; i++) {
             columns.getQuick(i * 2).sync(async);          // data (primary) first
             final MemoryMA m2 = columns.getQuick(i * 2 + 1);
@@ -20866,7 +20832,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try (Frame commitFrame = engine.getFrameFactory().openROFromMemoryColumns(o3Columns, this.metadata, commitRowCount)) {
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
                     // Do not compare dedup keys, already a match
-                    if (!metadata.isDedupKey(i) && !FrameAlgebra.isColumnReplaceIdentical(
+                    if (!metadata.isDedupKey(i) && !(hasNullsInValues(metadata, i) && FrameAlgebra.isColumnReplaceIdentical(
                             i,
                             partitionFrame,
                             partitionLo,
@@ -20876,7 +20842,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             commitHi + 1,
                             mergeIndexAddr,
                             mergeIndexRows
-                    )) {
+                    ))) {
                         return false;
                     }
                 }
@@ -20915,7 +20881,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Compare all columns, dedup keys and non-keys
                     if (i != metadata.getTimestampIndex()) {
                         // Non-designated timestamp
-                        if (!FrameAlgebra.isColumnReplaceIdentical(
+                        if (!(hasNullsInValues(metadata, i) && FrameAlgebra.isColumnReplaceIdentical(
                                 i,
                                 partitionFrame,
                                 partitionLo,
@@ -20925,7 +20891,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 commitHi + 1,
                                 0,
                                 commitHi + 1 - commitLo
-                        )) {
+                        ))) {
                             return false;
                         }
                     } else {

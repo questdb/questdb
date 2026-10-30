@@ -199,7 +199,7 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     public int getInt(Record rec) {
         int value = wrappedFunction.getInt(rec);
         if (interpolating) {
-            return (int) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getInt(target));
+            return InterpolationUtil.interpolateInt(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getInt(target));
         }
         return value;
     }
@@ -213,7 +213,7 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     public long getLong(Record rec) {
         long value = wrappedFunction.getLong(rec);
         if (interpolating) {
-            return (long) InterpolationUtil.interpolate(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getLong(target));
+            return InterpolationUtil.interpolateLong(startTime + current++ * interval, startTime, value, endTime, wrappedFunction.getLong(target));
         }
         return value;
     }

@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.orderby;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
@@ -194,6 +196,28 @@ public class RecordComparatorCompiler {
             LOG.critical().$("could not create an instance of RecordComparator, cause: ").$(e).$();
             throw BytecodeException.INSTANCE;
         }
+    }
+
+    /**
+     * The {@link #poolFieldArtifacts} arm for a column of this type: {@link
+     * PhysicalDescriptor#compareOpcode} of its type driver, which throws {@link
+     * io.questdb.cairo.CairoException} for a type that orders unlike its accessor family. Throws
+     * the ORDER BY error for BINARY, ARRAY and INTERVAL, which have no order, and for a pseudo type
+     * or VARCHAR_SLICE.
+     */
+    private static int comparatorOpcode(int columnType) throws SqlException {
+        final TypeDriver driver = PhysicalDescriptor.storedTypeDriverOf(columnType);
+        if (driver == null) {
+            throw SqlException.$(0, "column type is not supported for order by: ").put(ColumnType.nameOf(columnType));
+        }
+        return switch (driver.getAccessor()) {
+            case BOOLEAN, BYTE, DOUBLE, FLOAT, GEOBYTE, GEOSHORT, GEOINT, GEOLONG, INT, IPv4, LONG, DATE, TIMESTAMP,
+                 SHORT, CHAR, STRING, LONG256, UUID, LONG128, VARCHAR, DECIMAL8, DECIMAL16, DECIMAL32, DECIMAL64,
+                 DECIMAL128, DECIMAL256, SYMBOL -> PhysicalDescriptor.compareOpcode(driver, "ORDER BY");
+            // no order
+            case BINARY, ARRAY, INTERVAL ->
+                    throw SqlException.$(0, "column type is not supported for order by: ").put(ColumnType.nameOf(columnType));
+        };
     }
 
     /**
@@ -626,7 +650,7 @@ public class RecordComparatorCompiler {
             int columnType = metadata.getColumnType(index);
             int getterSigIndex;
             byte fieldRecordType = RECORD_TYPE_NORMAL;
-            switch (ColumnType.tagOf(columnType)) {
+            switch (comparatorOpcode(columnType)) {
                 case ColumnType.BOOLEAN:
                     fieldType = "Z";
                     poolFieldRecordAccessor(recordClassIndex, asm.poolUtf8("(I)Z"), "getBool");
@@ -808,7 +832,7 @@ public class RecordComparatorCompiler {
                     }
                     break;
                 default:
-                    throw SqlException.$(0, "column type is not supported for order by: ").put(ColumnType.nameOf(columnType));
+                    throw new IllegalStateException("no comparator arm [type=" + ColumnType.nameOf(columnType) + "]");
             }
             fieldRecordTypes.add(fieldRecordType);
 

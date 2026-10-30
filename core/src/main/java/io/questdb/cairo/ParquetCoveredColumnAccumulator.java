@@ -73,6 +73,8 @@ final class ParquetCoveredColumnAccumulator {
     private final ObjList<CharSequence> slotNames = new ObjList<>();
     // The parquet column to decode the slot from, -1 when it is not decoded.
     private final IntList slotParquetColumns = new IntList();
+    // The NULL policy of the parquet-stored type, null when the slot is not decoded.
+    private final ObjList<NullPolicy> slotParquetNullPolicies = new ObjList<>();
     // The parquet-stored type, which differs from the table type while a lazy ALTER COLUMN TYPE is pending.
     private final IntList slotParquetTypes = new IntList();
     private final LongList slotTops = new LongList();
@@ -94,6 +96,7 @@ final class ParquetCoveredColumnAccumulator {
             }
             final int columnType = slotTypes.getQuick(slot);
             final int parquetColType = slotParquetTypes.getQuick(slot);
+            final NullPolicy parquetColNullPolicy = slotParquetNullPolicies.getQuick(slot);
             final long srcDataPtr = rowGroupBuffers.getChunkDataPtr(decodedChunkIdx);
             final long srcDataSize = rowGroupBuffers.getChunkDataSize(decodedChunkIdx);
             final long srcAuxPtr = rowGroupBuffers.getChunkAuxPtr(decodedChunkIdx);
@@ -116,7 +119,7 @@ final class ParquetCoveredColumnAccumulator {
 
                 if (srcAuxSize == 0 && srcDataPtr != 0) {
                     final long convertedDataSize = accumulateFixedToVarChunk(
-                            driver, columnType, parquetColType, dataMem, auxMem,
+                            driver, columnType, parquetColType, parquetColNullPolicy, dataMem, auxMem,
                             rowGroupBuffers, decodedChunkIdx, srcDataPtr,
                             rowGroupIndex, rowGroupRowCount, dataVecBytesWritten);
                     slotDataBytesWritten.setQuick(slot, dataVecBytesWritten + convertedDataSize);
@@ -197,6 +200,7 @@ final class ParquetCoveredColumnAccumulator {
         slotTops.add(columnTop);
         slotParquetColumns.add(parquetColumnIndex);
         slotParquetTypes.add(-1);
+        slotParquetNullPolicies.add(null);
         slotDecodedChunks.add(-1);
         slotDataBytesWritten.add(0);
     }
@@ -213,6 +217,7 @@ final class ParquetCoveredColumnAccumulator {
         slotTops.clear();
         slotParquetColumns.clear();
         slotParquetTypes.clear();
+        slotParquetNullPolicies.clear();
         slotDecodedChunks.clear();
         slotDataBytesWritten.clear();
     }
@@ -280,6 +285,7 @@ final class ParquetCoveredColumnAccumulator {
                 final long columnNameTxn = slotNameTxns.getQuick(slot);
                 final boolean isVarSize = ColumnType.isVarSize(columnType);
                 slotParquetTypes.setQuick(slot, parquetColumnType);
+                slotParquetNullPolicies.setQuick(slot, parquetMetadata.getColumnNullPolicy(parquetColumnIndex));
                 slotDecodedChunks.setQuick(slot, (int) (decodeColumns.size() / 2));
 
                 // Fixed-size data: total bytes are exact (rowCount * entrySize),
@@ -354,7 +360,8 @@ final class ParquetCoveredColumnAccumulator {
         }
         long nullBuf = Unsafe.malloc(fixSize, MemoryTag.NATIVE_TABLE_WRITER);
         try {
-            TableUtils.setNull(columnType, nullBuf, rowCount);
+            ColumnType.getTypeDriver(columnType).setNull(nullBuf, rowCount);
+            // validity batch site: a column with a validity bitmap would mark these rows NULL here
             mem.putBlockOfBytes(nullBuf, fixSize);
         } finally {
             Unsafe.free(nullBuf, fixSize, MemoryTag.NATIVE_TABLE_WRITER);
@@ -397,6 +404,7 @@ final class ParquetCoveredColumnAccumulator {
                 }
                 auxMem.putBlockOfBytes(auxPtr, auxBytes);
             }
+            // validity batch site: a column with a validity bitmap would mark these rows NULL here
         } finally {
             if (nullAuxBuf != 0) {
                 Unsafe.free(nullAuxBuf, auxSize, MemoryTag.NATIVE_TABLE_WRITER);
@@ -411,6 +419,7 @@ final class ParquetCoveredColumnAccumulator {
             ColumnTypeDriver driver,
             int columnType,
             int parquetColType,
+            NullPolicy parquetColNullPolicy,
             MemoryMARW dataMem,
             MemoryMARW auxMem,
             RowGroupBuffers rowGroupBuffers,
@@ -435,9 +444,9 @@ final class ParquetCoveredColumnAccumulator {
             try {
                 final int convColumnTop = (int) rowGroupBuffers.getChunkColumnTop(decodedChunkIdx);
                 if (ColumnType.isVarchar(columnType)) {
-                    ParquetColumnTypeConverter.convertFixedColumnToVarchar(parquetColType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf8Sink);
+                    ParquetColumnTypeConverter.convertFixedColumnToVarchar(parquetColType, parquetColNullPolicy, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf8Sink);
                 } else {
-                    ParquetColumnTypeConverter.convertFixedColumnToString(parquetColType, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf16Sink);
+                    ParquetColumnTypeConverter.convertFixedColumnToString(parquetColType, parquetColNullPolicy, srcDataPtr, (int) rowGroupRowCount, convColumnTop, auxBuf, dataBuf, dataBufCap, utf16Sink);
                 }
                 final long actualDataSize = driver.getDataVectorSizeAt(auxBuf, rowGroupRowCount - 1);
                 long auxWritePtr = auxBuf;

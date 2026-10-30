@@ -34,6 +34,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.ReaderScanProfile;
+import io.questdb.cairo.WireKind;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -283,6 +284,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
+                    if (!isParquet) {
+                        // the opcodes pick the CSV writer's arms; the Parquet encoder writes every
+                        // column, LONG128 included, without them
+                        computeColumnOpcodes(state);
+                    }
                     doResumeSend(context);
                 } catch (CairoException e) {
                     if (state.isQueryCacheable()) {
@@ -382,6 +388,63 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             }
             throw ServerDisconnectException.INSTANCE;
         }
+    }
+
+    private static void computeColumnOpcodes(ExportQueryProcessorState state) {
+        state.columnOpcodes.clear();
+        for (int i = 0, n = state.metadata.getColumnCount(); i < n; i++) {
+            state.columnOpcodes.add(csvOpcode(state.metadata.getColumnType(i), state.metadata.getColumnName(i)));
+        }
+    }
+
+    /**
+     * Picks the {@link #putValue} arm for a column from its {@link WireKind}, once per export
+     * rather than per cell. LONG128 and a type CSV cannot write throw, and the export answers
+     * 400, since no byte of the response has gone out yet.
+     */
+    private static int csvOpcode(int columnType, CharSequence columnName) {
+        final WireKind kind = WireKind.of(columnType);
+        if (kind == null) {
+            // NULL and RECORD have no wire kind and render as an empty cell through the NULL arm;
+            // any other pseudo type (text[], for one) has no CSV form
+            return switch (ColumnType.tagOf(columnType)) {
+                case ColumnType.NULL -> ColumnType.NULL;
+                case ColumnType.RECORD -> ColumnType.RECORD;
+                default -> throw unsupportedColumnType(columnType, columnName);
+            };
+        }
+        return switch (kind) {
+            case BOOLEAN -> ColumnType.BOOLEAN;
+            case BYTE -> ColumnType.BYTE;
+            case SHORT -> ColumnType.SHORT;
+            case CHAR -> ColumnType.CHAR;
+            case INT -> ColumnType.INT;
+            case LONG -> ColumnType.LONG;
+            case DATE -> ColumnType.DATE;
+            case TIMESTAMP -> ColumnType.TIMESTAMP;
+            case FLOAT -> ColumnType.FLOAT;
+            case DOUBLE -> ColumnType.DOUBLE;
+            case STRING -> ColumnType.STRING;
+            case SYMBOL -> ColumnType.SYMBOL;
+            case LONG256 -> ColumnType.LONG256;
+            case GEOBYTE -> ColumnType.GEOBYTE;
+            case GEOSHORT -> ColumnType.GEOSHORT;
+            case GEOINT -> ColumnType.GEOINT;
+            case GEOLONG -> ColumnType.GEOLONG;
+            case BINARY -> ColumnType.BINARY;
+            case UUID -> ColumnType.UUID;
+            case LONG128 -> throw unsupportedColumnType(columnType, columnName);
+            case IPV4 -> ColumnType.IPv4;
+            case VARCHAR -> ColumnType.VARCHAR;
+            case ARRAY -> ColumnType.ARRAY;
+            case INTERVAL -> ColumnType.INTERVAL;
+            case DECIMAL8 -> ColumnType.DECIMAL8;
+            case DECIMAL16 -> ColumnType.DECIMAL16;
+            case DECIMAL32 -> ColumnType.DECIMAL32;
+            case DECIMAL64 -> ColumnType.DECIMAL64;
+            case DECIMAL128 -> ColumnType.DECIMAL128;
+            case DECIMAL256 -> ColumnType.DECIMAL256;
+        };
     }
 
     private static boolean isExpUrl(Utf8Sequence tok) {
@@ -496,6 +559,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 .$(", lastRequestBytesSent=").$(context.getLastRequestBytesSent())
                 .$(", nCompletedRequests=").$(context.getNCompletedRequests() + 1)
                 .$(", totalBytesSent=").$(context.getTotalBytesSent()).I$();
+    }
+
+    private static CairoException unsupportedColumnType(int columnType, CharSequence columnName) {
+        return CairoException.nonCritical().put("column type not supported [column=").put(columnName)
+                .put(", type=").put(ColumnType.nameOf(columnType)).put(']');
     }
 
     private void compileParquetExport(HttpConnectionContext context, ExportQueryProcessorState state) throws SqlException {
@@ -1211,7 +1279,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         final int columnType = state.metadata.getColumnType(state.columnIndex);
         final int columnIndex = state.columnIndex;
         final Record rec = state.record;
-        switch (ColumnType.tagOf(columnType)) {
+        switch (state.columnOpcodes.getQuick(columnIndex)) {
             case ColumnType.BOOLEAN:
                 response.put(rec.getBool(columnIndex));
                 break;
@@ -1266,6 +1334,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             case ColumnType.NULL:
             case ColumnType.BINARY:
             case ColumnType.RECORD:
+                // an empty cell
                 break;
             case ColumnType.STRING:
                 putStringOrNull(response, rec.getStrA(columnIndex));
@@ -1294,8 +1363,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             case ColumnType.UUID:
                 putUuidOrNull(response, rec.getLong128Lo(columnIndex), rec.getLong128Hi(columnIndex));
                 break;
-            case ColumnType.LONG128:
-                throw new UnsupportedOperationException();
             case ColumnType.IPv4:
                 putIPv4Value(response, rec, columnIndex);
                 break;
@@ -1326,7 +1393,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 putDecimal256StringValue(response, decimal256, columnType);
                 break;
             default:
-                assert false;
+                // csvOpcode() yields only the labels above; a wire kind whose opcode has no arm here
+                // fails loudly rather than write an empty cell (javac lists csvOpcode() for a new kind,
+                // not this per-row switch), as an error the export's handler reports
+                throw CairoException.nonCritical().put("no CSV arm for opcode ").put(state.columnOpcodes.getQuick(columnIndex))
+                        .put(" [type=").put(ColumnType.nameOf(columnType)).put(']');
         }
     }
 
