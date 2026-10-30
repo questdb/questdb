@@ -84,11 +84,11 @@ public class AdaptiveCoveredColumnReplayCrashTest extends AbstractAdaptiveCrashT
     }
 
     /**
-     * @param powerLoss          whether the process dies by a power loss, which loses the names the change added,
-     *                           or by a kill, which keeps every file it wrote
-     * @param sql                the change
-     * @param column             the column the change moves to a new name txn, by its name after the change
-     * @param assertAfterReplay  reads the table through the index that INCLUDEs the column
+     * @param powerLoss         whether the process dies by a power loss, which loses the names the change added,
+     *                          or by a kill, which keeps every file it wrote
+     * @param sql               the change
+     * @param column            the column the change moves to a new name txn, by its name after the change
+     * @param assertAfterReplay reads the table through the index that INCLUDEs the column
      */
     private void assertChangeReplayed(boolean powerLoss, String sql, String column, TestUtils.LeakProneCode assertAfterReplay) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
