@@ -70,6 +70,61 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(TxnBodyChecksumCacheTest.class);
 
     @Test
+    public void testClearPartitionStampFlagsKeepsChecksumExact() throws Exception {
+        // Snapshot restore clears REMOTE and the seal stamp in the live record, with no commit, and the next open
+        // verifies that record. The write lands in the partition table, so the record's checksum must follow it,
+        // and so must a cached hash of its area, which the writer's later commits reuse.
+        assertMemoryLeak(() -> {
+            final TableToken token = createHourTable("stamps");
+            final ObjList<SymbolCountProvider> symbols = new ObjList<>();
+            try (Path path = txnPath(token)) {
+                try (TxWriter writer = new TxWriter(configuration.getFilesFacade(), configuration)) {
+                    writer.ofRW(path.$(), ColumnType.TIMESTAMP, PartitionBy.HOUR);
+                    writer.setCommitMode(CommitMode.NOSYNC);
+                    populate(writer, symbols);
+                    for (int i = 0; i < 4; i++) {
+                        writer.setPartitionRemote(i, true);
+                        writer.setPartitionSealStamped(i, true);
+                    }
+                    writer.bumpPartitionTableVersion();
+                    writer.commit(symbols);
+                    // Both slots' hashes cached.
+                    appendAndCommit(writer, symbols);
+                    appendAndCommit(writer, symbols);
+
+                    writer.clearPartitionStampFlagsUnsafe(0, true);
+                    writer.clearPartitionStampFlagsUnsafe(1, false);
+                    assertAreasVerify(path.$());
+                    assertFreshReaderVerifies(path.$(), writer.getTxn());
+                    // The commits that reuse the cached hash of the area, and the close, which checks it.
+                    for (int i = 0; i < 2; i++) {
+                        appendAndCommit(writer, symbols);
+                        assertAreasVerify(path.$());
+                    }
+                }
+
+                // As the restore runs it: a writer opened for the clear and closed after it.
+                try (TxWriter writer = new TxWriter(configuration.getFilesFacade(), configuration)) {
+                    writer.ofRW(path.$(), ColumnType.TIMESTAMP, PartitionBy.HOUR);
+                    writer.clearPartitionStampFlagsUnsafe(2, true);
+                    writer.clearPartitionStampFlagsUnsafe(3, false);
+                }
+                assertAreasVerify(path.$());
+                try (TxReader reader = new TxReader(configuration.getFilesFacade())) {
+                    reader.ofRO(path.$(), ColumnType.TIMESTAMP, PartitionBy.HOUR);
+                    TxReader.resetBodyChecksumFallbackCount();
+                    Assert.assertTrue(reader.unsafeLoadAll());
+                    Assert.assertEquals(0, TxReader.getBodyChecksumFallbackCount());
+                    for (int i = 0; i < 4; i++) {
+                        Assert.assertFalse("REMOTE of partition " + i, reader.isPartitionRemote(i));
+                        Assert.assertEquals("seal stamp of partition " + i, i == 1 || i == 3, reader.isPartitionSealStamped(i));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCombinedChecksumMatchesFullChecksumForEveryGeometry() {
         // The split must reproduce calculateTxnBodyChecksum() bit for bit for every partition-table length
         // remainder (0-7 bytes past a whole word), for an empty or inverted partition-table range, and for

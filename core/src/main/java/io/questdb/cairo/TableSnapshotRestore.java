@@ -94,6 +94,9 @@ public class TableSnapshotRestore implements QuietCloseable {
     private final ExecutorService executor;
     private final FilesFacade ff;
     private final ObjList<Future<?>> futures = new ObjList<>();
+    // Partitions whose _pm a worker rebuilt from data.parquet, whose footer may carry an older stamp
+    // than the one uploaded or sealed. Guarded by itself; cleared once the workers finish.
+    private final IntList rebuiltParquetMetaPartitions = new IntList();
     private final int threadCount;
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     @TestOnly
@@ -413,6 +416,20 @@ public class TableSnapshotRestore implements QuietCloseable {
             AtomicInteger recoveredSymbolFiles,
             boolean rebuildPartitionColumnIndexes
     ) {
+        rebuildTableFiles(tablePath, recoveredSymbolFiles, rebuildPartitionColumnIndexes, false);
+    }
+
+    /**
+     * Like {@link #rebuildTableFiles(Path, AtomicInteger, boolean)}. {@code isRemoteCleared} clears
+     * REMOTE on every partition not remotely served, for a restore onto a cold storage root other than
+     * the one the copies were uploaded to.
+     */
+    public void rebuildTableFiles(
+            Path tablePath,
+            AtomicInteger recoveredSymbolFiles,
+            boolean rebuildPartitionColumnIndexes,
+            boolean isRemoteCleared
+    ) {
         pathTableLen = tablePath.size();
         try {
             if (tableMetadata == null) {
@@ -470,6 +487,22 @@ public class TableSnapshotRestore implements QuietCloseable {
             // caller loads the next table into the same objects.
             finalizeParallelTasks();
 
+            // A rebuilt _pm loses its seal stamp and its upload, so the partition falls back to released
+            // behaviour and uploads or dedups again.
+            for (int i = 0, n = rebuiltParquetMetaPartitions.size(); i < n; i++) {
+                txWriter.clearPartitionStampFlagsUnsafe(rebuiltParquetMetaPartitions.getQuick(i), true);
+            }
+            rebuiltParquetMetaPartitions.clear();
+            // A local copy's upload went to another root, so it uploads or dedups again against this one.
+            // A remotely served copy reads a base the restore named in this root.
+            if (isRemoteCleared) {
+                for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                    if (!txWriter.isPartitionRemotelyServed(i)) {
+                        txWriter.clearPartitionStampFlagsUnsafe(i, false);
+                    }
+                }
+            }
+
             if (tableMetadata.isWalEnabled() && txWriter.getLagRowCount() > 0) {
                 LOG.info().$("resetting WAL lag [table=").$(tablePath)
                         .$(", walLagRowCount=").$(txWriter.getLagRowCount())
@@ -497,6 +530,7 @@ public class TableSnapshotRestore implements QuietCloseable {
             throw th;
         } finally {
             futures.clear();
+            rebuiltParquetMetaPartitions.clear();
             tablePath.trimTo(pathTableLen);
         }
     }
@@ -827,6 +861,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                 final boolean doRebuild = rebuildIndexes && partitionRowCount > 0 && !txWriter.isPartitionDeltaActive(i);
                 try {
                     processParquetPartition(
+                            i,
                             path,
                             metaReader,
                             rowGroupBuffers,
@@ -843,7 +878,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                             parquetFileSize,
                             partitionBy,
                             timestampType,
-                            doRebuild
+                            doRebuild,
+                            txWriter.getPartitionHasDelta(i)
                     );
                 } finally {
                     // POSTING seal() retains Path thread-locals; clear per partition.
@@ -925,7 +961,7 @@ public class TableSnapshotRestore implements QuietCloseable {
      * the stale footer still resolves at the committed size. Takes per-task
      * {@code path}/{@code taskReader} as it runs on parallel executor threads.
      */
-    private long mapResolvableParquetMeta(Path path, int partitionDirLen, long parquetFileSize, long onDiskSize, ParquetMetaFileReader taskReader) {
+    private long mapResolvableParquetMeta(int partitionIndex, Path path, int partitionDirLen, long parquetFileSize, long onDiskSize, ParquetMetaFileReader taskReader) {
         path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
         final boolean exists = ff.exists(path.$());
         // Trust an existing _pm only when data.parquet is EXACTLY the committed
@@ -982,6 +1018,12 @@ public class TableSnapshotRestore implements QuietCloseable {
         }
 
         regenerateParquetMetaFile(path, partitionDirLen, parquetFileSize);
+        if (txWriter.isPartitionSealStamped(partitionIndex) || txWriter.isPartitionRemote(partitionIndex)) {
+            // The rebuilt _pm takes the data.parquet footer's stamp, not the one a seal wrote or an upload keyed.
+            synchronized (rebuiltParquetMetaPartitions) {
+                rebuiltParquetMetaPartitions.add(partitionIndex);
+            }
+        }
 
         path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
         long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), taskReader);
@@ -1172,8 +1214,11 @@ public class TableSnapshotRestore implements QuietCloseable {
      * shallow-copies its state, so the {@code _pm} footer is resolved and
      * CRC-verified once instead of three times. The caller owns {@code path}; the
      * rebuild-only buffers are non-null only when {@code rebuildIndexes} is set.
+     * With {@code hasDelta}, only {@code data.parquet} is validated: the Delta
+     * catalog owns {@code _pm}.
      */
     private void processParquetPartition(
+            int partitionIndex,
             Path path,
             ParquetMetaFileReader metaReader,
             RowGroupBuffers rowGroupBuffers,
@@ -1190,7 +1235,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             long parquetFileSize,
             int partitionBy,
             int timestampType,
-            boolean rebuildIndexes
+            boolean rebuildIndexes,
+            boolean hasDelta
     ) {
         // Reset the reused path to the table root.
         path.of(tablePathStr).trimTo(pathTableLen);
@@ -1198,6 +1244,13 @@ public class TableSnapshotRestore implements QuietCloseable {
         // Set path to partition dir
         TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         int partitionDirLen = path.size();
+
+        if (hasDelta) {
+            // The Delta catalog owns this partition's base. Its checkpoint restore has installed
+            // the selected _pm slot and checked the local data.parquet when that base reads it;
+            // a base the catalog replaced leaves no local data file to check.
+            return;
+        }
 
         // Validate data.parquet by size before touching _pm: regeneration reads
         // it at the committed size, so an undersized file must fail first. Runs
@@ -1218,13 +1271,12 @@ public class TableSnapshotRestore implements QuietCloseable {
                     .put(", onDisk=").put(onDiskSize)
                     .put(']');
         }
-
         long parquetMetaAddr = 0;
         long parquetMetaFileSize = 0;
         try {
             // Validate + (if needed) regenerate the sidecar, leaving it mapped and
             // its footer resolved. The only _pm map+CRC on this path.
-            parquetMetaAddr = mapResolvableParquetMeta(path, partitionDirLen, parquetFileSize, onDiskSize, metaReader);
+            parquetMetaAddr = mapResolvableParquetMeta(partitionIndex, path, partitionDirLen, parquetFileSize, onDiskSize, metaReader);
             parquetMetaFileSize = metaReader.getFileSize();
 
             if (!rebuildIndexes) {

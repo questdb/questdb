@@ -1481,39 +1481,55 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
     }
 
     @Test
-    public void testCannotDetachRemotelyServedPartition() throws Exception {
+    public void testCannotDetachReadOnlyPartition() throws Exception {
+        // Read-only is replicated, so DETACH refuses a sealed partition, served locally or remotely, at SQL time
+        // and in the writer.
         assertMemoryLeak(() -> {
-            String tableName = "tabDetachRemote";
+            String tableName = "tabDetachReadOnly";
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
             createPopulateTable(
                     tab.timestamp("ts", timestampType.getTimestampType())
                             .col("i", ColumnType.INT)
                             .col("l", ColumnType.LONG),
-                    10,
+                    15,
                     "2022-06-01",
-                    2
+                    3
             );
-            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-01'", sqlExecutionContext);
-
+            execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2022-06-02'", sqlExecutionContext);
             try (TableWriter writer = getWriter(tableName)) {
                 TxWriter tx = writer.getTxWriter();
-                Assert.assertTrue(tx.isPartitionParquet(0));
-                tx.setPartitionParquetGenerated(0, false);
-                tx.setPartitionRemote(0, true);
+                tx.setPartitionReadOnly(0, true);
+                Assert.assertTrue(tx.isPartitionParquet(1));
+                tx.setPartitionParquetGenerated(1, false);
+                tx.setPartitionRemote(1, true);
+                tx.setPartitionReadOnly(1, true);
                 writer.bumpPartitionTableVersion();
                 writer.commit();
-                Assert.assertTrue(tx.isPartitionRemotelyServed(0));
+                Assert.assertFalse(tx.isPartitionRemotelyServed(0));
+                Assert.assertTrue(tx.isPartitionRemotelyServed(1));
             }
 
-            assertFailure(
-                    "ALTER TABLE " + tableName + " DETACH PARTITION LIST '2022-06-01'",
-                    "could not detach partition [table=" + tableName + ", detachStatus=DETACH_ERR_REMOTE"
-            );
-
-            // The rejection left the partition attached and still remotely served.
+            final TableToken tableToken = engine.verifyTableName(tableName);
+            for (String partition : new String[]{"2022-06-01", "2022-06-02"}) {
+                assertFailure(
+                        "ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partition + "'",
+                        "cannot detach partition, partition is read-only [table=" + tableName + ", partition=" + partition + "]"
+                );
+                try (TableWriter writer = getWriter(tableName)) {
+                    Assert.assertEquals(DETACH_ERR_READ_ONLY, writer.detachPartition(timestampType.getDriver().parseFloorLiteral(partition)));
+                }
+                path.of(configuration.getDbRoot()).concat(tableToken).concat(partition).put(DETACHED_DIR_MARKER).$();
+                Assert.assertFalse(configuration.getFilesFacade().exists(path.$()));
+            }
             try (TableWriter writer = getWriter(tableName)) {
-                Assert.assertTrue(writer.getTxWriter().isPartitionRemotelyServed(0));
+                Assert.assertTrue(writer.getTxWriter().isPartitionReadOnly(0));
+                Assert.assertTrue(writer.getTxWriter().isPartitionRemotelyServed(1));
             }
+            assertQuery("SELECT count() FROM " + tableName + " WHERE ts < '2022-06-03'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n10\n");
         });
     }
 

@@ -246,6 +246,11 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                                     throw CairoException.nonCritical()
                                             .put("cannot reindex parquet partition [partition=").put(partitionName).put(']');
                                 }
+                                if (txReader.getPartitionHasDelta(partitionIndex)) {
+                                    // The Delta catalog owns the base's indexes, and an evicted base has no .d.
+                                    throw CairoException.nonCritical()
+                                            .put("cannot reindex Delta partition [partition=").put(partitionName).put(']');
+                                }
                                 reindexPartition(
                                         ff,
                                         metadata,
@@ -260,10 +265,11 @@ public abstract class RebuildColumnBase implements Closeable, Mutable {
                             }
                         } else {
                             for (int partitionIndex = txReader.getPartitionCount() - 1; partitionIndex > -1; partitionIndex--) {
-                                if (txReader.isPartitionParquet(partitionIndex)) {
-                                    // No local .d to rebuild from; skip so the existing index survives and
-                                    // the native partitions still get reindexed.
-                                    LOG.info().$("skipping parquet partition during reindex, index left intact [path=").$(path)
+                                if (txReader.isPartitionParquet(partitionIndex) || txReader.getPartitionHasDelta(partitionIndex)) {
+                                    // No local .d to rebuild from, or a Delta catalog owns the base's
+                                    // indexes; skip so the existing index survives and the native
+                                    // partitions still get reindexed.
+                                    LOG.info().$("skipping parquet or Delta partition during reindex, index left intact [path=").$(path)
                                             .$(", ts=").$ts(ColumnType.getTimestampDriver(metadata.getTimestampType()), txReader.getPartitionTimestampByIndex(partitionIndex))
                                             .I$();
                                     continue;

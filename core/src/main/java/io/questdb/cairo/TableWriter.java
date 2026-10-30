@@ -45,6 +45,7 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.PartitionFrameSource;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableMetadata;
@@ -305,6 +306,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final StringSink debugInvariantSink = new StringSink();
     private final LongAdder dedupRowsRemovedSinceLastCommit = new LongAdder();
     private final ObjList<PostingSealPurgeTask> deferredPostingSealPurges = new ObjList<>();
+    private final PartitionFrameSource deltaBaseSource = new PartitionFrameSource();
     private final ObjList<ColumnIndexer> denseIndexers = new ObjList<>();
     private final ObjList<MapWriter> denseSymbolMapWriters;
     private final int detachedMkDirMode;
@@ -1559,6 +1561,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         parquetFileSize = ff.length(path.$());
                     }
                     path.trimTo(partitionPathLen);
+                    // The footer stamp came from the table the partition was detached from. Stamp this
+                    // table's seqTxn instead, as a native ATTACH stamps _txn below. A soft link to a
+                    // read-only volume keeps the footer's stamp: it attaches as before, and a later seal
+                    // of it only freezes it.
+                    if (parquetFileSize > -1 && tableToken.isWal()
+                            && !attachPartitionStampParquetSeqTxn(partitionPathLen, parquetFileSize, txWriter.getSeqTxn())) {
+                        if (!isSoftLink) {
+                            return AttachDetachStatus.ATTACH_ERR_CREATE_PM_FILE;
+                        }
+                        LOG.info().$("keeping the footer stamp of a soft-linked parquet partition [path=").$(path).I$();
+                    }
                     attachPartitionUpdateSymbolNullFlags(timestamp, partitionSize, parquetFileSize, isSymbolNullKnown);
                     checkPassed = true;
                 } finally {
@@ -2235,6 +2248,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw TableReferenceOutOfDateException.ofOutdatedView(tableToken, expectedParquetFileSize, liveParquetFileSize);
         }
 
+        if (txWriter.isPartitionSealStamped(partitionIndex)) {
+            // A seal can apply between the build and this swap. The copy holds its source's rows, so it
+            // takes the sealed source's stamp rather than the one the build read.
+            try {
+                stampCompactedParquetSeqTxn(partitionTimestamp, expectedSrcNameTxn, expectedParquetFileSize, newParquetFileSize);
+            } catch (Throwable th) {
+                other.trimTo(pathSize);
+                path.trimTo(pathSize);
+                throw th;
+            }
+        }
+
         final long partitionRowCount = txWriter.getPartitionSize(partitionIndex);
         final long newNameTxn = txWriter.getTxn();
         path.trimTo(pathSize);
@@ -2675,18 +2700,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return AttachDetachStatus.DETACH_ERR_MISSING_PARTITION;
         }
 
-        // A remotely served partition has no local data file; detaching it yields an unreadable stub.
-        if (txWriter.isPartitionRemotelyServed(partitionIndex)) {
-            LOG.error().$("cannot detach remotely served partition [table=").$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, timestamp).I$();
-            return AttachDetachStatus.DETACH_ERR_REMOTE;
-        }
-
         // The partition's Delta catalog changes in place, so a detached copy cannot carry it.
         if (txWriter.isPartitionDeltaActive(partitionIndex)) {
             LOG.error().$("cannot detach delta-active partition [table=").$(tableToken)
                     .$(", partition=").$ts(timestampDriver, timestamp).I$();
             return AttachDetachStatus.DETACH_ERR_DELTA;
+        }
+
+        // Read-only is replicated, so every instance refuses a read-only partition alike, whatever its copy is: a
+        // local directory, a soft link, a restored plain directory or a cold one. DROP PARTITION removes a soft link
+        // and keeps its target.
+        if (txWriter.isPartitionReadOnly(partitionIndex)) {
+            LOG.error().$("cannot detach read-only partition [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, timestamp).I$();
+            return AttachDetachStatus.DETACH_ERR_READ_ONLY;
         }
 
         // Detach hard-links the directory into <ts>.detached with its pieces intact, while attach reads
@@ -2717,67 +2744,70 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 return AttachDetachStatus.DETACH_ERR_MISSING_PARTITION_DIR;
             }
 
-            final int detachedPathLen;
             AttachDetachStatus attachDetachStatus;
-            if (ff.isSoftLink(path.$())) {
-                detachedPathLen = 0;
-                attachDetachStatus = AttachDetachStatus.OK;
-                LOG.info().$("detaching partition via unlink [path=").$substr(pathRootSize, path).I$();
-            } else {
-                detachedPath.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                int detachedRootLen = detachedPath.size();
-                // detachedPath: detached partition folder
-                if (!ff.exists(detachedPath.slash$())) {
-                    // the detached and standard folders can have different roots
-                    // (server.conf: cairo.sql.detached.root)
-                    if (0 != ff.mkdirs(detachedPath, detachedMkDirMode)) {
-                        LOG.error().$("could no create detached partition folder [errno=").$(ff.errno())
-                                .$(", path=").$(detachedPath)
-                                .I$();
-                        return AttachDetachStatus.DETACH_ERR_MKDIR;
-                    }
+            detachedPath.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+            int detachedRootLen = detachedPath.size();
+            // detachedPath: detached partition folder
+            if (!ff.exists(detachedPath.slash$())) {
+                // the detached and standard folders can have different roots
+                // (server.conf: cairo.sql.detached.root)
+                if (0 != ff.mkdirs(detachedPath, detachedMkDirMode)) {
+                    LOG.error().$("could no create detached partition folder [errno=").$(ff.errno())
+                            .$(", path=").$(detachedPath)
+                            .I$();
+                    return AttachDetachStatus.DETACH_ERR_MKDIR;
                 }
-                setPathForNativePartition(detachedPath.trimTo(detachedRootLen), timestampType, partitionBy, timestamp, -1L);
-                detachedPath.put(DETACHED_DIR_MARKER);
-                if (ff.exists(detachedPath.$())) {
-                    LOG.error().$("detached partition folder already exist [path=").$(detachedPath).I$();
-                    return AttachDetachStatus.DETACH_ERR_ALREADY_DETACHED;
-                }
-                // The partition takes its .detached name only once this commit is final; until then a temporary name
-                // that carries the commit's txn, which writer open removes when the commit did not survive.
-                setPathForNativePartition(detachedPath.trimTo(detachedRootLen), timestampType, partitionBy, timestamp, -1L);
-                detachedPath.put('.').put(detachTxn).put(DETACHING_DIR_MARKER);
-                detachedPathLen = detachedPath.size();
-                if (ff.exists(detachedPath.$())) {
-                    ff.rmdir(detachedPath);
-                }
+            }
+            setPathForNativePartition(detachedPath.trimTo(detachedRootLen), timestampType, partitionBy, timestamp, -1L);
+            detachedPath.put(DETACHED_DIR_MARKER);
+            if (ff.exists(detachedPath.$())) {
+                LOG.error().$("detached partition folder already exist [path=").$(detachedPath).I$();
+                return AttachDetachStatus.DETACH_ERR_ALREADY_DETACHED;
+            }
+            // The partition takes its .detached name only once this commit is final; until then a temporary name
+            // that carries the commit's txn, which writer open removes when the commit did not survive.
+            setPathForNativePartition(detachedPath.trimTo(detachedRootLen), timestampType, partitionBy, timestamp, -1L);
+            detachedPath.put('.').put(detachTxn).put(DETACHING_DIR_MARKER);
+            final int detachedPathLen = detachedPath.size();
+            if (ff.exists(detachedPath.$())) {
+                ff.rmdir(detachedPath);
+            }
 
-                // Hard link partition folder recursive to partition.detached
-                undoDetachedPathLen = detachedPathLen;
-                if (ff.hardLinkDirRecursive(path, detachedPath, detachedMkDirMode) != 0) {
-                    if (ff.isCrossDeviceCopyError(ff.errno())) {
-                        // Cross drive operation. Make full copy to another device.
-                        if (ff.copyRecursive(path, detachedPath, detachedMkDirMode) != 0) {
-                            LOG.critical().$("could not copy detached partition [errno=").$(ff.errno())
-                                    .$(", from=").$(path)
-                                    .$(", to=").$(detachedPath)
-                                    .I$();
-                            return AttachDetachStatus.DETACH_ERR_COPY;
-                        }
-                    } else {
-                        LOG.critical().$("could not create hard link to detached partition [errno=").$(ff.errno())
+            // Hard link partition folder recursive to partition.detached
+            undoDetachedPathLen = detachedPathLen;
+            if (ff.hardLinkDirRecursive(path, detachedPath, detachedMkDirMode) != 0) {
+                if (ff.isCrossDeviceCopyError(ff.errno())) {
+                    // Cross drive operation. Make full copy to another device.
+                    if (ff.copyRecursive(path, detachedPath, detachedMkDirMode) != 0) {
+                        LOG.critical().$("could not copy detached partition [errno=").$(ff.errno())
                                 .$(", from=").$(path)
                                 .$(", to=").$(detachedPath)
                                 .I$();
-                        return AttachDetachStatus.DETACH_ERR_HARD_LINK;
+                        return AttachDetachStatus.DETACH_ERR_COPY;
                     }
+                } else {
+                    LOG.critical().$("could not create hard link to detached partition [errno=").$(ff.errno())
+                            .$(", from=").$(path)
+                            .$(", to=").$(detachedPath)
+                            .I$();
+                    return AttachDetachStatus.DETACH_ERR_HARD_LINK;
                 }
+            }
 
-                // copy _meta, _cv and _txn to partition.detached _meta, _cv and _txn
-                other.of(path).trimTo(pathSize).concat(META_FILE_NAME).$(); // exists already checked
-                detachedPath.trimTo(detachedPathLen).concat(META_FILE_NAME).$();
+            // copy _meta, _cv and _txn to partition.detached _meta, _cv and _txn
+            other.of(path).trimTo(pathSize).concat(META_FILE_NAME).$(); // exists already checked
+            detachedPath.trimTo(detachedPathLen).concat(META_FILE_NAME).$();
 
-                attachDetachStatus = AttachDetachStatus.OK;
+            attachDetachStatus = AttachDetachStatus.OK;
+            if (-1 == copyOverwrite(detachedPath)) {
+                attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY_META;
+                LOG.critical().$("could not copy [errno=").$(ff.errno())
+                        .$(", from=").$(other)
+                        .$(", to=").$(detachedPath)
+                        .I$();
+            } else {
+                other.parent().concat(COLUMN_VERSION_FILE_NAME).$();
+                detachedPath.parent().concat(COLUMN_VERSION_FILE_NAME).$();
                 if (-1 == copyOverwrite(detachedPath)) {
                     attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY_META;
                     LOG.critical().$("could not copy [errno=").$(ff.errno())
@@ -2785,41 +2815,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .$(", to=").$(detachedPath)
                             .I$();
                 } else {
-                    other.parent().concat(COLUMN_VERSION_FILE_NAME).$();
-                    detachedPath.parent().concat(COLUMN_VERSION_FILE_NAME).$();
+                    other.parent().concat(TXN_FILE_NAME).$();
+                    detachedPath.parent().concat(TXN_FILE_NAME).$();
                     if (-1 == copyOverwrite(detachedPath)) {
                         attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY_META;
                         LOG.critical().$("could not copy [errno=").$(ff.errno())
                                 .$(", from=").$(other)
                                 .$(", to=").$(detachedPath)
                                 .I$();
-                    } else {
-                        other.parent().concat(TXN_FILE_NAME).$();
-                        detachedPath.parent().concat(TXN_FILE_NAME).$();
-                        if (-1 == copyOverwrite(detachedPath)) {
-                            attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY_META;
-                            LOG.critical().$("could not copy [errno=").$(ff.errno())
-                                    .$(", from=").$(other)
-                                    .$(", to=").$(detachedPath)
-                                    .I$();
-                        } else if (CommitMode.isPowerLossDurable(getFlushCommitMode())) {
-                            // Make the copied files and both directory-entry sets durable before _txn names them.
-                            try {
-                                DurableEpochManifest.fsyncDirectoryFiles(
-                                        configuration,
-                                        detachedPath.trimTo(detachedPathLen),
-                                        detachedPathLen,
-                                        false
-                                );
-                                TableUtils.fsyncDirDurable(ff, other.trimTo(pathSize).$());
-                            } catch (CairoException e) {
-                                attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY;
-                                LOG.critical().$("could not sync detached partition [path=").$(detachedPath)
-                                        .$(", e=").$((Throwable) e).I$();
-                                if (engine.isDataSyncFailureFatal(e)) {
-                                    distressed = true;
-                                    engine.handleDataSyncFailure(e);
-                                }
+                    } else if (CommitMode.isPowerLossDurable(getFlushCommitMode())) {
+                        // Make the copied files and both directory-entry sets durable before _txn names them.
+                        try {
+                            DurableEpochManifest.fsyncDirectoryFiles(
+                                    configuration,
+                                    detachedPath.trimTo(detachedPathLen),
+                                    detachedPathLen,
+                                    false
+                            );
+                            TableUtils.fsyncDirDurable(ff, other.trimTo(pathSize).$());
+                        } catch (CairoException e) {
+                            attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY;
+                            LOG.critical().$("could not sync detached partition [path=").$(detachedPath)
+                                    .$(", e=").$((Throwable) e).I$();
+                            if (engine.isDataSyncFailureFatal(e)) {
+                                distressed = true;
+                                engine.handleDataSyncFailure(e);
                             }
                         }
                     }
@@ -2856,14 +2876,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
                     metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
                 }
-                if (detachedPathLen > 0) {
-                    if (defersPartitionMoves()) {
-                        detachesAfterSavePoint.add(timestamp, detachTxn);
-                    } else if (!finishDetach(timestamp, detachTxn)) {
-                        namingErrno = ff.errno();
-                        isNamingFailed = true;
-                        detachesAfterSavePoint.add(timestamp, detachTxn);
-                    }
+                if (defersPartitionMoves()) {
+                    detachesAfterSavePoint.add(timestamp, detachTxn);
+                } else if (!finishDetach(timestamp, detachTxn)) {
+                    namingErrno = ff.errno();
+                    isNamingFailed = true;
+                    detachesAfterSavePoint.add(timestamp, detachTxn);
                 }
                 // return at the end of the method after removing partition directory
             } else {
@@ -3138,7 +3156,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long txn = txWriter.getPartitionNameTxn(partitionIndex);
                         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, activePartitionTs, txn);
                         try {
-                            readPartitionMinMaxTimestamps(activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), isParquet, parquetFileSize, activePartitionRows);
+                            if (!readDeltaParquetBaseMinMaxTimestamps(partitionIndex)) {
+                                readPartitionMinMaxTimestamps(activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), isParquet, parquetFileSize, activePartitionRows);
+                            }
                             includeDeltaTimestampBounds(partitionIndex);
                             maxTimestamp = attachMaxTimestamp;
                         } finally {
@@ -3605,6 +3625,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit(metadata.getO3MaxLag(), effectiveCommitMode);
     }
 
+    /**
+     * Gives a delta-active partition without a Delta catalog an empty one, keeping the WAL seqTxn.
+     * Returns false when the partition is gone, not delta-active, or already has a catalog. On an adaptive
+     * table it returns once every save point covers the commit, and throws when one cannot be taken.
+     */
+    public boolean initDeltaPartition(long partitionTimestamp) {
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (partitionIndex < 0 || !isPartitionDeltaActive(partitionIndex) || txWriter.getPartitionHasDelta(partitionIndex)) {
+            return false;
+        }
+        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+        if (deltaWriter == null) {
+            return false;
+        }
+        deltaWriter.initialize(this, partitionIndex);
+        txWriter.setPartitionHasDelta(partitionIndex, true);
+        txWriter.bumpPartitionTableVersion();
+        commitTxWriter();
+        // The commit moves no seqTxn, so no replay redoes it, and a save point before it reads the native base,
+        // which an eviction deletes once the catalog serves the partition. Both save points must cover it first.
+        completeDurableEpochAfter("Delta catalog initialization");
+        return true;
+    }
+
     public boolean inTransaction() {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || (columnVersionWriter != null && columnVersionWriter.hasChanges()));
     }
@@ -3643,6 +3687,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean isOpen() {
         return tempMem16b != 0;
+    }
+
+    /**
+     * Whether the partition's rows are in its native column files: a native partition whose Delta
+     * catalog, if any, still reads its native base. An evicted Delta partition reads a remote base,
+     * and its native column files may be gone.
+     */
+    public boolean isPartitionBaseNative(int partitionIndex) {
+        if (txWriter.isPartitionParquet(partitionIndex)) {
+            return false;
+        }
+        if (!txWriter.getPartitionHasDelta(partitionIndex)) {
+            return true;
+        }
+        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+        if (deltaWriter == null) {
+            return true;
+        }
+        deltaWriter.readBaseSource(this, partitionIndex, deltaBaseSource);
+        return deltaBaseSource.getKind() == PartitionFrameSource.NATIVE;
     }
 
     public boolean isPartitionDeltaActive(int partitionIndex) {
@@ -3895,6 +3959,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Already fully switched to parquet format - nothing to do.
             return true;
         }
+        if (txWriter.isPartitionDeltaActive(partitionIndex)) {
+            // The Delta base is frozen. A conversion staged before a replicated Delta switch lands here.
+            return false;
+        }
         if (txWriter.isPartitionComposite(partitionIndex)) {
             // The generated bit masks the composite bit (isPartitionCompositeByRawIndex reads false once it is
             // set) while the geometry pointer stays in offset 3, so marking a composite partition ready would
@@ -3914,6 +3982,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             if (txWriter.isPartitionParquetGenerated(partitionIndex)) {
                 return true;
+            }
+            if (txWriter.isPartitionSealStamped(partitionIndex)) {
+                // A seal can apply between the conversion and this commit. The staged copy holds the
+                // sealed rows, so it takes the seal's stamp rather than the one the conversion read.
+                stampStagedParquetSeqTxn(partitionTimestamp, partitionNameTxn, nativePartitionSeqTxn(partitionIndex));
             }
             if (nativePartitionSeqTxn(partitionIndex) <= 0 && tableToken.isWal()) {
                 txWriter.setPartitionSeqTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, txWriter.getSeqTxn());
@@ -6756,6 +6829,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // A copied or hard-linked destination is this attempt's own directory: it did not exist before it, and
             // the source is untouched. unlinkOrRemove never removes through a link.
             LOG.error().$("could not remove partition dir copy [errno=").$(ff.errno()).$(", path=").$(path).I$();
+        }
+    }
+
+    private boolean attachPartitionStampParquetSeqTxn(int partitionPathLen, long parquetFileSize, long seqTxn) {
+        path.trimTo(partitionPathLen).concat(PARQUET_METADATA_FILE_NAME);
+        final long parquetMetaFd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+        if (parquetMetaFd < 0) {
+            LOG.error().$("could not open parquet metadata file to stamp it [path=").$(path).$(", errno=").$(ff.errno()).I$();
+            path.trimTo(partitionPathLen);
+            return false;
+        }
+        try {
+            ParquetMetadataWriter.setBaseSeqTxn(Files.toOsFd(parquetMetaFd), parquetFileSize, seqTxn);
+            return true;
+        } catch (CairoException e) {
+            LOG.error().$("could not stamp parquet metadata file [path=").$(path).$(", msg=").$safe(e.getFlyweightMessage()).I$();
+            return false;
+        } finally {
+            ff.close(parquetMetaFd);
+            path.trimTo(partitionPathLen);
         }
     }
 
@@ -9887,7 +9980,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final long parquetFileSize = prevIsParquet ? txWriter.getPartitionParquetFileSize(prevIndex) : -1L;
                     try {
                         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
-                        readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), prevIsParquet, parquetFileSize, newTransientRowCount);
+                        if (!readDeltaParquetBaseMinMaxTimestamps(prevIndex)) {
+                            readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), prevIsParquet, parquetFileSize, newTransientRowCount);
+                        }
                         includeDeltaTimestampBounds(prevIndex);
                         nextMaxTimestamp = attachMaxTimestamp;
                     } finally {
@@ -13024,7 +13119,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long partitionSize = txWriter.getPartitionSize(0);
                         setPathForNativePartition(path, timestampType, partitionBy, firstPartitionTimestamp, txWriter.getPartitionNameTxn(0));
                         CharSequence tsColumnName = metadata.getColumnName(metadata.getTimestampIndex());
-                        if (!readCompositePartitionBoundaryTimestamp(0, path, tsColumnName, false)) {
+                        if (!readCompositePartitionBoundaryTimestamp(0, path, tsColumnName, false)
+                                && !readDeltaParquetBaseMinMaxTimestamps(0)) {
                             readPartitionMinMaxTimestamps(firstPartitionTimestamp, path, tsColumnName, txWriter.isPartitionParquet(0), -1, partitionSize);
                         }
                         includeDeltaTimestampBounds(0);
@@ -13037,7 +13133,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         long partitionSize = txWriter.getPartitionSize(lastPartitionIndex);
                         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, lastPartitionTimestamp, txWriter.getPartitionNameTxn(lastPartitionIndex));
                         CharSequence tsColumnName = metadata.getColumnName(metadata.getTimestampIndex());
-                        if (!readCompositePartitionBoundaryTimestamp(lastPartitionIndex, path, tsColumnName, true)) {
+                        if (!readCompositePartitionBoundaryTimestamp(lastPartitionIndex, path, tsColumnName, true)
+                                && !readDeltaParquetBaseMinMaxTimestamps(lastPartitionIndex)) {
                             readPartitionMinMaxTimestamps(lastPartitionTimestamp, path, tsColumnName, txWriter.isPartitionParquet(lastPartitionIndex), -1, partitionSize);
                         }
                         includeDeltaTimestampBounds(lastPartitionIndex);
@@ -13463,7 +13560,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         final long parquetFileSize = prevIsParquet ? txWriter.getPartitionParquetFileSize(prevIndex) : -1L;
                         try {
                             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
-                            readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), prevIsParquet, parquetFileSize, prevSize);
+                            if (!readDeltaParquetBaseMinMaxTimestamps(prevIndex)) {
+                                readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), prevIsParquet, parquetFileSize, prevSize);
+                            }
                             includeDeltaTimestampBounds(prevIndex);
                             o3MoveUncommittedMaxTimestamp = attachMaxTimestamp;
                         } finally {
@@ -14594,19 +14693,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // in a frame no commit can reuse: they would keep its disk space, and on Windows block its removal.
                     compositeFrameCache.evict(timestamp, txn);
                 }
+                setPathForNativePartition(other, timestampType, partitionBy, timestamp, txn);
+                other.$();
+                if (deltaWriter != null) {
+                    deltaWriter.cancel(other);
+                }
                 // txn >= lastCommittedTxn means there are some versions found in the table directory
                 // that are not attached to the table most likely as a result of a rollback.
                 // Rollback orphans (txn >= lastCommittedTxn) are not in any txn snapshot,
                 // so no checkpoint or reader can reference them - safe to remove immediately.
                 if ((!anyReadersBeforeCommittedTxn && !checkpointInProgress) || txn >= lastCommittedTxn) {
-                    setPathForNativePartition(
-                            other,
-                            timestampType,
-                            partitionBy,
-                            timestamp,
-                            txn
-                    );
-                    other.$();
                     engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, timestampType, timestamp, txn, 0);
                     if (deltaWriter != null && !deltaWriter.purge(other)) {
                         // Delta files of this version remain; the async purge retries both.
@@ -16746,6 +16842,64 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Reads the timestamp bounds of a Delta partition's Parquet base into attachMinTimestamp and
+     * attachMaxTimestamp, from the metadata slot the catalog selects at its committed length. Returns
+     * false without a catalog or for a native base, which the caller reads as before.
+     */
+    private boolean readDeltaParquetBaseMinMaxTimestamps(int partitionIndex) {
+        if (!txWriter.getPartitionHasDelta(partitionIndex)) {
+            return false;
+        }
+        final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
+        if (deltaWriter == null) {
+            return false;
+        }
+        deltaWriter.readBaseSource(this, partitionIndex, deltaBaseSource);
+        final int kind = deltaBaseSource.getKind();
+        if (kind != PartitionFrameSource.PARQUET && kind != PartitionFrameSource.REMOTE_PARQUET) {
+            return false;
+        }
+        // The catalog's base can sit in either slot and outgrow the _txn Parquet size.
+        final long committedBytes = deltaBaseSource.getMetadataCommittedBytes();
+        final Path metaPath = Path.getThreadLocal2(path).trimTo(pathSize);
+        setPathForNativePartition(metaPath, timestampType, partitionBy, txWriter.getPartitionTimestampByIndex(partitionIndex), deltaBaseSource.getPartitionNameTxn());
+        metaPath.concat(deltaBaseSource.getMetadataSlot() == 0 ? PARQUET_METADATA_FILE_NAME : PARQUET_METADATA_B_FILE_NAME);
+        final long fd = openRO(ff, metaPath.$(), LOG);
+        final long addr;
+        try {
+            final long available = ff.length(fd);
+            if (committedBytes <= 0 || available < committedBytes) {
+                throw CairoException.critical(0)
+                        .put("Parquet metadata is shorter than catalog prefix [path=").put(metaPath)
+                        .put(", required=").put(committedBytes)
+                        .put(", available=").put(available).put(']');
+            }
+            addr = mapRO(ff, fd, committedBytes, MemoryTag.MMAP_PARQUET_METADATA_READER);
+        } finally {
+            ff.close(fd);
+        }
+        // The committed prefix ends with the base's own footer.
+        try {
+            parquetMetaReader.of(addr, committedBytes);
+            parquetMetaReader.resolveLastFooter(false);
+            final int rowGroupCount = parquetMetaReader.getRowGroupCount();
+            final int timestampIndex = parquetMetaReader.getDesignatedTimestampColumnIndex();
+            if (rowGroupCount == 0) {
+                attachMinTimestamp = Long.MAX_VALUE;
+                attachMaxTimestamp = Long.MIN_VALUE;
+            } else {
+                assert timestampIndex > -1;
+                attachMinTimestamp = parquetMetaReader.getRowGroupMinTimestamp(0, timestampIndex);
+                attachMaxTimestamp = parquetMetaReader.getRowGroupMaxTimestamp(rowGroupCount - 1, timestampIndex);
+            }
+        } finally {
+            parquetMetaReader.clear();
+            ff.munmap(addr, committedBytes, MemoryTag.MMAP_PARQUET_METADATA_READER);
+        }
+        return true;
+    }
+
     private void readDeltaTimestampBounds(int partitionIndex) {
         final PartitionDeltaWriter deltaWriter = getPartitionDeltaWriter();
         if (deltaWriter == null) {
@@ -16788,9 +16942,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean isParquet = txWriter.isPartitionParquet(partitionIndex);
         try {
             setStateForTimestamp(other, timestamp);
-            final long minTimestamp = isParquet
-                    ? readMinTimestampParquet(other, partitionIndex)
-                    : readMinTimestampNative(other, timestamp);
+            final long minTimestamp;
+            if (readDeltaParquetBaseMinMaxTimestamps(partitionIndex)) {
+                minTimestamp = attachMinTimestamp;
+            } else {
+                minTimestamp = isParquet
+                        ? readMinTimestampParquet(other, partitionIndex)
+                        : readMinTimestampNative(other, timestamp);
+            }
             if (txWriter.getPartitionHasDelta(partitionIndex)) {
                 readDeltaTimestampBounds(partitionIndex);
                 return Math.min(minTimestamp, Unsafe.getLong(tempMem16b));
@@ -19928,6 +20087,79 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             }
             ff.close(squashCounterFileFd);
+        } finally {
+            other.trimTo(pathSize);
+        }
+    }
+
+    /**
+     * Stamps the staged compaction's {@code _pm}, at {@link #other}, with the seqTxn the source's {@code _pm}
+     * resolves to: a seal applied since the build stamped the source, not the copy the build read.
+     */
+    private void stampCompactedParquetSeqTxn(
+            long partitionTimestamp,
+            long srcNameTxn,
+            long srcParquetFileSize,
+            long newParquetFileSize
+    ) {
+        // 1. Read the source's stamp.
+        path.trimTo(pathSize);
+        setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+        final int srcDirLen = path.size();
+        final long seqTxn;
+        openParquetMetadataOrThrow(path, srcDirLen, srcParquetFileSize);
+        try {
+            seqTxn = parquetMetaReader.getResolvedSeqTxn();
+        } finally {
+            final long parquetMetaAddr = parquetMetaReader.getAddr();
+            final long parquetMetaSize = parquetMetaReader.getFileSize();
+            parquetMetaReader.clear();
+            ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            path.trimTo(pathSize);
+        }
+        if (seqTxn < 1) {
+            return;
+        }
+
+        // 2. Write it to the staged copy.
+        final int stagedDirLen = other.size();
+        other.concat(PARQUET_METADATA_FILE_NAME);
+        final long parquetMetaFd = ff.openRW(other.$(), CairoConfiguration.O_NONE);
+        try {
+            if (parquetMetaFd < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not open staged parquet compaction metadata [path=").put(other).put(']');
+            }
+            ParquetMetadataWriter.setBaseSeqTxn(Files.toOsFd(parquetMetaFd), newParquetFileSize, seqTxn);
+        } finally {
+            if (parquetMetaFd > -1) {
+                ff.close(parquetMetaFd);
+            }
+            other.trimTo(stagedDirLen);
+        }
+    }
+
+    /**
+     * Stamps the {@code _pm} staged beside a native partition's columns with {@code seqTxn}, the stamp a
+     * seal applied since the conversion gave the partition.
+     */
+    private void stampStagedParquetSeqTxn(long partitionTimestamp, long partitionNameTxn, long seqTxn) {
+        other.trimTo(pathSize);
+        setPathForNativePartition(other, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        final int partitionDirLen = other.size();
+        try {
+            final long parquetFileSize = ff.length(other.concat(PARQUET_PARTITION_NAME).$());
+            other.trimTo(partitionDirLen).concat(PARQUET_METADATA_FILE_NAME);
+            final long parquetMetaFd = ff.openRW(other.$(), CairoConfiguration.O_NONE);
+            if (parquetMetaFd < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not open staged parquet metadata [path=").put(other).put(']');
+            }
+            try {
+                ParquetMetadataWriter.setBaseSeqTxn(Files.toOsFd(parquetMetaFd), parquetFileSize, seqTxn);
+            } finally {
+                ff.close(parquetMetaFd);
+            }
         } finally {
             other.trimTo(pathSize);
         }

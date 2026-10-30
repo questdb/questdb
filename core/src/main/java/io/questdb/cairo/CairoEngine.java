@@ -3447,8 +3447,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     /**
      * Runs before a dropped WAL table's files are deleted, while its readers and writer are locked out.
+     * Returns false when background work must drain before a later purge attempt.
      */
-    public void notifyDroppedTablePurge(TableToken tableToken) {
+    public boolean notifyDroppedTablePurge(TableToken tableToken) {
+        return true;
     }
 
     public void notifyLiveViewBaseTableCommit(TableToken baseTableToken, long seqTxn) {

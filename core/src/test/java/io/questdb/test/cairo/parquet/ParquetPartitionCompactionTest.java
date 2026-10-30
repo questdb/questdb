@@ -25,15 +25,21 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.ParquetMetaFileReader;
+import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -604,6 +610,66 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
             assertQuery("SELECT a FROM v WHERE ts = '2020-01-01T04:30:00.000000Z'")
                     .noLeakCheck()
                     .returns("a\n104\n");
+        });
+    }
+
+    /**
+     * A seal can stamp the source between the build and the swap: it leaves the nameTxn, the parquet file
+     * size and the metadata version alone, so the swap goes ahead. The copy holds the source's rows, so it
+     * carries the seal's stamp and keeps the bit, rather than the stamp the build read.
+     */
+    @Test
+    public void testSwapCarriesASealStampAppliedSinceTheBuild() throws Exception {
+        setUpSmallRowGroupsNoAutoRewrite();
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+        assertMemoryLeak(() -> {
+            createTableWithDeadRowGroupBytes("ss", true);
+            final TableToken tableToken = engine.verifyTableName("ss");
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            final long sealSeqTxn = 1;
+            Assert.assertNotEquals("fixture: the seal must change the stamp", sealSeqTxn, parquetPartitionSeqTxn(tableToken));
+
+            try (TableWriter ownerWriter = engine.getWriter(tableToken, "owner")) {
+                runSweepOnAnotherThread();
+                Assert.assertTrue("the build should have staged a compacted copy", dirExists(stagingDir(tableToken)));
+
+                // What a seal applies: the source's _pm takes the seal's stamp, and the bit marks it.
+                final TxWriter tx = ownerWriter.getTxWriter();
+                final int partitionIndex = tx.getPartitionIndex(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+                final FilesFacade ff = configuration.getFilesFacade();
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+                    TableUtils.setPathForParquetPartitionMetadata(
+                            path,
+                            ownerWriter.getMetadata().getTimestampType(),
+                            PartitionBy.DAY,
+                            tx.getPartitionTimestampByIndex(partitionIndex),
+                            tx.getPartitionNameTxn(partitionIndex)
+                    );
+                    final long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+                    Assert.assertTrue(fd > -1);
+                    try {
+                        ParquetMetadataWriter.setBaseSeqTxn(Files.toOsFd(fd), tx.getPartitionParquetFileSize(partitionIndex), sealSeqTxn);
+                    } finally {
+                        ff.close(fd);
+                    }
+                }
+                tx.setPartitionSealStamped(partitionIndex, true);
+                ownerWriter.bumpPartitionTableVersion();
+                ownerWriter.commit();
+
+                ownerWriter.tick();
+            }
+
+            Assert.assertNotEquals("the queued swap did not land", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            Assert.assertEquals("the copy must carry the seal's stamp", sealSeqTxn, parquetPartitionSeqTxn(tableToken));
+            try (TableReader reader = engine.getReader(tableToken)) {
+                Assert.assertTrue("the swap keeps the seal bit", reader.getTxFile().isPartitionSealStamped(findParquetPartitionIndex(reader)));
+            }
+            assertUnusedBytesZero(tableToken);
+            assertDataIntact("ss");
         });
     }
 
@@ -1236,6 +1302,33 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
             final int parquetIdx = findParquetPartitionIndex(reader);
             Assert.assertTrue("expected a parquet partition", parquetIdx >= 0);
             return reader.getTxFile().getPartitionNameTxn(parquetIdx);
+        }
+    }
+
+    private long parquetPartitionSeqTxn(TableToken tableToken) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+        try (TableReader reader = engine.getReader(tableToken); Path path = new Path()) {
+            final int parquetIdx = findParquetPartitionIndex(reader);
+            Assert.assertTrue("expected a parquet partition", parquetIdx >= 0);
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+            TableUtils.setPathForParquetPartitionMetadata(
+                    path,
+                    reader.getMetadata().getTimestampType(),
+                    reader.getPartitionedBy(),
+                    reader.getTxFile().getPartitionTimestampByIndex(parquetIdx),
+                    reader.getTxFile().getPartitionNameTxn(parquetIdx)
+            );
+            final long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+            Assert.assertTrue("the _pm must open", addr != 0);
+            final long size = parquetMetaReader.getFileSize();
+            try {
+                Assert.assertTrue(parquetMetaReader.resolveFooter(reader.getTxFile().getPartitionParquetFileSize(parquetIdx)));
+                return parquetMetaReader.getResolvedSeqTxn();
+            } finally {
+                parquetMetaReader.clear();
+                ff.munmap(addr, size, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
         }
     }
 

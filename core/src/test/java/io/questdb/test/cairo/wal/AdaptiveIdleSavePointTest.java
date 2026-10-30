@@ -302,6 +302,34 @@ public class AdaptiveIdleSavePointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIdleRequestCompletesFailedRequiredCompletion() throws Exception {
+        // A required completion that failed leaves the table owing both save points while its writer stays pooled, so
+        // no writer open completes them. The run an idle request starts does.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, INTERVAL_MS);
+        assertMemoryLeak(() -> {
+            startClock();
+            try {
+                execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                final TableToken tt = engine.verifyTableName("t");
+                execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                // What a failed completion leaves.
+                tracker(tt).setDurableEpochCompletionRequired(true);
+                tracker(tt).setDurableEpochOwed(true);
+                tracker(tt).requestIdleEpoch(currentMicros / 1000L);
+                engine.notifyWalTxnCommitted(tt);
+                drainWalQueue();
+                Assert.assertFalse("the idle run must complete the save points", tracker(tt).isDurableEpochCompletionRequired());
+                Assert.assertFalse(tracker(tt).isDurableEpochOwed());
+                Assert.assertEquals(tracker(tt).getPinnedEpochTxn(), tracker(tt).getOtherPinnedEpochTxn());
+            } finally {
+                setCurrentMicros(-1);
+            }
+        });
+    }
+
+    @Test
     public void testIdleRequestsReachEveryTableUnderChurn() throws Exception {
         // More tables go idle per pass than the cap allows: busy tables written every two intervals go idle in
         // between, and some tables are written twice and then never again. Each table that stays idle gets its

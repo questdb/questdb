@@ -68,6 +68,12 @@ public interface PartitionFrameStateFactory extends QuietCloseable {
     long open(TableReader reader, int partitionIndex, long readerSeqTxn);
 
     /**
+     * Reads the physical-source fields from the snapshot's pinned catalog base.
+     * Opens no physical files and binds no data windows.
+     */
+    void readSource(long state, PartitionFrameSource target);
+
+    /**
      * Reads logical rows and Delta-only bounds from the same pinned snapshot.
      */
     void readStats(long state, PartitionDeltaStats target);
