@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursor;
@@ -63,10 +64,16 @@ public class PivotInListCheckFactory implements RecordCursorFactory {
         checks.clear();
     }
 
+    /**
+     * Closes every check and the plan, also after a close fails, and then throws the first
+     * failure, with the others suppressed.
+     */
     @Override
     public void close() {
-        Misc.freeObjListAndClear(checks);
-        base.close();
+        Throwable failure = Misc.freeObjListBestEffort(null, checks);
+        checks.clear();
+        failure = Misc.freeBestEffort(failure, base);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override

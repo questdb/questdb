@@ -36,8 +36,11 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.BatchCallback;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
@@ -62,6 +65,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -112,6 +116,11 @@ import static org.junit.Assert.fail;
 public class TableFunctionOwnershipTest extends AbstractCairoTest {
     private static final String FAILING_FUNCTION_NAME = "failing_cursor";
     private static final String FUNCTION_NAME = "owned_cursor";
+    // The IN sub-query of a PIVOT over failing_cursor(), whose factories throw from close(). It
+    // returns no rows, so the second branch of the union supplies the one IN value. The sub-query
+    // succeeds, and the check of the IN values keeps its plan, which holds failing_cursor().
+    private static final String PIVOT_IN_FAILING_ONE_VALUE = "SELECT permission FROM %s() UNION ALL SELECT 'a'::VARCHAR FROM long_sequence(1)"
+            .formatted(FAILING_FUNCTION_NAME);
     // The IN sub-query of a PIVOT over owned_cursor(). owned_cursor() returns no rows, so the
     // second branch of the union supplies the one IN value.
     private static final String PIVOT_IN_ONE_VALUE = "SELECT permission FROM %s() UNION ALL SELECT 'a'::VARCHAR FROM long_sequence(1)"
@@ -275,6 +284,104 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPivotInSubQueryCloseFailureDoesNotStopCompilerClose() throws Exception {
+        assertWithCloseFailures(fixture -> {
+            // A compile that stops at the execution model leaves the check of the IN values in
+            // the optimiser. The compiler, outside the pool, closes it when it closes: the close
+            // throws, after the compiler has freed everything else. The leak check lets the
+            // compilers' memory grow, as the engine pools them, so the test counts that memory
+            // itself, once the pool holds the compiler the PIVOT borrows.
+            try (SqlCompiler ignored = engine.getSqlCompiler()) {
+                assertNotNull(ignored);
+            }
+            final long compilerMemory = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SQL_COMPILER);
+            final SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+            try {
+                compiler.generateExecutionModel("SELECT * FROM src PIVOT (sum(v) FOR g IN (" + PIVOT_IN_FAILING_ONE_VALUE + ") GROUP BY k)", sqlExecutionContext);
+            } catch (Throwable th) {
+                compiler.close();
+                throw th;
+            }
+            try {
+                compiler.close();
+                fail("the compiler's close must throw");
+            } catch (RuntimeException e) {
+                assertSame(fixture.closeFailure, e);
+                assertEquals(0, e.getSuppressed().length);
+            }
+            assertEquals(compilerMemory, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_SQL_COMPILER));
+            assertEquals(1, fixture.failingFactories.size());
+            assertEachClosedOnce(fixture);
+        });
+    }
+
+    @Test
+    public void testPivotInSubQueryCloseFailureFailsRetryAndLeavesCompilerClean() throws Exception {
+        assertWithCloseFailures(fixture -> {
+            // The first attempt generates against a table that changed after the optimiser read
+            // it. Before the retry, the compiler clears its state, which closes the check the
+            // first attempt left: the close throws, and the failure fails the statement rather
+            // than being lost to the retry. The next statement does not close the check again.
+            try (StaleTableCompiler compiler = new StaleTableCompiler("ALTER TABLE src ADD COLUMN y INT")) {
+                try {
+                    compiler.compile("SELECT * FROM src PIVOT (sum(v) FOR g IN (" + PIVOT_IN_FAILING_ONE_VALUE + ") GROUP BY k)", sqlExecutionContext);
+                    fail("the retry must fail");
+                } catch (RuntimeException e) {
+                    assertSame(fixture.closeFailure, e);
+                    assertEquals(0, e.getSuppressed().length);
+                }
+                assertEquals(1, compiler.attemptCount);
+                assertEquals(1, fixture.failingFactories.size());
+                assertEachClosedOnce(fixture);
+
+                assertQuery("SELECT count() FROM src")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count
+                                6
+                                """);
+            }
+            assertEachClosedOnce(fixture);
+        });
+    }
+
+    @Test
+    public void testPivotInSubQueryCloseFailureIsSuppressedOnceWhenBatchGenerationFails() throws Exception {
+        assertWithCloseFailures(fixture -> {
+            // As testPivotInSubQueryCloseFailureIsSuppressedOnceWhenGenerationFails(), for the
+            // second statement of a batch, after a first one that compiles.
+            final String sql = "CREATE TABLE batch_ok (x INT);\n"
+                    + "SELECT k, sin(k, k) e FROM (SELECT * FROM src PIVOT (sum(v) FOR g IN (" + PIVOT_IN_FAILING_ONE_VALUE + ") GROUP BY k))";
+            final int[] compiledCount = {0};
+            final BatchCallback callback = new BatchCallback() {
+                @Override
+                public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) {
+                    compiledCount[0]++;
+                }
+
+                @Override
+                public boolean preCompile(SqlCompiler compiler, CharSequence sqlText) {
+                    return true;
+                }
+            };
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.compileBatch(sql, sqlExecutionContext, callback);
+                fail("generation must fail");
+            } catch (SqlException e) {
+                assertEquals(1, compiledCount[0]);
+                assertEquals(sql.indexOf("sin("), e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "wrong number of arguments for function `sin`");
+                assertSuppressedOnce(e, fixture.closeFailure);
+            }
+            assertEquals(1, fixture.failingFactories.size());
+            assertEachClosedOnce(fixture);
+        });
+    }
+
+    @Test
     public void testPivotInSubQueryCloseFailureIsSuppressedOnceWhenCompileFails() throws Exception {
         assertWithCloseFailures(fixture -> {
             // The plan of the IN sub-query takes failing_cursor() over, and the optimiser's close
@@ -289,6 +396,74 @@ public class TableFunctionOwnershipTest extends AbstractCairoTest {
                 TestUtils.assertContains(e.getFlyweightMessage(), "PIVOT IN subquery must return exactly one column, got 2");
                 assertSuppressedOnce(e, fixture.closeFailure);
             }
+            assertEquals(1, fixture.failingFactories.size());
+            assertEachClosedOnce(fixture);
+        });
+    }
+
+    @Test
+    public void testPivotInSubQueryCloseFailureIsSuppressedOnceWhenGenerationFails() throws Exception {
+        assertWithCloseFailures(fixture -> {
+            // The IN sub-query succeeds, and its check keeps the plan, which holds
+            // failing_cursor(). Generation then fails on e, before a plan takes the check over:
+            // the compile closes the check, which throws, and the statement still reports why
+            // generation failed, the close failure travelling with that error as suppressed.
+            final String sql = "SELECT k, sin(k, k) e FROM (SELECT * FROM src PIVOT (sum(v) FOR g IN (" + PIVOT_IN_FAILING_ONE_VALUE + ") GROUP BY k))";
+            try (RecordCursorFactory ignored = select(sql)) {
+                fail("generation must fail");
+            } catch (SqlException e) {
+                assertEquals(sql.indexOf("sin("), e.getPosition());
+                TestUtils.assertContains(e.getFlyweightMessage(), "wrong number of arguments for function `sin`");
+                assertSuppressedOnce(e, fixture.closeFailure);
+            }
+            assertEquals(1, fixture.failingFactories.size());
+            assertEachClosedOnce(fixture);
+        });
+    }
+
+    @Test
+    public void testPivotInSubQueryCloseFailureOnPlanCloseClosesWholePlan() throws Exception {
+        assertWithCloseFailures(fixture -> {
+            // The plan takes the check over, whose sub-query plan holds failing_cursor(). The
+            // PIVOT reads owned_cursor() rows besides src, so the rest of the plan holds a factory
+            // too. Closing the plan throws, after it has closed the check and the rest of the
+            // plan, each once.
+            final String sql = "SELECT * FROM (SELECT g, k, v FROM src UNION ALL SELECT permission g, 0L k, 0L v FROM "
+                    + FUNCTION_NAME + "()) PIVOT (sum(v) FOR g IN (" + PIVOT_IN_FAILING_ONE_VALUE + ") GROUP BY k)";
+            final RecordCursorFactory factory = select(sql);
+            assertEquals(1, fixture.failingFactories.size());
+            assertEquals(1, fixture.factories.size());
+            assertEquals(0, fixture.failingFactories.getQuick(0).getCloseCount());
+            assertEquals(0, fixture.factories.getQuick(0).getCloseCount());
+            try {
+                factory.close();
+                fail("the plan's close must throw");
+            } catch (RuntimeException e) {
+                assertSame(fixture.closeFailure, e);
+                assertEquals(0, e.getSuppressed().length);
+            }
+            assertEachClosedOnce(fixture);
+        });
+    }
+
+    @Test
+    public void testPivotInSubQueryCloseFailureReturnsPooledCompilerToPool() throws Exception {
+        assertWithCloseFailures(fixture -> {
+            // A compile that stops at the execution model leaves the check of the IN values in
+            // the optimiser, and the pooled compiler closes it on its way back to the pool. The
+            // close throws, and the compiler goes back to the pool all the same.
+            final int busyCount = engine.getSqlCompilerPool().getBusyCount();
+            try {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    compiler.generateExecutionModel("SELECT * FROM src PIVOT (sum(v) FOR g IN (" + PIVOT_IN_FAILING_ONE_VALUE + ") GROUP BY k)", sqlExecutionContext);
+                    assertEquals(busyCount + 1, engine.getSqlCompilerPool().getBusyCount());
+                }
+                fail("the compiler's close must throw");
+            } catch (RuntimeException e) {
+                assertSame(fixture.closeFailure, e);
+                assertEquals(0, e.getSuppressed().length);
+            }
+            assertEquals(busyCount, engine.getSqlCompilerPool().getBusyCount());
             assertEquals(1, fixture.failingFactories.size());
             assertEachClosedOnce(fixture);
         });

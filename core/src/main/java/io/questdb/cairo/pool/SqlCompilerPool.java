@@ -25,6 +25,7 @@
 package io.questdb.cairo.pool;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.BatchCallback;
@@ -40,6 +41,7 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Misc;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -132,15 +134,23 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
             // revert any debug flags
             setFullFatJoins(false);
             final AbstractMultiTenantPool<C> pool = this.pool;
+            Throwable failure = null;
             if (pool != null && entry != null) {
-                // the plans of PIVOT IN sub-queries a model compile left unclaimed would
-                // otherwise live until the next borrow
-                delegate.freeUnclaimedPivotPlans();
+                // The plans of PIVOT IN sub-queries a model compile left unclaimed would
+                // otherwise live until the next borrow. Their sweep closes every one and leaves
+                // the compiler clean also when a close fails, so the compiler goes back to the
+                // pool either way, and the failure reaches the caller after that.
+                try {
+                    delegate.freeUnclaimedPivotPlans();
+                } catch (Throwable th) {
+                    failure = th;
+                }
                 if (pool.returnToPool(this)) {
+                    CairoException.rethrowCleanupFailure(failure);
                     return;
                 }
             }
-            delegate.close();
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(failure, delegate));
         }
 
         @Override

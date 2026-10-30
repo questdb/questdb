@@ -58,21 +58,30 @@ import io.questdb.std.str.StringSink;
 public final class PivotInListCheck implements QuietCloseable {
     private final ObjList<String> expected = new ObjList<>();
     private final CharSequenceHashSet expectedSet = new CharSequenceHashSet();
-    private final boolean isOrderSensitive;
     private final int position;
     private final CharSequenceHashSet seen = new CharSequenceHashSet();
     private final StringSink sink = new StringSink();
     private RecordCursorFactory factory;
+    private boolean isOrderSensitive;
 
-    PivotInListCheck(RecordCursorFactory factory, int position, boolean isOrderSensitive) {
-        this.factory = factory;
+    /**
+     * A check without a subquery plan yet: {@link #of} gives it one. The optimiser creates the
+     * check before it generates the plan, so that the plan has an owner, which closes it, from
+     * the moment it exists.
+     */
+    PivotInListCheck(int position) {
         this.position = position;
-        this.isOrderSensitive = isOrderSensitive;
     }
 
+    /**
+     * Closes the subquery plan, once: the check lets go of the plan before it closes it, so a
+     * close that throws is not repeated by a later one.
+     */
     @Override
     public void close() {
-        factory = Misc.free(factory);
+        final RecordCursorFactory factory = this.factory;
+        this.factory = null;
+        Misc.free(factory);
     }
 
     /**
@@ -117,5 +126,20 @@ public final class PivotInListCheck implements QuietCloseable {
         final String v = Chars.toString(value);
         expected.add(v);
         expectedSet.add(v);
+    }
+
+    /**
+     * Takes the subquery's plan over: the check closes it.
+     *
+     * @param factory          the plan of the subquery
+     * @param isOrderSensitive whether the subquery orders its rows, so the order of the values
+     *                         is part of the plan too
+     * @return the plan
+     */
+    RecordCursorFactory of(RecordCursorFactory factory, boolean isOrderSensitive) {
+        assert this.factory == null;
+        this.factory = factory;
+        this.isOrderSensitive = isOrderSensitive;
+        return factory;
     }
 }

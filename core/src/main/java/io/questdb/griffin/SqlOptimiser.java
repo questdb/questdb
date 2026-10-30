@@ -8182,10 +8182,16 @@ public class SqlOptimiser implements Mutable {
                     // re-parses its lexer, which holds the statement it compiled last. When a table
                     // the sub-query reads goes out of date, the exception propagates to whatever
                     // compiles this statement, which holds the statement's text and can retry it.
-                    final RecordCursorFactory inListFactory = compiler.generateSelectWithoutRetries(subQueryNode.queryModel, sqlExecutionContext, false);
-                    // the values are the plan's: a cached plan re-runs the subquery to check them
-                    final PivotInListCheck check = new PivotInListCheck(inListFactory, subQueryNode.position, hasOrderBy(subQueryNode.queryModel));
+                    // The values are the plan's: a cached plan re-runs the subquery to check them.
+                    // The check exists before the subquery's plan does and takes the plan over as
+                    // the borrowed compiler returns it, so whatever fails afterwards closes the
+                    // plan with the check.
+                    final PivotInListCheck check = new PivotInListCheck(subQueryNode.position);
                     try {
+                        final RecordCursorFactory inListFactory = check.of(
+                                compiler.generateSelectWithoutRetries(subQueryNode.queryModel, sqlExecutionContext, false),
+                                hasOrderBy(subQueryNode.queryModel)
+                        );
                         final RecordMetadata inListMetadata = inListFactory.getMetadata();
                         final int columnCount = inListMetadata.getColumnCount();
                         if (columnCount != 1) {
@@ -8248,7 +8254,9 @@ public class SqlOptimiser implements Mutable {
                         }
                         pivotInListChecks.add(check);
                     } catch (Throwable th) {
-                        check.close();
+                        // the statement fails with th, and a failure to close the plan travels
+                        // with it as suppressed, as try-with-resources would attach it
+                        Misc.free(check, th);
                         throw th;
                     }
                     pivotForColumn.setSelectSubqueryExpr(null);
@@ -16333,7 +16341,22 @@ public class SqlOptimiser implements Mutable {
      * {@link #getPivotInListChecks()}.
      */
     void freePivotInListChecks() {
-        Misc.freeObjListAndClear(pivotInListChecks);
+        CairoException.rethrowCleanupFailure(freePivotInListChecks(null));
+    }
+
+    /**
+     * Closes the PIVOT IN sub-query checks a compile collected and no plan took over, every one
+     * of them, also after a close fails, and empties the list, so that no later sweep closes a
+     * check a second time.
+     *
+     * @param failure the failure in flight, which takes every close failure as suppressed, or
+     *                null on a path that has not failed
+     * @return {@code failure}, or the first close failure when {@code failure} is null
+     */
+    @Nullable Throwable freePivotInListChecks(@Nullable Throwable failure) {
+        failure = Misc.freeObjListBestEffort(failure, pivotInListChecks);
+        pivotInListChecks.clear();
+        return failure;
     }
 
     /**
@@ -16351,8 +16374,7 @@ public class SqlOptimiser implements Mutable {
      */
     void freeTableFactoriesInFlight(@NotNull Throwable failure) {
         freeUnclaimedTableFactories(failure);
-        Misc.freeObjList(pivotInListChecks, failure);
-        pivotInListChecks.clear();
+        freePivotInListChecks(failure);
     }
 
     /**

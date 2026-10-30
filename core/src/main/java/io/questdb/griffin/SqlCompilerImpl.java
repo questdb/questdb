@@ -396,10 +396,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw new IllegalStateException("close was already called");
         }
         closed = true;
-        // null when the constructor failed before creating it
-        if (optimiser != null) {
-            optimiser.freePivotInListChecks();
-        }
+        // null when the constructor failed before creating it. A PIVOT IN plan that fails to
+        // close does not keep the rest from being freed: its failure is rethrown afterwards.
+        final Throwable failure = optimiser != null ? optimiser.freePivotInListChecks(null) : null;
         Misc.free(vacuumColumnVersions);
         Misc.free(path);
         Misc.free(renamePath);
@@ -408,6 +407,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         Misc.freeObjList(tableWriters);
         Misc.free(blockFileWriter);
         Misc.free(compileViewContext);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override
@@ -418,12 +418,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         lexer.of(sqlText);
         isSingleQueryMode = true;
 
+        // The PIVOT IN subqueries of a statement whose plan was not generated: nothing took them
+        // over. When the statement fails, a failure to close them travels with its error as
+        // suppressed, rather than replacing it.
         try {
             compileInner(executionContext, sqlText, true);
-        } finally {
-            // the PIVOT IN subqueries of a statement whose plan was not generated: nothing took them over
-            optimiser.freePivotInListChecks();
+        } catch (Throwable th) {
+            optimiser.freePivotInListChecks(th);
+            throw th;
         }
+        optimiser.freePivotInListChecks();
 
         // Verify all input was consumed — reject trailing content.
         // Skip in validation-only mode: handlers may return early without consuming all tokens.
@@ -494,12 +498,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // lexer.restart() rewinds to. A retry, in generateSelectWithRetries() or below,
                     // must re-parse this statement, not the batch's first one.
                     lexer.of(batchText, position, batchText.length());
+                    // see compile()
                     try {
                         compileInner(executionContext, sqlText, true);
-                    } finally {
-                        // see compile()
-                        optimiser.freePivotInListChecks();
+                    } catch (Throwable th) {
+                        optimiser.freePivotInListChecks(th);
+                        throw th;
                     }
+                    optimiser.freePivotInListChecks();
 
                     // consume residual text, such as semicolon
                     goToQueryEnd();
