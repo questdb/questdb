@@ -91,6 +91,8 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 1);
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 1);
             final long countBefore = rowsOfDay();
+            // The target's cleanup shortens its files, so it waits for a save point past its geometry.
+            releaseSavePointHolds("x");
             final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
             execute("INSERT INTO x (i, ts) VALUES (100, '2024-01-01T12:00:00')");
             execute("INSERT INTO x (i, ts) VALUES (101, '2024-01-02')");
@@ -220,6 +222,8 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
             final long sumBefore = scalar("SELECT sum(i) FROM x");
             final long oldNameTxn;
             final TableToken token = engine.verifyTableName("x");
+            // The target's cleanup shortens its files, so it waits for a save point past its geometry.
+            releaseSavePointHolds("x");
             final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
             try (TableReader pinned = engine.getReader(token)) {
                 oldNameTxn = pinned.getTxFile().getPartitionNameTxn(0);
@@ -697,6 +701,8 @@ public class CompositePartitionSquashTest extends AbstractCairoTest {
             path.trimTo(partitionPathSize);
             Assert.assertEquals(splitSize * 4 - (isBelowLimit ? 1 : 0), ff.getDirSize(path));
         }
+        // The target's cleanup shortens its files, so it waits for a save point past its geometry.
+        releaseSavePointHolds("x");
         final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
         try (TableWriter writer = getWriter(token)) {
             writer.squashAllPartitionsIntoOne();

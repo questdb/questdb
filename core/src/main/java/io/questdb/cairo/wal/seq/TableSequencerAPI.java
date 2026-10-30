@@ -26,7 +26,10 @@ package io.questdb.cairo.wal.seq;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
@@ -39,8 +42,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -56,6 +62,9 @@ import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 
 public class TableSequencerAPI implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(TableSequencerAPI.class);
+    // The header bytes the WAL table scan reads: the format version, the max txn and the flushed-through txn, at
+    // the same offsets in both log formats.
+    private static final int SCAN_HEADER_SIZE = (int) (TableTransactionLogV1.UNSYNCED_FROM_TXN_OFFSET_64 + Long.BYTES);
     final CairoConfiguration configuration;
     final ConcurrentHashMap<TableSequencerImpl> seqRegistry = new ConcurrentHashMap<>(false);
     private final Function<CharSequence, SeqTxnTracker> createTxnTracker;
@@ -94,11 +103,7 @@ public class TableSequencerAPI implements QuietCloseable {
     @TestOnly
     public void closeSequencer(TableToken tableToken) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            try {
-                sequencer.close();
-            } finally {
-                sequencer.unlockWrite();
-            }
+            sequencer.unlockWrite();
         }
     }
 
@@ -142,9 +147,7 @@ public class TableSequencerAPI implements QuietCloseable {
                         // metadata and log concurrently as we read the values. It's ok since we iterate
                         // through the WAL tables periodically, so eventually we should see the updates.
                         path.of(root).concat(tableToken.getDirName()).concat(SEQ_DIR);
-                        long fdTxn = TableUtils.openRO(ff, path, TXNLOG_FILE_NAME, LOG);
-                        lastTxn = ff.readNonNegativeLong(fdTxn, TableTransactionLogFile.MAX_TXN_OFFSET_64); // does not throw
-                        ff.close(fdTxn);
+                        lastTxn = readCertifiedLastTxn(ff, path, tableToken, false);
                     } else {
                         // Slow path.
                         try (TableSequencer tableSequencer = openSequencerLocked(tableToken, SequencerLockType.NONE)) {
@@ -182,6 +185,10 @@ public class TableSequencerAPI implements QuietCloseable {
                 }
             }
         }
+    }
+
+    public CairoConfiguration getConfiguration() {
+        return configuration;
     }
 
     public int getCurrentWalId(final TableToken tableToken) {
@@ -293,6 +300,28 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     /**
+     * The engine's set of WAL writers with a pending adaptive group-commit flush. A
+     * {@link io.questdb.cairo.wal.WalWriter}, which holds the sequencer API and not the engine, registers itself
+     * here when it defers a device flush.
+     */
+    @NotNull
+    public io.questdb.cairo.wal.WalGroupCommitFlushQueue getWalGroupCommitFlushQueue() {
+        return engine.getWalGroupCommitFlushQueue();
+    }
+
+    public void handleDataSyncFailure(Throwable failure) {
+        engine.handleDataSyncFailure(failure);
+    }
+
+    public boolean isDataSyncFailureFatal(Throwable failure) {
+        return engine.isDataSyncFailureFatal(failure);
+    }
+
+    public boolean isDurabilityFailed() {
+        return engine.isDurabilityFailed();
+    }
+
+    /**
      * Non-creating counterpart to {@link #getTxnTracker(TableToken)}: returns the tracker only if
      * one has already been installed, and never allocates or installs one on a miss. A caller that
      * only needs to inspect suspension state, and for which "no tracker yet" means "never
@@ -301,7 +330,16 @@ public class TableSequencerAPI implements QuietCloseable {
      */
     @Nullable
     public SeqTxnTracker getTxnTrackerIfExists(TableToken tableToken) {
-        return seqTxnTrackers.get(tableToken.getDirName());
+        return getTxnTrackerIfExists(tableToken.getDirName());
+    }
+
+    /**
+     * {@link #getTxnTrackerIfExists(TableToken)} by the table's directory name, which is what keys the
+     * trackers. For callers that hold only the name, such as the scoreboard pool.
+     */
+    @Nullable
+    public SeqTxnTracker getTxnTrackerIfExists(CharSequence tableDirName) {
+        return seqTxnTrackers.get(tableDirName);
     }
 
     /**
@@ -392,6 +430,34 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    /**
+     * Flushes the sequencer transaction log of {@code tableToken} to the device, the last step of the adaptive
+     * group commit's batched flush, after the data and the events. Opens the sequencer under the write lock, the
+     * lock {@code nextTxn} takes, so the flush cannot race an append or a rotation. Callers invoke it only for
+     * adaptive tables with at least one deferred sequencer commit.
+     *
+     * @return the highest seqTxn the flush covered; see {@link TableSequencerImpl#fdatasyncTxnLog()}.
+     */
+    public long fdatasyncTxnLog(final TableToken tableToken) {
+        return fdatasyncTxnLog(tableToken, Long.MAX_VALUE);
+    }
+
+    /**
+     * Flushes like {@link #fdatasyncTxnLog(TableToken)}, and also the older part files of a V2 log that hold txns
+     * from {@code fromTxn} on, for a flush that must cover records a run in a mode that does not flush the log
+     * left; see {@link TableTransactionLogFile#fdatasyncTxnLog(long)}.
+     */
+    public long fdatasyncTxnLog(final TableToken tableToken, long fromTxn) {
+        assert TableSequencerImpl.assertNoWriteLocksHeld();
+        try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+            try {
+                return tableSequencer.fdatasyncTxnLog(fromTxn);
+            } finally {
+                tableSequencer.unlockWrite();
+            }
+        }
+    }
+
     public boolean notifyOnCheck(TableToken tableToken, long seqTxn) {
         // Updates seqTxn and returns true if CheckWalTransactionsJob should post notification
         // to run ApplyWal2TableJob for the table
@@ -411,6 +477,10 @@ public class TableSequencerAPI implements QuietCloseable {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             sequencer.unlockWrite();
         }
+    }
+
+    public @Nullable CairoError poisonOnDataSyncFailure(Throwable failure) {
+        return engine.poisonOnDataSyncFailure(failure);
     }
 
     public boolean prepareToConvertToNonWal(final TableToken tableToken) {
@@ -433,7 +503,37 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void purgeTxnTracker(String dirName) {
-        seqTxnTrackers.remove(dirName);
+        final SeqTxnTracker removed = seqTxnTrackers.remove(dirName);
+        if (removed != null) {
+            // Clear the adaptive group-commit contiguous-prefix pins and zero this tracker's contribution to
+            // the engine-wide durable-frontier gauge before it is discarded (table drop / reboot reset), so a
+            // fresh tracker for the same dir does not inherit stale pins and the gauge does not leak.
+            removed.resetDurableFrontier();
+        }
+    }
+
+    /**
+     * Closes the table's cached sequencer and drops its {@link SeqTxnTracker} and scoreboard. Recovery must run
+     * before replay to rebuild the save-point pins, as on a freshly started engine. A simulated crash can roll back a txn
+     * that the open sequencer still counts in its in-memory {@code lastTxn}; through that sequencer,
+     * {@link #forAllWalTables} would seed the tracker above the durable writer txn, and the apply job would wait
+     * forever for a txn the WAL no longer has.
+     * <p>
+     * Closes only an idle sequencer ({@link TableSequencerImpl#checkClose()} takes the schema write lock); the
+     * caller has already released every reader and writer of the table.
+     */
+    @TestOnly
+    public void resetForReboot(TableToken tableToken) {
+        final String dirName = tableToken.getDirName();
+        final TableSequencerImpl sequencer = seqRegistry.get(dirName);
+        // An entry closed earlier stays registered otherwise, and getTableSequencerEntry() would spin on it: it
+        // retries a closed entry without counting the attempt.
+        if (sequencer != null && (sequencer.checkClose() || sequencer.isClosed())) {
+            seqRegistry.remove(dirName, sequencer);
+        }
+        purgeTxnTracker(dirName);
+        // A reboot also discards the old epoch reservations and the scoreboard's monotonic reader floor.
+        engine.getTxnScoreboardPool().remove(tableToken);
     }
 
     public void registerTable(int tableId, final TableStructure tableDescriptor, final TableToken tableToken) {
@@ -493,11 +593,17 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void resumeTable(TableToken tableToken, long resumeFromTxn) {
+        final SeqTxnTracker tracker = getTxnTracker(tableToken);
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
-                if (!isSuspended(tableToken)) {
-                    // Even if the table already unsuspended, send ApplyWal2TableJob notification anyway
-                    // as a way to resume table which is not moving even if it's marked as not suspended.
+                // A replica keeps no save point, so the boot arm owes nothing there.
+                final boolean isCompletionOutstanding = tracker.isDurableEpochCompletionRequired()
+                        && engine.getResolvedCommitMode() == CommitMode.ADAPTIVE;
+                // Re-notify an already resumed table too. Ordinary RESUME must not contend with its apply writer.
+                if (!isCompletionOutstanding && (!isSuspended(tableToken) || resumeFromTxn <= 0)) {
+                    // Lift SUSPEND WAL only once the resume is certain, and before the notification, which
+                    // the apply job drops for a table still hard-suspended.
+                    engine.removeWalApplySuspended(tableToken);
                     sequencer.resumeTable();
                     return;
                 }
@@ -505,20 +611,59 @@ public class TableSequencerAPI implements QuietCloseable {
                 if (resumeFromTxn > nextTxn) {
                     throw CairoException.nonCritical().put("resume txn is higher than next available transaction [resumeFromTxn=").put(resumeFromTxn).put(", nextTxn=").put(nextTxn).put(']');
                 }
-                // resume from the latest on negative value
-                if (resumeFromTxn > 0) {
-                    try (TableWriter tableWriter = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON)) {
-                        long seqTxn = tableWriter.getAppliedSeqTxn();
-                        if (resumeFromTxn - 1 > seqTxn) {
-                            // including resumeFromTxn
-                            tableWriter.commitSeqTxn(resumeFromTxn - 1);
-                        }
-                    }
-                }
-                sequencer.resumeTable();
             } finally {
                 sequencer.unlockWrite();
             }
+        }
+        // Constructor enrolment, required publication and pooled return may all take the sequencer lock.
+        boolean isCompletingDurableEpoch = false;
+        try (TableWriter writer = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON)) {
+            try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+                try {
+                    if (resumeFromTxn > 0 && isSuspended(tableToken) && resumeFromTxn - 1 > writer.getAppliedSeqTxn()) {
+                        if (writer.isEnrolledAdaptive() && engine.getResolvedCommitMode() == CommitMode.ADAPTIVE) {
+                            tracker.setDurableEpochCompletionRequired(true);
+                        }
+                        // This _txn-only commit is serialized with other RESUMEs; it does not publish an epoch.
+                        writer.commitSeqTxn(resumeFromTxn - 1);
+                    }
+                } finally {
+                    sequencer.unlockWrite();
+                }
+            }
+            isCompletingDurableEpoch = true;
+            writer.completeDurableEpochAfter("resume wal");
+            isCompletingDurableEpoch = false;
+            try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+                try {
+                    engine.removeWalApplySuspended(tableToken);
+                    sequencer.resumeTable();
+                } finally {
+                    sequencer.unlockWrite();
+                }
+            }
+        } catch (EntryUnavailableException busy) {
+            // Another thread holds the writer and nothing was attempted: the suspension, its reason and
+            // its write denial stay as they were, and the caller retries.
+            throw busy;
+        } catch (CairoException e) {
+            if (engine.isDataSyncFailureFatal(e)) {
+                engine.handleDataSyncFailure(e);
+            }
+            // A suspended table keeps the reason it was suspended for. A running one (in practice an ADAPTIVE table
+            // with a completion outstanding) is suspended with the tag the apply job would give the same failure
+            // (ApplyWal2TableJob.handleWalApplyFailure).
+            if (!isSuspended(tableToken)) {
+                final ErrorTag errorTag = e.isOutOfMemory() ? ErrorTag.OUT_OF_MEMORY : ErrorTag.resolveTag(e.getErrno());
+                suspendTable(tableToken, errorTag, e.getFlyweightMessage().toString());
+            }
+            if (isCompletingDurableEpoch) {
+                throw CairoException.critical(e.getErrno())
+                        .put("could not take the durable epoch the table owes, the table stays suspended; retry RESUME WAL [table=")
+                        .put(tableToken.getTableName()).put(", reason=").put(e.getFlyweightMessage()).put(']');
+            }
+            // Opening the writer, the skip and the resume fail with their own error, errno and severity.
+            throw e;
         }
     }
 
@@ -624,6 +769,60 @@ public class TableSequencerAPI implements QuietCloseable {
     @NotNull
     private TableSequencerImpl openSequencerLocked(TableToken tableToken, SequencerLockType lock) {
         return getTableSequencerEntry(tableToken, lock, this.openSequencerInstanceLambda);
+    }
+
+    /**
+     * The last txn of a sequencer log this process has not opened, as its open would leave it, or -1 when the header
+     * cannot be read. A power loss can leave the header on the disk ahead of its newest records, and the first open
+     * in a process cuts them, so the header's max txn is returned only when it is certain: the table's tracker holds
+     * as much, and every value the tracker holds was certified, or an open now would cut no record. A log that is not
+     * certain is opened. Its open fails with the same error at the table's first use when it fails here. It may have
+     * cut the log before it failed, and a cut header is certain, so the header is read again; one that is still not
+     * certain is returned as read, as without the check.
+     */
+    private long readCertifiedLastTxn(FilesFacade ff, Path path, TableToken tableToken, boolean isAfterFailedOpen) {
+        long lastTxn = -1;
+        boolean isCertain = true;
+        final long header = Unsafe.malloc(SCAN_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        long fdTxn = -1;
+        try {
+            fdTxn = TableUtils.openRO(ff, path, TXNLOG_FILE_NAME, LOG);
+            if (ff.read(fdTxn, header, SCAN_HEADER_SIZE, 0) == SCAN_HEADER_SIZE) {
+                lastTxn = Math.max(Unsafe.getLong(header + TableTransactionLogFile.MAX_TXN_OFFSET_64), -1);
+                if (lastTxn > 0) {
+                    final SeqTxnTracker tracker = getTxnTrackerIfExists(tableToken);
+                    if (tracker == null || lastTxn > tracker.getSeqTxn()) {
+                        isCertain = TableTransactionLog.isTailCertain(
+                                ff,
+                                fdTxn,
+                                Unsafe.getInt(header),
+                                lastTxn,
+                                Unsafe.getLong(header + TableTransactionLogV1.UNSYNCED_FROM_TXN_OFFSET_64),
+                                configuration.getCommitMode(),
+                                engine.getLocalDurabilityPolicy()
+                        );
+                    }
+                }
+            }
+        } finally {
+            if (fdTxn != -1) {
+                ff.close(fdTxn);
+            }
+            Unsafe.free(header, SCAN_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+        if (!isCertain && !isAfterFailedOpen) {
+            try (TableSequencer tableSequencer = openSequencerLocked(tableToken, SequencerLockType.NONE)) {
+                return tableSequencer.lastTxn();
+            } catch (CairoException ex) {
+                if (ex.isFileCannotRead() || ex.isTableDropped()) {
+                    throw ex;
+                }
+            }
+            // The open may have used the thread-local path.
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(SEQ_DIR);
+            return readCertifiedLastTxn(ff, path, tableToken, true);
+        }
+        return lastTxn;
     }
 
     private boolean releaseEntries(long deadline) {
