@@ -2870,29 +2870,28 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     @Test
     public void testOffsetShiftWideningBoundKeepsMatchingRows() throws Exception {
         // The mirror arm: a NEGATIVE stride stores a positive offset, so it is the UPPER boundary
-        // that overflows and collapses to Long.MAX_VALUE. The rows that genuinely satisfy the
-        // predicate have to survive the widened scan, so this pins a non-empty answer - an
-        // assertion that only ever expects an empty set cannot tell a correct scan from one that
-        // prunes everything away.
+        // that overflows and collapses to Long.MAX_VALUE. A stride of 200_000 days spans more than
+        // the nanosecond range, so dateadd() returns NULL for every row and none satisfies the
+        // predicate. The pushed spelling has to keep the predicate as a residual filter: consuming
+        // it returned all three rows.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tnw (ts TIMESTAMP_NS, v INT) TIMESTAMP(ts) PARTITION BY YEAR");
             execute("INSERT INTO tnw VALUES ('1975-01-01T00:00:00Z', 1), ('1990-01-01T00:00:00Z', 2), ('2020-01-01T00:00:00Z', 3)");
 
-            final String oneRow = "t\tv\n2011-12-21T23:34:33.709551616Z\t1\n";
+            final String noRows = "t\tv\n";
 
-            // The un-pushed spelling is the oracle: only the 1975 row projects below the bound.
+            // The un-pushed spelling is the oracle.
             assertQuery("SELECT dateadd('d', -200_000, ts) t, v FROM tnw WHERE dateadd('d', -200_000, ts) < '2020-01-01T00:00:00Z'")
                     .noLeakCheck()
                     .timestamp("t")
-                    .returns(oneRow);
+                    .returns(noRows);
 
-            // The pushed spelling must agree, and must keep the predicate as a residual filter:
-            // consuming it returned all three rows.
+            // The pushed spelling must agree.
             assertQuery("SELECT t, v FROM (SELECT dateadd('d', -200_000, ts) t, v FROM tnw) WHERE t < '2020-01-01T00:00:00Z'")
                     .noLeakCheck()
                     .timestamp("t")
                     .withPlanContaining("filter: dateadd('d',-200000,ts)<")
-                    .returns(oneRow);
+                    .returns(noRows);
         });
     }
 
@@ -2957,21 +2956,17 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     .returns("tt\tv\n2020-01-01T03:00:00.000000Z\t1\n");
 
             // A stride big enough that the forward dateadd carries a storable micros timestamp past
-            // Long.MAX_VALUE and back to the bottom of the range. Both rows then satisfy the bound,
-            // and the pushed spelling pruned both away before the guard existed.
-            final String bothWrapped = """
-                    tt\tv
-                    -290263-07-10T15:58:10.448384Z\t1
-                    -290262-07-11T15:58:10.448384Z\t2
-                    """;
+            // Long.MAX_VALUE. The sum does not fit, so dateadd returns NULL for both rows and neither
+            // satisfies the bound. The pushed spelling pruned the wrong rows before the guard existed.
+            final String noRows = "tt\tv\n";
             assertQuery("SELECT dateadd('w', 15_250_000, ts) tt, v FROM tmu WHERE dateadd('w', 15_250_000, ts) < '2020-01-01T00:00:00Z'")
                     .noLeakCheck()
                     .timestamp("tt")
-                    .returns(bothWrapped);
+                    .returns(noRows);
             assertQuery("SELECT tt, v FROM (SELECT dateadd('w', 15_250_000, ts) tt, v FROM tmu) WHERE tt < '2020-01-01T00:00:00Z'")
                     .noLeakCheck()
                     .timestamp("tt")
-                    .returns(bothWrapped);
+                    .returns(noRows);
         });
     }
 
@@ -2980,47 +2975,41 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // The BETWEEN twin below declines because the '>' boundary's OWN shift wraps. The one-sided
         // spellings have no wrapping boundary, so nothing declined and the pushdown was consumed with
         // an interval that models the wrong preimage:
-        // - "t < bound" left the open LOWER sentinel where it was. The forward dateadd wraps every
-        //   timestamp above Long.MAX_VALUE - shift back to the bottom of the range, so those rows do
-        //   satisfy the predicate, yet the computed [open, bound - shift] scan pruned all of them.
-        // - "t > bound" left the open UPPER sentinel where it was, which is the mirror error: the
-        //   same wrapped rows do NOT satisfy that predicate, and the scan returned every one of them.
-        // Both spellings now go through MonotonicTimestampFunction.invertConstantShift, the inverse
-        // the row-filter spelling has always used, which declines the first and computes the finite
-        // Long.MAX_VALUE - shift upper bound for the second.
+        // - "t < bound" left the open LOWER sentinel where it was, although the forward shift
+        //   can carry a stored timestamp past Long.MAX_VALUE.
+        // - "t > bound" left the open UPPER sentinel where it was, which is the mirror error.
+        // dateadd() returns NULL for a sum that does not fit, so such a row satisfies neither
+        // predicate. Both spellings go through MonotonicTimestampFunction.invertConstantShift, the
+        // inverse the row-filter spelling uses, and must return the rows the un-pushed one returns.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tnt (ts TIMESTAMP_NS, v INT) TIMESTAMP(ts) PARTITION BY YEAR");
-            execute("INSERT INTO tnt VALUES ('2020-01-01T00:00:00Z', 1), ('2211-01-01T00:00:00Z', 2), " +
+            execute("INSERT INTO tnt VALUES ('1980-01-01T00:00:00Z', 0), ('2020-01-01T00:00:00Z', 1), ('2211-01-01T00:00:00Z', 2), " +
                     "('2214-01-01T00:00:00Z', 3), ('2250-01-01T00:00:00Z', 4), ('2261-01-01T00:00:00Z', 5)");
 
-            final String allFive = """
-                    t\tv
-                    1709-03-28T00:25:26.290448384Z\t1
-                    1900-03-28T00:25:26.290448384Z\t2
-                    1903-03-29T00:25:26.290448384Z\t3
-                    1939-03-29T00:25:26.290448384Z\t4
-                    1950-03-29T00:25:26.290448384Z\t5
-                    """;
-
-            // Every row's forward dateadd wraps back below the bound, so all five match.
+            // The forward dateadd of rows 1 to 5 does not fit the nanosecond range, so it returns
+            // NULL for them and none matches "t < bound". Row 0 fits, and lands above the bound.
             assertQuery("SELECT dateadd('d', 100_000, ts) t, v FROM tnt WHERE dateadd('d', 100_000, ts) < '2020-01-01T00:00:00Z'")
                     .noLeakCheck()
                     .timestamp("t")
-                    .returns(allFive);
+                    .returns("t\tv\n");
             assertQuery("SELECT t, v FROM (SELECT dateadd('d', 100_000, ts) t, v FROM tnt) WHERE t < '2020-01-01T00:00:00Z'")
                     .noLeakCheck()
                     .timestamp("t")
-                    .returns(allFive);
+                    .returns("t\tv\n");
 
-            // The mirror: the same wrapped values are all BELOW the bound, so none match.
+            // The mirror: only row 0 has a value, and it is above the bound.
+            final String rowZero = """
+                    t\tv
+                    2253-10-16T00:00:00.000000000Z\t0
+                    """;
             assertQuery("SELECT dateadd('d', 100_000, ts) t, v FROM tnt WHERE dateadd('d', 100_000, ts) > '2020-01-01T00:00:00Z'")
                     .noLeakCheck()
                     .timestamp("t")
-                    .returns("t\tv\n");
+                    .returns(rowZero);
             assertQuery("SELECT t, v FROM (SELECT dateadd('d', 100_000, ts) t, v FROM tnt) WHERE t > '2020-01-01T00:00:00Z'")
                     .noLeakCheck()
                     .timestamp("t")
-                    .returns("t\tv\n");
+                    .returns(rowZero);
 
             // A NEGATIVE stride cannot wrap a non-negative designated timestamp out of the range, so
             // both sentinels keep their exact finite preimage and the pushdown stays. Pinned
@@ -3051,27 +3040,25 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // testOffsetShiftWrappingBoundKeepsRowsOnBetweenPredicate recorded this shape as unfixed.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tnt2 (ts TIMESTAMP_NS, v INT) TIMESTAMP(ts) PARTITION BY YEAR");
-            execute("INSERT INTO tnt2 VALUES ('2020-01-01T00:00:00Z', 1), ('2211-01-01T00:00:00Z', 2), " +
+            execute("INSERT INTO tnt2 VALUES ('1980-01-01T00:00:00Z', 0), ('2020-01-01T00:00:00Z', 1), ('2211-01-01T00:00:00Z', 2), " +
                     "('2214-01-01T00:00:00Z', 3), ('2250-01-01T00:00:00Z', 4), ('2261-01-01T00:00:00Z', 5)");
 
-            final String fourRows = """
+            // Rows 1 to 5 have a NULL forward dateadd, so only row 0 can fall into the window.
+            final String rowZero = """
                     t\tv
-                    1900-03-28T00:25:26.290448384Z\t2
-                    1903-03-29T00:25:26.290448384Z\t3
-                    1939-03-29T00:25:26.290448384Z\t4
-                    1950-03-29T00:25:26.290448384Z\t5
+                    2253-10-16T00:00:00.000000000Z\t0
                     """;
 
             assertQuery("SELECT dateadd('d', 100_000, ts) t, v FROM tnt2 " +
-                    "WHERE dateadd('d', 100_000, ts) > '1900-01-01T00:00:00Z' AND dateadd('d', 100_000, ts) < '2020-01-01T00:00:00Z'")
+                    "WHERE dateadd('d', 100_000, ts) > '2200-01-01T00:00:00Z' AND dateadd('d', 100_000, ts) < '2260-01-01T00:00:00Z'")
                     .noLeakCheck()
                     .timestamp("t")
-                    .returns(fourRows);
+                    .returns(rowZero);
             assertQuery("SELECT t, v FROM (SELECT dateadd('d', 100_000, ts) t, v FROM tnt2) " +
-                    "WHERE t > '1900-01-01T00:00:00Z' AND t < '2020-01-01T00:00:00Z'")
+                    "WHERE t > '2200-01-01T00:00:00Z' AND t < '2260-01-01T00:00:00Z'")
                     .noLeakCheck()
                     .timestamp("t")
-                    .returns(fourRows);
+                    .returns(rowZero);
         });
     }
 
@@ -3084,25 +3071,24 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // MonotonicTimestampFunction.shiftInputCeiling does for a chain of shift functions.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tnn (ts TIMESTAMP_NS, v INT) TIMESTAMP(ts) PARTITION BY YEAR BYPASS WAL");
-            execute("INSERT INTO tnn VALUES ('2020-01-01T00:00:00Z', 1), ('2211-01-01T00:00:00Z', 2), " +
+            execute("INSERT INTO tnn VALUES ('1980-01-01T00:00:00Z', 0), ('2020-01-01T00:00:00Z', 1), ('2211-01-01T00:00:00Z', 2), " +
                     "('2261-01-01T00:00:00Z', 3)");
 
-            // Every row's doubly-shifted timestamp wraps back below the bound, so all three match.
-            final String allThree = """
+            // The inner dateadd of rows 1 to 3 does not fit the nanosecond range, so the nested
+            // result is NULL for them and only row 0 is above the bound.
+            final String rowZero = """
                     t2\tv
-                    1709-03-29T00:25:26.290448384Z\t1
-                    1900-03-29T00:25:26.290448384Z\t2
-                    1950-03-30T00:25:26.290448384Z\t3
+                    2253-10-17T00:00:00.000000000Z\t0
                     """;
             assertQuery("SELECT dateadd('d', 1, dateadd('d', 100_000, ts)) t2, v FROM tnn " +
-                    "WHERE dateadd('d', 1, dateadd('d', 100_000, ts)) < '1990-01-01T00:00:00Z'")
+                    "WHERE dateadd('d', 1, dateadd('d', 100_000, ts)) > '1990-01-01T00:00:00Z'")
                     .noLeakCheck()
-                    .returns(allThree);
+                    .returns(rowZero);
             assertQuery("SELECT t2, v FROM (SELECT dateadd('d', 1, t) t2, v FROM " +
-                    "(SELECT dateadd('d', 100_000, ts) t, v FROM tnn)) WHERE t2 < '1990-01-01T00:00:00Z'")
+                    "(SELECT dateadd('d', 100_000, ts) t, v FROM tnn)) WHERE t2 > '1990-01-01T00:00:00Z'")
                     .noLeakCheck()
                     .timestamp("t2")
-                    .returns(allThree);
+                    .returns(rowZero);
 
             // Micros is where the two levels answer DIFFERENTLY, so it is the arm that discriminates
             // a polarity inversion. The inner level runs first, against the Long.MAX_VALUE ceiling
@@ -3137,70 +3123,59 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // wrap point), which also covers the one-sided spelling that is wrong on master today.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tnt (ts TIMESTAMP_NS, v INT) TIMESTAMP(ts) PARTITION BY YEAR");
-            execute("INSERT INTO tnt VALUES ('2020-01-01T00:00:00Z', 1), ('2211-01-01T00:00:00Z', 2), " +
+            execute("INSERT INTO tnt VALUES ('1980-01-01T00:00:00Z', 0), ('2020-01-01T00:00:00Z', 1), ('2211-01-01T00:00:00Z', 2), " +
                     "('2214-01-01T00:00:00Z', 3), ('2250-01-01T00:00:00Z', 4), ('2261-01-01T00:00:00Z', 5)");
 
-            final String fourRows = "t\tv\n" +
-                    "1900-03-28T00:25:26.290448384Z\t2\n" +
-                    "1903-03-29T00:25:26.290448384Z\t3\n" +
-                    "1939-03-29T00:25:26.290448384Z\t4\n" +
-                    "1950-03-29T00:25:26.290448384Z\t5\n";
+            // Rows 1 to 5 have a NULL forward dateadd, so only row 0 can fall into the window.
+            final String rowZero = "t\tv\n" +
+                    "2253-10-16T00:00:00.000000000Z\t0\n";
 
-            // The un-pushed spelling is the oracle: four rows wrap back into the bounded window.
+            // The un-pushed spelling is the oracle.
             assertQuery("SELECT dateadd('d', 100_000, ts) t, v FROM tnt " +
-                    "WHERE dateadd('d', 100_000, ts) > '1900-01-01T00:00:00Z' AND dateadd('d', 100_000, ts) < '2020-01-01T00:00:00Z'")
+                    "WHERE dateadd('d', 100_000, ts) > '2200-01-01T00:00:00Z' AND dateadd('d', 100_000, ts) < '2260-01-01T00:00:00Z'")
                     .noLeakCheck()
                     .timestamp("t")
-                    .returns(fourRows);
+                    .returns(rowZero);
 
-            // The pushed spelling must return them too. Widening the wrapped '>' bound to the open
-            // sentinel while keeping the finite '<' bound pruned every one of them away.
+            // The pushed spelling must return it too.
             assertQuery("SELECT t, v FROM (SELECT dateadd('d', 100_000, ts) t, v FROM tnt) " +
-                    "WHERE t BETWEEN '1900-01-01T00:00:00Z' AND '2020-01-01T00:00:00Z'")
+                    "WHERE t BETWEEN '2200-01-01T00:00:00Z' AND '2260-01-01T00:00:00Z'")
                     .noLeakCheck()
                     .timestamp("t")
-                    .returns(fourRows);
+                    .returns(rowZero);
         });
     }
 
     @Test
     public void testOffsetShiftWrappingOutOfRangeDeclinesPushdown() throws Exception {
-        // The overflow check detects a WRAP, not a mathematical excursion, and dateadd wraps too --
-        // Nanos.addDays is a plain "nanos + days * DAY_NANOS". At 200_000 days the stride exceeds
-        // 2^63, so the projection lands back inside the range about 37 years ABOVE the source
-        // timestamp, and the rows genuinely satisfy the predicate. Declaring the scan empty here
-        // would silently drop them; the pushdown has to decline and let the residual row filter
-        // re-check each row with the same wrapping arithmetic. MonotonicTimestampFunction's
-        // invertConstantShift already returns NONE for this hazard, so both spellings must agree.
+        // At 200_000 days the stride exceeds 2^63 nanoseconds, so dateadd() returns NULL and no row
+        // satisfies the predicate. The pushdown must not build an interval from the wrapped shift,
+        // which would select the rows the wrap lands above the bound. It declines and lets the
+        // residual row filter apply the NULL rule to each row. MonotonicTimestampFunction's
+        // invertConstantShift returns NONE for this hazard too, so both spellings must agree.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tab (ts TIMESTAMP_NS, x INT) TIMESTAMP(ts) PARTITION BY YEAR;");
             execute("INSERT INTO tab VALUES ('2020-06-01T00:00:00.000000000Z', 1);");
 
-            // What the projection actually produces: the wrap puts it in 2057, not out of range.
+            // What the projection actually produces: the result is out of range, so it is NULL.
             assertQuery("SELECT dateadd('d', -200_000, ts) AS t, x FROM tab")
                     .timestamp("t")
                     .expectSize()
                     .returns("""
                             t\tx
-                            2057-05-21T23:34:33.709551616Z\t1
+                            \t1
                             """);
 
-            // The pushed-down form must agree with it rather than returning nothing.
+            // The pushed-down form must agree with it: a NULL does not satisfy the predicate.
             assertQuery("SELECT * FROM (SELECT dateadd('d', -200_000, ts) AS t, x FROM tab) WHERE t > '2020-01-01'")
                     .timestamp("t")
-                    .returns("""
-                            t\tx
-                            2057-05-21T23:34:33.709551616Z\t1
-                            """);
+                    .returns("t\tx\n");
 
             // The same predicate spelled without the sub-query goes through invertConstantShift,
             // which declines for the same reason. The two spellings must return the same rows.
             assertQuery("SELECT dateadd('d', -200_000, ts) AS t, x FROM tab WHERE dateadd('d', -200_000, ts) > '2020-01-01'")
                     .timestamp("t")
-                    .returns("""
-                            t\tx
-                            2057-05-21T23:34:33.709551616Z\t1
-                            """);
+                    .returns("t\tx\n");
         });
     }
 

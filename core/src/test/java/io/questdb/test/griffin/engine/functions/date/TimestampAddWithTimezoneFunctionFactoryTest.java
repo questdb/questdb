@@ -267,6 +267,18 @@ public class TimestampAddWithTimezoneFunctionFactoryTest extends AbstractFunctio
     }
 
     @Test
+    public void testOverflow() throws Exception {
+        // a result that does not fit the timestamp type is NULL, not a wrapped value
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('d', -200000000, '2024-01-01'::timestamp, 'Europe/Berlin')");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('y', 2147483647, '2024-01-01'::timestamp, 'Europe/Berlin')");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n", "select dateadd('d', 200000, '2024-01-01'::timestamp_ns, 'Europe/Berlin')");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP_NS\n", "select dateadd('M', 4000, '2024-01-01'::timestamp_ns, 'Europe/Berlin')");
+        // the final addition overflows near either end of the range
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('d', 1, 9223372036854775807L::timestamp, 'Europe/Berlin')");
+        assertSqlWithTypes("dateadd\n:TIMESTAMP\n", "select dateadd('d', -1, -9223372036854775807L::timestamp, 'Europe/Berlin')");
+    }
+
+    @Test
     public void testPeriodNullChar() throws Exception {
         assertQuery("select dateadd('\0', 5, 1587275359886758L, 'Europe/Bratislava')")
                 .fails(15, "invalid time period [unit=");
