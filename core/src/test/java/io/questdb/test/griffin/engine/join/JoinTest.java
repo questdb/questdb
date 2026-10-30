@@ -9724,6 +9724,12 @@ public class JoinTest extends AbstractCairoTest {
                       SAMPLE BY 5m ALIGN TO FIRST OBSERVATION
                     )\s
                     """, "right side of splice join doesn't support random access", 20);
+
+            assertFailure(
+                    "SELECT * FROM ((SELECT * FROM trade UNION ALL SELECT * FROM trade) TIMESTAMP(ts)) SPLICE JOIN trade",
+                    "left side of splice join doesn't support random access",
+                    82
+            );
         });
     }
 

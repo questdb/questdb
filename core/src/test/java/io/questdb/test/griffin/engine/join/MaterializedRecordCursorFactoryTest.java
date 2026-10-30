@@ -182,11 +182,7 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
     public void testCrossJoinOverNegativeLimit() throws Exception {
         run((engine, compiler, context) -> {
             createTables(engine, context);
-            final String[] subquery = {
-                    "SELECT * FROM (" + SUBQUERIES[1][0] + ") LIMIT -6",
-                    "SELECT * FROM (" + SUBQUERIES[1][1] + ") LIMIT -6",
-                    SUBQUERIES[1][2]
-            };
+            final String[] subquery = withNegativeLimit(SUBQUERIES[1]);
             Assert.assertEquals(0, assertMaterialized(engine, context, CROSS_JOIN, subquery, null, true, true));
             // The join reuses the copy under the limit rather than copying the rows of the limit again.
             final String plan = TestUtils.printSqlToString(
@@ -233,6 +229,9 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
             createTables(engine, context);
             assertMaterialized(engine, context, HORIZON_JOIN, null, true, true);
             assertMaterialized(engine, context, MULTI_HORIZON_JOIN, null, true, true);
+            for (String[] subquery : SUBQUERIES) {
+                Assert.assertEquals(0, assertMaterialized(engine, context, HORIZON_JOIN, withNegativeLimit(subquery), null, true, true));
+            }
         });
     }
 
@@ -422,6 +421,7 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
                 // plans, decides which of them the splice pairs.
                 for (int i = 0; i < SUBQUERIES.length; i += 2) {
                     Assert.assertEquals(query, 0, assertMaterialized(engine, context, query, SUBQUERIES[i], null, false, false));
+                    Assert.assertEquals(query, 0, assertMaterialized(engine, context, query, withNegativeLimit(SUBQUERIES[i]), null, false, false));
                 }
             }
         });
@@ -521,6 +521,10 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
                 "CREATE TABLE q AS (SELECT timestamp_sequence('2024-01-01T00:30', 3_600_000_000L) ts, x FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY",
                 context
         );
+    }
+
+    private static String[] withNegativeLimit(String[] subquery) {
+        return new String[]{"SELECT * FROM (" + subquery[0] + ") LIMIT -6", "SELECT * FROM (" + subquery[1] + ") LIMIT -6", subquery[2]};
     }
 
     private void run(CustomisableRunnable runnable) throws Exception {

@@ -382,6 +382,35 @@ public class OrderByLimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyingTopKIgnoresLightValueBudget() throws Exception {
+        // The light value budget holds 4_096 entries, fewer than the limit keeps.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES, 32_768);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE big AS (SELECT x id, x::VARCHAR v FROM long_sequence(10_000))");
+            final String union = "(SELECT * FROM big WHERE id <= 5_000 UNION ALL SELECT * FROM big WHERE id > 5_000)";
+            assertMatchesReference(
+                    "SELECT id FROM " + union + " ORDER BY id LIMIT 6_000",
+                    "SELECT id FROM big WHERE id <= 6_000"
+            );
+            assertMatchesReference(
+                    "SELECT id FROM " + union + " ORDER BY id DESC LIMIT 4_095",
+                    "SELECT id FROM big WHERE id > 5_905 ORDER BY id DESC"
+            );
+            for (String query : new String[]{
+                    "SELECT id FROM big ORDER BY id DESC",
+                    "SELECT id FROM big WHERE id > 0 ORDER BY id DESC",
+                    "SELECT v FROM big WHERE id > 0 ORDER BY v DESC"
+            }) {
+                assertExceptionNoLeakCheck(
+                        query,
+                        -1,
+                        "memory exceeded in EncodedSort (raise cairo.sql.sort.key.max.bytes or cairo.sql.sort.light.value.max.bytes)"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testCopyingTopKWithinSortKeyBudget() throws Exception {
         // A full sort of the input needs more entries than the budget holds, while
         // the top-K keeps at most its compaction trigger of entries.
@@ -394,6 +423,71 @@ public class OrderByLimitTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("id\n10000\n9999\n9998\n");
             assertExceptionNoLeakCheck("SELECT id FROM " + union + " ORDER BY id DESC", -1, "memory exceeded in EncodedSort");
+            assertExceptionNoLeakCheck(
+                    "SELECT id FROM " + union + " ORDER BY id DESC LIMIT 9_000",
+                    -1,
+                    "limit of 131072 memory exceeded in EncodedSort (raise cairo.sql.sort.key.max.bytes)"
+            );
+            bindVariableService.setLong(0, 2L);
+            bindVariableService.setLong(1, -3L);
+            assertExceptionNoLeakCheck(
+                    "SELECT id FROM (SELECT * FROM big UNION ALL SELECT * FROM big) ORDER BY id LIMIT $1, $2",
+                    -1,
+                    "limit of 131072 memory exceeded in EncodedSort (raise cairo.sql.sort.key.max.bytes)"
+            );
+        });
+    }
+
+    @Test
+    public void testInputOfSortedRuns() throws Exception {
+        // Each table holds the ids 0..8_999 as three interleaved runs, ascending or descending, so the top-K
+        // buffer and the full sort receive several sorted runs to merge.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE asc_runs AS (
+                        SELECT ((x - 1) % 3_000) * 3 + (x - 1) / 3_000 id, ('v' || (100_000 + ((x - 1) % 3_000) * 3 + (x - 1) / 3_000))::VARCHAR v
+                        FROM long_sequence(9_000)
+                    )""");
+            execute("""
+                    CREATE TABLE desc_runs AS (
+                        SELECT (2_999 - (x - 1) % 3_000) * 3 + (x - 1) / 3_000 id, ('v' || (100_000 + (2_999 - (x - 1) % 3_000) * 3 + (x - 1) / 3_000))::VARCHAR v
+                        FROM long_sequence(9_000)
+                    )""");
+            final String first = printReference("SELECT x - 1 id, ('v' || (99_999 + x))::VARCHAR v FROM long_sequence(1_000)");
+            final String last = printReference("SELECT 7_999 + x id, ('v' || (107_999 + x))::VARCHAR v FROM long_sequence(1_000)");
+            final String top = printReference("SELECT 9_000 - x id, ('v' || (109_000 - x))::VARCHAR v FROM long_sequence(1_000)");
+            final String all = printReference("SELECT x - 1 id, ('v' || (99_999 + x))::VARCHAR v FROM long_sequence(9_000)");
+            for (String table : new String[]{"asc_runs", "desc_runs"}) {
+                for (String input : new String[]{table, "(SELECT * FROM " + table + " WHERE id >= 0 UNION ALL SELECT * FROM " + table + " WHERE id < 0)"}) {
+                    final String select = "SELECT id, v FROM " + input;
+                    assertTopK(select + " ORDER BY id LIMIT 1_000", first);
+                    assertTopK(select + " ORDER BY v LIMIT 1_000", first);
+                    assertTopK(select + " ORDER BY id LIMIT -1_000", last);
+                    assertTopK(select + " ORDER BY id DESC LIMIT 1_000", top);
+                    assertTopK(select + " ORDER BY v DESC LIMIT 1_000", top);
+                    // A full sort lends the native sort no scratch, so it sorts the runs again as one array.
+                    for (String key : new String[]{"id", "v"}) {
+                        assertQuery(select + " ORDER BY " + key)
+                                .noLeakCheck()
+                                .expectSize()
+                                .sizeMayVary()
+                                .withPlanContaining("Encode sort")
+                                .returns(all);
+                    }
+                }
+            }
+            // The first run lies wholly above the second, so the merge rotates the runs instead of interleaving them.
+            execute("""
+                    CREATE TABLE disjoint_runs AS (
+                        SELECT CASE WHEN x <= 1_000 THEN x + 1_999 ELSE x - 1_001 END id,
+                               ('v' || (100_000 + CASE WHEN x <= 1_000 THEN x + 1_999 ELSE x - 1_001 END))::VARCHAR v
+                        FROM long_sequence(3_000)
+                    )""");
+            final String disjoint = printReference("SELECT x - 1 id, ('v' || (99_999 + x))::VARCHAR v FROM long_sequence(3_000)");
+            for (String input : new String[]{"disjoint_runs", "(SELECT * FROM disjoint_runs WHERE id >= 0 UNION ALL SELECT * FROM disjoint_runs WHERE id < 0)"}) {
+                assertTopK("SELECT id, v FROM " + input + " ORDER BY id LIMIT 5_000", disjoint);
+                assertTopK("SELECT id, v FROM " + input + " ORDER BY v LIMIT 5_000", disjoint);
+            }
         });
     }
 
@@ -456,5 +550,13 @@ public class OrderByLimitTest extends AbstractCairoTest {
                 .expectSize()
                 .withPlanContaining("Encode sort", "lo:", "Union All")
                 .returns(printReference(referenceQuery));
+    }
+
+    private void assertTopK(String query, String expected) throws Exception {
+        assertQuery(query)
+                .noLeakCheck()
+                .expectSize()
+                .withPlanContaining("lo:")
+                .returns(expected);
     }
 }

@@ -2021,6 +2021,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
+    private static boolean isRandomAccessLostToStream(RecordCursorFactory factory) {
+        for (RecordCursorFactory f = factory; f != null && !f.recordCursorSupportsRandomAccess(); f = f.getBaseFactory()) {
+            if (f.isRewindRecomputing()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
@@ -6246,7 +6255,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (!supportsParallelism) {
-                if (masterFactory.isRewindRecomputing()) {
+                if (isRandomAccessLostToStream(masterFactory)) {
                     final RecordCursorFactory masterToMaterialize = masterFactory;
                     masterFactory = null;
                     masterFactory = materialize(masterToMaterialize, true);
@@ -7270,12 +7279,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestampOrders(master, slaveToFree, slaveModel.getJoinKeywordPosition());
                                 validateOuterJoinExpressions(slaveModel, "SPLICE");
                                 processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
-                                if (master.isRewindRecomputing()) {
+                                if (isRandomAccessLostToStream(master)) {
                                     final RecordCursorFactory masterToMaterialize = master;
                                     master = null;
                                     master = materialize(masterToMaterialize, true);
                                 }
-                                if (slaveToFree.isRewindRecomputing()) {
+                                if (isRandomAccessLostToStream(slaveToFree)) {
                                     final RecordCursorFactory slaveToMaterialize = slaveToFree;
                                     slaveToFree = null;
                                     slaveToFree = materialize(slaveToMaterialize, true);
@@ -9230,7 +9239,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (!supportsParallelism) {
-                if (masterFactory.isRewindRecomputing()) {
+                if (isRandomAccessLostToStream(masterFactory)) {
                     final RecordCursorFactory masterToMaterialize = masterFactory;
                     masterFactory = null;
                     masterFactory = materialize(masterToMaterialize, true);

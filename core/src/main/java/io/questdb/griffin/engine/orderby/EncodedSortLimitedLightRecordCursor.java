@@ -63,9 +63,10 @@ import org.jetbrains.annotations.Nullable;
  * Given a record sink, the cursor serves a base without random access: it copies
  * each row the buffer keeps into a record array and encodes the row's index in
  * that array instead of the base rowId, so a row the threshold rejects is never
- * copied. When the buffer compacts, the cursor re-stores the surviving rows in
- * entry order and renumbers the entries, which keeps the copies at O(limit) rows
- * as well. Emit reads the copies back and never re-reads the base.
+ * copied. Once the copies reach four times the limit, the next compaction of the
+ * buffer re-stores the surviving rows in entry order and renumbers the entries,
+ * which keeps the copies at O(limit) rows as well. Emit reads the copies back and
+ * never re-reads the base.
  */
 class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, RecordCursor.RowIdSource {
     private final IntHashSet buildReadColumns;
@@ -107,7 +108,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         RecordArray spareRecordsInit = null;
         try {
             encoderInit = new SortKeyEncoder(metadata, sortColumnFilter);
-            entriesInit = new EncodedTopKBuffer(configuration, true);
+            entriesInit = new EncodedTopKBuffer(configuration, true, recordSink != null);
             if (recordSink != null) {
                 final long pageSize = configuration.getSqlSortValuePageSize();
                 // RecordArray ceilPow2's the page before allocating; divide by the rounded unit to honor the cap.
@@ -432,12 +433,12 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final long count = entries.getCount();
             final long compactions = entries.getCompactionCount();
-            // records holds one copy per entry, so the next copy lands at this index.
             final long rowId = records.size();
             encoder.encodeTopK(baseRecord, rowId, entries);
-            if (entries.getCompactionCount() != compactions) {
+            final boolean isCompacted = entries.getCompactionCount() != compactions;
+            if (isCompacted && rowId >> 2 >= limit) {
                 compactRecords(rowId);
-            } else if (entries.getCount() != count) {
+            } else if (isCompacted || entries.getCount() != count) {
                 records.put(baseRecord);
             }
         }
