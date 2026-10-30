@@ -21,8 +21,8 @@ jobs:
     pool:
       vmImage: $(imageName)
       name: $(poolName)
-    # 100: must stay above the 90-minute "Run tests" task ceiling passed to
-    # steps.yml below, with headroom for the checkout/cache/download steps that run
+    # 100, not 60: must stay above the 90-minute "Run tests" task ceiling passed to
+    # steps.yml below, with headroom for the checkout/cache/compile steps that run
     # before it. A job ceiling at or below the task ceiling cancels the job before
     # the task's own timeout can report which step overran.
     timeoutInMinutes: 100
@@ -50,8 +50,8 @@ jobs:
           # build 269349 windows-cairo-1, windows-cairo-2 and windows-fuzz2, all
           # on adaptive, hit the old cap (49 / 23 / 32
           # min on master) and every shard that did finish ran 1.5-1.8x its
-          # master time. The job is shared by every leg of an OS, so the cap applies
-          # to macOS too; it is a ceiling, not a target. When a Windows leg nears
+          # master time. The matrix job is shared with macOS, so the cap rises
+          # there too; it is a ceiling, not a target. When a Windows leg nears
           # 75-80 minutes, split another shard rather than raise this cap
           # (windows-cairo-3 and windows-fuzz3 came from that, Oct 2026).
           testTimeoutInMinutes: 90

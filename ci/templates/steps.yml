@@ -311,7 +311,6 @@ steps:
         testRunTitle: "$(TEST_RUN_TITLE)"
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
-    # See "Run tests" below.
     timeoutInMinutes: ${{ parameters.testTimeoutInMinutes }}
     # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
