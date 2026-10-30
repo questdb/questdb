@@ -39,7 +39,8 @@ import org.jetbrains.annotations.Nullable;
  * the rows of each key in its index direction. The record cursor reads such a factory key by key over all page frames,
  * so the keys stay ordered when the scan reads more than one page frame. When the Parquet page frames of the scan do
  * not stay decoded across the passes of the keys, the record cursor instead gathers the rows of the keys window by
- * window, each in one pass over the page frames, and returns them key by key.
+ * window, each in one pass over the page frames, and returns them key by key, and a filtered read collects the rows of
+ * its keys in one pass over the page frames.
  */
 interface KeyOrderedRowCursorFactory extends RowCursorFactory {
 

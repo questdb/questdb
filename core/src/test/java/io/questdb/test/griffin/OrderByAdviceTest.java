@@ -30,10 +30,12 @@ import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.table.AbstractPageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
@@ -148,6 +150,70 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                                 timestamp_sequence(172800000000, 360000000) ts\s
                             from long_sequence(10)) timestamp (ts)""")
                 .returns("sym\tspread\n", expected);
+    }
+
+    @Test
+    public void testFilteredKeyOrderFiltersEachPageFrameOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT ('k' || (x % 4))::SYMBOL sym, x v, x::TIMESTAMP ts FROM long_sequence(10_000)
+                    ), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            sqlExecutionContext.changePageFrameSizes(1_000, 1_000);
+            final String tail = "ts, sym, v FROM t WHERE sym IN ('k0', 'k1', 'k2', 'k3') AND ts >= 0 AND ts < 10_001"
+                    + " AND test_latched_counter() AND v % 997 < 3 ORDER BY sym, ts";
+            final StringSink expected = new StringSink();
+            final long[] rowIdRewind = new long[2];
+            final TestLatchedCounterFunctionFactory.Callback rowIds = new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    final long rowId = rec.getRowId();
+                    rowIdRewind[1] = Math.max(rowIdRewind[1], rowIdRewind[0] - rowId);
+                    rowIdRewind[0] = rowId;
+                    return true;
+                }
+            };
+
+            String query = "SELECT " + tail;
+            printSql("SELECT /*+ no_index(t) */ " + tail, expected);
+            assertQuery(query).noLeakCheck().withPlanContaining("symbolOrder: asc").returns(expected);
+            TestLatchedCounterFunctionFactory.reset(rowIds);
+            printSql(query, new StringSink());
+            // the filter reads the rows of the four keys page frame by page frame, rather than key by key over the scan
+            Assert.assertEquals(10_000, TestLatchedCounterFunctionFactory.getCount());
+            Assert.assertTrue("rows the filter moved back by: " + rowIdRewind[1], rowIdRewind[1] < 1_000);
+
+            query = "SELECT " + tail + " LIMIT -3";
+            printSql("SELECT /*+ no_index(t) */ " + tail + " LIMIT -3", expected);
+            assertQuery(query).noLeakCheck().expectSize().returns(expected);
+            TestLatchedCounterFunctionFactory.reset(null);
+            printSql(query, new StringSink());
+            // the skip to the last rows reads the rows the size of the read filtered
+            Assert.assertEquals(10_000, TestLatchedCounterFunctionFactory.getCount());
+
+            query = "SELECT " + tail + " LIMIT 2";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tsym\tv
+                            1970-01-01T00:00:00.001996Z\tk0\t1996
+                            1970-01-01T00:00:00.002992Z\tk0\t2992
+                            """);
+            TestLatchedCounterFunctionFactory.reset(null);
+            printSql(query, new StringSink());
+            // a LIMIT that the rows of the first key fill filters the page frames before the one that holds the last
+            // row it reads, and only the first key in that one
+            Assert.assertEquals(2 * 1_000 + 1_000 / 4, TestLatchedCounterFunctionFactory.getCount());
+
+            for (String other : new String[]{
+                    "ts, sym, v FROM t WHERE sym IN ('k0', 'k1', 'k2', 'k3') AND ts >= 0 AND ts < 10_001 AND v % 997 < 3 ORDER BY sym DESC, ts DESC",
+                    "ts, sym, v FROM t WHERE sym != 'k2' AND ts >= 0 AND ts < 10_001 AND v % 997 < 3 ORDER BY sym, ts"
+            }) {
+                printSql("SELECT /*+ no_index(t) */ " + other, expected);
+                assertQuery("SELECT " + other).noLeakCheck().withPlanContaining("symbolOrder").returns(expected);
+            }
+        });
     }
 
     @Test

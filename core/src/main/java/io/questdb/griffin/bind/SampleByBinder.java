@@ -539,19 +539,8 @@ final class SampleByBinder {
     private void validateSampleByQuery(QueryModel model, QueryModel source, OutputSchema input, boolean isBucket) throws SqlException {
         final int timestampIndex = sampleByTimestampIndex(input);
         final ExpressionNode sampleBy = source.getSampleBy();
-        if (source.getSampleByFrom() != null || source.getSampleByTo() != null) {
-            boolean hasRangeTimestamp = source.getTimestamp() != null || source.getTableNameExpr() != null;
-            if (!hasRangeTimestamp) {
-                for (QueryModel current = model; current != null; current = current.getNestedModel()) {
-                    if (current.getWhereClause() != null) {
-                        hasRangeTimestamp = current.getTimestamp() != null || current.getTableNameExpr() != null;
-                        break;
-                    }
-                }
-            }
-            if (timestampIndex < 0 || !hasRangeTimestamp) {
-                throw SqlException.$(sampleBy.position, "Sample by requires a designated TIMESTAMP");
-            }
+        if (timestampIndex < 0 && (source.getSampleByFrom() != null || source.getSampleByTo() != null)) {
+            throw SqlException.$(sampleBy.position, "Sample by requires a designated TIMESTAMP");
         }
         if (source.getGroupBy().size() > 0) {
             throw SqlException.$(source.getGroupBy().getQuick(0).position, "SELECT query must not contain both GROUP BY and SAMPLE BY");

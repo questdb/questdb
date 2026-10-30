@@ -25,10 +25,14 @@
 package io.questdb.griffin.bind;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.CallBinder;
 import io.questdb.griffin.CharacterStore;
@@ -49,6 +53,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlHints;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.TimestampPrecisionUse;
 import io.questdb.griffin.SqlParserCallback;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.TableFunctionSources;
@@ -59,6 +64,7 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.ComparisonOperator;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -267,9 +273,52 @@ public final class SqlBinder implements Mutable {
         return false;
     }
 
+    /**
+     * Whether a branch of the set operation, or of a set operation it reads directly, reads the column at the index
+     * as DATE.
+     */
+    private static boolean hasDateBranch(SetOperationPlan operation, int columnIndex) {
+        for (int i = 0; i < 2; i++) {
+            final LogicalPlan branch = operation.inputAt(i);
+            if (branch instanceof SetOperationPlan branchOperation ? hasDateBranch(branchOperation, columnIndex)
+                    : ColumnType.tagOf(branch.getOutput().getColumnType(columnIndex)) == ColumnType.DATE) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether the expression reads a bind variable the service does not define yet.
+     */
+    private static boolean hasUndefinedBindVariable(ExpressionNode node, BindVariableService bindVariables) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.BIND_VARIABLE) {
+            return FunctionBinder.definedBindVariable(node.token, bindVariables) == null;
+        }
+        if (node.paramCount < 3) {
+            return hasUndefinedBindVariable(node.lhs, bindVariables) || hasUndefinedBindVariable(node.rhs, bindVariables);
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasUndefinedBindVariable(node.args.getQuick(i), bindVariables)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isProjectionReference(ExpressionNode expression, OutputSchema source, OutputSchema scope) {
         return FunctionBinder.qualifierEnd(expression, scope) < 0 && getColumnIndexQuiet(source, expression.token) < 0
                 && getColumnIndexQuiet(scope, expression.token) >= 0;
+    }
+
+    /**
+     * Whether the type is DATE or a timestamp, the types whose comparisons bind at the column's own precision.
+     */
+    private static boolean isTemporal(int type) {
+        return ColumnType.isTimestamp(type) || ColumnType.tagOf(type) == ColumnType.DATE;
     }
 
     // An object the principal may not see resolves exactly like a missing one. A model expanded from a view reads
@@ -743,10 +792,12 @@ public final class SqlBinder implements Mutable {
                 final int rightId = right.getOutput().getColumnId(i);
                 if (scope.intrinsicTimestampColumnIds.contains(leftId) || scope.intrinsicTimestampColumnIds.contains(rightId)
                         || scope.ambiguousTimestampColumnIds.contains(leftId) || scope.ambiguousTimestampColumnIds.contains(rightId)) {
+                    final int leftType = result.getOutput().getColumnType(i);
+                    final int rightType = right.getOutput().getColumnType(i);
                     if (LogicalPlans.canPushSetTimestamp(operation, i)) {
                         scope.intrinsicTimestampColumnIds.add(operation.getOutput().getColumnId(i));
-                    } else if (result.getOutput().getColumnType(i) != right.getOutput().getColumnType(i)
-                            || scope.ambiguousTimestampColumnIds.contains(leftId) || scope.ambiguousTimestampColumnIds.contains(rightId)) {
+                    } else if (isTemporal(leftType) && isTemporal(rightType) && (leftType != rightType
+                            || scope.ambiguousTimestampColumnIds.contains(leftId) || scope.ambiguousTimestampColumnIds.contains(rightId))) {
                         // A bound comparison cannot silently cross a timestamp
                         // precision conversion. Equal branch precisions bind as
                         // an ordinary column above a row-selection boundary.
@@ -1001,6 +1052,27 @@ public final class SqlBinder implements Mutable {
         modelDepth++;
     }
 
+    /**
+     * Whether every argument of the call is an instant of the column, see {@link #isInstant}, or precision exact, see
+     * {@link #isPrecisionExact}, and one is an instant.
+     */
+    private boolean hasInstantArgument(ExpressionNode call, boolean isTextExact, SqlExecutionContext executionContext) {
+        final ObjList<ExpressionNode> arguments = call.paramCount < 3 ? null : call.args;
+        final int argumentCount = arguments == null ? 2 : arguments.size();
+        boolean hasInstant = false;
+        for (int i = 0; i < argumentCount; i++) {
+            final ExpressionNode argument = arguments == null ? (i == 0 ? call.lhs : call.rhs) : arguments.getQuick(i);
+            if (argument != null) {
+                if (isInstant(argument, isTextExact, executionContext)) {
+                    hasInstant = true;
+                } else if (!isPrecisionExact(argument, isTextExact, executionContext)) {
+                    return false;
+                }
+            }
+        }
+        return hasInstant;
+    }
+
     private boolean isCursorNameTaken(CharSequence name) {
         final BindScope scope = ctx.scope();
         for (int i = 0, n = scope.cursorNames.size(); i < n; i++) {
@@ -1009,6 +1081,114 @@ public final class SqlBinder implements Mutable {
             }
         }
         return false;
+    }
+
+    /**
+     * Whether the expression reads the ambiguous set column, the only column it reads, as an instant: it is the
+     * column, a cast of an instant to DATE or a timestamp, or a call that returns the same instant at every precision,
+     * see {@link TimestampPrecisionUse#PRESERVING}, whose other arguments are precision exact, see
+     * {@link #isPrecisionExact}.
+     */
+    private boolean isInstant(ExpressionNode node, boolean isTextExact, SqlExecutionContext executionContext) {
+        if (node.type == ExpressionNode.LITERAL) {
+            return true;
+        }
+        if (node.type != ExpressionNode.FUNCTION && node.type != ExpressionNode.OPERATION) {
+            return false;
+        }
+        if (SqlKeywords.isCastKeyword(node.token) && node.paramCount == 2) {
+            return isTemporal(ColumnType.typeOf(node.rhs.token)) && isInstant(node.lhs, isTextExact, executionContext);
+        }
+        return ctx.functionFactoryCache.getTimestampPrecisionUse(node) == TimestampPrecisionUse.PRESERVING
+                && hasInstantArgument(node, isTextExact, executionContext);
+    }
+
+    /**
+     * Whether the conjunct, which reads no column but the ambiguous set column, means the same at each branch's
+     * precision as at the column's set type: it compares instants of the column, see {@link #isInstant}, only with
+     * each other and with timestamp values, see {@link #isTimestampValue}, and reads them otherwise only as arguments of
+     * calls whose value does not depend on the precision, see {@link TimestampPrecisionUse#INVARIANT}. Text that is
+     * not a literal counts as a timestamp value only when {@code isTextExact}, as no branch reads the column as DATE.
+     */
+    private boolean isPrecisionExact(ExpressionNode node, boolean isTextExact, SqlExecutionContext executionContext) {
+        if (node == null) {
+            return true;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            return false;
+        }
+        if (node.type != ExpressionNode.FUNCTION && node.type != ExpressionNode.OPERATION) {
+            return true;
+        }
+        final ObjList<ExpressionNode> operands = node.paramCount < 3 ? null : node.args;
+        final int operandCount = operands == null ? 2 : operands.size();
+        if (ComparisonOperator.of(Chars.toString(node.token)) != null || SqlKeywords.isInKeyword(node.token)
+                || SqlKeywords.isBetweenKeyword(node.token)) {
+            boolean isInstantCompared = false;
+            boolean isTimestampCompared = true;
+            for (int i = 0; i < operandCount; i++) {
+                final ExpressionNode operand = operands == null ? (i == 0 ? node.lhs : node.rhs) : operands.getQuick(i);
+                if (operand != null) {
+                    if (isInstant(operand, isTextExact, executionContext)) {
+                        isInstantCompared = true;
+                    } else {
+                        isTimestampCompared = isTimestampCompared && isTimestampValue(operand, isTextExact, executionContext);
+                    }
+                }
+            }
+            if (isInstantCompared) {
+                return isTimestampCompared;
+            }
+        }
+        if (ctx.functionFactoryCache.getTimestampPrecisionUse(node) == TimestampPrecisionUse.INVARIANT) {
+            return hasInstantArgument(node, isTextExact, executionContext);
+        }
+        for (int i = 0; i < operandCount; i++) {
+            if (!isPrecisionExact(operands == null ? (i == 0 ? node.lhs : node.rhs) : operands.getQuick(i), isTextExact, executionContext)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Whether the value, which reads no column, is one a comparison converts exactly to the precision of the column it
+     * compares: timestamp text or NULL, a value whose type is DATE or a timestamp, or text when {@code isTextExact}. A
+     * bind variable has the type the service defines; any other expression has the type it binds to on its own,
+     * without input columns. An expression that reads an undefined bind variable is not one, so binding it here
+     * defines no bind variable, and neither is one that fails to bind on its own, which the conjunct's own binding
+     * reports.
+     */
+    private boolean isTimestampValue(ExpressionNode value, boolean isTextExact, SqlExecutionContext executionContext) {
+        final BindVariableService bindVariables = executionContext.getBindVariableService();
+        final int type;
+        switch (value.type) {
+            case ExpressionNode.CONSTANT -> {
+                return Chars.isQuoted(value.token) || SqlKeywords.isNullKeyword(value.token);
+            }
+            case ExpressionNode.BIND_VARIABLE -> {
+                final Function bindVariable = FunctionBinder.definedBindVariable(value.token, bindVariables);
+                if (bindVariable == null) {
+                    return false;
+                }
+                type = bindVariable.getType();
+            }
+            case ExpressionNode.FUNCTION, ExpressionNode.OPERATION -> {
+                if (hasColumnReference(value) || hasUndefinedBindVariable(value, bindVariables)) {
+                    return false;
+                }
+                try {
+                    type = ctx.functionBinder.bind(value, ctx.emptySchema, null, executionContext).getDataType();
+                } catch (SqlException | CairoException | ImplicitCastException | UnsupportedOperationException e) {
+                    return false;
+                }
+            }
+            default -> {
+                return false;
+            }
+        }
+        final short tag = ColumnType.tagOf(type);
+        return isTemporal(type) || isTextExact && (tag == ColumnType.STRING || tag == ColumnType.VARCHAR);
     }
 
     private LowerCaseCharSequenceObjHashMap<CharSequence> mergeHints(
@@ -1497,7 +1677,8 @@ public final class SqlBinder implements Mutable {
 
     /**
      * Binds a conjunct that references only a mixed-precision set
-     * timestamp in every set branch, so each branch applies its own precision.
+     * timestamp in every set branch, so each branch applies its own precision,
+     * when that precision does not change what it means, see {@link #isPrecisionExact}.
      * Returns whether the conjunct left nothing to evaluate above the input.
      */
     boolean distributeSetFilter(
@@ -1526,6 +1707,7 @@ public final class SqlBinder implements Mutable {
         }
         final int columnIndex = operation.getOutput().getColumnIndexById(columnId);
         return LogicalPlans.setTimestampIndex(operation) == columnIndex
+                && isPrecisionExact(expression, !hasDateBranch(operation, columnIndex), executionContext)
                 && distributeSetFilter(expression, operation, columnIndex, scope, scopeIndex, alias, executionContext);
     }
 

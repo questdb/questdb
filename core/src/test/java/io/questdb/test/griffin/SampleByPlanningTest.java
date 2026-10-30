@@ -463,7 +463,6 @@ public class SampleByPlanningTest extends AbstractCairoTest {
                             2024-03-31T02:00:00.000000Z	2
                             """
             );
-            assertQuery("SELECT ts,count() FROM (SELECT * FROM lp_sample) SAMPLE BY 1h FROM '2024-01-01'").noLeakCheck().fails(59, "Sample by requires a designated TIMESTAMP");
             assertRowsOnly(
                     "SELECT ts,count() FROM (SELECT * FROM lp_sample) TIMESTAMP(ts) SAMPLE BY 1h FROM '2024-01-01'",
                     """

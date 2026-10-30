@@ -33,7 +33,6 @@ import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -611,7 +610,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long replacementTimestampLo,
             long replacementTimestampHi
     ) {
-        final long recordRowCopierMetadataVersion = walWriter.getMetadata().getMetadataVersion();
         final long refreshFinishTimestampUs = microsecondClock.getTicks();
         final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
         if (refreshContext.toBaseTxn == -1) {
@@ -645,7 +643,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             viewState.rangeRefreshSuccess(
                     factory,
                     copier,
-                    recordRowCopierMetadataVersion,
                     refreshFinishTimestampUs,
                     refreshTriggerTimestampUs,
                     commitPeriodHi
@@ -665,7 +662,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             viewState.refreshSuccess(
                     factory,
                     copier,
-                    recordRowCopierMetadataVersion,
                     refreshFinishTimestampUs,
                     refreshTriggerTimestampUs,
                     refreshContext.toBaseTxn,
@@ -1263,17 +1259,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return true;
     }
 
-    private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) throws SqlException {
-        columnFilter.of(factory.getMetadata().getColumnCount());
-        return RecordToRowCopierUtils.generateCopier(
-                compiler.getAsm(),
-                factory.getMetadata(),
-                tableWriter.getMetadata(),
-                columnFilter,
-                configuration
-        );
-    }
-
     /**
      * Returns true if the throwable is a transient, retriable refresh error: a "table busy" error
      * (the reader pool of a table the view SQL reads, or the view's WAL writer pool, exhausted), or
@@ -1509,9 +1494,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             final CompiledQuery compiledQuery = compiler.compile(viewSql, refreshSqlExecutionContext);
                             assert compiledQuery.getType() == CompiledQuery.SELECT;
                             factory = compiledQuery.getRecordCursorFactory();
-                            if (copier == null || walWriter.getMetadata().getMetadataVersion() != viewState.getRecordRowCopierMetadataVersion()) {
-                                copier = getRecordToRowCopier(walWriter, factory, compiler);
-                            }
+                            copier = RecordToRowCopierUtils.generateViewCopier(
+                                    compiler.getAsm(),
+                                    factory.getMetadata(),
+                                    walWriter.getMetadata(),
+                                    columnFilter,
+                                    configuration
+                            );
                         } catch (SqlException e) {
                             factory = Misc.free(factory);
                             if (e.isTableBusy()) {

@@ -1643,6 +1643,183 @@ public class JoinPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftJoinJoinsBeforeCrossInputItsOnDoesNotRead() throws Exception {
+        assertMemoryLeak(() -> {
+            createLeftJoinAnchorTables();
+            final String join = "lp_anchor_a a CROSS JOIN lp_anchor_c c LEFT JOIN lp_anchor_b b ON b.id = a.id";
+            final String sql = "SELECT count(), sum(c.k), sum(b.w) FROM " + join;
+            assertQuery(sql).noLeakCheck().noRandomAccess().expectSize().withPlan("""
+                    GroupBy vectorized: false
+                      values: [count(*),sum(c.k),sum(b.w)]
+                        Cross Join
+                            Hash Left Outer Join Light
+                              condition: b.id=a.id
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: lp_anchor_a
+                                Hash
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_anchor_b
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: lp_anchor_c
+                    """).returns("count\tsum\tsum1\n8\t120\t1002\n");
+            assertQuery(sql).noLeakCheck().fullFatJoins().noRandomAccess().expectSize().returns("count\tsum\tsum1\n8\t120\t1002\n");
+            assertQuery("SELECT a.id, c.k, b.w FROM " + join + " ORDER BY a.id, c.k, b.w").noLeakCheck().returns("""
+                    id\tk\tw
+                    1\t10\t100
+                    1\t10\t101
+                    1\t20\t100
+                    1\t20\t101
+                    2\t10\tnull
+                    2\t20\tnull
+                    3\t10\t300
+                    3\t20\t300
+                    """);
+        });
+    }
+
+    @Test
+    public void testLeftJoinStaysAfterKeyedInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createLeftJoinAnchorTables();
+            assertQuery("""
+                    SELECT count(), sum(c.k), sum(b.w)
+                    FROM lp_anchor_a a CROSS JOIN lp_anchor_c c JOIN lp_anchor_c c2 ON c2.k = c.k LEFT JOIN lp_anchor_b b ON b.id = a.id
+                    """).noLeakCheck().noRandomAccess().expectSize().withPlan("""
+                    GroupBy vectorized: false
+                      values: [count(*),sum(c.k),sum(b.w)]
+                        Hash Left Outer Join Light
+                          condition: b.id=a.id
+                            Hash Join Light
+                              condition: c2.k=c.k
+                                Cross Join
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_anchor_a
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_anchor_c
+                                Hash
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_anchor_c
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: lp_anchor_b
+                    """).returns("count\tsum\tsum1\n8\t120\t1002\n");
+        });
+    }
+
+    @Test
+    public void testLeftJoinStaysAfterInputsItDoesNotCommuteWith() throws Exception {
+        assertMemoryLeak(() -> {
+            createLeftJoinAnchorTables();
+            assertQuery("""
+                    SELECT a.id, c.k, b.w
+                    FROM lp_anchor_a a CROSS JOIN lp_anchor_c c LEFT JOIN lp_anchor_b b ON b.id = a.id AND b.w > c.k * 10
+                    ORDER BY a.id, c.k, b.w
+                    """).noLeakCheck().withPlan("""
+                    Encode sort
+                      keys: [id, k, w]
+                        SelectedRecord
+                            Hash Left Outer Join Light
+                              condition: b.id=a.id
+                              filter: c.k*10<b.w
+                                Cross Join
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_anchor_a
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_anchor_c
+                                Hash
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_anchor_b
+                    """).returns("""
+                    id\tk\tw
+                    1\t10\t101
+                    1\t20\tnull
+                    2\t10\tnull
+                    2\t20\tnull
+                    3\t10\t300
+                    3\t20\t300
+                    """);
+            assertQuery("""
+                    SELECT a.id, c.k, b.w
+                    FROM lp_anchor_a a CROSS JOIN lp_anchor_c c LEFT JOIN lp_anchor_b b ON b.id = a.id
+                    WHERE b.w = c.k * 10
+                    """).noLeakCheck().noRandomAccess().returns("""
+                    id\tk\tw
+                    1\t10\t100
+                    """);
+            assertQuery("""
+                    SELECT count(), count(b2.w), sum(c.k)
+                    FROM lp_anchor_a a CROSS JOIN lp_anchor_c c RIGHT JOIN lp_anchor_b b1 ON b1.id = a.id LEFT JOIN lp_anchor_b b2 ON b2.id = a.id
+                    """).noLeakCheck().noRandomAccess().expectSize().returns("count\tcount1\tsum\n11\t10\t150\n");
+            assertQuery("""
+                    SELECT count(), count(b2.w), sum(c.k)
+                    FROM lp_anchor_a a LEFT JOIN lp_anchor_b b1 ON b1.id = a.id CROSS JOIN lp_anchor_c c LEFT JOIN lp_anchor_b b2 ON b2.id = b1.id
+                    """).noLeakCheck().noRandomAccess().expectSize().returns("count\tcount1\tsum\n12\t10\t180\n");
+            assertQuery("""
+                    SELECT a.id, l.k, b.w
+                    FROM lp_anchor_a a CROSS JOIN LATERAL (SELECT k FROM lp_anchor_c c WHERE c.k > a.id * 5 ORDER BY k LIMIT 1) l
+                    LEFT JOIN lp_anchor_b b ON b.id = a.id
+                    ORDER BY a.id, b.w
+                    """).noLeakCheck().returns("""
+                    id\tk\tw
+                    1\t10\t100
+                    1\t10\t101
+                    2\t20\tnull
+                    3\t20\t300
+                    """);
+            final String asOfRows = """
+                    id\tv\tk\tw
+                    1\t7\t10\t100
+                    1\t7\t10\t101
+                    1\t7\t20\t100
+                    1\t7\t20\t101
+                    3\t8\t10\t300
+                    3\t8\t20\t300
+                    """;
+            assertQuery("""
+                    SELECT t.id, q.v, c.k, b.w
+                    FROM lp_anchor_t t ASOF JOIN lp_anchor_q q CROSS JOIN lp_anchor_c c LEFT JOIN lp_anchor_b b ON b.id = t.id
+                    ORDER BY t.id, c.k, b.w
+                    """).noLeakCheck().withPlan("""
+                    Encode sort
+                      keys: [id, k, w]
+                        SelectedRecord
+                            Cross Join
+                                Hash Left Outer Join Light
+                                  condition: b.id=t.id
+                                    AsOf Join Fast
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_anchor_t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_anchor_q
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_anchor_b
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: lp_anchor_c
+                    """).returns(asOfRows);
+            assertQuery("""
+                    SELECT t.id, q.v, c.k, b.w
+                    FROM lp_anchor_t t CROSS JOIN lp_anchor_c c LEFT JOIN lp_anchor_b b ON b.id = t.id ASOF JOIN lp_anchor_q q
+                    ORDER BY t.id, c.k, b.w
+                    """).noLeakCheck().returns(asOfRows);
+        });
+    }
+
+    @Test
     public void testLeftOnResidualAndWhereApplyAtDifferentBoundaries() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -1896,6 +2073,17 @@ public class JoinPlanningTest extends AbstractCairoTest {
                 assertRowsOnly(factory, expected);
             }
         }
+    }
+
+    private void createLeftJoinAnchorTables() throws Exception {
+        execute("CREATE TABLE lp_anchor_a AS (SELECT x id FROM long_sequence(3))");
+        execute("CREATE TABLE lp_anchor_b (id LONG, w LONG)");
+        execute("INSERT INTO lp_anchor_b VALUES (1, 100), (1, 101), (3, 300), (4, 400)");
+        execute("CREATE TABLE lp_anchor_c AS (SELECT x * 10 k FROM long_sequence(2))");
+        execute("CREATE TABLE lp_anchor_t (ts TIMESTAMP, id LONG) TIMESTAMP(ts)");
+        execute("INSERT INTO lp_anchor_t VALUES ('2024-01-01T00:00:01Z', 1), ('2024-01-01T00:00:03Z', 3)");
+        execute("CREATE TABLE lp_anchor_q (ts TIMESTAMP, v LONG) TIMESTAMP(ts)");
+        execute("INSERT INTO lp_anchor_q VALUES ('2024-01-01T00:00:00Z', 7), ('2024-01-01T00:00:02Z', 8)");
     }
 
     private void createRows() throws Exception {

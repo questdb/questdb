@@ -200,9 +200,16 @@ public final class JoinGraphBuilder implements Mutable {
     }
 
     boolean hasJoinDependency(int source) {
+        return hasParents(source) || children.getQuick(source).size() > 0 || constrainedInputs.contains(source);
+    }
+
+    /**
+     * Whether a key or a lateral dependency collected so far orders the input after an input before it: the optimiser
+     * joins an INNER or CROSS input with parents as an INNER step, and one without as a CROSS step.
+     */
+    boolean hasParents(int source) {
         final JoinDependency dependency = dependencies.getQuick(source);
-        return dependency != null && dependency.getParents().size() > 0 || children.getQuick(source).size() > 0
-                || constrainedInputs.contains(source);
+        return dependency != null && dependency.getParents().size() > 0;
     }
 
     /**

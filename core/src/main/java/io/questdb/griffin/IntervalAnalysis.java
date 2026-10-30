@@ -156,11 +156,6 @@ public final class IntervalAnalysis {
         private final ObjList<Function> placeholders = new ObjList<>();
         private int placeholderCount;
 
-        private static MonotonicTimestampFunctionFactory factory(BoundExpression expression) {
-            return expression instanceof FunctionExpression call && call.getOverload() != null
-                    && call.getOverload().getFactory() instanceof MonotonicTimestampFunctionFactory factory ? factory : null;
-        }
-
         @Override
         public Function compileTickExpr(TimestampDriver timestampDriver, CairoConfiguration configuration, CharSequence seq, int lo, int lim, int position) {
             return placeholder();
@@ -179,12 +174,12 @@ public final class IntervalAnalysis {
         @Override
         public int invertMonotonic(BoundExpression operand, Function head, Interval io) throws SqlException {
             int soundness = MonotonicTimestampFunction.EXACT;
-            BoundExpression layer = skipIdentities(operand);
+            BoundExpression layer = MonotonicTimestampFunctionFactory.skipIdentities(operand, arguments);
             int index;
             while ((index = timestampArgumentIndex(layer)) >= 0) {
                 final FunctionExpression call = (FunctionExpression) layer;
-                final BoundExpression argument = skipIdentities(call.argumentAt(index));
-                final int grade = factory(call).invertTimestampInterval(call, io, timestampArgumentIndex(argument) >= 0, arguments);
+                final BoundExpression argument = MonotonicTimestampFunctionFactory.skipIdentities(call.argumentAt(index), arguments);
+                final int grade = MonotonicTimestampFunctionFactory.of(call).invertTimestampInterval(call, io, timestampArgumentIndex(argument) >= 0, arguments);
                 if (grade == MonotonicTimestampFunction.NONE) {
                     return grade;
                 }
@@ -233,20 +228,8 @@ public final class IntervalAnalysis {
             return placeholders.getQuick(placeholderCount++);
         }
 
-        private BoundExpression skipIdentities(BoundExpression expression) throws SqlException {
-            MonotonicTimestampFunctionFactory factory;
-            while ((factory = factory(expression)) != null) {
-                final FunctionExpression call = (FunctionExpression) expression;
-                if (factory.getTimestampArgumentIndex(call, arguments) < 0 || !factory.isIdentity(call, arguments)) {
-                    break;
-                }
-                expression = call.argumentAt(factory.getTimestampArgumentIndex(call, arguments));
-            }
-            return expression;
-        }
-
         private int timestampArgumentIndex(BoundExpression expression) throws SqlException {
-            final MonotonicTimestampFunctionFactory factory = factory(expression);
+            final MonotonicTimestampFunctionFactory factory = MonotonicTimestampFunctionFactory.of(expression);
             return factory != null ? factory.getTimestampArgumentIndex((FunctionExpression) expression, arguments) : -1;
         }
     }

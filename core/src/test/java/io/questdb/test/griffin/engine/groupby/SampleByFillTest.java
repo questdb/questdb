@@ -3302,9 +3302,16 @@ public class SampleByFillTest extends AbstractCairoTest {
             }
             final String[] integerAggregates = {"sum(i)", "min(i)", "sum(l)", "first(ch)"};
             for (String aggregate : integerAggregates) {
-                assertFillCompileErrorOnAllShapes("SELECT ts, " + aggregate + " FROM t_fv SAMPLE BY 1h FILL(1.5)", "1.5");
                 assertFillCompileErrorOnAllShapes("SELECT ts, " + aggregate + " FROM t_fv SAMPLE BY 1h FILL('1.5')", "'1.5'");
             }
+            for (String aggregate : new String[]{"sum(i)", "min(i)", "sum(l)"}) {
+                assertFillCompileErrorOnAllShapes("SELECT ts, " + aggregate + " FROM t_fv SAMPLE BY 1h FILL(1.5)", "1.5");
+            }
+            assertFillCompileErrorOnAllShapes(
+                    "SELECT ts, first(ch) FROM t_fv SAMPLE BY 1h FILL(1.5)",
+                    "1.5",
+                    "fill value of type DOUBLE cannot fill column of type CHAR"
+            );
             assertFillCompileErrorOnAllShapes("SELECT ts, sum(i) FROM t_fv SAMPLE BY 1h FILL('')", "''");
             assertFillCompileErrorOnAllShapes("SELECT ts, sum(i), avg(d) FROM t_fv SAMPLE BY 1h FILL(0, 'abc')", "'abc'");
             assertFillCompileErrorOnAllShapes("SELECT ts, sum(i), avg(d) FROM t_fv SAMPLE BY 1h FILL(PREV, 'abc')", "'abc'");

@@ -31,10 +31,12 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.TimestampPrecisionUse;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
@@ -56,6 +58,11 @@ public class YearFunctionFactory implements FunctionFactory, MonotonicTimestampF
     @Override
     public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
         return 0;
+    }
+
+    @Override
+    public TimestampPrecisionUse getTimestampPrecisionUse(ExpressionNode call) {
+        return TimestampPrecisionUse.INVARIANT;
     }
 
     @Override

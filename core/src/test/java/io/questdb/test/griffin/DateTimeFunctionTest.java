@@ -68,7 +68,7 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                                 + "),year(" + column + ") FROM lp_date ORDER BY id",
                         """
                                 id	day	day_of_week	day_of_week_sunday_first	days_in_month	hour	is_end_of_month	is_leap_year	micros	millis	minute	month	nanos	second	week_of_year	year
-                                1	29	6	7	29	23	true	false	456	123	59	2	789	58	9	2020
+                                1	29	6	7	29	23	true	true	456	123	59	2	789	58	9	2020
                                 2	1	5	6	31	0	false	false	0	0	0	1	1	0	53	2021
                                 3	31	3	4	31	23	true	false	999	999	59	12	999	59	1	1969
                                 4	null	null	null	null	null	false	false	null	null	null	null	null	null	null	null
@@ -385,6 +385,24 @@ public class DateTimeFunctionTest extends AbstractCairoTest {
                 assertFailsAndRecovers(compiler, "SELECT to_utc(ts,null) FROM lp_date", 17, "timezone must not be null");
                 assertFailsAndRecovers(compiler, "SELECT to_timezone(nt,null) FROM lp_date", 22, "timezone must not be null");
             }
+        });
+    }
+
+    @Test
+    public void testIsLeapYearFollowsTheArgumentPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_leap (t STRING)");
+            execute("INSERT INTO lp_leap VALUES ('1900-06-01'),('2000-06-01'),('2023-06-01'),('2024-02-29T12:00:00.000Z')");
+            assertQuery("SELECT t, is_leap_year(t::TIMESTAMP) micro, is_leap_year(t::TIMESTAMP_NS) nano, is_leap_year(t::DATE) date FROM lp_leap")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            t	micro	nano	date
+                            1900-06-01	false	false	false
+                            2000-06-01	true	true	true
+                            2023-06-01	false	false	false
+                            2024-02-29T12:00:00.000Z	true	true	true
+                            """);
         });
     }
 

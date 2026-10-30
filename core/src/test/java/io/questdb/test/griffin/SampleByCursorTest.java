@@ -711,10 +711,69 @@ public class SampleByCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFromToOverSubQueryAndCte() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows("lp_sample_cursor", "TIMESTAMP");
+            final String[] sources = {
+                    "SELECT ts, sum(v) FROM lp_sample_cursor",
+                    "SELECT ts, sum(v) FROM (SELECT * FROM lp_sample_cursor)",
+                    "WITH c AS (SELECT * FROM lp_sample_cursor) SELECT ts, sum(v) FROM c"
+            };
+            for (int i = 0; i < sources.length; i++) {
+                final String source = sources[i];
+                final boolean isTable = i == 0;
+                assertQuery(source + " SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .supportsRandomAccess(isTable)
+                        .expectSize(isTable)
+                        .returns("""
+                                ts	sum
+                                2024-01-01T00:00:00.000000Z	4.0
+                                2024-01-01T02:00:00.000000Z	5.0
+                                2024-01-01T03:00:00.000000Z	7.0
+                                """);
+                assertQuery(source + " SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00' FILL(NULL)")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
+                                ts	sum
+                                2024-01-01T00:00:00.000000Z	4.0
+                                2024-01-01T01:00:00.000000Z	null
+                                2024-01-01T02:00:00.000000Z	5.0
+                                2024-01-01T03:00:00.000000Z	7.0
+                                2024-01-01T04:00:00.000000Z	null
+                                """);
+                assertQuery(source + " SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00' FILL(PREV)")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
+                                ts	sum
+                                2024-01-01T00:00:00.000000Z	4.0
+                                2024-01-01T01:00:00.000000Z	4.0
+                                2024-01-01T02:00:00.000000Z	5.0
+                                2024-01-01T03:00:00.000000Z	7.0
+                                2024-01-01T04:00:00.000000Z	7.0
+                                """);
+            }
+            assertQuery("SELECT ts, sum(v) FROM (SELECT * FROM lp_sample_cursor LIMIT 2) SAMPLE BY 1h FROM '2024-01-01T00:30:00' TO '2024-01-01T05:00:00'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts	sum
+                            2024-01-01T00:30:00.000000Z	3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testErrorsKeepInputOrderFillAndParameterDiagnostics() throws Exception {
         assertMemoryLeak(() -> {
             createRows("lp_sample_cursor", "TIMESTAMP");
-            assertQuery("SELECT ts,sum(v) FROM (SELECT * FROM lp_sample_cursor) SAMPLE BY 1h FROM '2024-01-01T00:15:00' TO '2024-01-01T04:00:00'").noLeakCheck().fails(65, "Sample by requires a designated TIMESTAMP");
+            assertQuery("SELECT ts,sum(v) FROM (SELECT * FROM lp_sample_cursor ORDER BY v) SAMPLE BY 1h FROM '2024-01-01T00:15:00' TO '2024-01-01T04:00:00'").noLeakCheck().fails(76, "Sample by requires a designated TIMESTAMP");
             assertQuery("SELECT ts,sum(v) FROM (SELECT * FROM lp_sample_cursor ORDER BY ts DESC) SAMPLE BY 1h ALIGN TO FIRST OBSERVATION").noLeakCheck().fails(0, "base query does not provide ASC order over designated TIMESTAMP column");
             assertQuery("SELECT ts,sum(v) FROM (SELECT * FROM lp_sample_cursor ORDER BY ts DESC) TIMESTAMP(ts) SAMPLE BY 1h ALIGN TO FIRST OBSERVATION").noLeakCheck().fails(0, "base query does not provide ASC order over designated TIMESTAMP column");
             assertQuery("SELECT ts,sum(v) FROM lp_sample_cursor SAMPLE BY (1.5) h ALIGN TO FIRST OBSERVATION").noLeakCheck().fails(55, "unexpected token [h]");

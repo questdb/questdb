@@ -108,7 +108,7 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
             assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts!=" + nano + " ORDER BY id", "id\n1\n2\n4\n5\n6\n", 1);
             assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts IN (" + nano + ") ORDER BY id", "id\n3\n", 1);
             assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts BETWEEN " + nano + " AND '2025' ORDER BY id", "id\n2\n3\n4\n", 2);
-            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts=1 ORDER BY id", "id\n5\n6\n", 2);
+            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts=1 ORDER BY id", "id\n6\n", 1);
             assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts>=1 AND ts<" + nano + " AND id>0 ORDER BY id", "id\n1\n5\n6\n", 2);
             assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts=" + nano + " OR id=5 ORDER BY id", "id\n3\n5\n", 0);
             assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts+0L!=" + nano + " ORDER BY id", "id\n1\n2\n4\n5\n6\n", 0);
@@ -126,12 +126,30 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
                     + " ON a.id=b.id AND b.ts=" + nano + " ORDER BY a.id", "id\tid1\n1\tnull\n2\tnull\n5\tnull\n", 0);
             bindVariableService.clear();
             bindVariableService.setLong(0, 1);
-            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts=$1 ORDER BY id", "id\n5\n6\n", 2);
-            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts>$1 ORDER BY id", "id\n1\n2\n3\n4\n", 2);
+            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts=$1 ORDER BY id", "id\n6\n", 1);
+            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts>$1 ORDER BY id", "id\n1\n2\n3\n4\n5\n", 1);
             assertRowsAndIntervalScans("SELECT id FROM lp_sp_micro WHERE ts=$1", "id\n5\n", 1);
             assertRowsAndIntervalScans("SELECT id FROM lp_sp_nano WHERE ts!=$1 ORDER BY id", "id\n3\n4\n", 1);
             assertRowsAndIntervalScans("SELECT id FROM (SELECT id,ts FROM lp_sp_micro UNION ALL SELECT id,ts FROM lp_sp_micro) WHERE ts=$1",
                     "id\n5\n5\n", 2);
+        });
+    }
+
+    @Test
+    public void testNullBranchFiltersOverUnifiedType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_sp_micro (ts TIMESTAMP,id INT) TIMESTAMP(ts)");
+            execute("INSERT INTO lp_sp_micro VALUES ('2024-01-01T00:00:00',1),('2024-01-01T01:00:00',2)");
+            final String set = " FROM (SELECT ts,id FROM lp_sp_micro UNION ALL SELECT null,id+2 FROM lp_sp_micro)";
+            assertQuery("SELECT id" + set + " WHERE typeOf(ts)='TIMESTAMP' ORDER BY id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("id\n1\n2\n3\n4\n");
+            assertQuery("SELECT id" + set + " WHERE ts IS NULL ORDER BY id")
+                    .noLeakCheck()
+                    .returns("id\n3\n4\n");
+            assertRowsAndIntervalScans("SELECT id" + set + " WHERE ts>'2024-01-01T00:30' ORDER BY id", "id\n2\n", 1);
+            assertLogicalResidual("SELECT id" + set + " WHERE ts>'2024-01-01T00:30' ORDER BY id", "id\n2\n", 0);
         });
     }
 
@@ -152,6 +170,49 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
             assertLogicalResidual("SELECT id" + nulls, "id\n2\n", 0);
             assertRowsAndIntervalScans("SELECT id FROM (SELECT ts,id FROM lp_sp_micro UNION ALL SELECT ts,id FROM lp_sp_nano)"
                     + " WHERE ts>'2024-01-01T00:00:00.000000000Z' ORDER BY id", "id\n2\n4\n", 2);
+        });
+    }
+
+    @Test
+    public void testPrecisionDependentFiltersBindOverUnifiedType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_sp_micro (ts TIMESTAMP,id INT,d DATE) TIMESTAMP(ts)");
+            execute("CREATE TABLE lp_sp_nano (ts TIMESTAMP_NS,id INT) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO lp_sp_micro VALUES
+                        (1,1,'1970-01-01T00:00:00.001Z'),
+                        ('2024-01-01T00:00:00.000000Z',2,'2024-01-01T00:00:00.000Z'),
+                        ('2024-01-01T00:00:00.000001Z',3,NULL)
+                    """);
+            execute("INSERT INTO lp_sp_nano VALUES (1,11),('2024-01-01T00:00:00.000000001Z',12),('2024-01-01T00:00:00.000001000Z',13)");
+            execute("CREATE TABLE lp_sp_one (x INT)");
+            execute("INSERT INTO lp_sp_one VALUES (1)");
+            final String precisions = "(SELECT ts c,id FROM lp_sp_micro UNION ALL SELECT ts,id FROM lp_sp_nano)";
+            assertPrecisionFilter(precisions, "typeOf({c})='TIMESTAMP'", "");
+            assertPrecisionFilter(precisions, "{c}::STRING LIKE '%000Z'", "1\n2\n3\n13\n");
+            assertPrecisionFilter(precisions, "{c}=1", "11\n");
+            assertPrecisionFilter(precisions, "{c}::LONG=1000", "1\n");
+            final String dates = "(SELECT d c,id FROM lp_sp_micro UNION ALL SELECT ts,id+10 FROM lp_sp_micro)";
+            assertPrecisionFilter(dates, "typeOf({c})='TIMESTAMP'", "1\n2\n3\n11\n12\n13\n");
+            assertPrecisionFilter(dates, "{c}::STRING LIKE '%000Z'", "1\n2\n12\n");
+            assertPrecisionFilter(dates, "{c}=1", "11\n");
+            assertPrecisionFilter(dates, "{c}::LONG=1000", "1\n");
+            assertLogicalResidual("SELECT id FROM " + precisions + " WHERE c::LONG=1000 ORDER BY id", "id\n1\n", 1);
+            assertLogicalResidual("SELECT id FROM " + precisions + " WHERE year(c)=2024 AND hour(c)=0 ORDER BY id", "id\n2\n3\n12\n13\n", 0);
+            assertLogicalResidual("SELECT id FROM " + precisions + " WHERE c>1+1 ORDER BY id", "id\n1\n2\n3\n12\n13\n", 1);
+            assertRowsAndIntervalScans("SELECT id FROM " + precisions + " WHERE c>dateadd('y',-100,now()) ORDER BY id",
+                    "id\n1\n2\n3\n11\n12\n13\n", 2);
+            assertLogicalResidual("SELECT id FROM " + precisions + " WHERE c<'2024-01-01'::TIMESTAMP_NS+1 ORDER BY id", "id\n1\n2\n11\n", 0);
+            assertLogicalResidual("SELECT id FROM " + precisions + " WHERE timestamp_floor('h',c)='2024-01-01' ORDER BY id", "id\n2\n3\n12\n13\n", 0);
+            assertLogicalResidual("SELECT id FROM " + precisions + " WHERE dateadd('h',1,c)>'2024-01-01T00:30' ORDER BY id", "id\n2\n3\n12\n13\n", 0);
+            assertLogicalResidual("SELECT id FROM " + precisions + " WHERE extract(hour FROM c)=0 ORDER BY id", "id\n1\n2\n3\n11\n12\n13\n", 0);
+            assertPrecisionFilter(precisions, "dateadd('n',1,{c})='2024-01-01T00:00:00.000000001Z'", "2\n");
+            assertLogicalResidual("SELECT id FROM " + precisions + " WHERE dateadd('n',1,c)='2024-01-01T00:00:00.000000001Z' ORDER BY id", "id\n2\n", 1);
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "2024-01-01T00:00:00.000000001Z");
+            assertRowsAndIntervalScans("SELECT id FROM " + precisions + " WHERE c>=$1 ORDER BY id", "id\n3\n12\n13\n", 2);
+            assertLogicalResidual("SELECT id FROM " + dates + " WHERE c>=$1 ORDER BY id", "id\n13\n", 1);
+            assertPrecisionFilter(dates, "{c}>=$1", "13\n");
         });
     }
 
@@ -190,6 +251,48 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTextAndTimestampFiltersBindOverUnifiedType() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_sp_ts (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO lp_sp_ts VALUES ('2024-01-01T03:00:00'),('2024-01-02T02:00:00')");
+            execute("CREATE TABLE lp_sp_text (sym SYMBOL,s STRING,v VARCHAR,u UUID,ip IPv4)");
+            execute("""
+                    INSERT INTO lp_sp_text VALUES
+                        ('1q','1q','1q','10000000-0000-0000-0000-000000000000','1.1.1.1'),
+                        ('q','q','q','f0000000-0000-0000-0000-000000000000','9.9.9.9')
+                    """);
+            execute("CREATE TABLE lp_sp_one (x INT)");
+            execute("INSERT INTO lp_sp_one VALUES (1)");
+            final ObjList<String> columns = new ObjList<>("sym", "s", "v", "u", "ip");
+            final ObjList<String> lows = new ObjList<>("1q", "1q", "1q", "10000000-0000-0000-0000-000000000000", "1.1.1.1");
+            final ObjList<String> highs = new ObjList<>("q", "q", "q", "f0000000-0000-0000-0000-000000000000", "9.9.9.9");
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                final String column = columns.getQuick(i);
+                final String high = highs.getQuick(i);
+                final String in = " IN ('2024-01-02T02','" + high + "')";
+                for (int order = 0; order < 2; order++) {
+                    final String set = order == 0
+                            ? "(SELECT " + column + " c FROM lp_sp_text UNION ALL SELECT ts FROM lp_sp_ts)"
+                            : "(SELECT ts c FROM lp_sp_ts UNION ALL SELECT " + column + " FROM lp_sp_text)";
+                    assertQuery("SELECT c, c>'2024-01-02T02' gt, c='2024-01-02T02' eq, c" + in + " inl, c LIKE '2024-01-02%' lk FROM "
+                            + set + " ORDER BY c")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("c\tgt\teq\tinl\tlk\n"
+                                    + lows.getQuick(i) + "\tfalse\tfalse\tfalse\tfalse\n"
+                                    + "2024-01-01T03:00:00.000000Z\tfalse\tfalse\tfalse\tfalse\n"
+                                    + "2024-01-02T02:00:00.000000Z\ttrue\tfalse\tfalse\ttrue\n"
+                                    + high + "\ttrue\tfalse\ttrue\tfalse\n");
+                    assertUnifiedFilter(set, ">'2024-01-02T02'", "2024-01-02T02:00:00.000000Z\n" + high + "\n");
+                    assertUnifiedFilter(set, "='2024-01-02T02'", "");
+                    assertUnifiedFilter(set, in, high + "\n");
+                    assertUnifiedFilter(set, " LIKE '2024-01-02%'", "2024-01-02T02:00:00.000000Z\n");
+                }
+            }
+        });
+    }
+
     private static int countSetResiduals(LogicalPlan plan) {
         int count = plan instanceof FilterPlan filter && filter.getChild() instanceof SetOperationPlan ? 1 : 0;
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
@@ -205,6 +308,22 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
                 assertRowsOnly(factory, expected);
             }
         }
+    }
+
+    private void assertPrecisionFilter(String set, String predicate, String expected) throws Exception {
+        final String rows = "id\n" + expected;
+        assertQuery("SELECT id FROM " + set + " WHERE " + predicate.replace("{c}", "c") + " ORDER BY id")
+                .noLeakCheck()
+                .sizeMayVary()
+                .returns(rows);
+        assertQuery("SELECT u.id FROM " + set + " u JOIN lp_sp_one k ON " + predicate.replace("{c}", "u.c") + " ORDER BY u.id")
+                .noLeakCheck()
+                .sizeMayVary()
+                .returns(rows);
+        assertQuery("SELECT id FROM (SELECT id," + predicate.replace("{c}", "c") + " k FROM " + set + ") WHERE k ORDER BY id")
+                .noLeakCheck()
+                .sizeMayVary()
+                .returns(rows);
     }
 
     private void assertRowsAndIntervalScans(String sql, String expected, int intervalScans) throws Exception {
@@ -224,6 +343,19 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
         } finally {
             sqlExecutionContext.setJitMode(jitMode);
         }
+    }
+
+    private void assertUnifiedFilter(String set, String predicate, String expected) throws Exception {
+        final String rows = "c\n" + expected;
+        assertQuery("SELECT c FROM " + set + " WHERE c" + predicate + " ORDER BY c")
+                .noLeakCheck()
+                .returns(rows);
+        assertQuery("SELECT c FROM (SELECT c::STRING c FROM " + set + ") WHERE c" + predicate + " ORDER BY c")
+                .noLeakCheck()
+                .returns(rows);
+        assertQuery("SELECT u.c FROM " + set + " u JOIN lp_sp_one k ON u.c" + predicate + " ORDER BY u.c")
+                .noLeakCheck()
+                .returns(rows);
     }
 
     private void createRows() throws Exception {

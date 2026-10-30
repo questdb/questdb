@@ -35,14 +35,17 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.TimestampPrecisionUse;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
@@ -83,6 +86,11 @@ public class TimestampAddFunctionFactory implements FunctionFactory, MonotonicTi
     @Override
     public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
         return call.argumentAt(0) instanceof ConstantExpression && call.argumentAt(1) instanceof ConstantExpression ? 2 : -1;
+    }
+
+    @Override
+    public TimestampPrecisionUse getTimestampPrecisionUse(ExpressionNode call) {
+        return periodPrecisionUse(call);
     }
 
     @Override
@@ -142,6 +150,17 @@ public class TimestampAddFunctionFactory implements FunctionFactory, MonotonicTi
 
     private static int timestampType(Function timestampFunc) {
         return ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(timestampFunc.getType()), ColumnType.TIMESTAMP_MICRO);
+    }
+
+    /**
+     * {@link TimestampPrecisionUse#PRESERVING} when the parsed call adds a constant period of a microsecond or longer,
+     * which every timestamp precision adds exactly, otherwise {@link TimestampPrecisionUse#DEPENDENT}.
+     */
+    static TimestampPrecisionUse periodPrecisionUse(ExpressionNode call) {
+        final ExpressionNode period = call.paramCount < 3 ? call.lhs : call.args.getLast();
+        return period != null && period.type == ExpressionNode.CONSTANT && period.token.length() == 3
+                && Chars.isQuoted(period.token) && period.token.charAt(1) != 'n'
+                ? TimestampPrecisionUse.PRESERVING : TimestampPrecisionUse.DEPENDENT;
     }
 
     private static class TimestampAddConstConstVar extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {

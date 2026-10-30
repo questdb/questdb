@@ -49,6 +49,31 @@ import io.questdb.std.str.StringSink;
 public interface MonotonicTimestampFunctionFactory {
 
     /**
+     * The factory of a bound call that declares this interface, null for any other expression.
+     */
+    static MonotonicTimestampFunctionFactory of(BoundExpression expression) {
+        return expression instanceof FunctionExpression call && call.getOverload() != null
+                && call.getOverload().getFactory() instanceof MonotonicTimestampFunctionFactory factory ? factory : null;
+    }
+
+    /**
+     * The expression past the outermost calls whose built function is their timestamp argument itself, see
+     * {@link #isIdentity}.
+     */
+    static BoundExpression skipIdentities(BoundExpression expression, ConstantArguments arguments) throws SqlException {
+        MonotonicTimestampFunctionFactory factory;
+        while ((factory = of(expression)) != null) {
+            final FunctionExpression call = (FunctionExpression) expression;
+            final int index = factory.getTimestampArgumentIndex(call, arguments);
+            if (index < 0 || !factory.isIdentity(call, arguments)) {
+                break;
+            }
+            expression = call.argumentAt(index);
+        }
+        return expression;
+    }
+
+    /**
      * The index of the argument the built function reads its timestamp from, or -1 when the built function is not
      * a {@link MonotonicTimestampFunction}.
      */

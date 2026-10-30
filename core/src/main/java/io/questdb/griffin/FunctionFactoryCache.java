@@ -137,6 +137,27 @@ public class FunctionFactoryCache {
         return factories.get(token);
     }
 
+    /**
+     * How the value of the parsed call depends on the precision of its TIMESTAMP argument, as every overload of its
+     * arity answers, see {@link FunctionFactory#getTimestampPrecisionUse}; overloads that differ, and unknown functions,
+     * depend on it.
+     */
+    public TimestampPrecisionUse getTimestampPrecisionUse(ExpressionNode call) {
+        final ObjList<FunctionFactoryDescriptor> overloads = getOverloadList(call.token);
+        TimestampPrecisionUse use = null;
+        for (int i = 0, n = overloads == null ? 0 : overloads.size(); i < n; i++) {
+            final FunctionFactoryDescriptor overload = overloads.getQuick(i);
+            if (overload.getSigArgCount() == call.paramCount) {
+                final TimestampPrecisionUse overloadUse = overload.getFactory().getTimestampPrecisionUse(call);
+                if (use != null && use != overloadUse) {
+                    return TimestampPrecisionUse.DEPENDENT;
+                }
+                use = overloadUse;
+            }
+        }
+        return use != null ? use : TimestampPrecisionUse.DEPENDENT;
+    }
+
     public boolean isCursor(CharSequence name) {
         return name != null && cursorFunctionNames.contains(name);
     }

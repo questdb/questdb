@@ -65,7 +65,8 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
             execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
             // the 20 row groups stay decoded across the passes of the keys: the 300 keys outnumber their rows enough for
             // a dense scan of each to cost less than those passes, and their rows fit one window, the ten keys do not;
-            // the passes of the keys of a filtered read stop at the end of the read, which a window would only bound
+            // a filtered read collects the rows of its keys in one pass over the row groups that stops at the end of
+            // the read, which a window would only bound
             final StringSink keys = new StringSink();
             keys.put(" AND s IN ('k0'");
             for (int i = 1; i < 150; i++) {
@@ -75,8 +76,9 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
             final String[] predicates = {"", " AND s IN ('k0', 'k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'k7', 'k8', 'k9')", keys.toString(), keys.toString()};
             final long[] limits = {RecordCursor.UNBOUNDED_ROW_COUNT, RecordCursor.UNBOUNDED_ROW_COUNT, RecordCursor.UNBOUNDED_ROW_COUNT, 100};
             final ParquetDecodeHint[] hints = {ParquetDecodeHint.MONOTONIC, ParquetDecodeHint.CYCLIC, ParquetDecodeHint.MONOTONIC, ParquetDecodeHint.CYCLIC};
-            // the scans decode each row group, and so do the passes of the keys of the filtered read, the passes of
-            // the ten keys only the row groups that hold them
+            final boolean[] isPrecomputed = {true, false, true, true};
+            // the scans decode each row group, and so does the collection of the filtered read, the passes of the ten
+            // keys only the row groups that hold them
             final long[] decodes = {20, 13, 20, 20};
             final StringSink expected = new StringSink();
             for (int i = 0; i < predicates.length; i++) {
@@ -93,7 +95,7 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
                     final PageFrameMemoryPool pool = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool();
                     Assert.assertEquals(decodes[i], pool.getDecodeCount());
                     Assert.assertEquals(hints[i], pool.getDecodeHint());
-                    Assert.assertEquals("the read gathers its rows", hints[i] == ParquetDecodeHint.MONOTONIC, stateSize != cursor.preComputedStateSize());
+                    Assert.assertEquals("the read precomputes its rows", isPrecomputed[i], stateSize != cursor.preComputedStateSize());
                 }
             }
         });

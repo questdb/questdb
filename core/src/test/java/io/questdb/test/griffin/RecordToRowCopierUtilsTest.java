@@ -29,20 +29,30 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
+import io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
+import io.questdb.std.Long256;
+import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -58,6 +68,153 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
             RecordToRowCopierUtils.COPIER_TYPE_SINGLE_METHOD,
             RecordToRowCopierUtils.COPIER_TYPE_CHUNKED,
             RecordToRowCopierUtils.COPIER_TYPE_LOOPING
+    };
+    // Reads every column as NULL or zero, the values the copier must convert without reading anything else.
+    private static final Record NULL_RECORD = new Record() {
+        @Override
+        public ArrayView getArray(int col, int columnType) {
+            return null;
+        }
+
+        @Override
+        public BinarySequence getBin(int col) {
+            return null;
+        }
+
+        @Override
+        public boolean getBool(int col) {
+            return false;
+        }
+
+        @Override
+        public byte getByte(int col) {
+            return 0;
+        }
+
+        @Override
+        public char getChar(int col) {
+            return 0;
+        }
+
+        @Override
+        public long getDate(int col) {
+            return Numbers.LONG_NULL;
+        }
+
+        @Override
+        public void getDecimal128(int col, Decimal128 sink) {
+            sink.ofNull();
+        }
+
+        @Override
+        public short getDecimal16(int col) {
+            return Decimals.DECIMAL16_NULL;
+        }
+
+        @Override
+        public void getDecimal256(int col, Decimal256 sink) {
+            sink.ofNull();
+        }
+
+        @Override
+        public int getDecimal32(int col) {
+            return Decimals.DECIMAL32_NULL;
+        }
+
+        @Override
+        public long getDecimal64(int col) {
+            return Decimals.DECIMAL64_NULL;
+        }
+
+        @Override
+        public byte getDecimal8(int col) {
+            return Decimals.DECIMAL8_NULL;
+        }
+
+        @Override
+        public double getDouble(int col) {
+            return Double.NaN;
+        }
+
+        @Override
+        public float getFloat(int col) {
+            return Float.NaN;
+        }
+
+        @Override
+        public byte getGeoByte(int col) {
+            return GeoHashes.BYTE_NULL;
+        }
+
+        @Override
+        public int getGeoInt(int col) {
+            return GeoHashes.INT_NULL;
+        }
+
+        @Override
+        public long getGeoLong(int col) {
+            return GeoHashes.NULL;
+        }
+
+        @Override
+        public short getGeoShort(int col) {
+            return GeoHashes.SHORT_NULL;
+        }
+
+        @Override
+        public int getIPv4(int col) {
+            return Numbers.IPv4_NULL;
+        }
+
+        @Override
+        public int getInt(int col) {
+            return Numbers.INT_NULL;
+        }
+
+        @Override
+        public long getLong(int col) {
+            return Numbers.LONG_NULL;
+        }
+
+        @Override
+        public long getLong128Hi(int col) {
+            return Numbers.LONG_NULL;
+        }
+
+        @Override
+        public long getLong128Lo(int col) {
+            return Numbers.LONG_NULL;
+        }
+
+        @Override
+        public Long256 getLong256A(int col) {
+            return Long256Impl.NULL_LONG256;
+        }
+
+        @Override
+        public short getShort(int col) {
+            return 0;
+        }
+
+        @Override
+        public CharSequence getStrA(int col) {
+            return null;
+        }
+
+        @Override
+        public CharSequence getSymA(int col) {
+            return null;
+        }
+
+        @Override
+        public long getTimestamp(int col) {
+            return Numbers.LONG_NULL;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(int col) {
+            return null;
+        }
     };
 
     @Test
@@ -207,6 +364,35 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopierRejectsInconvertibleTarget() {
+        // Enough INT columns follow the LONG256 one for the chunked copier to split them into several methods.
+        final int intColumnCount = 400;
+        final ArrayColumnTypes from = new ArrayColumnTypes();
+        final GenericRecordMetadata to = new GenericRecordMetadata();
+        final ListColumnFilter mapping = new ListColumnFilter();
+        from.add(ColumnType.LONG256);
+        to.add(new TableColumnMetadata("x", ColumnType.LONG));
+        mapping.add(1);
+        for (int i = 0; i < intColumnCount; i++) {
+            from.add(ColumnType.INT);
+            to.add(new TableColumnMetadata("i" + i, ColumnType.INT));
+            mapping.add(i + 2);
+        }
+        final Record record = new Record() {
+        };
+        for (int copierType : COPIER_TYPES) {
+            setCopierType(copierType);
+            try {
+                RecordToRowCopierUtils.generateCopier(new BytecodeAssembler(), from, to, mapping, configuration)
+                        .copy(sqlExecutionContext, record, new RowAsserter());
+                Assert.fail("expected the copier to reject LONG256 -> LONG");
+            } catch (CairoException e) {
+                TestUtils.assertEquals("inconvertible types: LONG256 -> LONG", e.getFlyweightMessage());
+            }
+        }
+    }
+
+    @Test
     public void testCopierShortToDecimal() {
         RecordToRowCopier copier = generateCopier(ColumnType.SHORT, ColumnType.getDecimalType(16, 3));
         copier.copy(sqlExecutionContext, getLongRecord(ColumnType.SHORT, 1234), getLongAsserter(1234000));
@@ -216,6 +402,64 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
     public void testCopierShortToDecimalOverflow() {
         RecordToRowCopier copier = generateCopier(ColumnType.SHORT, ColumnType.getDecimalType(5, 3));
         copier.copy(sqlExecutionContext, getLongRecord(ColumnType.SHORT, 9999), new RowAsserter());
+    }
+
+    @Test
+    public void testCopiersImplementEveryAcceptedConversion() {
+        // Enough INT columns follow the converted one for the chunked copier to split them into several methods.
+        final int intColumnCount = 400;
+        final int[] types = {
+                ColumnType.NULL, ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT,
+                ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO, ColumnType.FLOAT,
+                ColumnType.DOUBLE, ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR, ColumnType.LONG256,
+                ColumnType.BINARY, ColumnType.UUID, ColumnType.IPv4, ColumnType.LONG128,
+                ColumnType.getGeoHashTypeWithBits(3), ColumnType.getGeoHashTypeWithBits(5),
+                ColumnType.getGeoHashTypeWithBits(10), ColumnType.getGeoHashTypeWithBits(20),
+                ColumnType.getGeoHashTypeWithBits(40), ColumnType.encodeArrayType(ColumnType.DOUBLE, 1),
+                ColumnType.encodeArrayType(ColumnType.DOUBLE, 2), ColumnType.getDecimalType(2, 0),
+                ColumnType.getDecimalType(4, 1), ColumnType.getDecimalType(9, 2), ColumnType.getDecimalType(18, 3),
+                ColumnType.getDecimalType(38, 4), ColumnType.getDecimalType(76, 5)
+        };
+        final StringSink missing = new StringSink();
+        for (int copierType : COPIER_TYPES) {
+            setCopierType(copierType);
+            for (int from : types) {
+                for (int to : types) {
+                    if (to == ColumnType.NULL
+                            || !ColumnType.isConvertibleFrom(from, to) && !CreateTableOperationBuilderImpl.isCompatibleCast(from, to)) {
+                        continue;
+                    }
+                    final ArrayColumnTypes fromTypes = new ArrayColumnTypes();
+                    final GenericRecordMetadata toMetadata = new GenericRecordMetadata();
+                    final ListColumnFilter mapping = new ListColumnFilter();
+                    fromTypes.add(from);
+                    toMetadata.add(new TableColumnMetadata("x", to, IndexType.NONE, 0, false, null));
+                    mapping.add(1);
+                    for (int i = 0; i < intColumnCount; i++) {
+                        fromTypes.add(ColumnType.INT);
+                        toMetadata.add(new TableColumnMetadata("i" + i, ColumnType.INT));
+                        mapping.add(i + 2);
+                    }
+                    try {
+                        RecordToRowCopierUtils.generateCopier(new BytecodeAssembler(), fromTypes, toMetadata, mapping, configuration)
+                                .copy(sqlExecutionContext, NULL_RECORD, new RowAsserter());
+                    } catch (CairoException e) {
+                        if (e.isSchemaMismatch()) {
+                            missing.put(copierType).put(": ").put(e.getFlyweightMessage()).put('\n');
+                        }
+                    } catch (ImplicitCastException ignore) {
+                        // the copier converts the pair and rejects this value
+                    } catch (AssertionError e) {
+                        // RowAsserter rejects the write the copier converted the value for
+                        if (!Chars.startsWith(e.getMessage(), "Unexpected call")) {
+                            missing.put(copierType).put(": ").put(ColumnType.nameOf(from)).put(" -> ").put(ColumnType.nameOf(to))
+                                    .put(' ').put(e.getMessage()).put('\n');
+                        }
+                    }
+                }
+            }
+        }
+        TestUtils.assertEquals("", missing);
     }
 
     @Test

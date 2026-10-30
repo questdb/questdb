@@ -1098,17 +1098,27 @@ final class FilterPushdown implements OptimiserPass {
         return plan;
     }
 
+    /**
+     * Pushes the predicate, bound over the operation's column at {@code timestampIndex}, into the branch when the
+     * branch reads that column at the operation's type, or pushes false when the branch reads it at the NULL type and
+     * the predicate rejects NULL, see {@link OptimiserContext#isNullRejecting}; returns whether the branch took it.
+     */
     private boolean pushSetBranch(SetOperationPlan operation, int branchIndex, BoundExpression predicate, int timestampIndex) throws SqlException {
         final LogicalPlan branch = operation.inputAt(branchIndex);
         final OutputSchema output = operation.getOutput();
         final int type = output.getColumnType(timestampIndex);
-        if (branch.getOutput().getColumnType(timestampIndex) != type) {
+        final int branchType = branch.getOutput().getColumnType(timestampIndex);
+        final BoundExpression replacement;
+        if (branchType == type) {
+            // Copying descriptions leaves the other branch and any retained residual's preparation untouched.
+            columnMap.clear();
+            columnMap.put(output.getColumnId(timestampIndex), branch.getOutput().getColumnId(timestampIndex));
+            replacement = context.getRewriter().copyRemappedColumns(predicate, columnMap);
+        } else if (ColumnType.isNull(branchType) && context.isNullRejecting(predicate)) {
+            replacement = context.getRewriter().newFalseConstant(predicate.getPosition());
+        } else {
             return false;
         }
-        // Copying descriptions leaves the other branch and any retained residual's preparation untouched.
-        columnMap.clear();
-        columnMap.put(output.getColumnId(timestampIndex), branch.getOutput().getColumnId(timestampIndex));
-        final BoundExpression replacement = context.getRewriter().copyRemappedColumns(predicate, columnMap);
         final FilterPlan pushed = filters.next().of(branch, replacement, predicate.getPosition());
         // A row-selection barrier keeps the filter above the whole branch.
         operation.replaceInput(branchIndex, isSetBranchSelectionBarrier(branch) ? pushed : pushDownScopedFilter(pushed));

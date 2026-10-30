@@ -667,6 +667,11 @@ public class WindowJoinRecordCursorFactory extends AbstractRecordCursorFactory {
                         groupByFunctionsUpdater,
                         value
                 );
+                final int slaveFrameIndex = Rows.toPartitionIndex(baseSlaveRowId);
+                if (slaveTimeFrameHelper.getTimeFrameIndex() != slaveFrameIndex) {
+                    slaveTimeFrameHelper.jumpTo(slaveFrameIndex);
+                    slaveTimeFrameHelper.recordAt(baseSlaveRowId);
+                }
             }
 
             // Aggregate the rows within the time window.

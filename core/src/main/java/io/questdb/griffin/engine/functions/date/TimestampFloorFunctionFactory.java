@@ -32,7 +32,9 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.TimestampPrecisionUse;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
@@ -56,6 +58,11 @@ public class TimestampFloorFunctionFactory implements FunctionFactory, Monotonic
     @Override
     public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
         return 1;
+    }
+
+    @Override
+    public TimestampPrecisionUse getTimestampPrecisionUse(ExpressionNode call) {
+        return TimestampPrecisionUse.PRESERVING;
     }
 
     @Override

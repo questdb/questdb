@@ -78,6 +78,26 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     private int volumePosition;
     private boolean walEnabled;
 
+    /**
+     * Whether a CAST clause of CREATE TABLE ... AS SELECT may store a column of type {@code from} as type
+     * {@code to}: types of one cast group cast to each other, and every other pair follows
+     * {@link ColumnType#isConvertibleFrom}. The record copier implements every pair this accepts.
+     */
+    public static boolean isCompatibleCast(int from, int to) {
+        if (from == to || isIPv4Cast(from, to)) {
+            return true;
+        }
+        if (!hasCastGroup(from) || !hasCastGroup(to)) {
+            // CHAR, LONG256, UUID, IPv4, the geohashes, decimals, arrays and NULL have no group: no
+            // single group could express which numbers convert to a CHAR, a geohash's bit width, a
+            // decimal's precision and scale or an array's dimensionality. INSERT ... SELECT gates the
+            // very same record copier on isConvertibleFrom, so deferring to it admits exactly the
+            // pairs the copier implements.
+            return ColumnType.isConvertibleFrom(from, to);
+        }
+        return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
+    }
+
     public void addColumnModel(CharSequence columnName, CreateTableColumnModel model) throws SqlException {
         if (columnModels.get(columnName) != null) {
             throw SqlException.duplicateColumn(model.getColumnNamePos(), columnName);
@@ -442,7 +462,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
     }
 
     private static boolean hasCastGroup(int columnType) {
-        return ColumnType.tagOf(columnType) < castGroups.size();
+        final int tag = ColumnType.tagOf(columnType);
+        return tag < castGroups.size() && castGroups.getQuick(tag) != 0;
     }
 
     private static boolean isIPv4Cast(int from, int to) {
@@ -495,25 +516,10 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         }
     }
 
-    static boolean isCompatibleCast(int from, int to) {
-        if (from == to || isIPv4Cast(from, to)) {
-            return true;
-        }
-        if (!hasCastGroup(from) || !hasCastGroup(to)) {
-            // The group table stops at VARCHAR, so the decimal, array and NULL tags have no entry,
-            // and no single group could express a decimal's precision and scale or an array's
-            // dimensionality. INSERT ... SELECT gates the very same record copier on
-            // isConvertibleFrom, so deferring to it admits exactly the pairs the copier implements.
-            return ColumnType.isConvertibleFrom(from, to);
-        }
-        return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
-    }
-
     static {
         castGroups.extendAndSet(ColumnType.BOOLEAN, 2);
         castGroups.extendAndSet(ColumnType.BYTE, 1);
         castGroups.extendAndSet(ColumnType.SHORT, 1);
-        castGroups.extendAndSet(ColumnType.CHAR, 1);
         castGroups.extendAndSet(ColumnType.INT, 1);
         castGroups.extendAndSet(ColumnType.LONG, 1);
         castGroups.extendAndSet(ColumnType.FLOAT, 1);

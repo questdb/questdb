@@ -71,6 +71,9 @@ import java.util.Collection;
  * a definition over {@code read_parquet()} persisted by an older binary must fail <em>closed</em>
  * at its first post-upgrade refresh — {@code invalid=true} with the same stable message CREATE
  * surfaces, base table untouched, view still droppable — rather than crash, leak, or retry-loop.
+ * <p>
+ * A definition whose columns no longer fit the columns the view stores fails closed the same way, with a
+ * reason that names the column, both types and the recreate step.
  */
 @RunWith(Parameterized.class)
 public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest {
@@ -264,6 +267,32 @@ public class MatViewRefreshRecompileCompatibilityTest extends AbstractCairoTest 
                             + "mv\tinvalid\t[" + legacySql.lastIndexOf("now()")
                             + "]: non-deterministic function cannot be used in materialized view: now\n");
             assertQuery("mv").noLeakCheck().timestamp("ts").expectSize().returns("ts\tobserved\n");
+        });
+    }
+
+    @Test
+    public void testRefreshFailsClosedForPersistedNumberIntoCharColumn() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, String.valueOf(parallel));
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_PARALLEL_SQL_ENABLED, String.valueOf(parallel));
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, c CHAR, l LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2024-01-01T00:00:00Z', 'a', 65)");
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv WITH BASE base REFRESH MANUAL DEFERRED AS ("
+                    + "SELECT ts, first(c) c FROM base SAMPLE BY 1d) PARTITION BY DAY");
+            drainWalQueue();
+            // mv stores c as CHAR, and no copier writes the LONG this definition computes into a CHAR.
+            installPersistedViewSql("mv", "SELECT ts, first(l) c FROM base SAMPLE BY 1d");
+
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            assertQuery("SELECT view_name, view_status, invalidation_reason FROM materialized_views")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            mv\tinvalid\t[-1]: view column type does not match its query, recreate the view [column=c, view=CHAR, query=LONG]
+                            """);
         });
     }
 

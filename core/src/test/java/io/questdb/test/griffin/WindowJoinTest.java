@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.join.AsyncWindowJoinAtom;
 import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -4515,6 +4516,83 @@ public class WindowJoinTest extends AbstractCairoTest {
                             B\t40.0
                             C\t40.0
                             """);
+        });
+    }
+
+    @Test
+    public void testPrevailingWithFilterAfterFrameBoundary() throws Exception {
+        // The slave row on the window's lower bound is the last row of its partition and fails the join
+        // filter, so the serial cursor walks into the next partition before it scans back for the
+        // prevailing row.
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE m (ts #TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY"
+                            .replace("#TIMESTAMP", leftTableTimestampType.getTypeName())
+            );
+            execute(
+                    "CREATE TABLE sl (ts #TIMESTAMP, id INT, v LONG) TIMESTAMP(ts) PARTITION BY DAY"
+                            .replace("#TIMESTAMP", rightTableTimestampType.getTypeName())
+            );
+            execute("INSERT INTO m VALUES ('2023-01-02T00:00:59.000000Z', 1)");
+            execute("""
+                    INSERT INTO sl VALUES
+                        ('2023-01-01T23:59:00.000000Z', 1, 100),
+                        ('2023-01-01T23:59:59.000000Z', 2, 200),
+                        ('2023-01-02T00:00:30.000000Z', 1, 300)
+                    """);
+            final String fraction = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000000Z" : "000000000Z";
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                assertQuery("""
+                        SELECT m.ts, m.id, sum(sl.v) s, count() c
+                        FROM m
+                        WINDOW JOIN sl ON m.id = sl.id
+                        RANGE BETWEEN 1 minute PRECEDING AND 1 minute FOLLOWING
+                        INCLUDE PREVAILING
+                        """)
+                        .noLeakCheck()
+                        .withBaseFactoryClass(isParallel ? AsyncWindowJoinRecordCursorFactory.class : WindowJoinRecordCursorFactory.class)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize(!isParallel)
+                        .returns("ts\tid\ts\tc\n" +
+                                "2023-01-02T00:00:59." + fraction + "\t1\t400\t2\n");
+            }
+        });
+    }
+
+    @Test
+    public void testPrevailingWithFilterAfterFrameBoundaryManyPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE m (ts #TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY HOUR"
+                            .replace("#TIMESTAMP", leftTableTimestampType.getTypeName())
+            );
+            execute(
+                    "CREATE TABLE sl (ts #TIMESTAMP, id INT, v LONG) TIMESTAMP(ts) PARTITION BY HOUR"
+                            .replace("#TIMESTAMP", rightTableTimestampType.getTypeName())
+            );
+            execute("INSERT INTO m SELECT timestamp_sequence('2023-01-01', 10_000_000), (x % 3)::INT FROM long_sequence(2_000)");
+            execute("INSERT INTO sl SELECT timestamp_sequence('2023-01-01', 10_000_000), (x % 5)::INT, x FROM long_sequence(2_000)");
+            final String query = """
+                    SELECT m.ts, m.id, sum(sl.v) s, count() c, first(sl.v) f, last(sl.v) l
+                    FROM m
+                    WINDOW JOIN sl ON m.id = sl.id
+                    RANGE BETWEEN 20 seconds PRECEDING AND 20 seconds FOLLOWING
+                    INCLUDE PREVAILING
+                    """;
+            printSql(query, sink);
+            final String expected = sink.toString();
+            for (boolean isParallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .withBaseFactoryClass(isParallel ? AsyncWindowJoinRecordCursorFactory.class : WindowJoinRecordCursorFactory.class)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize(!isParallel)
+                        .returns(expected);
+            }
         });
     }
 

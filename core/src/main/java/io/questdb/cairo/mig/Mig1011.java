@@ -30,7 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.vm.Vm;
-import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -48,7 +48,10 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
  * QuestDB's gains a footer that carries the record; one another writer wrote, such as an attached external
  * file, stays as it is. Row group pruning trusts NaN to be a Parquet null only in a recorded partition.
  * <p>
- * The migration reads {@code _txn} to locate partitions and never modifies it. Each {@code _pm} gains its
+ * The migration reads {@code _meta} and {@code _txn} through read-only mappings and never modifies them. A
+ * table whose {@code _meta} or {@code _txn} is shorter than the fields it reads, or holds a partition table
+ * that does not fit, is logged and left as it is: its partitions are still read correctly without the record,
+ * and the damaged file fails only that table when it opens, not the server start. Each {@code _pm} gains its
  * footer through the same append-then-publish sequence as an incremental update, so a crash leaves the
  * committed snapshot in place, and a rerun skips partitions already recorded.
  * <p>
@@ -89,15 +92,22 @@ public final class Mig1011 {
             path.trimTo(plen);
             return;
         }
+        final long metaFileSize = ff.length(path.$());
+        if (metaFileSize < META_OFFSET_COLUMN_TYPES) {
+            LOG.error().$("skipping table, _meta is shorter than its header [path=").$(path)
+                    .$(", size=").$(metaFileSize).I$();
+            path.trimTo(plen);
+            return;
+        }
         final int partitionBy;
         final int timestampType;
-        try (MemoryMARW metaMem = Vm.getCMARWInstance(
-                ff, path.$(), ff.getPageSize(), ff.length(path.$()), MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE
-        )) {
+        try (MemoryCMR metaMem = Vm.getCMRInstance(ff, path.$(), metaFileSize, MemoryTag.NATIVE_MIG_MMAP)) {
             partitionBy = metaMem.getInt(META_OFFSET_PARTITION_BY);
             final int timestampIndex = metaMem.getInt(META_OFFSET_TIMESTAMP_INDEX);
+            final long timestampTypeOffset = META_OFFSET_COLUMN_TYPES + timestampIndex * META_COLUMN_DATA_SIZE;
             timestampType = timestampIndex >= 0 && timestampIndex < metaMem.getInt(META_OFFSET_COUNT)
-                    ? metaMem.getInt(META_OFFSET_COLUMN_TYPES + timestampIndex * META_COLUMN_DATA_SIZE)
+                    && timestampTypeOffset + Integer.BYTES <= metaFileSize
+                    ? metaMem.getInt(timestampTypeOffset)
                     : ColumnType.TIMESTAMP;
         }
         path.trimTo(plen);
@@ -110,27 +120,41 @@ public final class Mig1011 {
             path.trimTo(plen);
             return;
         }
+        final long txFileSize = ff.length(path.$());
+        if (txFileSize < TableUtils.TX_BASE_HEADER_SIZE) {
+            LOG.error().$("skipping table, _txn is shorter than its header [path=").$(path)
+                    .$(", size=").$(txFileSize).I$();
+            path.trimTo(plen);
+            return;
+        }
         int marked = 0;
         int unchanged = 0;
         int failed = 0;
-        final long txFileSize = ff.length(path.$());
-        try (MemoryMARW txMem = Vm.getCMARWInstance(
-                ff, path.$(), ff.getPageSize(), txFileSize, MemoryTag.NATIVE_MIG_MMAP, CairoConfiguration.O_NONE
-        )) {
+        try (MemoryCMR txMem = Vm.getCMRInstance(ff, path.$(), txFileSize, MemoryTag.NATIVE_MIG_MMAP)) {
             final long version = txMem.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
             final int baseOffset = (version & 1) == 0
                     ? txMem.getInt(TableUtils.TX_BASE_OFFSET_A_32)
                     : txMem.getInt(TableUtils.TX_BASE_OFFSET_B_32);
-            final int symbolColumnCount = txMem.getInt(baseOffset + TableUtils.TX_OFFSET_MAP_WRITER_COUNT_32);
-            final long partitionTableSizeOffset = baseOffset + TableUtils.getPartitionTableSizeOffset(symbolColumnCount);
-            final int partitionCount = txMem.getInt(partitionTableSizeOffset) / Long.BYTES / LONGS_PER_PARTITION;
+            final long symbolCountOffset = baseOffset + TableUtils.TX_OFFSET_MAP_WRITER_COUNT_32;
+            final int symbolColumnCount = baseOffset >= 0 && symbolCountOffset + Integer.BYTES <= txFileSize
+                    ? txMem.getInt(symbolCountOffset)
+                    : -1;
+            final long partitionTableSizeOffset = symbolColumnCount >= 0
+                    ? baseOffset + TableUtils.getPartitionTableSizeOffset(symbolColumnCount)
+                    : txFileSize;
+            final int partitionCount = partitionTableSizeOffset + Integer.BYTES <= txFileSize
+                    ? txMem.getInt(partitionTableSizeOffset) / Long.BYTES / LONGS_PER_PARTITION
+                    : -1;
             final long dataStart = partitionTableSizeOffset + Integer.BYTES;
             if (partitionCount < 0 || dataStart + (long) partitionCount * LONGS_PER_PARTITION * Long.BYTES > txFileSize) {
-                throw CairoException.critical(0)
-                        .put("migration failed, corrupt _txn file, partitionCount exceeds mapped region [path=").put(path)
-                        .put(", partitionCount=").put(partitionCount)
-                        .put(", txFileSize=").put(txFileSize)
-                        .put(']');
+                LOG.error().$("skipping table, corrupt _txn partition table [path=").$(path)
+                        .$(", baseOffset=").$(baseOffset)
+                        .$(", symbolColumnCount=").$(symbolColumnCount)
+                        .$(", partitionCount=").$(partitionCount)
+                        .$(", size=").$(txFileSize)
+                        .I$();
+                path.trimTo(plen);
+                return;
             }
             path.trimTo(plen);
 

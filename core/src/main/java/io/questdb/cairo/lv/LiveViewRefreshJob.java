@@ -1546,7 +1546,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Returns a {@link RecordToRowCopier} for the live view, compiling a fresh one when
-     * the cached one's metadata version is out of sync with the WAL writer.
+     * the cached one's metadata version is out of sync with the WAL writer. Throws, as
+     * {@link RecordToRowCopierUtils#generateViewCopier} does, when the view's query no
+     * longer fits the view's columns.
      */
     private RecordToRowCopier ensureCopier(
             LiveViewInstance instance,
@@ -1561,8 +1563,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // for the wrong column count and mis-write every row.
             final RecordMetadata outMetadata = instance.getCompiledPlan().getOutputMetadata();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                columnFilter.of(outMetadata.getColumnCount());
-                copier = RecordToRowCopierUtils.generateCopier(
+                copier = RecordToRowCopierUtils.generateViewCopier(
                         compiler.getAsm(),
                         outMetadata,
                         walWriter.getMetadata(),
@@ -9478,6 +9479,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         instance.recordRefreshFailure(nowUs);
+        if (t instanceof CairoException ce && ce.isSchemaMismatch()) {
+            LOG.critical().$("live view query no longer fits its columns, invalidating [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$safe(ce.getFlyweightMessage()).I$();
+            return Chars.toString(ce.getFlyweightMessage());
+        }
         // A breach of THIS view's configured limit means its working set does not fit the
         // budget the operator set. Retrying re-allocates into the same ceiling and ends at
         // the generic budget message anyway, throwing away the one diagnostic that says why.

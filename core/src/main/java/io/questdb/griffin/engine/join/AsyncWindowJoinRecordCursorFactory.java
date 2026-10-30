@@ -3136,6 +3136,15 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         return sign * scaled;
     }
 
+    /**
+     * Aggregates the prevailing row of a master row: the latest slave row that passes {@code joinFilter},
+     * scanning back from {@code prevailingRowIndex} of frame {@code prevailingFrameIndex} through the
+     * earlier frames. A {@code prevailingFrameIndex} of -1 means there is no candidate.
+     * <p>
+     * The scan moves the slave cursor and record. When it returns, they sit on the bookmarked frame and row,
+     * which is not the caller's frame once the caller has walked past it with
+     * {@link WindowJoinTimeFrameHelper#nextFrame(long)}; such a caller moves back to its own frame.
+     */
     static void findPrevailingForMasterRow(
             WindowJoinTimeFrameHelper slaveTimeFrameHelper,
             int prevailingFrameIndex,

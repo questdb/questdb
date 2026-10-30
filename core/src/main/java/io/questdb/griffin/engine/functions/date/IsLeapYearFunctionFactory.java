@@ -26,17 +26,19 @@ package io.questdb.griffin.engine.functions.date;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.TimestampPrecisionUse;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.CommonUtils;
-import io.questdb.std.datetime.microtime.Micros;
 
 public class IsLeapYearFunctionFactory implements FunctionFactory {
 
@@ -51,17 +53,24 @@ public class IsLeapYearFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public TimestampPrecisionUse getTimestampPrecisionUse(ExpressionNode call) {
+        return TimestampPrecisionUse.INVARIANT;
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         final Function arg = args.getQuick(0);
-        return new Func(arg);
+        return new Func(arg, ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType())));
     }
 
     private static final class Func extends BooleanFunction implements UnaryFunction {
 
         private final Function arg;
+        private final TimestampDriver driver;
 
-        public Func(Function arg) {
+        public Func(Function arg, TimestampDriver driver) {
             this.arg = arg;
+            this.driver = driver;
         }
 
         @Override
@@ -75,7 +84,7 @@ public class IsLeapYearFunctionFactory implements FunctionFactory {
             if (value == Numbers.LONG_NULL) {
                 return Boolean.FALSE;
             }
-            final int year = Micros.getYear(value);
+            final int year = driver.getYear(value);
             return CommonUtils.isLeapYear(year);
         }
 

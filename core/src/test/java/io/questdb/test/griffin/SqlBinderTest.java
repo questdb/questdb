@@ -874,7 +874,7 @@ public class SqlBinderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimestampSetNumericBoundsRequireBranchSemantics() throws Exception {
+    public void testTimestampSetNumericBoundsBindOverSetType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_epoch_us (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("CREATE TABLE lp_epoch_ns (id INT, ts TIMESTAMP_NS) TIMESTAMP(ts)");
@@ -883,8 +883,8 @@ public class SqlBinderTest extends AbstractCairoTest {
             final String source = "SELECT id FROM (SELECT id, ts FROM lp_epoch_us UNION ALL SELECT id, ts FROM lp_epoch_ns) WHERE ts=";
             bindVariableService.clear();
             bindVariableService.setLong(0, 1);
-            assertRowsOnly(source + "1 ORDER BY id", "id\n1\n2\n");
-            assertRowsOnly(source + "$1 ORDER BY id", "id\n1\n2\n");
+            assertRowsOnly(source + "1 ORDER BY id", "id\n2\n");
+            assertRowsOnly(source + "$1 ORDER BY id", "id\n2\n");
         });
     }
 

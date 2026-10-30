@@ -1076,14 +1076,8 @@ final class JoinBinder implements Mutable {
                     nullingJoinBoundaries.add(i);
                 } else {
                     final boolean isMasterNulling = slave.getJoinType().isMasterNulling();
-                    int prefixStart = slave.getJoinType() == JoinKind.LEFT_OUTER ? i - 1 : 0;
-                    // A preceding LEFT join may wait for this one through a forward reference.
-                    while (prefixStart > 0 && forwardLeftJoinInputs.contains(prefixStart)) {
-                        prefixStart--;
-                    }
-                    // A LEFT join whose ON reads no column stays unanchored, so it trails the order.
-                    if (slave.getJoinType() != JoinKind.LEFT_OUTER || hasColumnReference(onCriteria)) {
-                        joinGraphBuilder.addOrderingConstraint(prefixStart, i);
+                    if (slave.getJoinType() != JoinKind.LEFT_OUTER) {
+                        joinGraphBuilder.addOrderingConstraint(0, i);
                     }
                     if (isForwardLeftJoin) {
                         if (!forwardLeftJoinInputs.contains(i)) {
@@ -1093,7 +1087,7 @@ final class JoinBinder implements Mutable {
                         joinGraphBuilder.addLateInput(i);
                     }
                     if (isMasterNulling) {
-                        constrainNullingJoinPrefix(prefixStart, i);
+                        constrainNullingJoinPrefix(0, i);
                         for (int k = i + 1; k < n; k++) {
                             final JoinKind type = join.getInputs().getQuick(k).getJoinType();
                             if (type == JoinKind.INNER || type == JoinKind.CROSS || type.isMasterNulling()) {
@@ -1122,6 +1116,7 @@ final class JoinBinder implements Mutable {
             final int boundary = nullingJoinBoundaries.getQuick(i);
             constrainNullingJoinConsumers(join, boundary);
         }
+        constrainLeftJoins(join, source, modelBase);
         if (joinGraphBuilder.prepare()) {
             return whereConstants;
         }
@@ -1171,6 +1166,22 @@ final class JoinBinder implements Mutable {
                 ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, leftName, 0, leftPosition),
                 ctx.bindingExpressions.next().of(ExpressionNode.LITERAL, rightName, 0, rightPosition),
                 leftPosition);
+    }
+
+    /**
+     * Orders each LEFT input whose ON clause reads a column after the nearest input before it that it joins after, see
+     * {@link #leftJoinAnchor}. A LEFT input whose ON clause reads no column stays unanchored, so it trails the order.
+     */
+    private void constrainLeftJoins(JoinPlan join, QueryModel source, int modelBase) {
+        for (int i = 1, n = join.getInputs().size(); i < n; i++) {
+            if (join.getInputs().getQuick(i).getJoinType() == JoinKind.LEFT_OUTER
+                    && hasColumnReference(joinModel(source, modelBase, i).getJoinCriteria())) {
+                final int anchor = leftJoinAnchor(join, i);
+                if (anchor > -1) {
+                    joinGraphBuilder.addOrderingConstraint(anchor, i);
+                }
+            }
+        }
     }
 
     private void constrainNullingJoinConsumers(JoinPlan join, int boundary) {
@@ -1444,6 +1455,26 @@ final class JoinBinder implements Mutable {
             last = Math.max(last, lastJoinReferenceSource(expression.args.getQuick(i), join));
         }
         return last;
+    }
+
+    /**
+     * The nearest input before the LEFT input {@code input} that it joins after: an outer, temporal, UNNEST or LATERAL
+     * step, or an input that a key orders after an input before it, see {@link JoinGraphBuilder#hasParents}, other than
+     * a LEFT input that may wait for {@code input} through a forward reference. Returns -1 when there is none. The LEFT
+     * input commutes with the INNER and CROSS inputs before it: the ordering constraints of its ON clause keep it after
+     * the inputs the clause reads, and a condition of an INNER or CROSS input that reads it keeps that input after it or
+     * applies once both have joined. It joins before a key-less input, which multiplies the rows it would probe for,
+     * and after a keyed one, which may drop them.
+     */
+    private int leftJoinAnchor(JoinPlan join, int input) {
+        for (int anchor = input - 1; anchor > 0; anchor--) {
+            final JoinInput step = join.getInputs().getQuick(anchor);
+            if (!forwardLeftJoinInputs.contains(anchor)
+                    && (step.getJoinType().isBarrier() || step.isDependent() || joinGraphBuilder.hasParents(anchor))) {
+                return anchor;
+            }
+        }
+        return -1;
     }
 
     /**

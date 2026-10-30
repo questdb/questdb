@@ -1410,19 +1410,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     private boolean isBindVariableDefined(CharSequence name) {
-        final BindVariableService service = sqlExecutionContext.getBindVariableService();
-        if (service == null) {
-            return false;
-        }
-        if (name.charAt(0) == ':') {
-            return service.getFunction(name) != null;
-        }
-        try {
-            final int index = Numbers.parseInt(name, 1, name.length());
-            return index > 0 && service.getFunction(index - 1) != null;
-        } catch (NumericException e) {
-            return false;
-        }
+        return definedBindVariable(name, sqlExecutionContext.getBindVariableService()) != null;
     }
 
     private boolean isNativeTimestampColumn(int columnId) {
@@ -2163,6 +2151,24 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             throw SqlException.invalidColumn(node.position, node.token);
         }
         return index;
+    }
+
+    /**
+     * The bind variable the service defines under the name, {@code $n} or {@code :name}, or null when it defines none.
+     */
+    static Function definedBindVariable(CharSequence name, BindVariableService service) {
+        if (service == null) {
+            return null;
+        }
+        if (name.charAt(0) == ':') {
+            return service.getFunction(name);
+        }
+        try {
+            final int index = Numbers.parseInt(name, 1, name.length());
+            return index > 0 ? service.getFunction(index - 1) : null;
+        } catch (NumericException e) {
+            return null;
+        }
     }
 
     /**
