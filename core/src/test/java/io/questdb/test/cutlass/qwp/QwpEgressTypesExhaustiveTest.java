@@ -591,6 +591,81 @@ public class QwpEgressTypesExhaustiveTest extends AbstractReusedServerQwpEgressT
     }
 
     @Test
+    public void testDecimal8To32TravelAsDecimal64() throws Exception {
+        // DECIMAL(2,0), DECIMAL(4,1) and DECIMAL(8,2) are stored as DECIMAL8, DECIMAL16 and
+        // DECIMAL32. The wire has no kind for them; they go out as DECIMAL64 with the
+        // column's scale, and each class's NULL sentinel becomes a wire NULL. Before this
+        // the egress refused the query: "QWP egress: unsupported column type DECIMAL(8,2)".
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startEgressServer()) {
+                serverMain.execute("CREATE TABLE t(d8 DECIMAL(2,0), d16 DECIMAL(4,1), d32 DECIMAL(8,2), part_ts TIMESTAMP) "
+                        + "TIMESTAMP(part_ts) PARTITION BY DAY WAL");
+                serverMain.execute("INSERT INTO t VALUES "
+                        + "(42m, 123.4m, 123456.78m, 1::TIMESTAMP), "
+                        + "(-42m, -123.4m, -123456.78m, 2::TIMESTAMP), "
+                        + "(0m, 0m, 0m, 3::TIMESTAMP), "
+                        + "(CAST(NULL AS DECIMAL(2,0)), CAST(NULL AS DECIMAL(4,1)), CAST(NULL AS DECIMAL(8,2)), 4::TIMESTAMP)");
+                serverMain.awaitTable("t");
+
+                final byte[] wireTypes = new byte[3];
+                final int[] scales = new int[3];
+                final LongList values = new LongList();
+                final BoolList nulls = new BoolList();
+                try (QwpQueryClient client = QwpQueryClient.fromConfig("ws::addr=127.0.0.1:" + HTTP_PORT + ";")) {
+                    client.connect();
+                    client.execute("SELECT d8, d16, d32 FROM t", new QwpColumnBatchHandler() {
+                        @Override
+                        public void onBatch(QwpColumnBatch batch) {
+                            for (int c = 0; c < 3; c++) {
+                                wireTypes[c] = batch.getColumnWireType(c);
+                                scales[c] = batch.getDecimalScale(c);
+                            }
+                            for (int r = 0; r < batch.getRowCount(); r++) {
+                                for (int c = 0; c < 3; c++) {
+                                    boolean isNull = batch.isNull(c, r);
+                                    nulls.add(isNull);
+                                    values.add(isNull ? 0L : batch.getLongValue(c, r));
+                                }
+                            }
+                        }
+
+                        @Override
+                        public void onEnd(long totalRows) {
+                        }
+
+                        @Override
+                        public void onError(byte status, String message) {
+                            Assert.fail(message);
+                        }
+                    });
+                }
+                Assert.assertEquals(QwpConstants.TYPE_DECIMAL64, wireTypes[0]);
+                Assert.assertEquals(QwpConstants.TYPE_DECIMAL64, wireTypes[1]);
+                Assert.assertEquals(QwpConstants.TYPE_DECIMAL64, wireTypes[2]);
+                Assert.assertArrayEquals(new int[]{0, 1, 2}, scales);
+                Assert.assertEquals(12, values.size());
+                // row 0: 42, 123.4 (scale 1 -> 1234), 123456.78 (scale 2 -> 12345678)
+                Assert.assertEquals(42L, values.getQuick(0));
+                Assert.assertEquals(1_234L, values.getQuick(1));
+                Assert.assertEquals(12_345_678L, values.getQuick(2));
+                // row 1: the negatives
+                Assert.assertEquals(-42L, values.getQuick(3));
+                Assert.assertEquals(-1_234L, values.getQuick(4));
+                Assert.assertEquals(-12_345_678L, values.getQuick(5));
+                // row 2: zeros, not NULL
+                for (int c = 6; c < 9; c++) {
+                    Assert.assertFalse(nulls.get(c));
+                    Assert.assertEquals(0L, values.getQuick(c));
+                }
+                // row 3: NULL in every class
+                Assert.assertTrue(nulls.get(9));
+                Assert.assertTrue(nulls.get(10));
+                Assert.assertTrue(nulls.get(11));
+            }
+        });
+    }
+
+    @Test
     public void testDecimalScalesAcrossColumns() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startEgressServer()) {
