@@ -31,6 +31,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
@@ -40,43 +41,22 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Primary-owned lifecycle operations for the versioned checkpoint timeline.
- *
- * <p>Startup reconciliation is bounded by physical segment count. It discards
- * the candidate of every crashed repair through
- * {@link LiveViewCheckpointRepairState#sweep}, removes recognized temporary
- * files, removes every final name the generation it adopts does not catalogue,
- * and records the final-name files above both valid A/B slot id ceilings that it
- * had no catalogue to ask about. Those last are removed only after a new slot
- * advances past them, preserving monotonic allocation. Reconciliation walks the
- * segment catalogue but never the logical checkpoint leaves below it.
- * Zero-reference deletion delegates to {@link LiveViewCheckpointDataStore},
- * retaining its old-slot, reader-pin, candidate-ownership, and retry guards.</p>
- *
- * <p>That id-ceiling rule needs a reconciliation to read the ceiling before the
- * next publication moves it, which only a restart and a failed {@code append}
- * give it. {@link #purgeUncataloguedSegments} states the same disposition
- * against the catalogue instead, so it holds whatever the ceiling has since done.
- * Reconciliation applies it to every generation it adopts and the purge cadence
- * applies it on every sweep, so the two rules no longer overlap: the ceiling
- * decides only what no catalogue can speak for, which is a directory carrying no
- * valid generation at all. There every final name is an orphan by definition, and
- * no publication is there to have moved the ceiling off it.</p>
- *
- * <p>Ahead of all of that, reconciliation classifies the directory as a whole.
- * A {@code _timeline} carrying a foreign layout version, or a top-level entry
- * outside the current layout, means a build with a different on-disk format
- * owned this directory. Since live views are unreleased, such a directory is
- * removed rather than migrated or partially recovered: the primary rebuilds the
- * timeline from the base table on its next refresh, and no reconciliation rule
- * ever meets a mix of two formats.</p>
- *
- * <p>Callers serialize reconciliation, epoch replacement, and retirement with
- * timeline publication, repair descriptor writes, and pin acquisition. The
- * live-view integration does so with the refresh latch (and fences DROP before
- * retirement), so the repair sweep only ever meets descriptors of repairs that
- * are not running. Tests may pass an open metadata store to
- * {@link #retireTimeline} to assert that a live pin defers deletion.</p>
+ * Reconciles and retires node-owned checkpoint timelines under the refresh latch,
+ * serialized with publication, repair descriptors and pin acquisition. DROP fences
+ * readers before retirement; reconciliation cannot race a live repair.
+ * <p>
+ * Reconciliation scales with physical segments, never logical checkpoint leaves.
+ * It sweeps crashed repairs, temporary files and uncatalogued final segments. With
+ * no valid catalogue, final ids above both slot ceilings remain until a new slot
+ * advances past them. Deletion retains slot, reader-pin, candidate and retry guards.
+ * <p>
+ * An unrecognized layout with no declared format version is removed for rebuilding.
+ * A declared unsupported version leaves the directory intact: newer versions block
+ * refresh on rollback, while older versions request an upgrade rebuild. Keeping the
+ * old superblock makes that rebuild requirement survive a crash until retirement.
+ * <p>
+ * A damaged foreign-looking slot cannot override a selectable current-format slot.
+ * Version field and magic nibble must agree before a slot declares a foreign format.
  */
 public final class LiveViewCheckpointLifecycle {
 
@@ -93,8 +73,15 @@ public final class LiveViewCheckpointLifecycle {
      * {@code true} regardless of role and the flag survives only as the
      * ownership assertion this class refuses to write without.
      * <p>
-     * A directory written under a foreign layout short-circuits every other
-     * rule: it is removed whole and the result reports
+     * A directory whose {@code _timeline} declares a format version this build
+     * does not implement short-circuits every other rule and is left exactly as
+     * it is: the result reports {@link ReconcileResult#isFormatBlocked()} and the
+     * version it read, and nothing on disk is opened, removed or rewritten. A
+     * version below this build's own, and no lower than 1, additionally reports
+     * {@link ReconcileResult#isFormatUpgrade()}; see {@link #isUpgradableFormatVersion}.
+     * <p>
+     * A directory written under a foreign layout that declares no such version
+     * short-circuits the same way but is removed whole, and the result reports
      * {@link ReconcileResult#isFormatReset()}, leaving the caller with the same
      * disposition a live view that never checkpointed has.
      * <p>
@@ -105,6 +92,11 @@ public final class LiveViewCheckpointLifecycle {
      * catalogued at all through {@link #purgeUncataloguedSegments}. Only where no
      * generation is adopted does the deferred id-ceiling rule decide anything, and
      * there the ceiling is zero, so it names every final-name file on disk.
+     * <p>
+     * A {@link CairoException} from the purge sweep fails neither the reconciliation nor
+     * the adoption: the result reports {@link ReconcileResult#isPurgeFailed()} and still
+     * carries the adopted generation's WAL purge floor and base coordinate, which the
+     * caller publishes. Any other throwable from the sweep propagates.
      */
     public static ReconcileResult reconcile(
             @NotNull CairoConfiguration configuration,
@@ -121,6 +113,30 @@ public final class LiveViewCheckpointLifecycle {
                     .put("invalid live view checkpoint history identity")
                     .put(" [definitionTxn=").put(expectedDefinitionTxn)
                     .put(", historyEpoch=").put(expectedHistoryEpoch).put(']');
+        }
+
+        // A timeline that names its own format goes first: a version this build
+        // does not implement is another build's generation, and the whole
+        // disposition is to leave it alone. Nothing below may open, remove or
+        // rewrite any part of it, the repair sweep included. That holds for an
+        // older version too: its superblock is what tells every restart that the
+        // view still owes its upgrade rebuild.
+        final int foreignFormatVersion = foreignTimelineFormatVersion(configuration, checkpointsDir);
+        if (foreignFormatVersion != LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT) {
+            if (isUpgradableFormatVersion(foreignFormatVersion)) {
+                LOG.info().$("live view checkpoint timeline declares an older format version, leaving it for the upgrade rebuild [path=")
+                        .$(checkpointsDir)
+                        .$(", version=").$(foreignFormatVersion)
+                        .$(", supported=").$(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION)
+                        .I$();
+                return ReconcileResult.formatUpgrade(foreignFormatVersion);
+            }
+            LOG.error().$("live view checkpoint timeline declares an unsupported format version, blocking [path=")
+                    .$(checkpointsDir)
+                    .$(", version=").$(foreignFormatVersion)
+                    .$(", supported=").$(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION)
+                    .I$();
+            return ReconcileResult.formatBlocked(foreignFormatVersion);
         }
 
         // A directory this build cannot read as a whole goes before anything
@@ -142,12 +158,13 @@ public final class LiveViewCheckpointLifecycle {
             LiveViewCheckpointLayout.timelinePath(timelinePath, checkpointsDir);
             if (!ff.exists(timelinePath.$())) {
                 final CleanupResult cleanup = cleanupOrphans(configuration, checkpointsDir, 0);
-                return result(false, -1, Numbers.LONG_NULL, cleanup, null, null, repairSweep);
+                return result(false, -1, Numbers.LONG_NULL, cleanup, null, false, null, repairSweep);
             }
         }
 
         boolean replaceEpoch = false;
         boolean catalogueMismatch = false;
+        boolean isPurgeFailed = false;
         long nextSegmentIdCeiling = 0;
         long walPurgeFloor = -1;
         long normalizedBaseSeqTxn = Numbers.LONG_NULL;
@@ -176,6 +193,22 @@ public final class LiveViewCheckpointLifecycle {
                     )) {
                         dataStore.of(checkpointsDir);
                         purgeResult = dataStore.purge();
+                    } catch (CairoException e) {
+                        // The sweep is reclamation only. A fault in it - a full disk
+                        // failing the _retirements rewrite, a queue load that cannot
+                        // map, a catalogue page it cannot read - leaves every file it
+                        // did not reach to the next sweep, and the queue it could not
+                        // prune is a superset that sweep re-checks against the
+                        // catalogue. The floor and coordinate above are what the
+                        // caller publishes as this generation's base WAL floor and
+                        // head; a throw here would cost the view both and let
+                        // WalPurgeJob delete the base WAL the restore replays.
+                        isPurgeFailed = true;
+                        LOG.error().$("could not purge live view checkpoint segments, deferring to the next sweep [path=")
+                                .$(checkpointsDir)
+                                .$(", errno=").$(e.getErrno())
+                                .$(", error=").$safe(e.getFlyweightMessage())
+                                .I$();
                     }
                     // The sweep above decides the fate of every segment this
                     // generation ever named; this decides the fate of the files it
@@ -210,12 +243,15 @@ public final class LiveViewCheckpointLifecycle {
             return new ReconcileResult(
                     true,
                     false,
+                    false,
+                    LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
                     -1,
                     Numbers.LONG_NULL,
                     0,
                     0,
                     0,
                     null,
+                    false,
                     null,
                     repairSweep.getDiscardedRepairCount(),
                     repairSweep.getFailedCount()
@@ -229,7 +265,25 @@ public final class LiveViewCheckpointLifecycle {
         // at the ceiling and the deferred rule has no range left to apply.
         final CleanupResult cleanup = cleanupOrphans(configuration, checkpointsDir, nextSegmentIdCeiling);
         cleanup.add(uncatalogued);
-        return result(false, walPurgeFloor, normalizedBaseSeqTxn, cleanup, purgeResult, stats, repairSweep);
+        return result(false, walPurgeFloor, normalizedBaseSeqTxn, cleanup, purgeResult, isPurgeFailed, stats, repairSweep);
+    }
+
+    /**
+     * Whether a declared checkpoint format version is one this build upgrades by rebuilding
+     * the view from its base table, rather than one it blocks on.
+     * <p>
+     * The rule is a range, {@code [1, SLOT_FORMAT_VERSION)}, rather than the one older
+     * version that exists today, so every later bump inherits it: a build that raises
+     * {@link LiveViewCheckpointSuperblock#SLOT_FORMAT_VERSION} rebuilds the views the build
+     * before it wrote. A bump that wants a real migration of the older layout instead - a
+     * decoder that restores from it - must opt that version out here.
+     * <p>
+     * Version 0 stays blocked. A slot can declare it, since a magic nibble of 0 beside a
+     * version field of 0 names the same version twice, but no released build wrote it, so
+     * nothing a real upgrade meets has that shape.
+     */
+    public static boolean isUpgradableFormatVersion(int formatVersion) {
+        return formatVersion >= 1 && formatVersion < LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION;
     }
 
     /**
@@ -255,10 +309,12 @@ public final class LiveViewCheckpointLifecycle {
             long orphanUpperBound,
             boolean primaryOwner
     ) {
-        final CleanupResult result = new CleanupResult(protectedCeiling);
+        // Ordered before the scratch: a steady cadence seal reaches this with an
+        // upper bound the ceiling already covers, so the common path builds nothing.
         if (!primaryOwner || orphanUpperBound <= protectedCeiling) {
-            return new CleanupStats(0, 0);
+            return CleanupStats.NONE;
         }
+        final CleanupResult result = new CleanupResult(protectedCeiling);
         try (Path path = new Path()) {
             purgeFinalOrphansInDir(
                     configuration.getFilesFacade(),
@@ -277,52 +333,19 @@ public final class LiveViewCheckpointLifecycle {
                     result
             );
         }
-        return new CleanupStats(result.removed, result.failed);
+        return new CleanupStats(result.removed, result.failed, result.visited);
     }
 
     /**
-     * Removes every final-name segment file the newest durable generation neither
-     * catalogues nor names as its pending directory segment.
+     * Removes final-name segments absent from both the newest generation's catalogue and
+     * its pending directory segment. The directory cannot catalogue its own file, so the
+     * superblock names that exception explicitly. Reachability remains authoritative even
+     * when later allocations advance past an orphan's id.
      * <p>
-     * Since Phase 2a/2b the catalogue holds an entry for every segment a published
-     * root can reach - data, tree metadata and boundary metadata alike - and the
-     * one documented exception is the segment carrying the directory root itself,
-     * which the superblock names as pending because a tree cannot list the file it
-     * is being written into. A final-name file outside both sets is therefore
-     * reachable from nothing, whatever its id: it is what a publication that
-     * renamed its segments into place and then failed left behind.
-     * <p>
-     * The rule this applies is strictly stronger than
-     * {@link #purgeFinalOrphans}'s, and it is stronger in the direction that
-     * matters. The id ceiling decays - {@code skipPublishedSegmentIds} steps the
-     * next publication's allocation over an orphan, the ceiling rises past it, and
-     * no later reconciliation can tell it from a live segment again - while a
-     * catalogue that never held the id keeps saying so. That is why a failed
-     * compaction or repair publication used to leak its segments for the life of
-     * the directory: neither re-runs a reconciliation, so nothing read the ceiling
-     * before the next seal moved it.
-     * <p>
-     * Both collectors apply it. The purge cadence runs it beside every sweep, so a
-     * running process collects without waiting; {@link #reconcile} runs it over
-     * every generation it adopts, so a process that swept nothing - the cadence
-     * disabled, or a view that never sealed again after the failure - collects at
-     * its next restart rather than never.
-     * <p>
-     * Nothing has to advance past these ids first, because the monotonic
-     * {@code nextSegmentId} is what preserves allocation order on its own -
-     * unlinking a file never lowers it, and the id skip only ever moves forward.
-     * The pass publishes no generation, so a fault costs one deferred collection.
-     * <p>
-     * It is fail-closed at every step it cannot complete: a catalogue this build
-     * cannot read, a directory root the superblock does not name, or a slot that
-     * lost the newest-generation race all leave every file where it is. Keeping a
-     * dead file costs disk; unlinking a live one costs the timeline.
-     * <p>
-     * Temporary files are not this pass's business. A {@code .tmp} belongs to
-     * whichever writer is holding it open - a repair capture spans several
-     * {@code capture} calls before it commits - so ownership rather than
-     * reachability decides its fate, and reconciliation, which runs where no
-     * writer can own one, is where that decision belongs.
+     * Purge and startup reconciliation both run this pass. It publishes no generation and
+     * never lowers nextSegmentId. An unreadable catalogue, unnamed directory root or lost
+     * generation race leaves files untouched. Temporary files require writer-ownership
+     * checks and are handled only by reconciliation, where no writer can own them.
      */
     public static CleanupStats purgeUncataloguedSegments(
             @NotNull CairoConfiguration configuration,
@@ -334,7 +357,7 @@ public final class LiveViewCheckpointLifecycle {
             // A root that failed bounded validation, or a generation whose
             // catalogue has no root at all, is no evidence that anything on disk
             // is free.
-            return new CleanupStats(0, 0);
+            return new CleanupStats(0, 0, 0);
         }
         final CleanupResult result = new CleanupResult(0);
         try (LiveViewCheckpointSegmentDirectoryReader directory =
@@ -365,7 +388,7 @@ public final class LiveViewCheckpointLifecycle {
             LOG.error().$("could not read the live view checkpoint catalogue while collecting orphans [path=")
                     .$(checkpointsDir).$(", error=").$safe(e.getFlyweightMessage()).I$();
         }
-        return new CleanupStats(result.removed, result.failed);
+        return new CleanupStats(result.removed, result.failed, result.visited);
     }
 
     /**
@@ -406,6 +429,16 @@ public final class LiveViewCheckpointLifecycle {
                 logRemoveFailure(ff, path);
             }
             LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
+            path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
+            if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
+                success = false;
+                logRemoveFailure(ff, path);
+            }
+            LiveViewCheckpointLayout.retirementQueuePath(path, checkpointsDir);
+            if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
+                success = false;
+                logRemoveFailure(ff, path);
+            }
             path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
             if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
                 success = false;
@@ -454,7 +487,9 @@ public final class LiveViewCheckpointLifecycle {
             return;
         }
         final int dirLen = dir.size();
-        final StringSink name = new StringSink();
+        // Thread-local: the sweep fills and consumes the sink inside its own loop and
+        // nothing it calls reaches for the same sink, so it needs no instance of its own.
+        final StringSink name = Misc.getThreadLocalSink();
         final long findPtr = ff.findFirst(dir.$());
         if (findPtr == 0) {
             return;
@@ -465,6 +500,7 @@ public final class LiveViewCheckpointLifecycle {
                 if (namePtr == 0) {
                     continue;
                 }
+                result.visited++;
                 name.clear();
                 if (!Utf8s.utf8ToUtf16Z(namePtr, name)
                         || Chars.equals(name, ".")
@@ -494,11 +530,12 @@ public final class LiveViewCheckpointLifecycle {
 
     /**
      * Reports whether {@code checkpointsDir} holds a top-level entry outside the
-     * current layout. Everything this build writes there is one of five names -
+     * current layout. Everything this build writes there is one of six names -
      * the {@code _timeline} superblock, the {@code _repairing} prefix-preservation
-     * marker, and the {@code meta}, {@code data} and {@code repair} directories -
-     * so anything else came from a build that arranged checkpoint state
-     * differently. Earlier development builds left the {@code _ring} manifest and
+     * marker, the {@code _retirements} work set, and the {@code meta}, {@code data}
+     * and {@code repair} directories - so anything else came from a build that
+     * arranged checkpoint state differently. Earlier development builds left the
+     * {@code _ring} manifest and
      * per-checkpoint {@code .cp} / {@code .scp} files at this level, which is what
      * the check most often finds.
      */
@@ -510,7 +547,9 @@ public final class LiveViewCheckpointLifecycle {
         if (findPtr == 0) {
             return false;
         }
-        final StringSink name = new StringSink();
+        // Thread-local: the sweep fills and consumes the sink inside its own loop and
+        // nothing it calls reaches for the same sink, so it needs no instance of its own.
+        final StringSink name = Misc.getThreadLocalSink();
         try {
             do {
                 final long namePtr = ff.findName(findPtr);
@@ -525,6 +564,8 @@ public final class LiveViewCheckpointLifecycle {
                         || Chars.equals(name, "..")
                         || Chars.equals(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
                         || Chars.startsWith(name, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)
+                        || Chars.equals(name, LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME)
+                        || Chars.equals(name, LiveViewCheckpointLayout.RETIREMENT_QUEUE_TMP_FILE_NAME)
                         || Chars.equals(name, LiveViewCheckpointLayout.META_DIR_NAME)
                         || Chars.equals(name, LiveViewCheckpointLayout.DATA_DIR_NAME)
                         || Chars.equals(name, LiveViewCheckpointLayout.REPAIR_DIR_NAME)) {
@@ -570,6 +611,30 @@ public final class LiveViewCheckpointLifecycle {
             LOG.error().$("could not read the live view checkpoint segment catalogue [path=")
                     .$(checkpointsDir).$(", error=").$safe(e.getFlyweightMessage()).I$();
             return true;
+        }
+    }
+
+    /**
+     * Reads the format version {@code _timeline} declares, when this build does
+     * not implement it. Superblock only: it opens the two fixed slot fields and
+     * never descends into a root page, so the classification costs the same on a
+     * layout this build has no decoder for.
+     *
+     * @return the declared foreign version, or
+     * {@link LiveViewCheckpointSuperblock#NO_FOREIGN_FORMAT} when the timeline is
+     * missing, is this build's own format, or declares no readable version
+     */
+    private static int foreignTimelineFormatVersion(
+            @NotNull CairoConfiguration configuration,
+            @NotNull Path checkpointsDir
+    ) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            LiveViewCheckpointLayout.timelinePath(path, checkpointsDir);
+            if (!ff.exists(path.$())) {
+                return LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT;
+            }
+            return LiveViewCheckpointSuperblock.foreignFormatVersion(ff, path.$());
         }
     }
 
@@ -621,7 +686,9 @@ public final class LiveViewCheckpointLifecycle {
             return;
         }
         final int dirLen = dir.size();
-        final StringSink name = new StringSink();
+        // Thread-local: the sweep fills and consumes the sink inside its own loop and
+        // nothing it calls reaches for the same sink, so it needs no instance of its own.
+        final StringSink name = Misc.getThreadLocalSink();
         final long findPtr = ff.findFirst(dir.$());
         if (findPtr == 0) {
             return;
@@ -662,7 +729,9 @@ public final class LiveViewCheckpointLifecycle {
             return;
         }
         final int dirLen = dir.size();
-        final StringSink name = new StringSink();
+        // Thread-local: the sweep fills and consumes the sink inside its own loop and
+        // nothing it calls reaches for the same sink, so it needs no instance of its own.
+        final StringSink name = Misc.getThreadLocalSink();
         final long findPtr = ff.findFirst(dir.$());
         if (findPtr == 0) {
             return;
@@ -673,6 +742,7 @@ public final class LiveViewCheckpointLifecycle {
                 if (namePtr == 0) {
                     continue;
                 }
+                result.visited++;
                 name.clear();
                 if (!Utf8s.utf8ToUtf16Z(namePtr, name)
                         || !Chars.startsWith(name, prefix)
@@ -772,18 +842,22 @@ public final class LiveViewCheckpointLifecycle {
             long normalizedBaseSeqTxn,
             CleanupResult cleanup,
             @Nullable LiveViewCheckpointDataStore.PurgeResult purge,
+            boolean isPurgeFailed,
             @Nullable LiveViewCheckpointTimelineStats stats,
             LiveViewCheckpointRepairState.SweepResult repairSweep
     ) {
         return new ReconcileResult(
                 epochReplaced,
                 false,
+                false,
+                LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
                 walPurgeFloor,
                 normalizedBaseSeqTxn,
                 cleanup.removed,
                 cleanup.failed,
                 cleanup.finalOrphanUpperBound,
                 purge,
+                isPurgeFailed,
                 stats,
                 repairSweep.getDiscardedRepairCount(),
                 repairSweep.getFailedCount()
@@ -794,6 +868,7 @@ public final class LiveViewCheckpointLifecycle {
         private long finalOrphanUpperBound;
         private int failed;
         private int removed;
+        private int visited;
 
         private CleanupResult(long finalOrphanUpperBound) {
             this.finalOrphanUpperBound = finalOrphanUpperBound;
@@ -812,17 +887,24 @@ public final class LiveViewCheckpointLifecycle {
 
     public static final class ReconcileResult {
         private static final LongList EMPTY_SEGMENT_IDS = new LongList();
-        private static final ReconcileResult FORMAT_RESET =
-                new ReconcileResult(false, true, -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0);
-        private static final ReconcileResult NOT_OWNER =
-                new ReconcileResult(false, false, -1, Numbers.LONG_NULL, 0, 0, 0, null, null, 0, 0);
+        private static final ReconcileResult FORMAT_RESET = new ReconcileResult(
+                false, true, false, LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                -1, Numbers.LONG_NULL, 0, 0, 0, null, false, null, 0, 0
+        );
+        private static final ReconcileResult NOT_OWNER = new ReconcileResult(
+                false, false, false, LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT,
+                -1, Numbers.LONG_NULL, 0, 0, 0, null, false, null, 0, 0
+        );
         private final int discardedRepairCount;
         private final boolean epochReplaced;
         private final int failedOrphanCount;
         private final int failedPurgeCount;
         private final int failedRepairCount;
         private final long finalOrphanUpperBound;
+        private final int foreignFormatVersion;
         private final boolean formatReset;
+        private final boolean isFormatUpgrade;
+        private final boolean isPurgeFailed;
         private final int liveSegmentCount;
         private final long normalizedBaseSeqTxn;
         private final long obsoleteSegmentBytes;
@@ -835,18 +917,23 @@ public final class LiveViewCheckpointLifecycle {
         private ReconcileResult(
                 boolean epochReplaced,
                 boolean formatReset,
+                boolean isFormatUpgrade,
+                int foreignFormatVersion,
                 long walPurgeFloor,
                 long normalizedBaseSeqTxn,
                 int removedOrphanCount,
                 int failedOrphanCount,
                 long finalOrphanUpperBound,
                 @Nullable LiveViewCheckpointDataStore.PurgeResult purge,
+                boolean isPurgeFailed,
                 @Nullable LiveViewCheckpointTimelineStats stats,
                 int discardedRepairCount,
                 int failedRepairCount
         ) {
             this.epochReplaced = epochReplaced;
             this.formatReset = formatReset;
+            this.isFormatUpgrade = isFormatUpgrade;
+            this.foreignFormatVersion = foreignFormatVersion;
             this.walPurgeFloor = walPurgeFloor;
             this.normalizedBaseSeqTxn = normalizedBaseSeqTxn;
             this.removedOrphanCount = removedOrphanCount;
@@ -857,9 +944,36 @@ public final class LiveViewCheckpointLifecycle {
             this.liveSegmentCount = purge == null ? 0 : purge.getLiveSegmentCount();
             this.obsoleteSegmentBytes = purge == null ? 0 : purge.getObsoleteBytes();
             this.retirableSegmentIds = purge == null ? EMPTY_SEGMENT_IDS : purge.getRetirableSegmentIds();
+            this.isPurgeFailed = isPurgeFailed;
             this.stats = stats;
             this.discardedRepairCount = discardedRepairCount;
             this.failedRepairCount = failedRepairCount;
+        }
+
+        /**
+         * A reconciliation that read a format version this build does not
+         * implement and therefore did nothing at all. Every count is zero and
+         * every coordinate is absent because nothing was opened, not because
+         * nothing was found.
+         */
+        private static ReconcileResult formatBlocked(int foreignFormatVersion) {
+            return new ReconcileResult(
+                    false, false, false, foreignFormatVersion,
+                    -1, Numbers.LONG_NULL, 0, 0, 0, null, false, null, 0, 0
+            );
+        }
+
+        /**
+         * A reconciliation that read an older format version this build upgrades by
+         * rebuilding the view from its base table. It did nothing at all, exactly as
+         * {@link #formatBlocked} did: the older superblock stays on disk as the witness
+         * that the rebuild is still owed.
+         */
+        private static ReconcileResult formatUpgrade(int foreignFormatVersion) {
+            return new ReconcileResult(
+                    false, false, true, foreignFormatVersion,
+                    -1, Numbers.LONG_NULL, 0, 0, 0, null, false, null, 0, 0
+            );
         }
 
         /**
@@ -895,6 +1009,16 @@ public final class LiveViewCheckpointLifecycle {
          */
         public long getFinalOrphanUpperBound() {
             return finalOrphanUpperBound;
+        }
+
+        /**
+         * @return the format version the checkpoint timeline declares when
+         * {@link #isFormatBlocked()}, or
+         * {@link LiveViewCheckpointSuperblock#NO_FOREIGN_FORMAT} otherwise. The
+         * number is the whole of what this build knows about that directory
+         */
+        public int getForeignFormatVersion() {
+            return foreignFormatVersion;
         }
 
         /**
@@ -960,6 +1084,29 @@ public final class LiveViewCheckpointLifecycle {
         }
 
         /**
+         * @return true when the checkpoint timeline declares a format version this
+         * build does not implement, older or newer. The reconciliation left the
+         * directory untouched, and nothing may publish over it: a caller that is about
+         * to seal refuses on this. A caller deciding the view's disposition asks
+         * {@link #isFormatUpgrade()} first, which refines this for an older version;
+         * otherwise it must stop the view's refresh rather than treat this as a view
+         * with no timeline
+         */
+        public boolean isFormatBlocked() {
+            return foreignFormatVersion != LiveViewCheckpointSuperblock.NO_FOREIGN_FORMAT;
+        }
+
+        /**
+         * @return true when the checkpoint timeline declares an older format version
+         * this build upgrades by rebuilding the view from its base table. Implies
+         * {@link #isFormatBlocked()}: the directory is left whole and is still no
+         * place to publish, until the rebuild retires it
+         */
+        public boolean isFormatUpgrade() {
+            return isFormatUpgrade;
+        }
+
+        /**
          * @return true when this reconciliation removed a checkpoint directory
          * written under a layout this build cannot read, leaving the primary to
          * rebuild the timeline from the base table
@@ -967,16 +1114,28 @@ public final class LiveViewCheckpointLifecycle {
         public boolean isFormatReset() {
             return formatReset;
         }
+
+        /**
+         * @return true when this reconciliation adopted a generation but its purge
+         * sweep failed. The floor, coordinate and stats still describe the adopted
+         * generation; the segment counts and retirable ids do not describe its
+         * catalogue, and the next sweep owes the reclamation this one deferred
+         */
+        public boolean isPurgeFailed() {
+            return isPurgeFailed;
+        }
     }
 
     public static final class CleanupStats {
-        private static final CleanupStats NONE = new CleanupStats(0, 0);
+        private static final CleanupStats NONE = new CleanupStats(0, 0, 0);
         private final int failedCount;
         private final int removedCount;
+        private final int visitedCount;
 
-        private CleanupStats(int removedCount, int failedCount) {
+        private CleanupStats(int removedCount, int failedCount, int visitedCount) {
             this.removedCount = removedCount;
             this.failedCount = failedCount;
+            this.visitedCount = visitedCount;
         }
 
         public int getFailedCount() {
@@ -985,6 +1144,10 @@ public final class LiveViewCheckpointLifecycle {
 
         public int getRemovedCount() {
             return removedCount;
+        }
+
+        public int getVisitedCount() {
+            return visitedCount;
         }
     }
 }

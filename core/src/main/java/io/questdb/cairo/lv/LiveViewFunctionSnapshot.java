@@ -396,8 +396,7 @@ public final class LiveViewFunctionSnapshot {
         final long lengthOffset = sink.getAppendOffset();
         sink.putLong(0);
         pageWriter.of(sink);
-        function.freezeCheckpointState(pageWriter, value);
-        final long pageLength = pageWriter.size();
+        final long pageLength = pageWriter.freeze(function, value);
         final long appendOffset = sink.getAppendOffset();
         sink.jumpTo(lengthOffset);
         sink.putLong(pageLength);

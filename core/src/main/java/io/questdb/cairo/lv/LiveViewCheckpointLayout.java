@@ -41,6 +41,8 @@ import org.jetbrains.annotations.NotNull;
  * <pre>
  *   &lt;live-view-table&gt;/_checkpoints/
  *     _timeline                 fixed A/B superblock (LiveViewCheckpointSuperblock)
+ *     _retirements              checksummed zero-reference reclamation work set
+ *     _retirements.tmp          copy-on-write queue publication
  *     meta/
  *       m.&lt;segmentId&gt;           immutable, per-page-checksummed metadata segment
  *       m.&lt;segmentId&gt;.tmp       unpublished metadata segment
@@ -117,6 +119,11 @@ public final class LiveViewCheckpointLayout {
      */
     public static final String REPAIRING_MARKER_FILE_NAME = "_repairing";
     /**
+     * CRC-checked copy-on-write work set of zero-reference segments awaiting
+     * generation-safe physical removal.
+     */
+    public static final String RETIREMENT_QUEUE_FILE_NAME = "_retirements";
+    /**
      * Filename prefix for a repair descriptor: {@code r.<repairId>}.
      */
     public static final String REPAIR_DESCRIPTOR_PREFIX = "r.";
@@ -173,6 +180,7 @@ public final class LiveViewCheckpointLayout {
      * Suffix for an unpublished ({@code .tmp}) metadata or data segment.
      */
     public static final String TMP_SUFFIX = ".tmp";
+    public static final String RETIREMENT_QUEUE_TMP_FILE_NAME = RETIREMENT_QUEUE_FILE_NAME + TMP_SUFFIX;
 
     private LiveViewCheckpointLayout() {
     }
@@ -230,37 +238,13 @@ public final class LiveViewCheckpointLayout {
     }
 
     /**
-     * Publishes a staged {@code .tmp} file over a final name that may already
-     * hold a previous version of the same record, and returns the
-     * {@link Files} rename result.
+     * Publishes a staged file over a rewritable final name, returning the rename result.
+     * On Windows only a destination-collision errno permits unlinking the old name and
+     * retrying once. That fallback is not atomic: readers must tolerate a temporarily
+     * absent record. Other errors preserve the old record. Callers close mappings first.
      * <p>
-     * POSIX {@code rename} replaces the destination atomically, so the first
-     * attempt succeeds and this never takes a second step. Windows
-     * {@code MoveFileW} instead refuses an existing destination, so on a
-     * collision errno - and only on one of those - the destination is unlinked
-     * and the rename retried once.
-     * <p>
-     * The retry is not atomic: a Windows reader can observe the final name
-     * missing between the unlink and the rename. That state is <em>not</em> the
-     * one a crash between staging and publication leaves - a crash there keeps
-     * the previous record and adds a {@code .tmp} sibling, whereas this window
-     * has no record at all - so a caller that distinguishes "record absent" from
-     * "record present" must tolerate the former appearing spuriously on Windows.
-     * Restoring atomicity needs a replace-capable native rename
-     * ({@code MoveFileExW} with {@code MOVEFILE_REPLACE_EXISTING}); until then
-     * this is the closest behaviour that keeps the caller working at all, since
-     * today every such re-publication simply fails on Windows.
-     * <p>
-     * Gating on the errno rather than on the destination existing matters: a
-     * rename that failed for any other reason leaves the previously published
-     * record in place, exactly as it did before this method existed. Closing the
-     * mapping before publishing is the caller's job on both platforms.
-     * <p>
-     * Only for names a caller deliberately rewrites: the repair marker and the
-     * repair descriptor. Published metadata and data segments never reach an
-     * existing final name - their ids are allocated past every published one -
-     * so those paths rename directly and rely on that invariant rather than on
-     * replace semantics.
+     * Use only for rewritable markers, repair descriptors and retirement queues.
+     * Immutable metadata and data segments allocate fresh ids and rename directly.
      */
     public static int publishOverwrite(@NotNull FilesFacade ff, @NotNull LPSZ tmpPath, @NotNull LPSZ finalPath) {
         final int result = ff.rename(tmpPath, finalPath);
@@ -311,6 +295,10 @@ public final class LiveViewCheckpointLayout {
      */
     public static Path repairingMarkerPath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir) {
         return dst.of(checkpointsDir).concat(REPAIRING_MARKER_FILE_NAME);
+    }
+
+    public static Path retirementQueuePath(@NotNull Path dst, @Transient @NotNull Path checkpointsDir) {
+        return dst.of(checkpointsDir).concat(RETIREMENT_QUEUE_FILE_NAME);
     }
 
     /**

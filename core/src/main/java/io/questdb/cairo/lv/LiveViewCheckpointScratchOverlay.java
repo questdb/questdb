@@ -65,6 +65,11 @@ import org.jetbrains.annotations.Nullable;
  * both, which is the whole of what it needs: the replay leaves it holding the last
  * row it read, and its next value is the next row's rather than that one's.
  * <p>
+ * A function whose state the anchored window owns is skipped by both, and its
+ * accumulator travels in the window's own payload instead: once the group is fused
+ * there is one map holding the anchor value and every component, so the overlay
+ * captures the window state once rather than the same numbers once per projection.
+ * <p>
  * An anchored view's per-partition last-seen anchor value is runtime state on the
  * same terms, and it travels here through {@link LiveViewWindow}'s own snapshot
  * contract. The repair clears the anchor map before replaying - which is what makes
@@ -77,6 +82,15 @@ import org.jetbrains.annotations.Nullable;
  * and a repair that converges below the runtime frontier is rare enough that
  * holding that much native memory for the worker's life costs more than the
  * allocation it saves.
+ * <p>
+ * <b>This is now the fallback route rather than the ordinary one.</b> A converging
+ * repair replays through {@link LiveViewRepairRuntime} - a second compiled runtime of
+ * the view's own SELECT - and so takes nothing aside at all; the copy here is what it
+ * falls back to when
+ * {@code cairo.live.view.checkpoint.repair.isolated.runtime.enabled} declines the second
+ * runtime, or when compiling it fails. The size is why: this copy is proportional to the
+ * view's whole key domain, while the isolated runtime holds only the keys of the range
+ * being repaired.
  */
 public final class LiveViewCheckpointScratchOverlay implements QuietCloseable {
     private static final long PAGE_SIZE = 64 * 1024;
@@ -117,7 +131,7 @@ public final class LiveViewCheckpointScratchOverlay implements QuietCloseable {
         mem.setMemoryTracker(memoryTracker);
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction f = functions.getQuick(i);
-            if (!f.supportsCheckpointState()) {
+            if (!f.supportsCheckpointState() || f.isWindowStateOwned()) {
                 continue;
             }
             final long payloadStart = mem.getAppendOffset();
@@ -174,7 +188,7 @@ public final class LiveViewCheckpointScratchOverlay implements QuietCloseable {
         int frame = 0;
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction f = functions.getQuick(i);
-            if (!f.supportsCheckpointState()) {
+            if (!f.supportsCheckpointState() || f.isWindowStateOwned()) {
                 continue;
             }
             if (frame + 2 > frames.size()) {

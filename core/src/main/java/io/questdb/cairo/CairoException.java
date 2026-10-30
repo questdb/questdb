@@ -99,6 +99,10 @@ public class CairoException extends RuntimeException implements Sinkable, Flywei
     // live area, or left the whole file behind _txn. The table writer continues from the previous transaction
     // when that is safe and refuses to open otherwise; the engine repairs the table on read by opening it.
     public static final int CV_TORN = TXN_LIVE_AREA_TORN - 1;
+    // A live-view checkpoint timeline declares a format version this build does not implement.
+    // Unlike LV_CHECKPOINT_TIMELINE_INVALID, a rebuild cannot clear it, so the view blocks with
+    // everything intact rather than resetting.
+    public static final int LV_CHECKPOINT_FORMAT_BLOCKED = CV_TORN - 1;
     public static final int NON_CRITICAL = -1;
     // Single source of truth for the write-refusal message a read-only node emits. Both a static
     // read-only OSS instance and an enterprise node acting as a read-only replica reach this
