@@ -71,6 +71,7 @@ import io.questdb.cairo.wal.SymbolMapDiffEntry;
 import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalBlockBudget;
 import io.questdb.cairo.wal.WalTxnDetails;
+import io.questdb.cairo.wal.WalTxnType;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
@@ -422,6 +423,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long attachPartitionTimestamp;
     private TxReader attachTxReader;
     private long avgRecordSize;
+    // Whether avgRecordSize was measured from WAL rows, sampled before the first block or staged by an apply
+    private boolean avgRecordSizeFromWal;
     // Whether setAppendPosition() measured avgRecordSize from the last partition's column files. Until it does - always
     // on a parquet last partition, which has none - the WAL apply measures it from the rows it applies.
     private boolean avgRecordSizeMeasured;
@@ -1820,6 +1823,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         hasTtlEvictedPartitionsSinceLastCommit = false;
         txWriter.beginPartitionSizeUpdate();
         long commitToTimestamp = walTxnDetails.getCommitToTimestamp(seqTxn);
+        if (!avgRecordSizeMeasured && !avgRecordSizeFromWal) {
+            sampleWalRecordSize(walPath, seqTxn);
+        }
         int transactionBlock = calculateInsertTransactionBlock(seqTxn, pressureControl);
         // Read before the apply changes the lag: with lag pending, calculateInsertTransactionBlock() returns 1
         // without walking the transactions, and the flag is the previous block's.
@@ -14311,6 +14317,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // Without it, a var-size column counts as ESTIMATED_VAR_COL_SIZE bytes, and on wide rows the next WAL
             // apply block, sized by bytes, comes out orders of magnitude too many rows long
             avgRecordSize = measureO3RecordSize(o3Lo, o3Hi);
+            avgRecordSizeFromWal = true;
         }
 
         // Real data writing into table happens here.
@@ -16841,6 +16848,69 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             closeActivePartition(false);
             openLastPartition();
         }
+    }
+
+    /**
+     * Measures avgRecordSize from the WAL segment of the first transaction to apply, so that the first block is not
+     * sized from the estimate. The sample is the rows of the loaded data transactions in that segment, read the way
+     * {@link #measureO3RecordSize(long, long)} reads staged rows: two aux entries of each var-size column give its
+     * data bytes. On a missing or unreadable file the estimate stays.
+     */
+    private void sampleWalRecordSize(@Transient Path walPath, long seqTxn) {
+        final long walSegment = walTxnDetails.getWalSegment(seqTxn);
+        final long rowLo = walTxnDetails.getSegmentRowLo(seqTxn);
+        long rowHi = rowLo;
+        for (long txn = seqTxn, lastTxn = walTxnDetails.getLastSeqTxn();
+             txn <= lastTxn
+                     && walTxnDetails.getWalSegment(txn) == walSegment
+                     && WalTxnType.isDataType(walTxnDetails.getWalTxnType(txn));
+             txn++) {
+            rowHi = Math.max(rowHi, walTxnDetails.getSegmentRowHi(txn));
+        }
+        final long rowCount = rowHi - rowLo;
+        if (rowCount <= 0) {
+            return;
+        }
+
+        final int walPathLen = walPath.size();
+        long size = 0;
+        try {
+            for (int i = 0; i < columnCount; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType > 0) {
+                    if (ColumnType.isVarSize(columnType)) {
+                        final long auxFd = ff.openRO(iFile(walPath.trimTo(walPathLen), metadata.getColumnName(i)));
+                        if (auxFd < 0) {
+                            final int errno = ff.errno();
+                            LOG.info().$("could not sample WAL record size [table=").$(tableToken)
+                                    .$(", path=").$(walPath)
+                                    .$(", errno=").$(errno)
+                                    .I$();
+                            return;
+                        }
+                        try {
+                            final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
+                            size += driver.getDataVectorSizeAtFromFd(ff, auxFd, rowHi - 1)
+                                    - driver.getDataVectorSizeAtFromFd(ff, auxFd, rowLo - 1)
+                                    + driver.auxRowsToBytes(rowCount);
+                        } finally {
+                            ff.close(auxFd);
+                        }
+                    } else {
+                        size += rowCount << ColumnType.pow2SizeOf(columnType);
+                    }
+                }
+            }
+        } catch (CairoException e) {
+            LOG.info().$("could not sample WAL record size [table=").$(tableToken)
+                    .$(", msg=").$safe(e.getFlyweightMessage())
+                    .I$();
+            return;
+        } finally {
+            walPath.trimTo(walPathLen);
+        }
+        avgRecordSize = Math.max(1, size / rowCount);
+        avgRecordSizeFromWal = true;
     }
 
     private void scaleSymbolCapacities() {

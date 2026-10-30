@@ -52,6 +52,8 @@ public class WalApplyBlockSizeTest extends AbstractCairoTest {
     private static final int RECORD_SIZE = 16;
     private static final int ROWS_PER_TXN = 10;
     private static final int TXN_COUNT = 100;
+    // (ts TIMESTAMP, x LONG, s VARCHAR) with 1,000-byte strings: 8 + 8 + 16 (aux) + 1,000
+    private static final int VARCHAR_RECORD_SIZE = 1_032;
 
     @Override
     @Before
@@ -209,6 +211,17 @@ public class WalApplyBlockSizeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstBlockSampledFromWalOnNativeTable() throws Exception {
+        // An empty native table has no column files to measure either: the first block samples the WAL segment
+        assertBlocksSizedByRecordSize("", "VARCHAR", VARCHAR_RECORD_SIZE, false);
+    }
+
+    @Test
+    public void testFirstBlockSampledFromWalOnParquetTable() throws Exception {
+        assertBlocksSizedByRecordSize("FORMAT PARQUET", "VARCHAR", VARCHAR_RECORD_SIZE, false);
+    }
+
+    @Test
     public void testFitsWalBlockBudget() {
         // 100 rows of 16 B, nothing copied: staging 100 x (48 + 16) = 6,400, merge index 100 x 16 = 1,600
         Assert.assertTrue(TableWriter.fitsWalBlockBudget(100, 0, 16, 8_000));
@@ -317,41 +330,16 @@ public class WalApplyBlockSizeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParquetTableMeasuresRecordSize() throws Exception {
-        // (ts TIMESTAMP, x LONG, s VARCHAR) with 1,000-byte strings: 8 + 8 + 16 (aux) + 1,000 = 1,032 bytes per row.
-        // The estimate takes s for 28 bytes, 44 per row, which would fit all 100 txns in one block of 2,462 rows.
-        // A parquet partition has no column files to measure, so the WAL apply measures the rows it applies.
-        final int recordSize = 1_032;
-        setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 105L * recordSize);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, x LONG, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL FORMAT PARQUET");
-            final TableToken tableToken = engine.verifyTableName("t");
-            // The first txn applies on its own and measures the rows
-            execute("INSERT INTO t SELECT ('2024-01-01'::TIMESTAMP + x * 1_000_000)::TIMESTAMP, x, rpad('a', 1_000, 'a') FROM long_sequence(10)");
-            drainWalQueue();
-            try (TableWriter writer = getWriter(tableToken)) {
-                Assert.assertTrue(writer.getTxWriter().isPartitionParquet(0));
-            }
-            final long txnBefore = getTableTxn(tableToken);
-            for (int i = 0; i < TXN_COUNT; i++) {
-                execute(
-                        "INSERT INTO t SELECT ('2024-01-01'::TIMESTAMP + (x - 1) * 100_000_000 + " + i
-                                + " * 1_000_000 + 7)::TIMESTAMP, x, rpad('a', 1_000, 'a') FROM long_sequence(" + ROWS_PER_TXN + ")"
-                );
-            }
-            drainWalQueue();
-            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
-            // 105 rows fit 10 txns a block
-            Assert.assertEquals(10, getTableTxn(tableToken) - txnBefore);
-            assertQuery("SELECT count(), sum(x), sum(length(s)) FROM t")
-                    .noLeakCheck()
-                    .expectSize()
-                    .noRandomAccess()
-                    .returns("count\tsum\tsum1\n"
-                            + (10 + TXN_COUNT * ROWS_PER_TXN) + "\t"
-                            + (55 + TXN_COUNT * (ROWS_PER_TXN * (ROWS_PER_TXN + 1) / 2)) + "\t"
-                            + (10 + TXN_COUNT * ROWS_PER_TXN) * 1_000L + "\n");
-        });
+    public void testParquetTableMeasuresRecordSizeOfAppliedRows() throws Exception {
+        // The writer that applied the first txn measured its rows, it does not sample the WAL again
+        assertBlocksSizedByRecordSize("FORMAT PARQUET", "VARCHAR", VARCHAR_RECORD_SIZE, true);
+    }
+
+    @Test
+    public void testParquetTableSamplesWalMidSegment() throws Exception {
+        // A new writer samples the segment from the first pending txn on, past the applied rows.
+        // STRING: 8 + 8 + 8 (aux) + 4 + 2 x 1,000 = 2,028 bytes per row
+        assertBlocksSizedByRecordSize("FORMAT PARQUET", "STRING", 2_028, true, true);
     }
 
     @Test
@@ -430,6 +418,49 @@ public class WalApplyBlockSizeTest extends AbstractCairoTest {
         // the block does not grow.
         setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 10L * ROWS_PER_TXN * RECORD_SIZE);
         assertCommits(10, 1_000);
+    }
+
+    private void assertBlocksSizedByRecordSize(String format, String columnType, int recordSize, boolean seed) throws Exception {
+        assertBlocksSizedByRecordSize(format, columnType, recordSize, seed, false);
+    }
+
+    /**
+     * (ts TIMESTAMP, x LONG, s columnType) with 1,000-char strings and a block size of 105 rows by recordSize, 100
+     * txns of 10 rows apply in 10 blocks. The estimate takes s for 28 bytes, 44 per row, and would fit all of them in
+     * one block.
+     */
+    private void assertBlocksSizedByRecordSize(String format, String columnType, int recordSize, boolean seed, boolean reopen) throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_BLOCK_SIZE, 105L * recordSize);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG, s " + columnType + ") TIMESTAMP(ts) PARTITION BY DAY WAL " + format);
+            final TableToken tableToken = engine.verifyTableName("t");
+            drainWalQueue();
+            final int seedRows = seed ? ROWS_PER_TXN : 0;
+            if (seed) {
+                // Applies on its own, in the same WAL segment as the txns below
+                execute("INSERT INTO t SELECT ('2024-01-01'::TIMESTAMP + x * 1_000_000)::TIMESTAMP, x, rpad('a', 1_000, 'a') FROM long_sequence(" + ROWS_PER_TXN + ")");
+                drainWalQueue();
+                if (reopen) {
+                    engine.releaseAllWriters();
+                }
+            }
+            final long txnBefore = getTableTxn(tableToken);
+            for (int i = 0; i < TXN_COUNT; i++) {
+                execute(
+                        "INSERT INTO t SELECT ('2024-01-01'::TIMESTAMP + (x - 1) * 100_000_000 + " + i
+                                + " * 1_000_000 + 7)::TIMESTAMP, x, rpad('a', 1_000, 'a') FROM long_sequence(" + ROWS_PER_TXN + ")"
+                );
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertEquals(10, getTableTxn(tableToken) - txnBefore);
+            final long rowCount = seedRows + (long) TXN_COUNT * ROWS_PER_TXN;
+            assertQuery("SELECT count(), sum(length(s)) FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\tsum\n" + rowCount + "\t" + rowCount * 1_000 + "\n");
+        });
     }
 
     private void assertCommits(int expectedCommits, int maxUncommittedRows) throws Exception {
