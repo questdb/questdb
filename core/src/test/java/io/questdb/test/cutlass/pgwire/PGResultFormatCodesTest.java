@@ -120,6 +120,18 @@ public class PGResultFormatCodesTest extends BasePGTest {
     }
 
     @Test
+    public void testSimpleQueryBinaryColumnUsesTextFormatCode() throws Exception {
+        assertWithPgServer(Mode.SIMPLE, false, -1, (connection, binary, mode, port) -> {
+            try (RawPGClient client = new RawPGClient(port)) {
+                short[] formatCodes = client.simpleQueryFormatCodes(
+                        "SELECT rnd_bin(10, 10, 0) AS binary_value"
+                );
+                Assert.assertArrayEquals(new short[]{FORMAT_TEXT}, formatCodes);
+            }
+        });
+    }
+
+    @Test
     public void testArrayWithNullElementsDeclaresCorrectRowLength() throws Exception {
         // A NULL element renders as the 4-byte "NULL" literal instead of a up-to-24-byte double
         // literal, which moves both the patched DataRow length and the size estimate.
@@ -1149,6 +1161,44 @@ public class PGResultFormatCodesTest extends BasePGTest {
             body.put(sqlBytes);
             body.putShort((short) 0);     // no parameter type OIDs
             send('P', body);
+        }
+
+        private short[] simpleQueryFormatCodes(String sql) throws IOException {
+            byte[] sqlBytes = cString(sql);
+            ByteBuffer queryBody = ByteBuffer.allocate(sqlBytes.length);
+            queryBody.put(sqlBytes);
+            send('Q', queryBody);
+            byte[] type = new byte[1];
+            while (true) {
+                byte[] messageBody = readMessage(type);
+                switch (type[0]) {
+                    case 'T':
+                        return readRowDescriptionFormatCodes(messageBody);
+                    case 'E':
+                        Assert.fail("server returned an error: " + new String(messageBody, StandardCharsets.UTF_8));
+                        break;
+                    case 'Z':
+                        Assert.fail("simple query did not return a RowDescription");
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+
+        private short[] readRowDescriptionFormatCodes(byte[] body) {
+            ByteBuffer bb = ByteBuffer.wrap(body);
+            int columnCount = bb.getShort() & 0xffff;
+            short[] formatCodes = new short[columnCount];
+            for (int i = 0; i < columnCount; i++) {
+                while (bb.get() != 0) {
+                    // skip the column name
+                }
+                bb.position(bb.position() + 4 + 2 + 4 + 2 + 4);
+                formatCodes[i] = bb.getShort();
+            }
+            Assert.assertEquals(0, bb.remaining());
+            return formatCodes;
         }
 
         private ObjList<String> readDataRow(byte[] body) {
