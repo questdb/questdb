@@ -3560,6 +3560,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Installs a staged parquet copy beside a plain native partition's files and marks it parquet_generated.
+     * The partition has to still be as the copy found it; see {@link #swapMergedLogicalPartition} for why each
+     * expected value is re-checked.
      */
     public void installGeneratedParquet(
             long partitionTimestamp,
@@ -3567,6 +3569,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long expectedRowCount,
             long expectedColumnVersion,
             long expectedMetadataVersion,
+            long expectedSquashTracker,
             long seqTxn
     ) {
         assert PartitionBy.isPartitioned(partitionBy);
@@ -3588,6 +3591,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 || liveNameTxn != expectedNameTxn
                 || txWriter.getPartitionSize(partitionIndex) != expectedRowCount
                 || columnVersionWriter.getMaxPartitionVersion(partitionTimestamp) != expectedColumnVersion
+                || getPartitionSquashTracker(partitionIndex) != expectedSquashTracker
                 || getMetadataVersion() != expectedMetadataVersion
                 // The copy is of the whole logical partition: a split on either side holds rows it does not.
                 || partitionTimestamp != logicalPartitionTimestamp
@@ -4958,11 +4962,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * <p>
      * {@code folders} carries {@link CompositePartitionSwapCommand#LONGS_PER_FOLDER} longs per source folder, in
      * {@code _txn} order: its start timestamp, name txn, generation (a composite folder's writer txn, zero for a
-     * plain one), live row count and column version. Every one of them has to still be exactly as the copy found
-     * it, and the run has to still be the WHOLE logical partition - a folder added or removed since the snapshot
-     * means the copy does not hold the partition's rows. The column version is the word an UPDATE moves on its
-     * own: it rewrites a folder's column files under new name txns while the folder keeps its name txn, its
-     * generation and its row count, so without it a swap would publish pre-UPDATE files under post-UPDATE names.
+     * plain one), live row count, column version and squash tracker. Every one of them has to still be exactly as
+     * the copy found it, and the run has to still be the WHOLE logical partition - a folder added or removed since
+     * the snapshot means the copy does not hold the partition's rows. The column version is the word an UPDATE
+     * moves on its own: it rewrites a folder's column files under new name txns while the folder keeps its name
+     * txn, its generation and its row count, so without it a swap would publish pre-UPDATE files under post-UPDATE
+     * names. The squash tracker is the word an in-place squash moves on its own: it appends an O3 split back into
+     * the folder under the same name txn, and under DEDUP UPSERT at the same row count, so without it a swap would
+     * publish rows the upsert replaced.
      * <p>
      * The run may not end on the last {@code _txn} entry. That partition is the one this writer holds open, and
      * whose files carry the WAL lag rows past the live ones - rows no piece accounts for and the copy therefore
@@ -4991,6 +4998,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isIndexLinkedAtSwap,
             ColumnTopRecorder columnTops
     ) {
+        assert folders.size() % CompositePartitionSwapCommand.LONGS_PER_FOLDER == 0;
         final int folderCount = folders.size() / CompositePartitionSwapCommand.LONGS_PER_FOLDER;
         final boolean isParquetConversion = parquetFileSize > -1;
         // Ahead of every lookup below: the commit can move the run's first index.
@@ -5019,7 +5027,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     || txWriter.isPartitionParquet(partitionIndex)
                     || txWriter.getPartitionSize(partitionIndex) != folders.getQuick(offset + 3)
                     || compositePartitionGeneration(partitionIndex) != folders.getQuick(offset + 2)
-                    || columnVersionWriter.getMaxPartitionVersion(folders.getQuick(offset)) != folders.getQuick(offset + 4);
+                    || columnVersionWriter.getMaxPartitionVersion(folders.getQuick(offset)) != folders.getQuick(offset + 4)
+                    || getPartitionSquashTracker(partitionIndex) != folders.getQuick(offset + 5);
         }
         if (!stale) {
             // The run has to still BE the logical partition: a split that appeared on either side of it holds
@@ -7996,6 +8005,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             folders.add(compositePartitionGeneration(partitionIndex));
             folders.add(folderRows);
             folders.add(columnVersionWriter.getMaxPartitionVersion(folderTimestamp));
+            // The squash tracker word of the layout; nothing re-checks it, the conversion runs under this writer.
+            folders.add(txWriter.getPartitionSquashCount(partitionIndex));
             liveRows += folderRows;
             seqTxn = Math.max(seqTxn, nativePartitionSeqTxn(partitionIndex));
         }
@@ -10366,6 +10377,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             parquetPartitionIndexBuilder = new ParquetPartitionIndexBuilder(configuration, ff);
         }
         return parquetPartitionIndexBuilder;
+    }
+
+    /**
+     * The live squash tracker of the folder at {@code partitionIndex} - see {@link TableUtils#readPartitionSquashTracker}.
+     */
+    private long getPartitionSquashTracker(int partitionIndex) {
+        final int squashCount = txWriter.getPartitionSquashCount(partitionIndex);
+        if (squashCount != TxReader.PARTITION_SQUASH_COUNTER_MAX) {
+            return squashCount;
+        }
+        other.trimTo(pathSize);
+        setPathForNativePartition(other, timestampType, partitionBy, txWriter.getPartitionTimestampByIndex(partitionIndex), txWriter.getPartitionNameTxn(partitionIndex));
+        try {
+            return TableUtils.readPartitionSquashTracker(ff, other, squashCount);
+        } finally {
+            other.trimTo(pathSize);
+        }
     }
 
     private long getPartitionTimestampOrMax(int partitionIndex) {
@@ -16246,6 +16274,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             @Nullable ColumnTopRecorder columnTops,
             boolean isInTransaction
     ) {
+        assert folders.size() % CompositePartitionSwapCommand.LONGS_PER_FOLDER == 0;
         final int folderCount = folders.size() / CompositePartitionSwapCommand.LONGS_PER_FOLDER;
         final boolean isParquetConversion = parquetFileSize > -1;
         // Hoisted: the formatter writes through a reusable sink, so it must run before the ring slot is taken.

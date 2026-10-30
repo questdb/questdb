@@ -93,9 +93,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private static final long IN_FLIGHT_WHOLE_RUN_TARGET = Long.MIN_VALUE;
     private static final int IN_FLIGHT_WRITER_ID_OFFSET = 6;
     private static final Log LOG = LogFactory.getLog(PartitionCompactionScanJob.class);
-    // Longs per folder in the scan's own folders list - see collectFolders. One word narrower than
-    // CompositePartitionSwapCommand.LONGS_PER_FOLDER: a swap re-checks the folder's column version too, and
-    // the scan reads no _cv file to fill that word with.
+    // Longs per folder in the scan's own folders list - see collectFolders. Two words narrower than
+    // CompositePartitionSwapCommand.LONGS_PER_FOLDER: a swap re-checks the folder's column version and squash
+    // tracker too, and the scan reads neither - see describeSwapFolders.
     private static final int LONGS_PER_SCANNED_FOLDER = 4;
     // Bounds the clean-parquet memo. Kept across two generations so a full memo evicts its oldest half
     // rather than being wiped whole - see rememberCleanParquetPartition.
@@ -686,7 +686,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         final int timestampType = reader.getMetadata().getTimestampType();
         final int partitionBy = reader.getPartitionedBy();
         final ColumnVersionReader cvr = reader.getColumnVersionReader();
-        describeSwapFolders(folders, cvr);
+        describeSwapFolders(reader, folders);
 
         setMergeStagingPath(
                 other,
@@ -825,7 +825,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         final int timestampType = reader.getMetadata().getTimestampType();
         final int partitionBy = reader.getPartitionedBy();
         final ColumnVersionReader cvr = reader.getColumnVersionReader();
-        describeSwapFolders(folders, cvr);
+        describeSwapFolders(reader, folders);
 
         // The MERGE staging name: the writer's startup purge and the in-flight record treat both the same way.
         setMergeStagingPath(
@@ -1250,25 +1250,35 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Copies {@code scannedFolders} into {@link #swapFolders}, widening each record with the column version
-     * {@code cvr} reads the folder's files at - the max column name txn of the folder's own {@code _cv}
-     * records, which is the same word {@link TableReader} re-reads a partition on.
-     * <p>
-     * That word is what tells the writer an UPDATE landed on a source folder while the copy ran: an UPDATE
-     * rewrites the folder's column files under new name txns and leaves everything else the swap re-checks
-     * standing - same folders, same name txns, same generations, same row counts, same metadata version. A
-     * swap that took the copy anyway would publish the pre-UPDATE files under the post-UPDATE names, which
-     * loses the UPDATE and leaves the partition unreadable.
+     * Copies {@code scannedFolders} into {@link #swapFolders}, widening each record with two words of
+     * {@code reader}'s snapshot:
+     * <ul>
+     *     <li>the column version the folder's files are read at - the max column name txn of the folder's own
+     *     {@code _cv} records, which is the same word {@link TableReader} re-reads a partition on. It tells the
+     *     writer an UPDATE landed on a source folder while the copy ran: an UPDATE rewrites the folder's column
+     *     files under new name txns and leaves everything else the swap re-checks standing - same folders, same
+     *     name txns, same generations, same row counts, same metadata version. A swap that took the copy anyway
+     *     would publish the pre-UPDATE files under the post-UPDATE names, which loses the UPDATE and leaves the
+     *     partition unreadable.</li>
+     *     <li>the folder's squash tracker ({@link TableUtils#readPartitionSquashTracker}). It tells the writer an
+     *     O3 commit split the folder and a squash appended the split back in place: the name txn stays, and with
+     *     DEDUP UPSERT so does the row count, while the rows the copy holds are overwritten. Read while the
+     *     reader pins the folder, which keeps any squash off it, so it is the snapshot's.</li>
+     * </ul>
      */
-    private void describeSwapFolders(LongList scannedFolders, ColumnVersionReader cvr) {
+    private void describeSwapFolders(TableReader reader, LongList scannedFolders) {
+        final TxReader txFile = reader.getTxFile();
+        final ColumnVersionReader cvr = reader.getColumnVersionReader();
         swapFolders.clear();
         for (int i = 0, n = scannedFolders.size(); i < n; i += LONGS_PER_SCANNED_FOLDER) {
             final long folderTimestamp = scannedFolders.getQuick(i);
+            final long folderNameTxn = scannedFolders.getQuick(i + 1);
             swapFolders.add(folderTimestamp);
-            swapFolders.add(scannedFolders.getQuick(i + 1));
+            swapFolders.add(folderNameTxn);
             swapFolders.add(scannedFolders.getQuick(i + 2));
             swapFolders.add(scannedFolders.getQuick(i + 3));
             swapFolders.add(cvr.getMaxPartitionVersion(folderTimestamp));
+            swapFolders.add(readSquashTracker(reader, txFile.findAttachedPartitionIndexByLoTimestamp(folderTimestamp), folderTimestamp, folderNameTxn));
         }
     }
 
@@ -1560,6 +1570,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         nameTxn,
                         reader.getColumnVersionReader().getMaxPartitionVersion(partitionTimestamp),
                         reader.getMetadataVersion(),
+                        readSquashTracker(reader, partitionIndex, partitionTimestamp, nameTxn),
                         rowCount,
                         seqTxn
                 );
@@ -2062,6 +2073,20 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         }
         collectFolders(txFile, reader.getGeometry(), lo, findLogicalPartitionRunEnd(txFile, lo, logicalPartitionTimestamp));
         return logicalPartitionState(folders);
+    }
+
+    /**
+     * The squash tracker of the folder at {@code partitionIndex} in {@code reader}'s snapshot, which the swap
+     * compares the folder's live one against - see {@link TableUtils#readPartitionSquashTracker}.
+     */
+    private long readSquashTracker(TableReader reader, int partitionIndex, long partitionTimestamp, long partitionNameTxn) {
+        final int squashCount = reader.getTxFile().getPartitionSquashCount(partitionIndex);
+        if (squashCount != TxReader.PARTITION_SQUASH_COUNTER_MAX) {
+            return squashCount;
+        }
+        final Path partitionDir = Path.getThreadLocal(configuration.getDbRoot()).concat(reader.getTableToken().getDirName());
+        TableUtils.setPathForNativePartition(partitionDir, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), partitionTimestamp, partitionNameTxn);
+        return TableUtils.readPartitionSquashTracker(ff, partitionDir, squashCount);
     }
 
     /**

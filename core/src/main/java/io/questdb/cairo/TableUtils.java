@@ -2704,6 +2704,38 @@ public final class TableUtils {
         return Unsafe.getLong(tempMem8b);
     }
 
+    /**
+     * A plain folder's squash identity: its {@code _txn} squash count or, once that 16-bit count has saturated, the
+     * time of its last squash, which the writer records in {@link #PARTITION_LAST_SQUASH_TIMESTAMP_FILE} instead. A
+     * squash that appends a split back into the folder in place keeps its name txn, and under DEDUP its row count,
+     * so this is what tells a copy built before the squash from the folder after it.
+     *
+     * @param partitionDir the folder's directory, trimmed back on return
+     * @param squashCount  the folder's squash count in {@code _txn}
+     */
+    public static long readPartitionSquashTracker(FilesFacade ff, Path partitionDir, int squashCount) {
+        if (squashCount != TxReader.PARTITION_SQUASH_COUNTER_MAX) {
+            return squashCount;
+        }
+        final int partitionDirLen = partitionDir.size();
+        try {
+            final long fd = ff.openRO(partitionDir.concat(PARTITION_LAST_SQUASH_TIMESTAMP_FILE).$());
+            if (fd > -1) {
+                try {
+                    final long lastSquashTimestamp = ff.readNonNegativeLong(fd, 0);
+                    if (lastSquashTimestamp > -1) {
+                        return lastSquashTimestamp;
+                    }
+                } finally {
+                    ff.close(fd);
+                }
+            }
+            return TxReader.PARTITION_SQUASH_COUNTER_MAX;
+        } finally {
+            partitionDir.trimTo(partitionDirLen);
+        }
+    }
+
     public static String readTableName(Path path, int rootLen, MemoryCMR mem, FilesFacade ff) {
         long fd = -1;
         try {

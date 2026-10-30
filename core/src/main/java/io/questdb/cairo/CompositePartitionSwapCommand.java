@@ -50,11 +50,12 @@ import io.questdb.tasks.TableWriterTask;
 public class CompositePartitionSwapCommand implements CompactionSwapCommand {
     /**
      * Longs per {@link #folders} entry: the folder's own start timestamp, its name txn, its generation
-     * (a composite folder's writer txn, zero for a plain one), its live row count and the column version its
-     * files carried when the copy read them. Together they are the state the writer re-checks each source
-     * folder against before it swaps the merged copy in.
+     * (a composite folder's writer txn, zero for a plain one), its live row count, the column version its
+     * files carried when the copy read them and its squash tracker ({@link TableUtils#readPartitionSquashTracker}).
+     * Together they are the state the writer re-checks each source folder against before it swaps the merged
+     * copy in.
      */
-    public static final int LONGS_PER_FOLDER = 5;
+    public static final int LONGS_PER_FOLDER = 6;
     private final ColumnTopRecorder columnTops = new ColumnTopRecorder();
     /**
      * MERGE only: the source folders the staging copy was built from, in {@code _txn} order.
@@ -64,6 +65,8 @@ public class CompositePartitionSwapCommand implements CompactionSwapCommand {
     // PARQUET GENERATION only: the column version the folder's files carried when the copy read them.
     private long expectedColumnVersion;
     private long expectedMetadataVersion;
+    // PARQUET GENERATION only: the folder's squash tracker when the copy read it.
+    private long expectedSquashTracker;
     private long expectedSrcNameTxn;
     private long expectedWriterTxn;
     private volatile boolean isApplied;
@@ -91,6 +94,7 @@ public class CompositePartitionSwapCommand implements CompactionSwapCommand {
                         liveRows,
                         expectedColumnVersion,
                         expectedMetadataVersion,
+                        expectedSquashTracker,
                         seqTxn
                 );
             } else if (isMerge) {
@@ -238,6 +242,7 @@ public class CompositePartitionSwapCommand implements CompactionSwapCommand {
         this.isParquetGeneration = false;
         this.parquetFileSize = -1L;
         this.expectedColumnVersion = -1L;
+        this.expectedSquashTracker = -1L;
         this.seqTxn = -1L;
         this.folders.clear();
         this.columnTops.clear();
@@ -310,12 +315,14 @@ public class CompositePartitionSwapCommand implements CompactionSwapCommand {
             long expectedSrcNameTxn,
             long expectedColumnVersion,
             long expectedMetadataVersion,
+            long expectedSquashTracker,
             long liveRows,
             long seqTxn
     ) {
         of(tableToken, tableId, partitionTimestamp, expectedSrcNameTxn, 0, expectedMetadataVersion, liveRows);
         this.isParquetGeneration = true;
         this.expectedColumnVersion = expectedColumnVersion;
+        this.expectedSquashTracker = expectedSquashTracker;
         this.seqTxn = seqTxn;
     }
 
