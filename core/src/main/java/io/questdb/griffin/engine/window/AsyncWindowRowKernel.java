@@ -1538,7 +1538,8 @@ public final class AsyncWindowRowKernel {
 
     // A window step's record (VirtualRecord): each column is one of its functions over the input,
     // a running sum or a function of the input's columns.
-    private record WindowStageResolver(Compiler compiler, ObjList<Function> functions, Resolver input, int stageIndex) implements Resolver {
+    private record WindowStageResolver(Compiler compiler, ObjList<Function> functions, Resolver input,
+                                       int stageIndex) implements Resolver {
         @Override
         public @Nullable Node resolve(int column, int rep) {
             if (column >= functions.size()) {

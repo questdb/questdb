@@ -64,7 +64,8 @@ public interface CaseBranches {
      * tests in order, the first that holds picking its THEN, the ELSE when none does (null for a
      * switch).
      */
-    record Values(@NotNull ObjList<Function> thenValues, @NotNull Function elseValue, @Nullable ObjList<Function> conditions) {
+    record Values(@NotNull ObjList<Function> thenValues, @NotNull Function elseValue,
+                  @Nullable ObjList<Function> conditions) {
         public Values(@NotNull ObjList<Function> thenValues, @NotNull Function elseValue) {
             this(thenValues, elseValue, null);
         }

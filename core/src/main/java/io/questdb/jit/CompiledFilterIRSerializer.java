@@ -350,6 +350,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public void addScalarSubQuery(CharSequence token, AbstractScalarCursorFunction source) {
         scalarSubQueries.put(token, source);
     }
+
     private SymbolTableSource symbolTableSource;
 
     @Override

@@ -122,7 +122,8 @@ class EncodedSortPayloadRecordCursor implements DelegatingRecordCursor {
         }
         final int key = Math.abs(sortColumnFilter.getQuick(0)) - 1;
         switch (ColumnType.tagOf(metadata.getColumnType(key))) {
-            case ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.INT, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP:
+            case ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.INT, ColumnType.LONG, ColumnType.DATE,
+                 ColumnType.TIMESTAMP:
                 break;
             default:
                 return false;
@@ -344,7 +345,8 @@ class EncodedSortPayloadRecordCursor implements DelegatingRecordCursor {
         return switch (keyType) {
             case ColumnType.FLOAT -> SortKeyEncoder.floatKey(record.getFloat(keyColumn), isDesc);
             case ColumnType.DOUBLE -> SortKeyEncoder.doubleKey(record.getDouble(keyColumn), isDesc);
-            case ColumnType.INT -> Integer.toUnsignedLong(record.getInt(keyColumn) ^ (isDesc ? 0x7FFFFFFF : 0x80000000)) << 32;
+            case ColumnType.INT ->
+                    Integer.toUnsignedLong(record.getInt(keyColumn) ^ (isDesc ? 0x7FFFFFFF : 0x80000000)) << 32;
             case ColumnType.DATE -> record.getDate(keyColumn) ^ (isDesc ? Long.MAX_VALUE : Long.MIN_VALUE);
             case ColumnType.TIMESTAMP -> record.getTimestamp(keyColumn) ^ (isDesc ? Long.MAX_VALUE : Long.MIN_VALUE);
             default -> record.getLong(keyColumn) ^ (isDesc ? Long.MAX_VALUE : Long.MIN_VALUE);

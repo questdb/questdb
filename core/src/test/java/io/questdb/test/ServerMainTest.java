@@ -1288,10 +1288,10 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "http.min.worker.count\tQDB_HTTP_MIN_WORKER_COUNT\t1\tdefault\tfalse\tfalse\n"
                     ).concat(
                                     "http.min.worker.haltOnError\tQDB_HTTP_MIN_WORKER_HALTONERROR\tfalse\tdefault\tfalse\tfalse\n" +
-                                    "http.min.worker.sleep.threshold\tQDB_HTTP_MIN_WORKER_SLEEP_THRESHOLD\t100\tdefault\tfalse\tfalse\n" +
-                                    "http.min.worker.sleep.timeout\tQDB_HTTP_MIN_WORKER_SLEEP_TIMEOUT\t50\tdefault\tfalse\tfalse\n" +
-                                    showParametersTail()
-                    )
+                                            "http.min.worker.sleep.threshold\tQDB_HTTP_MIN_WORKER_SLEEP_THRESHOLD\t100\tdefault\tfalse\tfalse\n" +
+                                            "http.min.worker.sleep.timeout\tQDB_HTTP_MIN_WORKER_SLEEP_TIMEOUT\t50\tdefault\tfalse\tfalse\n" +
+                                            showParametersTail()
+                            )
                             .split("\n");
 
                     final Set<String> missingProps = new HashSet<>();

@@ -79,6 +79,7 @@ public class FunctionFlagsForwardingTest {
         // built from keyBranches, which the forward reads
         ALLOWED_FIELDS.put("io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory$SymbolSwitchPicker#intMap", "alias of keyBranches");
     }
+
     // methods whose Function default derives from the ones above, so a class may inherit it
     private static final String[] DERIVED_METHODS = {"isStableWithinExecution"};
     private static final String[] METHODS = {"hasPerCallState", "isRandom", "isNonDeterministic", "isStableWithinExecution"};
