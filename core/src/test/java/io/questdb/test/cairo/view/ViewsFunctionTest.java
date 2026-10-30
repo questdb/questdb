@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.MetadataCacheWriter;
 import org.junit.Test;
 
@@ -149,6 +150,11 @@ public class ViewsFunctionTest extends AbstractViewTest {
 
     @Test
     public void testViewsConsistentWithMatViewsAndTablesCommands() throws Exception {
+        // deterministic: adaptive populates durableEpochSeqTxn/localDurableSeqTxn/lastEpochTs in every
+        // wal_tables() row, and lastEpochTs is wall-clock. This test asserts that views(), tables() and
+        // wal_tables() agree with each other, which is mode-independent. Same treatment as
+        // WalTableSqlTest#testEmptyTruncate.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
         assertMemoryLeak(() -> {
             setCurrentMicros(1750345200000000L);
 
@@ -240,13 +246,13 @@ public class ViewsFunctionTest extends AbstractViewTest {
 
             assertQueryAndPlan(
                     """
-                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure
-                            table1\tfalse\t9\t0\t9\t\t\t0
-                            table2\tfalse\t9\t0\t9\t\t\t0
-                            view1\tfalse\t0\t0\t0\t\t\t0
-                            view2\tfalse\t0\t0\t0\t\t\t0
-                            view3\tfalse\t1\t0\t1\t\t\t0
-                            view4\tfalse\t1\t0\t1\t\t\t0
+                            name\tsuspended\twriterTxn\tbufferedTxnSize\tsequencerTxn\terrorTag\terrorMessage\tmemoryPressure\tdurableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochTs
+                            table1\tfalse\t9\t0\t9\t\t\t0\t0\t0\t-1\t
+                            table2\tfalse\t9\t0\t9\t\t\t0\t0\t0\t-1\t
+                            view1\tfalse\t0\t0\t0\t\t\t0\t0\t0\t-1\t
+                            view2\tfalse\t0\t0\t0\t\t\t0\t0\t0\t-1\t
+                            view3\tfalse\t1\t0\t1\t\t\t0\t0\t0\t-1\t
+                            view4\tfalse\t1\t0\t1\t\t\t0\t0\t0\t-1\t
                             """,
                     "wal_tables() order by 1",
                     null,
