@@ -13109,6 +13109,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Now it's safe to remove the empty split partition
                         partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
                         removeAttachedPartitionsTracked(partitionTimestamp);
+
+                        // FrameAlgebra.append indexed the copied rows without their covered values, and the
+                        // new split has no block in the partition update sink, so the O3 seal sweep never
+                        // reaches it. Reseal it here, as compaction and squash do after their frame copies.
+                        path.trimTo(pathSize);
+                        try {
+                            if (sealPostingIndexForPartition(newSplitPartitionTimestamp, false)) {
+                                restorePostingIndexersToLastPartition();
+                            }
+                        } catch (Throwable th) {
+                            LOG.critical().$("split partition removal succeeded but posting-index reseal failed `").$(th).$('`').$();
+                            distressed = true;
+                            throw th;
+                        }
                     } finally {
                         path.trimTo(pathSize);
                         other.trimTo(pathSize);

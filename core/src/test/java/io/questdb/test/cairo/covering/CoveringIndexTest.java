@@ -33,6 +33,7 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
@@ -63,6 +64,8 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.api.MemoryMR;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -19302,6 +19305,78 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 }
             }
+        });
+    }
+
+    @Test
+    public void testSplitRemovalRepairBuildsCoveredSidecarWal() throws Exception {
+        // A replace commit that empties a split cannot drop it while a reader may still hold its parent,
+        // so TableWriter first copies the parent's last timestamp into a fresh split. That copy writes the
+        // posting index without covered values; a covered read of the copied row then found no sidecar.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1_000);
+        // Merge-append would rewrite the day in place instead of splitting it.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x AS (
+                        SELECT CASE WHEN x = 18_000 THEN 'last' ELSE 'k' || (x % 4) END::SYMBOL sym,
+                            x v,
+                            timestamp_sequence('2024-01-01', 1_000_000L) ts
+                        FROM long_sequence(20_000)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("ALTER TABLE x ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (v)");
+            drainWalQueue();
+            // An O3 write well inside the day cuts the rows from 05:00 off into a split.
+            execute("""
+                    INSERT INTO x
+                    SELECT 'k0', x + 100_000, timestamp_sequence('2024-01-01T05:00:00', 1_000L)
+                    FROM long_sequence(200)
+                    """);
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("x");
+            final long splitTs;
+            try (TableReader reader = engine.getReader(tableToken)) {
+                Assert.assertEquals("the O3 write did not split the day", 2, reader.getTxFile().getPartitionCount());
+                splitTs = reader.getTxFile().getPartitionTimestampByIndex(1);
+            }
+
+            // Replace everything from the split up, carrying one row in a later day: the split loses every
+            // row, and the parent's last row, 'last', moves into a fresh split.
+            try (WalWriter walWriter = engine.getWalWriter(tableToken)) {
+                final TableWriter.Row row = walWriter.newRow(MicrosTimestampDriver.floor("2024-01-09T00:00:00.000000Z"));
+                row.putSym(0, "k1");
+                row.putLong(1, 999);
+                row.append();
+                walWriter.commitWithParams(splitTs, Long.MAX_VALUE, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+            drainWalQueue();
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = 'x'")
+                    .noRandomAccess()
+                    .returns("""
+                            suspended
+                            false
+                            """);
+            assertQuery("SELECT name, numRows FROM table_partitions('x') WHERE name LIKE '2024-01-01%'")
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows
+                            2024-01-01\t17999
+                            2024-01-01T045958-000001\t1
+                            """);
+
+            assertQuery("SELECT sym, v, ts FROM x WHERE sym = 'last'")
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            sym\tv\tts
+                            last\t18000\t2024-01-01T04:59:59.000000Z
+                            """);
         });
     }
 
