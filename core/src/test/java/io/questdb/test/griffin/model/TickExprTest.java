@@ -53,6 +53,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.time.LocalDate;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -79,6 +80,10 @@ public class TickExprTest {
     private static final String[] FUZZ_RANGE_ENDS = {"$tomorrow", "$today + 3d", "$now", "$NOW + 1h", "$yesterday", "2024-01-09"};
     private static final String[] FUZZ_SHIFTS = {" + 1d", "+2h", " - 1bd", "-30m", "+1w", " - 1M", "+90s"};
     private static final String[] FUZZ_STATIC_ELEMENTS = {"2024-01-05", "2024-01-05T10:00", "2024-01", "2024-01-0[1..3]"};
+    // static elements that get a time part of their own: those of FUZZ_STATIC_ELEMENTS and an ISO week.
+    // Under a time part of the list, the compiled form expands a week without a time part of its own
+    // to its days, where the parser fails, so FUZZ_STATIC_ELEMENTS leaves the week out.
+    private static final String[] FUZZ_TIMED_STATIC_ELEMENTS = {"2024-01-05", "2024-01-05T10:00", "2024-01", "2024-01-0[1..3]", "2024-W01"};
     private static final String[] FUZZ_TIMES = {
             "", "T09:00", "T09", "T09:00:30", "T[09:00]", "T[09:00,14:30]", "T[09..10]:30", "T[01,02]:30",
             "T[10:30@+02:00]", "T[09:00,10:00]:[15,45]"
@@ -1206,6 +1211,96 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledTickExprElementWithBracketedTimeFails() {
+        // A date list element without a day whose own time part is in brackets, in a date list with a
+        // time part: the parser appends the time part of the list to the element, and fails on the first
+        // date that the element expands to, which then holds two times. The compiled form must fail with
+        // the same error when it compiles, rather than give each day of the element the time of the list.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        final String error = "Invalid date: 2024-01-01T09:00T10:00";
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00,10:00], $today]T10:00", now, error);
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00], $NOW + 1w]T09:00:30", now, "Invalid date: 2024-01-01T09:00T09:00:30");
+        // after a date variable, next to other static elements, with a range and with $now
+        assertParsedAndCompiledRejectedAtCompileTime("[$today, 2024-01T[09:00,10:00]]T10:00", now, error);
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-02, 2024-01T[09:00], $today]T10:00", now, error);
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00], $today, 2024-01-05]T10:00", now, error);
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00,10:00], $today..$tomorrow]T10:00", now, error);
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00,10:00], $now]T10:00", now, error);
+        // a timezone or a day filter after the time part of the list
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00,10:00], $today]T10:00@+02:00", now, error);
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00,10:00], $today]T10:00@Europe/London", now, error);
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00,10:00], $today]T10:00#Tue", now, error);
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00,10:00], $today]T10:00#weekend", now, error);
+        // other times on the list, also the time of the element
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00,10:00], $today]T10", now, "Invalid date: 2024-01-01T09:00T10");
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00,10:00], $today]T10:00:00", now, "Invalid date: 2024-01-01T09:00T10:00:00");
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00,10:00], $today]T10:00:00.5", now, "Invalid date: 2024-01-01T09:00T10:00:00.5");
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00], $today]T09:00", now, "Invalid date: 2024-01-01T09:00T09:00");
+        // whitespace, an empty slot, a slot with its own timezone, and a part after the time list
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[ 09:00], $today]T10:00", now, error);
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00,], $today]T10:00", now, error);
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00@+02:00], $today]T10:00", now, error);
+        assertParsedAndCompiledRejectedAtCompileTime("[ 2024-01T[09:00], $today]T10:00", now, error);
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00] , $today]T10:00", now, error);
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09:00]:30, $today]T10:00", now, "Invalid date: 2024-01-01T09:00:30T10:00");
+        // numeric brackets in the time of the element expand no days
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09], $today]T10:00", now, "Invalid date: 2024-01T09T10:00");
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09..10], $today]T10:00", now, "Invalid date: 2024-01T09T10:00");
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01T[09]:30, $today]T10:00", now, "Invalid date: 2024-01T09:30T10:00");
+        // nor does a year, a bracketed month, or a month followed by a space
+        assertParsedAndCompiledRejectedAtCompileTime("[2024T[09:00], $today]T10:00", now, "Invalid date: 2024T09:00T10:00");
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-[01,02]T[09:00], $today]T10:00", now, "Invalid date: 2024-01T09:00T10:00");
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01 T[09:00], $today]T10:00", now, "Invalid date: 2024-01 T09:00T10:00");
+    }
+
+    @Test
+    public void testCompiledTickExprElementWithoutDayKeepsPerDayPath() throws SqlException {
+        // A date list element without a day takes the time part of the list on each of its days, unless
+        // it has a time part of its own. "now" is 2024-01-02T10:00Z, so $today is 2024-01-02, whose
+        // 10:00 minute each element without a day below holds too.
+        final String now = "2024-01-02T10:00:00.000000Z";
+        assertParsedAndCompiledWithNow(minuteOfEachDay(LocalDate.of(2024, 1, 1), 31, "10:00"), "[2024-01, $today]T10:00", now);
+        // 2024 is a leap year
+        assertParsedAndCompiledWithNow(minuteOfEachDay(LocalDate.of(2024, 1, 1), 366, "10:00"), "[2024, $today]T10:00", now);
+        assertParsedAndCompiledWithNow(minuteOfEachDay(LocalDate.of(2024, 1, 1), 60, "10:00"), "[2024-[01..02], $today]T10:00", now);
+        // without a time part on the list, each day of the month takes the time list of the element, and
+        // $today is the whole day
+        final StringBuilder monthWithTimeList = new StringBuilder("[");
+        for (LocalDate day = LocalDate.of(2024, 1, 1); day.getMonthValue() == 1; day = day.plusDays(1)) {
+            if (day.getDayOfMonth() > 1) {
+                monthWithTimeList.append(',');
+            }
+            if (day.getDayOfMonth() == 2) {
+                monthWithTimeList.append("{lo=2024-01-02T00:00:00.000000Z, hi=2024-01-02T23:59:59.999999Z}");
+            } else {
+                appendMinute(monthWithTimeList, day, "09:00");
+                monthWithTimeList.append(',');
+                appendMinute(monthWithTimeList, day, "10:00");
+            }
+        }
+        monthWithTimeList.append(']');
+        assertParsedAndCompiledWithNow(monthWithTimeList.toString(), "[2024-01T[09:00,10:00], $today]", now);
+        // an element with a day fails on its own time list, as the element without a day does
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01-05T[09:00], $today]T10:00", now, "Invalid date: 2024-01-05T09:00T10:00");
+        // and keeps a time of day of its own
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-02T09:00:00.000000Z, hi=2024-01-02T09:00:59.999999Z},{lo=2024-01-05T10:00:00.000000Z, hi=2024-01-05T10:00:59.999999Z}]",
+                "[2024-01-05T10:00, $today]T09:00",
+                now
+        );
+        // a month fails on a time of day of its own, which the compiled form leaves to the parser, and on
+        // a 'T' without a bracket after it
+        assertParsedAndCompiledRejectedWithNow("[2024-01T09:00, $today]T10:00", now, "Invalid date: 2024-01T09:00");
+        assertParsedAndCompiledRejectedAtCompileTime("[2024-01Tx, $today]T10:00", now, "Invalid date: 2024-01Tx");
+        // and on a lowercase 't', which the parser reports with the time of the list after it
+        assertParsedAndCompiledRejectedWithNow("[2024-01t[09:00], $today]T10:00", now, "Invalid date: 2024-01t09:00");
+        // Left out: a month with a duration of its own, as in [2024-01;1h, $today]T10:00, to which the
+        // compiled form gives the time of the list where the parser fails, and weeks, bracketed years
+        // and padded months without a time part of their own, as in [2024-W01, $today]T10:00 or
+        // [2024-0[1..2], $today]T10:00, on which the parser and the compiled form disagree.
+    }
+
+    @Test
     public void testCompiledTickExprMixedListWithRange() throws SqlException {
         assertCompiledTickExpr("[2025-03-01, $today .. $today + 2d , $yesterday]");
     }
@@ -1605,6 +1700,22 @@ public class TickExprTest {
     @Test
     public void testCompiledTickExprUppercaseVariable() throws SqlException {
         assertCompiledTickExpr("$TODAY");
+    }
+
+    @Test
+    public void testCompiledTickExprWeekElementWithBracketedTime() throws SqlException {
+        // An ISO week has no day either, but the parser reads 2024-W01 followed by anything other than a
+        // day of the week as the start of the week, so it accepts a week with a time list of its own in a
+        // date list with a time part. The compiled form must give the same intervals. Week 1 of 2024
+        // starts on Monday 2024-01-01.
+        assertParsedAndCompiledWithNow(
+                "[{lo=2024-01-01T00:00:00.000000Z, hi=2024-01-01T00:00:00.000000Z},{lo=2024-01-02T10:00:00.000000Z, hi=2024-01-02T10:00:59.999999Z}]",
+                "[2024-W01T[09:00], $today]T10:00",
+                "2024-01-02T10:00:00.000000Z"
+        );
+        // Left out: a slot of the week with its own timezone, as in [2024-W01T[09:00@+05:00], $today]T10:00@+02:00,
+        // which the compiled form converts again with the timezone of the list, and judges against the day
+        // filter of the list by its day in UTC.
     }
 
     @Test
@@ -3257,6 +3368,24 @@ public class TickExprTest {
             for (String time : FUZZ_MALFORMED_TIMES) {
                 for (String zone : FUZZ_ZONES) {
                     checker.check(variable + time + zone, TickExprKind.MALFORMED);
+                }
+            }
+        }
+        // every static element with a time part of its own in a date list with a time part
+        for (String element : FUZZ_TIMED_STATIC_ELEMENTS) {
+            for (String elementTime : FUZZ_TIMES) {
+                if (elementTime.isEmpty() || isWeekWithZonedSlot(element, elementTime)) {
+                    continue;
+                }
+                for (String listTime : FUZZ_TIMES) {
+                    if (listTime.isEmpty()) {
+                        continue;
+                    }
+                    for (String zone : FUZZ_ZONES) {
+                        for (String dayFilter : FUZZ_DAY_FILTERS) {
+                            checker.check("[" + element + elementTime + ", $today]" + listTime + zone + dayFilter, TickExprKind.STATIC_ELEMENT_TIME);
+                        }
+                    }
                 }
             }
         }
@@ -7205,6 +7334,14 @@ public class TickExprTest {
         assertBracketIntervalError("   ", "Invalid date");
     }
 
+    /**
+     * Appends, in the format of intervalToString(), the minute that starts at {@code time} on the day.
+     */
+    private static void appendMinute(StringBuilder intervals, LocalDate day, String time) {
+        intervals.append("{lo=").append(day).append('T').append(time).append(":00.000000Z, hi=")
+                .append(day).append('T').append(time).append(":59.999999Z}");
+    }
+
     private static void appendRandomDateVariableExpr(Rnd rnd, StringSink sink) {
         sink.put(pick(rnd, FUZZ_VARIABLES));
         if (rnd.nextBoolean()) {
@@ -7221,6 +7358,7 @@ public class TickExprTest {
      */
     private static TickExprKind appendRandomTickExpr(Rnd rnd, StringSink sink) {
         boolean isMalformed = false;
+        boolean hasStaticElementTime = false;
         if (rnd.nextInt(8) == 0) {
             sink.put("  ");
         }
@@ -7232,18 +7370,33 @@ public class TickExprTest {
                 if (i > 0) {
                     sink.put(rnd.nextBoolean() ? "," : ", ");
                 }
-                if (rnd.nextInt(4) == 0) {
+                final boolean isStaticElement = rnd.nextInt(4) == 0;
+                // an element with a suffix of its own
+                final int elementSuffix = rnd.nextInt(10);
+                if (isStaticElement && elementSuffix == 2) {
+                    // a static element with a time part of its own
+                    final String element = pick(rnd, FUZZ_TIMED_STATIC_ELEMENTS);
+                    String elementTime;
+                    do {
+                        elementTime = pick(rnd, FUZZ_TIMES);
+                    } while (elementTime.isEmpty());
+                    sink.put(element).put(elementTime);
+                    hasStaticElementTime = true;
+                    // not compared, see isWeekWithZonedSlot()
+                    isMalformed |= isWeekWithZonedSlot(element, elementTime);
+                    continue;
+                }
+                if (isStaticElement) {
                     sink.put(pick(rnd, FUZZ_STATIC_ELEMENTS));
                 } else {
                     appendRandomDateVariableExpr(rnd, sink);
                 }
-                // an element with a suffix of its own
-                switch (rnd.nextInt(10)) {
+                switch (elementSuffix) {
                     case 0 -> sink.put(pick(rnd, FUZZ_ZONES));
                     case 1 -> sink.put(pick(rnd, FUZZ_DAY_FILTERS));
                     case 2 -> {
-                        // a time part on an element rather than after the list, which the grammar
-                        // rejects on a date variable and on a date without a day
+                        // a time part on a date variable rather than after the list, which the
+                        // grammar rejects
                         sink.put(pick(rnd, FUZZ_TIMES));
                         isMalformed = true;
                     }
@@ -7253,15 +7406,21 @@ public class TickExprTest {
             }
             sink.put(']');
         }
+        boolean hasListTime = false;
         if (rnd.nextInt(10) == 0) {
             sink.put(pick(rnd, FUZZ_MALFORMED_TIMES));
             isMalformed = true;
         } else {
-            sink.put(pick(rnd, FUZZ_TIMES));
+            final String listTime = pick(rnd, FUZZ_TIMES);
+            sink.put(listTime);
+            hasListTime = !listTime.isEmpty();
         }
+        // Without a time part of the list, a static element keeps its own, and the compiled form runs a
+        // slot of it that has its own timezone through the timezone and the day filter of the list again
+        isMalformed |= hasStaticElementTime && !hasListTime;
         sink.put(pick(rnd, FUZZ_ZONES));
         final String dayFilter = pick(rnd, FUZZ_DAY_FILTERS);
-        if (!isMalformed && rnd.nextInt(10) == 0) {
+        if (!isMalformed && !hasStaticElementTime && rnd.nextInt(10) == 0) {
             sink.put(dayFilter).put(pick(rnd, FUZZ_BAD_UNIT_DURATIONS));
             return TickExprKind.BAD_DURATION_UNIT;
         }
@@ -7273,7 +7432,10 @@ public class TickExprTest {
         } else {
             sink.put(dayFilter).put(duration);
         }
-        return isMalformed ? TickExprKind.MALFORMED : TickExprKind.WELL_FORMED;
+        if (isMalformed) {
+            return TickExprKind.MALFORMED;
+        }
+        return hasStaticElementTime ? TickExprKind.STATIC_ELEMENT_TIME : TickExprKind.WELL_FORMED;
     }
 
     /**
@@ -7323,6 +7485,31 @@ public class TickExprTest {
         int month = driver.getMonthOfYear(timestamp);
         int day = driver.getDayOfMonth(timestamp);
         return String.format("%04d-%02d-%02d", year, month, day);
+    }
+
+    /**
+     * Returns whether a static element of the fuzz test is an ISO week with a time slot that has its own
+     * timezone. The parser reads such a week as the start of the week in the timezone of the slot. The
+     * compiled form converts it again with the timezone of the list, and judges it against the day filter
+     * of the list by its day in UTC, so the fuzz test does not compare the two on such an element.
+     */
+    private static boolean isWeekWithZonedSlot(String element, String elementTime) {
+        return element.indexOf('W') >= 0 && elementTime.indexOf('@') >= 0;
+    }
+
+    /**
+     * Returns, in the format of intervalToString(), the minute that starts at {@code time} on each of
+     * {@code dayCount} days from {@code firstDay}.
+     */
+    private static String minuteOfEachDay(LocalDate firstDay, int dayCount, String time) {
+        final StringBuilder intervals = new StringBuilder("[");
+        for (int i = 0; i < dayCount; i++) {
+            if (i > 0) {
+                intervals.append(',');
+            }
+            appendMinute(intervals, firstDay.plusDays(i), time);
+        }
+        return intervals.append(']').toString();
     }
 
     private static DateVariableExpr parseDateVar(CharSequence seq, int hi) throws SqlException {
@@ -7659,6 +7846,36 @@ public class TickExprTest {
     }
 
     /**
+     * Asserts that the parser rejects the expression at the given "now", and the compiled form when it
+     * compiles, both with exactly the given error.
+     */
+    private void assertParsedAndCompiledRejectedAtCompileTime(String expression, String nowTimestamp, String expectedError) {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final long now = timestampDriver.parseFloorLiteral(nowTimestamp);
+        String parsed;
+        out.clear();
+        try {
+            parseTickExprWithNow(timestampDriver, expression, 0, expression.length(), 0, out, IntervalOperation.INTERSECT, now);
+            parsed = intervalToString(timestampDriver, out).toString();
+        } catch (SqlException e) {
+            parsed = "error: " + e.getFlyweightMessage();
+        }
+        String compiled;
+        try {
+            IntervalUtils.compileTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0).close();
+            compiled = "no error";
+        } catch (SqlException e) {
+            compiled = "error: " + e.getFlyweightMessage();
+        }
+        // one assertion over both paths, so a failure shows the result of each
+        TestUtils.assertEquals(
+                expression + " at " + nowTimestamp,
+                "parsed: error: " + expectedError + "\ncompiled: error: " + expectedError,
+                "parsed: " + parsed + "\ncompiled: " + compiled
+        );
+    }
+
+    /**
      * Asserts that both the parser and the compiled form reject the expression, the compiled form
      * when it compiles or when it evaluates. SQL parses a bind variable and compiles a literal with a
      * date variable, so the two must fail on the same expressions.
@@ -7746,10 +7963,13 @@ public class TickExprTest {
      * rejects fails to parse at every "now".
      * <p>
      * The two validate a malformed expression in different ways. The parser ignores the time part
-     * of a point in time, so it lets {@code $nowT[25:00]} through where the compiled form rejects it,
-     * and the compiled form ignores the time part of a static element in a date list with a time of
-     * its own, which the parser rejects. The checker therefore only requires a detected date variable
-     * of a malformed expression.
+     * of a point in time, so it lets {@code $nowT[25:00]} through where the compiled form rejects it.
+     * The checker therefore only requires a detected date variable of a malformed expression.
+     * <p>
+     * The parser rejects most static elements with a time part of their own in a date list with a time
+     * part. It accepts an element with a day and a time of day of its own, and an ISO week, which it
+     * reads as the start of the week whatever follows it. The checker requires the compiled form to
+     * agree with the parser on such an expression as on a well-formed one.
      * <p>
      * The parser rejects a duration unit that TimestampDriver.add() does not know wherever it applies
      * the duration, so the compiled form must fail, when it compiles or when it evaluates, at every
@@ -7771,6 +7991,8 @@ public class TickExprTest {
         private int compiledCount;
         private int failureCount;
         private int nowDependentCount;
+        private int staticElementTimeCount;
+        private int staticElementTimeRejectedCount;
 
         DateVariableDetectionChecker(TimestampDriver timestampDriver) {
             this.timestampDriver = timestampDriver;
@@ -7785,6 +8007,8 @@ public class TickExprTest {
                     .$(", compiled=").$(compiledCount)
                     .$(", badDurationUnit=").$(badDurationUnitCount)
                     .$(", badDurationUnitRejected=").$(badDurationUnitRejectedCount)
+                    .$(", staticElementTime=").$(staticElementTimeCount)
+                    .$(", staticElementTimeRejected=").$(staticElementTimeRejectedCount)
                     .$(", failures=").$(failureCount)
                     .I$();
             if (failureCount > 0) {
@@ -7795,6 +8019,8 @@ public class TickExprTest {
             Assert.assertTrue("no expression compiled", compiledCount > 0);
             Assert.assertTrue("no expression with a date variable had a bad duration unit", badDurationUnitCount > 0);
             Assert.assertTrue("no expression with a bad duration unit failed to compile", badDurationUnitRejectedCount > 0);
+            Assert.assertTrue("no expression with a date variable had a static element with a time part", staticElementTimeCount > 0);
+            Assert.assertTrue("no expression with a static element with a time part failed to compile", staticElementTimeRejectedCount > 0);
         }
 
         /**
@@ -7837,10 +8063,17 @@ public class TickExprTest {
                 checkBadDurationUnit(expression);
                 return;
             }
+            final boolean isStaticElementTime = kind == TickExprKind.STATIC_ELEMENT_TIME;
+            if (isStaticElementTime) {
+                staticElementTimeCount++;
+            }
             final CompiledTickExpression compiled;
             try {
                 compiled = IntervalUtils.compileTickExpr(timestampDriver, configuration, expression, 0, expression.length(), 0);
             } catch (SqlException | CairoException e) {
+                if (isStaticElementTime) {
+                    staticElementTimeRejectedCount++;
+                }
                 for (int i = 0; i < nows.length; i++) {
                     if (!ERROR.equals(parsed[i])) {
                         fail(expression, "does not compile [error=" + e.getFlyweightMessage() + "], but parses to "
@@ -7922,6 +8155,9 @@ public class TickExprTest {
         // different ways
         MALFORMED,
         // well-formed but for a duration unit that TimestampDriver.add() does not know
-        BAD_DURATION_UNIT
+        BAD_DURATION_UNIT,
+        // a static element with a time part of its own in a date list with a time part, which the parser
+        // mostly rejects, and on which the compiled form must agree with it
+        STATIC_ELEMENT_TIME
     }
 }

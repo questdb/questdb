@@ -168,6 +168,24 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testCompiledTickExprElementWithBracketedTimeFailsWithCalendar() {
+        // The parser rejects a month element with a time list of its own in a date list with a time part:
+        // it appends the time part of the list to the element, so the first day of the month holds two
+        // times. The compiled form, which SQL uses for a literal with a date variable, must reject it too,
+        // rather than give each trading day of the month the time of the list, which at 10:00Z is before
+        // the open of XNYS. It rejects it when it compiles, so on every day: on 2025-01-07, a trading
+        // Tuesday, and on Saturday 2025-01-04, as the parser does.
+        final String expression = "[2025-01T[09:00,10:00], $today]T10:00#XNYS";
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO}) {
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            for (String now : new String[]{"2025-01-07T10:00:00.000000Z", "2025-01-04T10:00:00.000000Z"}) {
+                assertTickExprErrorWithNow(driver, expression, driver.parseFloorLiteral(now), "Invalid date: 2025-01-01T09:00T10:00");
+            }
+            assertCompileTickExprError(driver, expression, "Invalid date: 2025-01-01T09:00T10:00");
+        }
+    }
+
+    @Test
     public void testCompiledTickExprInvalidDurationUnitWithCalendar() {
         // The parser rejects a duration unit that TimestampDriver.add() does not know when it extends
         // the trading sessions of 2025-01-07, a Tuesday. The compiled form, which SQL uses for a literal

@@ -2461,8 +2461,11 @@ public final class IntervalUtils {
         // When the date has month or year precision and a time override follows,
         // expand to individual days first so each day receives the correct time.
         // Without this, "2024-01T09:30" would reach parseInterval which only
-        // accepts YYYY-MM-DD'T'HH:mm format.
-        if (timeLo < timeHi && !hasDatePrecision(effectiveSeq, es, ee)) {
+        // accepts YYYY-MM-DD'T'HH:mm format. The days take the time override in place
+        // of any time of the element, so an element with a bracketed time of its own, as in
+        // 2024-01T[09:00,10:00], takes the path below instead, which, like parseTickExpr(),
+        // appends the time override to the element.
+        if (timeLo < timeHi && !hasDatePrecision(effectiveSeq, es, ee) && !hasBracketedTime(effectiveSeq, es, ee)) {
             return compileImpreciseDateWithTime(
                     timestampDriver, configuration, effectiveSeq, es, ee,
                     timeLo, timeHi, tzMarkerPos, durationSemicolon, durationHi, tzContentHi,
@@ -4393,6 +4396,19 @@ public final class IntervalUtils {
         return false;
     }
 
+    /**
+     * Returns whether a date list element has a bracketed time of its own, a 'T' followed by a
+     * bracket, as in {@code 2024-01T[09:00,10:00]} or {@code 2024-01T[09..10]:30}.
+     */
+    private static boolean hasBracketedTime(CharSequence seq, int lo, int hi) {
+        for (int i = lo; i < hi - 1; i++) {
+            if (seq.charAt(i) == 'T' && seq.charAt(i + 1) == '[') {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean hasTimeOfDay(CharSequence seq, int lo, int hi) {
         for (int i = lo; i < hi - 1; i++) {
             if (seq.charAt(i) == 'T' && Chars.isAsciiDigit(seq.charAt(i + 1))) {
@@ -4439,8 +4455,8 @@ public final class IntervalUtils {
      * in the time ({@code T[09..17]:30}), brackets after a time list ({@code T[09:00,10:00]:[15,45]})
      * or a time list slot with its own timezone ({@code T[09:00@Asia/Tokyo]}). It also cannot
      * represent an element with its own timezone or day filter ({@code [$today#Mon]}), a static
-     * element under a time list or with a time of its own under a time override, or a month or year
-     * element with a duration, which {@link #parseTickExpr} expands day by day.
+     * element under a time list or with a time of day of its own under a time override, or a month
+     * or year element with a duration, which {@link #parseTickExpr} expands day by day.
      */
     private static boolean isCompilable(
             CharSequence seq,
