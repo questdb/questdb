@@ -176,6 +176,71 @@ public class EncodedSortSpreadKeysTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCapacityHintPayloadAcrossExecutions() throws Exception {
+        // The materialized sort of a key and one other column keeps no record chain
+        // (EncodedSortPayloadRecordCursor), and sizes its entries by the capacity hint too: an
+        // execution smaller or larger than the previous one, past and below the counts at which
+        // the entries grow, returns the rows a fresh compile returns. The base gives the sort its
+        // rows in blocks under the parallel filter, and one by one without it.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table t as (select rnd_int(0, 1000, 0) i, rnd_double(0) d, " +
+                            "timestamp_sequence('2026-04-01', 100_000L) ts from long_sequence(1_000_000)) timestamp(ts) partition by hour"
+            );
+            final String query = "select ts, d from (select ts, d from t where i > $1 union all select ts, d from t where i < 0) order by d desc";
+            // after 1M rows: below the 64K start, past it and past the x8 step to 512K, then past the
+            // previous count; the run after a small one starts from that one's count
+            final int[] bounds = {0, 990, 900, 400, 1000, 999, 0, 960, 100, 3};
+            for (boolean isParallelFilterEnabled : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelFilterEnabled(isParallelFilterEnabled);
+                final String[] expected = new String[bounds.length];
+                for (int j = 0; j < bounds.length; j++) {
+                    bindVariableService.clear();
+                    bindVariableService.setInt(0, bounds[j]);
+                    try (io.questdb.cairo.sql.RecordCursorFactory factory = select(query)) {
+                        expected[j] = rowsOf(factory);
+                    }
+                }
+                try (io.questdb.cairo.sql.RecordCursorFactory factory = select(query)) {
+                    for (int j = 0; j < bounds.length; j++) {
+                        bindVariableService.clear();
+                        bindVariableService.setInt(0, bounds[j]);
+                        TestUtils.assertEquals("parallel filter " + isParallelFilterEnabled + ", $1=" + bounds[j], expected[j], rowsOf(factory));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCapacityHintPayloadMediumAfterHugeRowByRow() throws Exception {
+        // testCapacityHintMediumAfterHuge() for the materialized sort of a key and one other
+        // column, with a base that gives the sort its rows one by one: no parallel filter.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table t as (select x::int i, rnd_double(0) d, " +
+                            "timestamp_sequence('2026-04-01', 10_000L) ts from long_sequence(4_000_000)) timestamp(ts) partition by day"
+            );
+            sqlExecutionContext.setParallelFilterEnabled(false);
+            final String query = "select ts, d from (select ts, d from t where i <= $1 union all select ts, d from t where i < 0) order by d";
+            try (io.questdb.cairo.sql.RecordCursorFactory factory = select(query)) {
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 4_000_000);
+                final long hugeGrowth = drainGrowth(factory);
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 70_000);
+                final long mediumGrowth = drainGrowth(factory);
+                Assert.assertTrue("huge " + hugeGrowth, hugeGrowth >= 4_000_000L * 16);
+                // 512K entries of 16 bytes (8 MB), not the 4M entries (64 MB) the previous run held
+                Assert.assertTrue("medium " + mediumGrowth + ", huge " + hugeGrowth, mediumGrowth < 16L * 1024 * 1024);
+                bindVariableService.clear();
+                bindVariableService.setInt(0, 4_000_000);
+                Assert.assertTrue(drainGrowth(factory) >= 4_000_000L * 16);
+            }
+        });
+    }
+
     // The native memory a cursor of the factory holds once it has sorted its rows.
     private static long drainGrowth(io.questdb.cairo.sql.RecordCursorFactory factory) throws Exception {
         final long before = io.questdb.std.Unsafe.getMemUsedByTag(io.questdb.std.MemoryTag.NATIVE_DEFAULT)

@@ -77,7 +77,11 @@ class EncodedSortPayloadRecordCursor implements DelegatingRecordCursor {
     private long count;
     private long currentAddr;
     private long endAddr;
-    // the previous execution's row count, the entries' capacity for a base that does not know its size
+    // the entry count at which this execution grows its entries towards the previous one's, -1
+    // for none, see EncodedSortCapacityHint
+    private long hintAt = -1;
+    // the previous execution's row count, which sizes the entries for a base that does not know its
+    // size, see EncodedSortCapacityHint
     private long lastCount;
     private boolean isOpen;
     private boolean isSorted;
@@ -373,6 +377,14 @@ class EncodedSortPayloadRecordCursor implements DelegatingRecordCursor {
         };
     }
 
+    // Grows the entries towards the previous execution's count once this one reaches hintAt, see
+    // EncodedSortCapacityHint: reached is the number of entries this execution needs room for.
+    private void applyCapacityHint(long reached, long maxEntries) {
+        final long entries = EncodedSortCapacityHint.next(reached, lastCount, maxEntries);
+        entryMem.setCapacity(Math.max(entryMem.getCapacity(), entries * 2));
+        hintAt = entries < Math.min(lastCount, maxEntries) ? entries : -1;
+    }
+
     private void buildAndSort() {
         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         final long maxEntries = maxEntryMemBytes / 16;
@@ -383,9 +395,14 @@ class EncodedSortPayloadRecordCursor implements DelegatingRecordCursor {
             }
             entryMem.setCapacity(estimatedSize * 2);
         }
+        // A size the base does not know is guessed from the previous execution's, see
+        // EncodedSortCapacityHint: a small execution after a large one does not take, and charge
+        // to its query, the entries of the large one.
+        hintAt = -1;
         if (estimatedSize <= 0 && lastCount > 0) {
-            // a base that does not know its size: the previous execution's count, rather than growing to it
-            entryMem.setCapacity(Math.min(lastCount, maxEntries) * 2);
+            final long start = EncodedSortCapacityHint.start(lastCount, maxEntries);
+            entryMem.setCapacity(start * 2);
+            hintAt = Math.min(lastCount, maxEntries) > start ? start : -1;
         }
         entryMem.clear();
         count = 0;
@@ -413,6 +430,9 @@ class EncodedSortPayloadRecordCursor implements DelegatingRecordCursor {
                 throwLimitOverflow();
             }
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            if (hintAt != -1 && count + n > hintAt) {
+                applyCapacityHint(count + n, maxEntries);
+            }
             entryMem.ensureCapacity((long) n * 2);
             final long dst = entryMem.getAppendAddress();
             encodeKeys(dst, n, keyAddr, b.getColumnStride(keyColumn), b.getColumnRowIndexesAddress(keyColumn));
@@ -462,7 +482,9 @@ class EncodedSortPayloadRecordCursor implements DelegatingRecordCursor {
         entryMem.ensureCapacity(2);
         entryMem.add(key);
         entryMem.add(payload);
-        count++;
+        if (++count == hintAt) {
+            applyCapacityHint(count, maxEntries);
+        }
     }
 
     private void throwLimitOverflow() {
