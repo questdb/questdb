@@ -2931,6 +2931,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .put(", table=").put(tableToken.getTableName())
                     .put(", column=").put(columnName)
                     .put("]: ").put(e.getMessage());
+        } catch (CairoError e) {
+            // A failed directory barrier has poisoned the engine; the error carries the stop
+            throw e;
         } catch (Throwable e) {
             // LOG original exception detail
             LOG.critical().$("exception on index drop [txn=").$(txWriter.getTxn())
@@ -3104,6 +3107,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // Call O3 methods to remove check TxnScoreboard and remove partition directly
             processPartitionRemoveCandidates(true);
+        }
+    }
+
+    /**
+     * Under SYNC, makes the names an operation has just added to an existing partition directory survive a power
+     * loss before the commit that names them: the column files DROP INDEX and UPDATE hard-link under a new name
+     * txn, the covering sidecars linked with them and the index files UPDATE rebuilds. Runs after the last link or
+     * write into the directory, whose own entry in the table directory is durable already. A failed barrier is a
+     * data-sync failure.
+     */
+    public void fsyncPartitionDirUnderSync(long partitionTimestamp, long partitionNameTxn) {
+        if (effectiveCommitMode != CommitMode.SYNC) {
+            return;
+        }
+        try {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            fsyncPartitionDirUnderSync(other, other.size());
+        } finally {
+            other.trimTo(pathSize);
         }
     }
 
@@ -10394,6 +10416,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         TableUtils.fsyncDirDurable(ff, dirFsyncPath.trimTo(pathSize).$());
     }
 
+    /**
+     * Under SYNC, flushes the file names of an existing partition directory, see
+     * {@link #fsyncPartitionDirUnderSync(long, long)}. A failed barrier is a data-sync failure.
+     */
+    private void fsyncPartitionDirUnderSync(Path partitionPath, int partitionDirLen) {
+        if (effectiveCommitMode != CommitMode.SYNC) {
+            return;
+        }
+        if (dirFsyncPath == null) {
+            dirFsyncPath = new Path();
+        }
+        // A copy, as fsyncPartitionDirEntries: $() writes a NUL at the end of the sequence.
+        dirFsyncPath.of(partitionPath).trimTo(partitionDirLen);
+        try {
+            TableUtils.fsyncDirDurable(ff, dirFsyncPath.$());
+        } catch (CairoException e) {
+            if (engine.isDataSyncFailureFatal(e)) {
+                distressed = true;
+                engine.handleDataSyncFailure(e);
+            }
+            throw e;
+        }
+    }
+
     private CharSequence getColumnNameSafe(int columnIndex) {
         try {
             return metadata.getColumnName(columnIndex);
@@ -10697,6 +10743,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
         linkCoveringSidecars(plen, columnIndex, partitionTimestamp, columnNameTxn, newColumnNameTxn);
+        // The links are the last names this rename adds to the partition directory.
+        fsyncPartitionDirUnderSync(path, plen);
         path.trimTo(pathSize);
         other.trimTo(pathSize);
         purgingOperator.add(columnIndex, columnName, columnType, indexType, columnNameTxn, partitionTimestamp, partitionNameTxn);

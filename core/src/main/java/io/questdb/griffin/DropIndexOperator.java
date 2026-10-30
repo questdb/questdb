@@ -108,6 +108,8 @@ public class DropIndexOperator {
                     }
                     // The column keeps its data under the new version, and so do the indexes that INCLUDE it.
                     tableWriter.linkCoveringSidecars(columnIndex, pTimestamp, pVersion, columnVersion, columnDropIndexVersion);
+                    // Under SYNC, the linked names must survive a power loss before the commit that names them.
+                    tableWriter.fsyncPartitionDirUnderSync(pTimestamp, pVersion);
 
                     // add to cleanup tasks, the index will be removed in due time
                     purgingOperator.add(columnIndex, columnName, ColumnType.SYMBOL, indexType, columnVersion, pTimestamp, pVersion);

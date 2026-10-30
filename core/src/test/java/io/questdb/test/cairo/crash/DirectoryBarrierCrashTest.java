@@ -68,7 +68,9 @@ import java.util.function.BooleanSupplier;
  *   <li>SYNC fsyncs each partition directory in which ALTER COLUMN TYPE creates converted column files, and the
  *   partition directory a parquet conversion or the switch of a native partition to its parquet file creates and
  *   then the table directory, before the commit that publishes them. A failed one poisons the engine, as every
- *   failed barrier does.</li>
+ *   failed barrier does. The same for each partition directory RENAME COLUMN, DROP INDEX or UPDATE adds names to:
+ *   the column files linked or written under a new name txn, the covering values of the indexes that INCLUDE
+ *   the column linked under it, and the index files UPDATE rebuilds.</li>
  *   <li>SYNC and ADAPTIVE fsync each column file ALTER COLUMN TYPE converts, data before aux, before the commit
  *   that publishes it, and each file a parquet conversion writes. A failed one poisons the engine too; under ASYNC
  *   it only fails the statement.</li>
@@ -81,6 +83,30 @@ import java.util.function.BooleanSupplier;
  * </ul>
  */
 public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
+    /**
+     * A POSTING index on {@code s} that INCLUDEs {@code k} and {@code v}, and a BITMAP index on {@code k}, so that
+     * DROP INDEX, RENAME COLUMN and UPDATE move a covered column to a new name txn.
+     */
+    private static final TestTable COVERED_COLUMN_TABLE = wal -> {
+        execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (k, v), k SYMBOL INDEX, v DOUBLE) "
+                + "TIMESTAMP(ts) PARTITION BY DAY " + (wal ? "WAL" : "BYPASS WAL"));
+        execute("""
+                INSERT INTO x VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 'p', 1.0),
+                    ('2024-01-02T00:00:00.000000Z', 'b', 'q', 2.0),
+                    ('2024-01-03T00:00:00.000000Z', 'a', 'r', 3.0)
+                """);
+    };
+    private static final TestTable INDEXED_SYMBOL_TABLE = wal -> {
+        execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY "
+                + (wal ? "WAL" : "BYPASS WAL"));
+        execute("""
+                INSERT INTO x VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
+                    ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
+                    ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
+                """);
+    };
 
     @Test
     public void testAdaptiveAlterColumnTypeNonWalFailedFixedFsyncIsFailStop() throws Exception {
@@ -537,8 +563,48 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testSyncDropIndexOnCoveredColumnNonWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncCoveredColumnChangeBarrierFailureIsFailStop(false, "ALTER TABLE x ALTER COLUMN k DROP INDEX");
+    }
+
+    @Test
+    public void testSyncDropIndexOnCoveredColumnNonWalSurvivesCrash() throws Exception {
+        assertSyncCoveredColumnChangeSurvivesCrash(false, "ALTER TABLE x ALTER COLUMN k DROP INDEX", this::assertDroppedIndexOnCoveredColumn);
+    }
+
+    @Test
+    public void testSyncDropIndexOnCoveredColumnWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncCoveredColumnChangeBarrierFailureIsFailStop(true, "ALTER TABLE x ALTER COLUMN k DROP INDEX");
+    }
+
+    @Test
+    public void testSyncDropIndexOnCoveredColumnWalSurvivesCrash() throws Exception {
+        assertSyncCoveredColumnChangeSurvivesCrash(true, "ALTER TABLE x ALTER COLUMN k DROP INDEX", this::assertDroppedIndexOnCoveredColumn);
+    }
+
+    @Test
     public void testSyncNewSequencerPartSurvivesCrash() throws Exception {
         assertNewSequencerPartSurvivesCrash("sync", new CrashFaultFilesFacade());
+    }
+
+    @Test
+    public void testSyncRenameCoveredColumnNonWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncCoveredColumnChangeBarrierFailureIsFailStop(false, "ALTER TABLE x RENAME COLUMN v TO w");
+    }
+
+    @Test
+    public void testSyncRenameCoveredColumnNonWalSurvivesCrash() throws Exception {
+        assertSyncCoveredColumnChangeSurvivesCrash(false, "ALTER TABLE x RENAME COLUMN v TO w", this::assertRenamedCoveredColumn);
+    }
+
+    @Test
+    public void testSyncRenameCoveredColumnWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncCoveredColumnChangeBarrierFailureIsFailStop(true, "ALTER TABLE x RENAME COLUMN v TO w");
+    }
+
+    @Test
+    public void testSyncRenameCoveredColumnWalSurvivesCrash() throws Exception {
+        assertSyncCoveredColumnChangeSurvivesCrash(true, "ALTER TABLE x RENAME COLUMN v TO w", this::assertRenamedCoveredColumn);
     }
 
     @Test
@@ -599,6 +665,26 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testSyncTableConvertedToWalKeepsWalIdCounter() throws Exception {
         assertTableConvertedToWalKeepsWalIdCounter("sync", new CrashFaultFilesFacade());
+    }
+
+    @Test
+    public void testSyncUpdateCoveredColumnNonWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncCoveredColumnChangeBarrierFailureIsFailStop(false, "UPDATE x SET v = v + 10 WHERE ts < '2024-01-03'");
+    }
+
+    @Test
+    public void testSyncUpdateCoveredColumnNonWalSurvivesCrash() throws Exception {
+        assertSyncCoveredColumnChangeSurvivesCrash(false, "UPDATE x SET v = v + 10 WHERE ts < '2024-01-03'", this::assertUpdatedCoveredColumn);
+    }
+
+    @Test
+    public void testSyncUpdateCoveredColumnWalFailedBarrierIsFailStop() throws Exception {
+        assertSyncCoveredColumnChangeBarrierFailureIsFailStop(true, "UPDATE x SET v = v + 10 WHERE ts < '2024-01-03'");
+    }
+
+    @Test
+    public void testSyncUpdateCoveredColumnWalSurvivesCrash() throws Exception {
+        assertSyncCoveredColumnChangeSurvivesCrash(true, "UPDATE x SET v = v + 10 WHERE ts < '2024-01-03'", this::assertUpdatedCoveredColumn);
     }
 
     @Test
@@ -863,6 +949,30 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
+     * Reads the dropped index's column through its new name txn, and through the covering values linked under it.
+     */
+    private void assertDroppedIndexOnCoveredColumn() throws Exception {
+        assertQuery("SELECT \"column\", indexed FROM table_columns('x') WHERE \"column\" = 'k'").noRandomAccess().returns("""
+                column\tindexed
+                k\tfalse
+                """);
+        assertQuery("SELECT ts FROM x WHERE k = 'p'").timestamp("ts").returns("""
+                ts
+                2024-01-01T00:00:00.000000Z
+                """);
+        assertQuery("SELECT s, k, v, ts FROM x WHERE s = 'a'")
+                .noRandomAccess()
+                .expectSize()
+                .timestamp("ts")
+                .withPlanContaining("CoveringIndex on: s with: k, v, ts")
+                .returns("""
+                        s\tk\tv\tts
+                        a\tp\t1.0\t2024-01-01T00:00:00.000000Z
+                        a\tr\t3.0\t2024-01-03T00:00:00.000000Z
+                        """);
+    }
+
+    /**
      * Fails one fsync of a change, in the given commit mode: the engine must be poisoned.
      *
      * @param prepare   runs once the rows are inserted, before they are applied to a WAL table; null for none
@@ -1067,6 +1177,26 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         Assert.assertEquals("[_pm, data.parquet, s.k, s.v]", Arrays.toString(names));
     }
 
+    /**
+     * Reads the renamed column through its new name txn, and through the covering values linked under it.
+     */
+    private void assertRenamedCoveredColumn() throws Exception {
+        assertQuery("SELECT sum(w) FROM x").noRandomAccess().expectSize().returns("""
+                sum
+                6.0
+                """);
+        assertQuery("SELECT s, k, w, ts FROM x WHERE s = 'a'")
+                .noRandomAccess()
+                .expectSize()
+                .timestamp("ts")
+                .withPlanContaining("CoveringIndex on: s with: k, w, ts")
+                .returns("""
+                        s\tk\tw\tts
+                        a\tp\t1.0\t2024-01-01T00:00:00.000000Z
+                        a\tr\t3.0\t2024-01-03T00:00:00.000000Z
+                        """);
+    }
+
     private void assertRows(String expected) throws Exception {
         assertQuery("SELECT ts, v FROM x").timestamp("ts").expectSize().returns(expected);
     }
@@ -1229,6 +1359,27 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
+     * Under SYNC, the partition directory barrier of a change that links a covered column's files under a new
+     * name txn (DROP INDEX, RENAME COLUMN, UPDATE) fails. The engine must be poisoned, as for every other failed
+     * barrier.
+     */
+    private void assertSyncCoveredColumnChangeBarrierFailureIsFailStop(boolean wal, String sql) throws Exception {
+        Assume.assumeFalse("a directory takes no fsync on Windows", Os.isWindows());
+        assertSyncFailure("sync", wal, COVERED_COLUMN_TABLE, null, () -> execute(sql), new FsyncFailureFacade("fsyncPartitionDirUnderSync", 0, false), true);
+    }
+
+    /**
+     * A change that moves a covered column to a new name txn without rewriting its data (DROP INDEX, RENAME
+     * COLUMN) or rewrites it (UPDATE) returns under SYNC, then the power fails. Each name it added to the
+     * partition directories must survive: the column's files linked or written under the new name txn, the
+     * covering values of the index that INCLUDEs the column linked under it, and the index files UPDATE rebuilt.
+     * Otherwise the durable {@code _cv} and {@code _txn} name files that are gone.
+     */
+    private void assertSyncCoveredColumnChangeSurvivesCrash(boolean wal, String sql, TestUtils.LeakProneCode assertAfterCrash) throws Exception {
+        assertSyncSchemaChangeSurvivesCrash(wal, COVERED_COLUMN_TABLE, null, () -> execute(sql), assertAfterCrash);
+    }
+
+    /**
      * Fails one data sync of a change, in the given commit mode. When it is fail-stop, the engine must be poisoned
      * and refuse the next write; a non-WAL statement must also fail with a data-sync {@link CairoError}, and a WAL
      * apply must not merely suspend the table while the engine keeps taking writes. Otherwise the statement fails
@@ -1247,16 +1398,24 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
             FsyncFailureFacade ff,
             boolean isFailStop
     ) throws Exception {
+        assertSyncFailure(commitMode, wal, INDEXED_SYMBOL_TABLE, prepare, change, ff, isFailStop);
+    }
+
+    /**
+     * @param table the table to create and fill, {@link #INDEXED_SYMBOL_TABLE} or {@link #COVERED_COLUMN_TABLE}
+     */
+    private void assertSyncFailure(
+            String commitMode,
+            boolean wal,
+            TestTable table,
+            TestUtils.LeakProneCode prepare,
+            TestUtils.LeakProneCode change,
+            FsyncFailureFacade ff,
+            boolean isFailStop
+    ) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY "
-                    + (wal ? "WAL" : "BYPASS WAL"));
-            execute("""
-                    INSERT INTO x VALUES
-                        ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
-                        ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
-                        ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
-                    """);
+            table.create(wal);
             if (prepare != null) {
                 prepare.run();
             }
@@ -1364,16 +1523,22 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
             TestUtils.LeakProneCode change,
             TestUtils.LeakProneCode assertAfterCrash
     ) throws Exception {
+        assertSyncSchemaChangeSurvivesCrash(wal, INDEXED_SYMBOL_TABLE, prepare, change, assertAfterCrash);
+    }
+
+    /**
+     * @param table the table to create and fill, {@link #INDEXED_SYMBOL_TABLE} or {@link #COVERED_COLUMN_TABLE}
+     */
+    private void assertSyncSchemaChangeSurvivesCrash(
+            boolean wal,
+            TestTable table,
+            TestUtils.LeakProneCode prepare,
+            TestUtils.LeakProneCode change,
+            TestUtils.LeakProneCode assertAfterCrash
+    ) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         runWithCrashFacade(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, s SYMBOL INDEX, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY "
-                    + (wal ? "WAL" : "BYPASS WAL"));
-            execute("""
-                    INSERT INTO x VALUES
-                        ('2024-01-01T00:00:00.000000Z', 'a', 1.0),
-                        ('2024-01-02T00:00:00.000000Z', 'b', 2.0),
-                        ('2024-01-03T00:00:00.000000Z', 'a', 3.0)
-                    """);
+            table.create(wal);
             if (prepare != null) {
                 prepare.run();
             }
@@ -1493,6 +1658,27 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
             Assert.assertTrue("the WAL id counter must outlive the power loss", counter.exists());
             releaseEngineHandles();
         });
+    }
+
+    /**
+     * Reads the updated column through its new name txn, and the index rebuilt with the covering values of the
+     * updated column, both in the two partitions the update rewrote.
+     */
+    private void assertUpdatedCoveredColumn() throws Exception {
+        assertQuery("SELECT sum(v) FROM x").noRandomAccess().expectSize().returns("""
+                sum
+                26.0
+                """);
+        assertQuery("SELECT s, k, v, ts FROM x WHERE s = 'a'")
+                .noRandomAccess()
+                .expectSize()
+                .timestamp("ts")
+                .withPlanContaining("CoveringIndex on: s with: k, v, ts")
+                .returns("""
+                        s\tk\tv\tts
+                        a\tp\t11.0\t2024-01-01T00:00:00.000000Z
+                        a\tr\t3.0\t2024-01-03T00:00:00.000000Z
+                        """);
     }
 
     /**
@@ -1663,6 +1849,14 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
      * or asynchronous {@code msync} when {@code isMsync}, selected by {@code isAsyncMsync}. Fails the first after
      * {@code skipCount} such calls with a genuine data-sync failure, then behaves normally.
      */
+    @FunctionalInterface
+    private interface TestTable {
+        /**
+         * Creates table {@code x}, WAL or not, and inserts its three rows, one per day from 2024-01-01.
+         */
+        void create(boolean wal) throws Exception;
+    }
+
     private static final class FsyncFailureFacade extends TestFilesFacadeImpl {
         private final String caller;
         private final boolean isAsyncMsync;

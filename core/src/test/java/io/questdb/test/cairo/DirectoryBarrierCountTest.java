@@ -94,6 +94,10 @@ import java.util.stream.Stream;
  *   PARTITION creates, then the table directory.</li>
  *   <li>The switch of a native partition to its parquet file links the files into a new partition directory and
  *   fsyncs it, then the table directory, under SYNC only.</li>
+ *   <li>A change that adds names to an existing partition directory (RENAME COLUMN and DROP INDEX link the
+ *   column's files and the covering values of the indexes that INCLUDE it under a new name txn, UPDATE writes
+ *   new column versions, links the columns of the indexes it rebuilds and rebuilds them) fsyncs that directory
+ *   under SYNC only; UPDATE also fsyncs the column files it writes.</li>
  * </ul>
  * The crash tests that prove these are enough are in {@code DirectoryBarrierCrashTest}.
  */
@@ -362,6 +366,61 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
     @Test
     public void testReplicaSwitchToParquet() throws Exception {
         assertSwitchToParquet(true);
+    }
+
+    @Test
+    public void testSchemaChangeLinkedNames() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            final boolean isSync = "sync".equals(commitMode);
+            for (String table : new String[]{"x", "w"}) {
+                execute("CREATE TABLE " + table + " (ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (k, v), k SYMBOL INDEX, v LONG) "
+                        + "TIMESTAMP(ts) PARTITION BY DAY " + ("x".equals(table) ? "BYPASS WAL" : "WAL"));
+                execute("INSERT INTO " + table + " VALUES ('2024-01-01T00:00:00.000000Z', 'a', 'p', 1), "
+                        + "('2024-01-02T00:00:00.000000Z', 'b', 'q', 2), ('2024-01-03T00:00:00.000000Z', 'c', 'r', 3)");
+                drainWalQueue();
+                // The apply job takes a save point for an adaptive WAL table, which fsyncs more files.
+                final boolean exact = "x".equals(table) || !"adaptive".equals(commitMode);
+                final String tableDir = tableDir(table);
+
+                // RENAME COLUMN links the column's files, and the covering values of the index that INCLUDEs it,
+                // under a new name txn in each of the three partitions: under SYNC each partition directory is
+                // fsynced after its links. The table directory twice is the _meta swap.
+                ff.clear();
+                execute("ALTER TABLE " + table + " RENAME COLUMN v TO w");
+                drainWalQueue();
+                if (exact) {
+                    Assert.assertEquals("rename column" + ff.dump(), isSync ? 3 : 0, ff.countChildren(tableDir));
+                }
+
+                // DROP INDEX links the column's data file, and the covering values of the index that INCLUDEs it,
+                // under a new name txn in each of the three partitions, the same way.
+                ff.clear();
+                execute("ALTER TABLE " + table + " ALTER COLUMN k DROP INDEX");
+                drainWalQueue();
+                if (exact) {
+                    Assert.assertEquals("drop index" + ff.dump(), isSync ? 3 : 0, ff.countChildren(tableDir));
+                }
+
+                // UPDATE writes the column under a new name txn in each of the two partitions it touches, links the
+                // column of the index that INCLUDEs it under a new name txn and rebuilds the index there, the same way.
+                // Under SYNC it also fsyncs the rewritten column file of each of the two partitions.
+                ff.clear();
+                execute("UPDATE " + table + " SET w = w + 1 WHERE ts < '2024-01-03'");
+                drainWalQueue();
+                if (exact) {
+                    Assert.assertEquals("update" + ff.dump(), isSync ? 2 : 0, ff.countOther());
+                    Assert.assertEquals("update" + ff.dump(), isSync ? 2 : 0, ff.countChildren(tableDir));
+                }
+
+                assertQuery("SELECT s, k, w, ts FROM " + table + " WHERE s = 'b'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .timestamp("ts")
+                        .withPlanContaining("CoveringIndex on: s with: k, w, ts")
+                        .returns("s\tk\tw\tts\nb\tq\t3\t2024-01-02T00:00:00.000000Z\n");
+            }
+        });
     }
 
     @Test

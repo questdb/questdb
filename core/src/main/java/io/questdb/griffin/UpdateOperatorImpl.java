@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableToken;
@@ -708,7 +709,17 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
                 affectedColumnCount,
                 minRow
         );
+        final boolean isSync = tableWriter.getEffectiveCommitMode() == CommitMode.SYNC;
+        if (isSync) {
+            syncUpdatedColumns(affectedColumnCount);
+        }
         rebuildIndexes(partitionIndex, tableMetadata);
+        if (isSync) {
+            // The names this update added to the partition directory, the new column versions, the links of the
+            // indexed columns it moved and the rebuilt index files, must survive a power loss before the commit
+            // that names them.
+            tableWriter.fsyncPartitionDirUnderSync(tableWriter.getPartitionTimestamp(partitionIndex), tableWriter.getPartitionNameTxn(partitionIndex));
+        }
         tableWriter.markPartitionDataChanged(partitionIndex);
     }
 
@@ -923,6 +934,21 @@ public class UpdateOperatorImpl implements QuietCloseable, UpdateOperator {
             if (ff.exists(file)) {
                 throw CairoException.critical(errno).put("cannot remove stale column file [path=").put(file).put(']');
             }
+        }
+    }
+
+    /**
+     * Under SYNC, makes the column files this update wrote in the partition durable before the commit that names
+     * them, data before aux: an aux that became durable before its data could point past the end of the durable
+     * data after a power loss. A failed flush is a data-sync failure.
+     */
+    private void syncUpdatedColumns(int affectedColumnCount) {
+        for (int i = 0; i < affectedColumnCount; i++) {
+            final MemoryCMARW dstVarMem = dstColumns.get(2 * i + 1);
+            if (dstVarMem != null) {
+                ff.fsync(dstVarMem.getFd());
+            }
+            ff.fsync(dstColumns.get(2 * i).getFd());
         }
     }
 }
