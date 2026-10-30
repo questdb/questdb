@@ -425,6 +425,111 @@ public class DistinctTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDuplicateColumnWithWildcard() throws Exception {
+        assertDistinctWildcard("select distinct symbol, * from trades order by symbol, price", """
+                symbol\tsymbol1\tprice
+                \t\t1
+                A\tA\t0
+                A\tA\t1
+                B\tB\t0
+                """);
+    }
+
+    @Test
+    public void testDuplicateColumnWithWildcardAlias() throws Exception {
+        assertDistinctWildcard("select distinct symbol as ticker, * from trades order by ticker, price", """
+                ticker\tsymbol\tprice
+                \t\t1
+                A\tA\t0
+                A\tA\t1
+                B\tB\t0
+                """);
+    }
+
+    @Test
+    public void testDuplicateColumnWithWildcardAliasCollision() throws Exception {
+        assertQuery("select distinct symbol, * from trades order by 1, 3")
+                .ddl("create table trades (symbol symbol, symbol1 int)",
+                        "insert into trades values ('A', 1), ('A', 1), ('B', 2)")
+                .expectSize()
+                .returns("""
+                        symbol\tsymbol1\tsymbol11
+                        A\tA\t1
+                        B\tB\t2
+                        """);
+    }
+
+    @Test
+    public void testDuplicateColumnWithWildcardExpression() throws Exception {
+        assertDistinctWildcard("select distinct price + 1 as next_price, symbol, * from trades order by symbol, price", """
+                next_price\tsymbol\tsymbol1\tprice
+                2\t\t\t1
+                1\tA\tA\t0
+                2\tA\tA\t1
+                1\tB\tB\t0
+                """);
+    }
+
+    @Test
+    public void testDuplicateColumnWithWildcardFirst() throws Exception {
+        assertDistinctWildcard("select distinct *, symbol from trades order by symbol, price", """
+                symbol\tprice\tsymbol1
+                \t1\t
+                A\t0\tA
+                A\t1\tA
+                B\t0\tB
+                """);
+    }
+
+    @Test
+    public void testDuplicateColumnWithWildcardJoin() throws Exception {
+        assertQuery("select distinct t.symbol, t.*, u.price from trades t join trades u on (symbol) order by 1, 3, 4")
+                .ddl("create table trades (symbol symbol, price int)",
+                        "insert into trades values ('A', 1), ('A', 1), ('A', 2)")
+                .expectSize()
+                .returns("""
+                        symbol\tsymbol1\tprice\tprice1
+                        A\tA\t1\t1
+                        A\tA\t1\t2
+                        A\tA\t2\t1
+                        A\tA\t2\t2
+                        """);
+    }
+
+    @Test
+    public void testDuplicateColumnWithWildcardQualified() throws Exception {
+        assertDistinctWildcard("select distinct t.symbol, t.* from trades t order by symbol, price", """
+                symbol\tsymbol1\tprice
+                \t\t1
+                A\tA\t0
+                A\tA\t1
+                B\tB\t0
+                """);
+    }
+
+    @Test
+    public void testDuplicateColumnWithWildcardRepeated() throws Exception {
+        assertDistinctWildcard("select distinct symbol, *, * from trades order by symbol, price", """
+                symbol\tsymbol1\tprice\tsymbol2\tprice1
+                \t\t1\t\t1
+                A\tA\t0\tA\t0
+                A\tA\t1\tA\t1
+                B\tB\t0\tB\t0
+                """);
+    }
+
+    @Test
+    public void testDuplicateColumnWithWildcardSubQuery() throws Exception {
+        assertDistinctWildcard("select symbol1, price from (select distinct symbol, * from trades) order by symbol1, price", """
+                symbol1\tprice
+                \t1
+                A\t0
+                A\t1
+                B\t0
+                """);
+    }
+
+    @Test
     public void testDuplicateCount() throws Exception {
         assertQuery("SELECT DISTINCT count(*), count(*) FROM x;")
                 .ddl("create table x as (" +
@@ -497,6 +602,14 @@ public class DistinctTest extends AbstractCairoTest {
     @Test
     public void testInnerJoinAliases2_columnAliasExprDisabled() throws Exception {
         testInnerJoinAliases2(false);
+    }
+
+    private void assertDistinctWildcard(String query, String expected) throws Exception {
+        assertQuery(query)
+                .ddl("create table trades (symbol symbol, price int)",
+                        "insert into trades values (null, 1), (null, 1), ('A', 0), ('A', 1), ('A', 1), ('B', 0)")
+                .expectSize()
+                .returns(expected);
     }
 
     private void testColumnPrefixes(boolean columnAliasExprEnabled) throws Exception {
