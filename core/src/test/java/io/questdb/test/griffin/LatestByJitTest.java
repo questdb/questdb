@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.engine.table.LatestByCompiledFilter;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.MemoryTag;
@@ -135,6 +136,39 @@ public class LatestByJitTest extends AbstractCairoTest {
     @Test
     public void testBatchesWhenNewestFrameCannotCoverTargets() throws Exception {
         assertJitBatchesAfterSmallFrames(1, 1);
+    }
+
+    @Test
+    public void testDeclinedFilterDoesNotAffectNextCompilation() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE jit_reuse AS (
+                      SELECT (x % 2)::STRING::SYMBOL s, x v, timestamp_sequence(0, 1) ts
+                      FROM long_sequence(10)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            bindVariableService.setLong("min", 0);
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                for (int mode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_FORCE_SCALAR, SqlJitMode.JIT_MODE_ENABLED}) {
+                    sqlExecutionContext.setJitMode(mode);
+                    for (int attempt = 0; attempt < 2; attempt++) {
+                        try (RecordCursorFactory factory = compiler.compile(
+                                "SELECT v FROM jit_reuse WHERE v > :min AND length(v::STRING) > 0 LATEST ON ts PARTITION BY s",
+                                sqlExecutionContext).getRecordCursorFactory()) {
+                            Assert.assertFalse(factory.usesCompiledFilter());
+                            assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n9\n10\n");
+                        }
+                        try (RecordCursorFactory factory = compiler.compile(
+                                "SELECT v FROM jit_reuse WHERE v > :min AND s IN (SELECT s FROM jit_reuse WHERE v < 10 LATEST ON ts PARTITION BY s) LATEST ON ts PARTITION BY s",
+                                sqlExecutionContext).getRecordCursorFactory()) {
+                            Assert.assertEquals(mode != SqlJitMode.JIT_MODE_DISABLED, factory.usesCompiledFilter());
+                            assertFactory(factory).withContext(sqlExecutionContext).sizeMayVary().returns("v\n9\n10\n");
+                        }
+                    }
+                }
+            }
+        });
     }
 
     @Test

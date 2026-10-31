@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.functions.TernaryFunction;
 import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
@@ -54,14 +55,20 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         final Function withWhat = args.getQuick(2);
         if (withWhat.isConstant() &&
                 withWhat.getStrLen(null) < 0) {
+            CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
             return StrConstant.NULL;
         }
 
         final Function term = args.getQuick(1);
         if (term.isConstant()) {
             if (term.getStrLen(null) < 0) {
+                CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
                 return StrConstant.NULL;
             } else if (term.getStrLen(null) == 0) {
+                args.setQuick(1, null);
+                Misc.free(term);
+                args.setQuick(2, null);
+                Misc.free(withWhat);
                 return args.getQuick(0);
             }
         }
@@ -70,6 +77,10 @@ public class ReplaceStrFunctionFactory implements FunctionFactory {
         if (value.isConstant()) {
             int len = value.getStrLen(null);
             if (len < 1) {
+                args.setQuick(1, null);
+                Misc.free(term);
+                args.setQuick(2, null);
+                Misc.free(withWhat);
                 return value;
             }
         }

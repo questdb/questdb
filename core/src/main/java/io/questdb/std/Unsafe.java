@@ -159,6 +159,20 @@ public final class Unsafe {
         return Unsafe.cas(array, Unsafe.LONG_OFFSET + (((long) index) << Unsafe.LONG_SCALE), expected, value);
     }
 
+    /**
+     * Charges {@code tracker} for {@code size} bytes a container already holds when the container
+     * binds it, so that the container's later tracker-aware free of those bytes stays balanced.
+     * The tracker the container drops keeps its charge: it may already serve another workload, so
+     * crediting it could underflow that workload's counter. The global counters do not change. A
+     * breach of the tracker's limit throws before anything is charged. A {@code null} tracker
+     * charges nothing.
+     */
+    public static void chargeHeldMemory(long size, int memoryTag, @Nullable MemoryTracker tracker) {
+        if (tracker != null && size > 0) {
+            tracker.reserve(size, memoryTag);
+        }
+    }
+
     public static void copyMemory(long srcAddress, long destAddress, long bytes) {
         UNSAFE.copyMemory(srcAddress, destAddress, bytes);
     }

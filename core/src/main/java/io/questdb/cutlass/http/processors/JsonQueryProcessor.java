@@ -240,7 +240,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             internalError(
                     context.getChunkedResponse(),
                     context.getLastRequestBytesSent(),
-                    e.getFlyweightMessage(),
                     getStatusCode(e),
                     e,
                     state,
@@ -254,7 +253,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             internalError(
                     context.getChunkedResponse(),
                     context.getLastRequestBytesSent(),
-                    e.getMessage(),
                     HTTP_INTERNAL_ERROR,
                     e,
                     state,
@@ -361,7 +359,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 internalError(
                         context.getChunkedResponse(),
                         context.getLastRequestBytesSent(),
-                        e.getFlyweightMessage(),
                         HTTP_INTERNAL_ERROR,
                         e,
                         state,
@@ -371,7 +368,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 internalError(
                         context.getChunkedResponse(),
                         context.getLastRequestBytesSent(),
-                        e.getFlyweightMessage(),
                         HTTP_BAD_REQUEST,
                         e,
                         state,
@@ -843,7 +839,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
     private void internalError(
             HttpChunkedResponse response,
             long bytesSent,
-            CharSequence message,
             int code,
             Throwable e,
             JsonQueryProcessorState state,
@@ -857,10 +852,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             errorMessage = ex.getFlyweightMessage();
         } else {
             errorMessagePosition = 0;
-            errorMessage = e.getMessage();
+            errorMessage = Misc.getMessageOrClassName(e);
         }
         if (bytesSent > 0) {
-            state.querySuffixWithError(response, code, message, errorMessagePosition);
+            state.querySuffixWithError(response, code, errorMessage, errorMessagePosition);
         } else {
             sendException(
                     state,

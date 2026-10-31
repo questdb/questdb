@@ -483,6 +483,46 @@ namespace questdb::aarch64 {
         return v;
     }
 
+    // !int32_lt_gt: true when either operand is NULL.
+    inline Gp int32_not_lt_gt(Compiler &c, const Gp &lhs, const Gp &rhs, bool gt, bool check_null) {
+        if (!check_null) {
+            return int32_le_ge(c, lhs, rhs, !gt, false);
+        }
+        Gp v = c.new_gp32();
+        Gp l = c.new_gp32();
+        Gp r = c.new_gp32();
+
+        cmp_imm32(c, lhs, INT_NULL);
+        c.cset(l, CondCode::kEQ);
+        cmp_imm32(c, rhs, INT_NULL);
+        c.cset(r, CondCode::kEQ);
+        c.orr(r, r, l);
+        c.cmp(lhs, rhs);
+        c.cset(v, gt ? CondCode::kLE : CondCode::kGE);
+        c.orr(v, v, r);
+        return v;
+    }
+
+    // !int32_le_ge: true when exactly one operand is NULL.
+    inline Gp int32_not_le_ge(Compiler &c, const Gp &lhs, const Gp &rhs, bool ge, bool check_null) {
+        if (!check_null) {
+            return int32_lt_gt(c, lhs, rhs, !ge, false);
+        }
+        Gp v = c.new_gp32();
+        Gp l = c.new_gp32();
+        Gp r = c.new_gp32();
+
+        cmp_imm32(c, lhs, INT_NULL);
+        c.cset(l, CondCode::kEQ);
+        cmp_imm32(c, rhs, INT_NULL);
+        c.cset(r, CondCode::kEQ);
+        c.eor(r, r, l);
+        c.cmp(lhs, rhs);
+        c.cset(v, ge ? CondCode::kLT : CondCode::kGT);
+        c.orr(v, v, r);
+        return v;
+    }
+
     inline Gp int32_lt(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         return int32_lt_gt(c, lhs, rhs, false, check_null);
     }
@@ -606,6 +646,50 @@ namespace questdb::aarch64 {
         return v;
     }
 
+    // !int64_lt_gt: true when either operand is NULL.
+    inline Gp int64_not_lt_gt(Compiler &c, const Gp &lhs, const Gp &rhs, bool gt, bool check_null) {
+        if (!check_null) {
+            return int64_le_ge(c, lhs, rhs, !gt, false);
+        }
+        Gp v = c.new_gp32();
+        Gp l = c.new_gp32();
+        Gp r = c.new_gp32();
+        Gp n = c.new_gp64();
+
+        c.mov(n, LONG_NULL);
+        c.cmp(lhs, n);
+        c.cset(l, CondCode::kEQ);
+        c.cmp(rhs, n);
+        c.cset(r, CondCode::kEQ);
+        c.orr(r, r, l);
+        c.cmp(lhs, rhs);
+        c.cset(v, gt ? CondCode::kLE : CondCode::kGE);
+        c.orr(v, v, r);
+        return v;
+    }
+
+    // !int64_le_ge: true when exactly one operand is NULL.
+    inline Gp int64_not_le_ge(Compiler &c, const Gp &lhs, const Gp &rhs, bool ge, bool check_null) {
+        if (!check_null) {
+            return int64_lt_gt(c, lhs, rhs, !ge, false);
+        }
+        Gp v = c.new_gp32();
+        Gp l = c.new_gp32();
+        Gp r = c.new_gp32();
+        Gp n = c.new_gp64();
+
+        c.mov(n, LONG_NULL);
+        c.cmp(lhs, n);
+        c.cset(l, CondCode::kEQ);
+        c.cmp(rhs, n);
+        c.cset(r, CondCode::kEQ);
+        c.eor(r, r, l);
+        c.cmp(lhs, rhs);
+        c.cset(v, ge ? CondCode::kLT : CondCode::kGT);
+        c.orr(v, v, r);
+        return v;
+    }
+
     inline Gp int64_lt(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         return int64_lt_gt(c, lhs, rhs, false, check_null);
     }
@@ -636,6 +720,21 @@ namespace questdb::aarch64 {
         return r;
     }
 
+    // !float_lt and !float_le: kPL and kHI also answer true for an unordered (NaN) fcmp.
+    inline Gp float_nlt(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp32();
+        c.fcmp(lhs, rhs);
+        c.cset(r, CondCode::kPL);
+        return r;
+    }
+
+    inline Gp float_nle(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp32();
+        c.fcmp(lhs, rhs);
+        c.cset(r, CondCode::kHI);
+        return r;
+    }
+
     inline Gp float_gt(Compiler &c, const Vec &lhs, const Vec &rhs) {
         Gp r = c.new_gp32();
         c.fcmp(lhs, rhs);
@@ -661,6 +760,21 @@ namespace questdb::aarch64 {
         Gp r = c.new_gp32();
         c.fcmp(lhs, rhs);
         c.cset(r, CondCode::kLS);  // ordered less or equal (false for NaN)
+        return r;
+    }
+
+    // !double_lt and !double_le: kPL and kHI also answer true for an unordered (NaN) fcmp.
+    inline Gp double_nlt(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp32();
+        c.fcmp(lhs, rhs);
+        c.cset(r, CondCode::kPL);
+        return r;
+    }
+
+    inline Gp double_nle(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp32();
+        c.fcmp(lhs, rhs);
+        c.cset(r, CondCode::kHI);
         return r;
     }
 

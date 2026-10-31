@@ -36,6 +36,11 @@ import io.questdb.std.ObjList;
 
 public class CastCharToShortFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.SHORT;
+    }
+
+    @Override
     public String getSignature() {
         return "cast(Ae)";
     }

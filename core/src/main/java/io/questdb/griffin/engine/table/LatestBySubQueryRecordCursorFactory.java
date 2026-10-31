@@ -70,6 +70,8 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         super(configuration, metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
 
         try {
+            this.recordCursorFactory = recordCursorFactory;
+            this.filter = filter;
             this.indexed = indexed;
             final IntHashSet symbolKeys;
             final PageFrameRecordCursor cursor;
@@ -88,8 +90,6 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
                 cursor = valueListCursor;
             }
             this.cursor = new PageFrameRecordCursorWrapper(cursor, symbolKeys);
-            this.recordCursorFactory = recordCursorFactory;
-            this.filter = filter;
             this.columnIndex = columnIndex;
             this.func = func;
         } catch (Throwable th) {

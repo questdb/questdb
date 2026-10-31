@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
@@ -53,6 +54,11 @@ public class CastDoubleToDecimalFunctionFactory implements FunctionFactory {
             case ColumnType.DECIMAL128 -> new Func128(arg, targetType, position);
             default -> new Func256(arg, targetType, position);
         };
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.castTarget(argTypes);
     }
 
     @Override

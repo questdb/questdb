@@ -120,9 +120,11 @@ public class LastNotNullDateGroupByFunction extends FirstDateGroupByFunction {
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        if (arg.getDate(record) != Numbers.LONG_NULL) {
+        long val = arg.getDate(record);
+        if (val != Numbers.LONG_NULL) {
             if (mapValue.getDate(valueIndex + 1) == Numbers.LONG_NULL || rowId > mapValue.getLong(valueIndex)) {
-                computeFirst(mapValue, record, rowId);
+                mapValue.putLong(valueIndex, rowId);
+                mapValue.putDate(valueIndex + 1, val);
             }
         }
     }

@@ -106,8 +106,8 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
         // expressible. It is not: Long.MIN_VALUE doubles as the timestamp NULL sentinel, so the
         // exact MIN epoch literal is rejected at parse time and every functional route hits the
         // NULL check before the adjustment. These are reachability sentinels: if literal
-        // parsing ever starts accepting the MIN epoch value, analyzeTimestampLess needs the
-        // same wrap guard as analyzeTimestampGreater, and this test will flag it.
+        // parsing ever starts accepting the MIN epoch value, IntervalExtractor needs the
+        // same wrap guard as IntervalExtractor, and this test will flag it.
         assertMemoryLeak(() -> {
             execute("create table x as (" +
                     "select timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
@@ -501,25 +501,25 @@ public class LtTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPreventVarcharImplicitCastingToTimestampInSubQuery() throws Exception {
+        // A VARCHAR left operand compares as text with a text scalar sub-query; neither side casts to TIMESTAMP.
         assertMemoryLeak(() -> {
-            execute("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
-                    ") timestamp(ts) partition by day");
-
-            assertQuery("select * from x where a < (select '1970-01-01T00:00:00.000000Z'::varchar)")
-                    .fails(22, "left operand must be a DOUBLE or FLOAT, found: VARCHAR");
+            execute("create table x (a varchar, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into x values ('0', '1970-01-01T00:00:00.000000Z'), ('zzz', '1970-01-01T00:00:01.000000Z')");
+            assertQuery("select a from x where a < (select '1970-01-01T00:00:00.000000Z'::varchar)")
+                    .noLeakCheck()
+                    .returns("a\n0\n");
         });
     }
 
     @Test
     public void testPreventStringImplicitCastingToTimestampInSubQuery() throws Exception {
-        // A STRING left operand re-routes to <(DC) exactly like VARCHAR: the DC guard rejects a
-        // non-DOUBLE/FLOAT left operand, so the error flips from "must be a TIMESTAMP" to
-        // "must be a DOUBLE or FLOAT". Lock the routing so it cannot silently regress.
+        // A STRING left operand compares as text with a text scalar sub-query; neither side casts to TIMESTAMP.
         assertMemoryLeak(() -> {
             execute("create table x (a string, ts timestamp) timestamp(ts) partition by day");
-            assertQuery("select * from x where a < (select '1970-01-01T00:00:00.000000Z'::string)")
-                    .fails(22, "left operand must be a DOUBLE or FLOAT, found: STRING");
+            execute("insert into x values ('0', '1970-01-01T00:00:00.000000Z'), ('zzz', '1970-01-01T00:00:01.000000Z')");
+            assertQuery("select a from x where a < (select '1970-01-01T00:00:00.000000Z'::string)")
+                    .noLeakCheck()
+                    .returns("a\n0\n");
         });
     }
 

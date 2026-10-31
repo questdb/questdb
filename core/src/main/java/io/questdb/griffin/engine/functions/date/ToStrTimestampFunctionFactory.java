@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -51,8 +52,20 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
     private static final FiberLocal<StringSink> tlSink = new FiberLocal<>(StringSink::new);
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.STRING;
+    }
+
+    @Override
     public String getSignature() {
         return "to_str(Ns)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        final Function var = args.getQuick(0);
+        timestampFormat(args.getQuick(1), argPositions, ColumnType.getTimestampDriver(ResultTypes.timestampAtLeastMicros(var.getType())));
+        return !var.isConstant();
     }
 
     @Override
@@ -63,14 +76,9 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        Function fmt = args.getQuick(1);
-        CharSequence format = fmt.getStrA(null);
-        if (format == null) {
-            throw SqlException.$(argPositions.getQuick(1), "format must not be null");
-        }
         Function var = args.getQuick(0);
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(var.getType()), ColumnType.TIMESTAMP_MICRO));
-        DateFormat timestampFormat = driver.getTimestampDateFormatFactory().get(fmt.getStrA(null));
+        DateFormat timestampFormat = timestampFormat(args.getQuick(1), argPositions, driver);
         if (var.isConstant()) {
             long value = var.getTimestamp(null);
             if (value == Numbers.LONG_NULL) {
@@ -80,10 +88,21 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
             StringSink sink = tlSink.get();
             sink.clear();
             timestampFormat.format(value, configuration.getDefaultDateLocale(), "Z", sink);
-            return new StrConstant(sink);
+            return StrConstant.fromValue(sink);
         }
 
         return new ToCharDateFFunc(args.getQuick(0), timestampFormat, configuration.getDefaultDateLocale());
+    }
+
+    /**
+     * The format a constant format argument spells for the driver; raises the error for a NULL format.
+     */
+    private static DateFormat timestampFormat(Function fmt, IntList argPositions, TimestampDriver driver) throws SqlException {
+        final CharSequence format = fmt.getStrA(null);
+        if (format == null) {
+            throw SqlException.$(argPositions.getQuick(1), "format must not be null");
+        }
+        return driver.getTimestampDateFormatFactory().get(format);
     }
 
     private static class ToCharDateFFunc extends StrFunction implements UnaryFunction {

@@ -460,7 +460,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewCursorFunctionClosedOnPostOptimiseRejection() throws Exception {
+    public void testCreateMatViewCursorFunctionClosedOnPostBindRejection() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
@@ -481,19 +481,17 @@ public class CreateMatViewTest extends AbstractCairoTest {
                                 sql.indexOf(functionName + "()"),
                                 "administrative function cannot be used in materialized view: " + functionName
                         );
-                // The optimiser instantiates a FROM/JOIN cursor function while compileMatViewQuery still
-                // allows non-deterministic functions, so FunctionParser's pre-check - which rejects before
-                // newInstance() - cannot fire here. A constructed factory therefore pins the rejection on the
-                // post-optimise backstop in SqlCompilerImpl.compileMatViewQuery, and the function name in the
-                // message can only come from SqlExecutionRequirements.getFunctionName(). That backstop throws
-                // after optimise() returned and before generation takes ownership of the factory, so the
-                // compile path itself has to close it - exactly once, since a second close would be a
-                // use-after-free.
+                // Binding instantiates a FROM/JOIN cursor function while CREATE MATERIALIZED VIEW defers the
+                // checks of the functions the view may not store, so FunctionResolver's check - which rejects
+                // before newInstance() - cannot fire here. A constructed factory therefore pins the rejection on
+                // SqlCompilerImpl.compileCreateSelect, which decides the deferred functions after binding
+                // returned and before generation takes ownership of the factory, so the compile path itself has
+                // to close it - exactly once, since a second close would be a use-after-free.
                 assertEquals(1, factories.size());
                 assertEquals(1, factories.getQuick(0).getCloseCount());
                 assertNull(getMatViewDefinition("test"));
 
-                // The next compile borrows the same pooled compiler and clears its optimiser state. A
+                // The next compile borrows the same pooled compiler and clears its planning state. A
                 // reference left behind in that state must not close the factory a second time.
                 execute("create table t2 (ts timestamp, v long) timestamp(ts) partition by day wal");
                 assertEquals(1, factories.getQuick(0).getCloseCount());
@@ -523,7 +521,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     assertEquals(1, factories.getQuick(i).getCloseCount());
                 }
 
-                // Clearing the pooled compiler's optimiser state on the next compile must not close the
+                // Clearing the pooled compiler's planning state on the next compile must not close the
                 // factories the compiled tree already owned and released.
                 execute("create table t2 (ts timestamp, v long) timestamp(ts) partition by day wal");
                 for (int i = 0, n = factories.size(); i < n; i++) {
@@ -536,7 +534,7 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateMatViewCursorFunctionFromViewClosedOnPostOptimiseRejection() throws Exception {
+    public void testCreateMatViewCursorFunctionFromViewClosedOnPostBindRejection() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
 
@@ -549,8 +547,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 final int viewFactoryCount = factories.size();
 
                 // A materialized view may use a function that discloses objects only where a SYSTEM ADMIN writes
-                // it, never through a regular view. The optimiser instantiates the function in the view's FROM
-                // clause, so the post-optimise backstop rejects it, and has to close it exactly once.
+                // it, never through a regular view. Binding instantiates the function in the view's FROM clause,
+                // so the check that runs after binding rejects it, and has to close it exactly once.
                 final String sql = "create materialized view test as (select t1.ts, count() from " + TABLE1 +
                         " t1 cross join v sample by 30s) partition by day";
                 assertQuery(sql)
@@ -625,6 +623,19 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewFailPeriodIntervalCombinedWithNestedOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String query = "select * from (select ts, avg(v) from " + TABLE1 + " sample by 30m align to calendar with offset '00:10')";
+            assertQuery("create materialized view test refresh period(sample by interval) as (" + query + ") partition by day")
+                    .noLeakCheck()
+                    .fails(55, "PERIOD (SAMPLE BY INTERVAL) can't be used with WITH OFFSET");
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewFailPeriodIntervalCombinedWithOffset() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -633,6 +644,20 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery("create materialized view test refresh period(sample by interval) as (" + query + ") partition by day")
                     .noLeakCheck()
                     .fails(40, "PERIOD (SAMPLE BY INTERVAL) can't be used with WITH OFFSET");
+        });
+    }
+
+    @Test
+    public void testCreateMatViewFailPeriodIntervalTooLong() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            for (String interval : new String[]{"25h", "1000000h", "35791395m", "24856d"}) {
+                assertQuery("create materialized view test refresh period(sample by interval) as (select ts, avg(v) from " + TABLE1
+                        + " sample by " + interval + ") partition by day")
+                        .noLeakCheck()
+                        .fails(40, "maximum supported length interval is 24 hours: " + interval);
+                assertNull(getMatViewDefinition("test"));
+            }
         });
     }
 
@@ -742,6 +767,207 @@ public class CreateMatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .fails(34, "TIMESTAMP column does not exist or not present in select list [name=ts]");
             assertNull(getMatViewDefinition("testView"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewGroupByTimestampFloorDefinition() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2, true, "timestamp_ns");
+            final String[] queries = {
+                    "select timestamp_floor_utc('1d', ts, null, '02:00', 'Europe/Berlin') bucket, avg(v) from " + TABLE1 + " group by 1",
+                    "select timestamp_floor('1h', ts, null, '00:30', null) bucket, avg(v) from " + TABLE1,
+                    "select timestamp_floor('1d', ts, null, null, 'UTC') bucket, avg(v) from " + TABLE1,
+                    "select timestamp_floor('1d', ts::timestamp) bucket, avg(v) from " + TABLE1,
+                    "select timestamp_floor('1d', ts::date) bucket, avg(v) from " + TABLE1 + " group by 1",
+                    "select timestamp_floor('1d', ts::timestamp_ns) bucket, avg(v) from " + TABLE2
+            };
+            final String[] timeZones = {"Europe/Berlin", null, "UTC", null, null, null};
+            final String[] offsets = {"02:00", "00:30", null, null, null, null};
+            for (int i = 0; i < queries.length; i++) {
+                final String baseTableName = i < queries.length - 1 ? TABLE1 : TABLE2;
+                final char unit = i == 1 ? 'h' : 'd';
+                execute("create materialized view test" + i + " as (" + queries[i] + ") partition by day");
+                assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test" + i, queries[i], baseTableName, 1, unit, timeZones[i], offsets[i]);
+                assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test" + i, queries[i], baseTableName, 1, unit, timeZones[i], offsets[i]);
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewGroupByTimestampFloorFromOrigin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('1d', ts, '2024-01-01T06:00:00Z') bucket, avg(v) from " + TABLE1,
+                    "'2024-01-01T06:00:00Z'",
+                    "timestamp_floor() in a materialized view does not support a from origin, use the offset argument"
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor_utc('1d', ts, 1000::timestamp, null, 'Europe/Berlin') bucket, avg(v) from " + TABLE1 + " group by 1",
+                    "::timestamp",
+                    "timestamp_floor_utc() in a materialized view does not support a from origin, use the offset argument"
+            );
+        });
+    }
+
+    @Test
+    public void testCreateMatViewGroupByTimestampFloorLocalTimeZone() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('1d', ts, null, null, 'Europe/Berlin') bucket, avg(v) from " + TABLE1 + " group by 1",
+                    "'Europe/Berlin'",
+                    "timestamp_floor() with a time zone floors to local time, use timestamp_floor_utc() in a materialized view"
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('1h', ts, null, '00:30', '+01:00') bucket, avg(v) from " + TABLE1,
+                    "'+01:00'",
+                    "timestamp_floor() with a time zone floors to local time, use timestamp_floor_utc() in a materialized view"
+            );
+        });
+    }
+
+    @Test
+    public void testCreateMatViewGroupByTimestampFloorNotDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            execute("create table t (ts timestamp, ts2 timestamp, v long) timestamp(ts) partition by day wal");
+            execute("create table tn (ts timestamp_ns, v long) timestamp(ts) partition by day wal");
+            final String message = "() in a materialized view must floor the designated timestamp of the base table";
+            assertTimestampFloorRejected("t", "select timestamp_floor('1d', ts2) bucket, avg(v) from t", "ts2", "timestamp_floor" + message);
+            assertTimestampFloorRejected("t", "select timestamp_floor_utc('1d', ts2, null, null, 'Europe/Berlin') bucket, avg(v) from t group by 1", "ts2", "timestamp_floor_utc" + message);
+            assertTimestampFloorRejected("t", "select timestamp_floor('500U', ts::date) bucket, avg(v) from t", "::date", "timestamp_floor" + message);
+            assertTimestampFloorRejected("t", "select timestamp_floor('1d', ts::timestamp_ns) bucket, avg(v) from t", "::timestamp_ns", "timestamp_floor" + message);
+            assertTimestampFloorRejected("tn", "select timestamp_floor('1d', ts::timestamp) bucket, avg(v) from tn", "::timestamp", "timestamp_floor" + message);
+            assertTimestampFloorRejected("tn", "select timestamp_floor('1d', ts::date) bucket, avg(v) from tn", "::date", "timestamp_floor" + message);
+            assertTimestampFloorRejected("t", "select timestamp_floor('1d', to_timezone(ts, 'Europe/Berlin')) bucket, avg(v) from t", "to_timezone", "timestamp_floor" + message);
+            assertTimestampFloorRejected("t", "select timestamp_floor('1d', ts) bucket, avg(v) from (select ts2 ts, v from t)", "ts) bucket", "timestamp_floor" + message);
+            assertTimestampFloorRejected("t", "select timestamp_floor('1h', p.ts) bucket, avg(t.v) from t join " + TABLE1 + " p on t.v = p.v", "p.ts", "timestamp_floor" + message);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewGroupByTimestampFloorOverNestedSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String hourly = "(select ts, sum(v) s from " + TABLE1 + " sample by 1h)";
+            final String daily = "(select ts, sum(v) s from " + TABLE1 + " sample by 1d)";
+            final String dailyByKey = "(select ts, k, sum(v) s from " + TABLE1 + " sample by 1d)";
+            final String[] queries = {
+                    "select timestamp_floor('1d', ts) ts, sum(s) s from " + hourly + " order by ts",
+                    "select timestamp_floor('1d', ts) ts, sum(s) s from " + hourly,
+                    "select timestamp_floor('1d', ts) ts, s from " + hourly + " order by ts",
+                    "select timestamp_floor('1d', ts) ts, sum(s) s from (select ts, sum(v) s from (select * from " + TABLE1 + " where v > 0) sample by 1h) order by ts",
+                    "select timestamp_floor('1M', ts) ts, sum(s) s from " + daily + " order by ts",
+                    "select timestamp_floor('1w', ts) ts, sum(s) s from " + daily + " order by ts",
+                    "select timestamp_floor('1y', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 3M) order by ts",
+                    "select timestamp_floor_utc('1h', ts, null, '00:30', null) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 30m) order by ts",
+                    "select timestamp_floor_utc('1d', ts, null, null, 'Europe/Berlin') ts, sum(s) s from (select ts, sum(v) s from " + TABLE1
+                            + " sample by 1h align to calendar time zone 'Europe/Berlin') order by ts",
+                    "select ts, sum(s) s from " + hourly,
+                    "select timestamp_floor('1h', ts) ts, k, sum(s) s from " + dailyByKey + " order by ts",
+                    "select timestamp_floor('1h', ts) ts, k, sum(s) s from " + dailyByKey + " group by 1, k",
+                    "select timestamp_floor('1h', ts) ts, s from " + daily + " order by ts",
+                    "select timestamp_floor('1h', ts) ts, sum(s) s from (select ts, sum(v) s from (select * from " + TABLE1 + " where v > 0) sample by 1d) order by ts",
+                    "select timestamp_floor('1d', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1h align to calendar time zone 'Europe/Berlin') order by ts",
+                    "select timestamp_floor('1h', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1d align to calendar time zone 'Europe/Berlin') order by ts",
+                    "select timestamp_floor('1d', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 30m align to calendar time zone 'Asia/Kolkata') order by ts"
+            };
+            final char[] units = {'d', 'd', 'd', 'd', 'M', 'w', 'y', 'h', 'd', 'h', 'd', 'd', 'd', 'd', 'd', 'd', 'd'};
+            final String[] timeZones = {null, null, null, null, null, null, null, null, "Europe/Berlin", null, null, null, null, null, null, "Europe/Berlin", null};
+            final String[] offsets = {null, null, null, null, null, null, null, "00:30", null, null, null, null, null, null, null, null, null};
+            for (int i = 0; i < queries.length; i++) {
+                execute("create materialized view test" + i + " as (" + queries[i] + ") partition by day");
+                assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test" + i, queries[i], TABLE1, 1, units[i], timeZones[i], offsets[i]);
+                assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test" + i, queries[i], TABLE1, 1, units[i], timeZones[i], offsets[i]);
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewGroupByTimestampFloorOverNestedSampleByRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String message = "the materialized view's sampling interval and a nested SAMPLE BY interval must have aligned buckets, one evenly dividing the other";
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('1d', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 5h) order by ts",
+                    "5h)",
+                    message
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('2h', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1h align to calendar with offset '00:30') order by ts",
+                    "1h align",
+                    message
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('1y', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 5M) order by ts",
+                    "5M)",
+                    message
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('1M', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1w) order by ts",
+                    "1w)",
+                    message
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('1d', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1h align to calendar time zone 'Asia/Kolkata') order by ts",
+                    "1h align",
+                    message
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor('1h', ts) ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1d align to calendar time zone 'Asia/Kolkata') order by ts",
+                    "1d align",
+                    message
+            );
+            for (String zone : new String[]{"Europe/Berlin", "Europe/Helsinki"}) {
+                assertTimestampFloorRejected(
+                        TABLE1,
+                        "select ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 2h align to calendar time zone '" + zone + "') "
+                                + "sample by 1d align to calendar time zone '" + zone + "'",
+                        "2h align",
+                        message
+                );
+            }
+            // Berlin skips 02:30 on the spring-forward day, so that day starts at the shift instant, 01:00Z, inside an hour from :30.
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor_utc('1d', ts, null, '02:30', 'Europe/Berlin') ts, sum(s) s from (select ts, sum(v) s from " + TABLE1
+                            + " sample by 1h align to calendar with offset '00:30') order by ts",
+                    "1h align",
+                    message
+            );
+        });
+    }
+
+    @Test
+    public void testCreateMatViewGroupByTimestampFloorRuntimeConstantArguments() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String message = "timestamp_floor_utc() in a materialized view requires a constant offset and time zone";
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor_utc('1d', ts, null, null, current_user()) bucket, avg(v) from " + TABLE1 + " group by 1",
+                    "current_user",
+                    message
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select timestamp_floor_utc('1d', ts, null, current_user(), 'Europe/Berlin') bucket, avg(v) from " + TABLE1,
+                    "current_user",
+                    message
+            );
         });
     }
 
@@ -1190,6 +1416,42 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewSampleByBindVariableTimeZone() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "Europe/Berlin");
+            final String query = "select ts, avg(v) from (select ts, v from " + TABLE1 + " where v > 0) sample by 1h align to calendar time zone $1";
+            assertQuery("create materialized view test as (" + query + ")")
+                    .noLeakCheck()
+                    .fails(137, "SAMPLE BY in a materialized view requires a constant offset and time zone");
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleByConstantTimeZoneAndOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String folded = "select ts, avg(v) from " + TABLE1 + " where ts in '2024' sample by 1d align to calendar " +
+                    "time zone concat('Europe/', 'Berlin') with offset concat('00:', '45')";
+            execute("create materialized view test1 as (" + folded + ") partition by day");
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test1", folded, TABLE1, 1, 'd', "Europe/Berlin", "00:45");
+            assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test1", folded, TABLE1, 1, 'd', "Europe/Berlin", "00:45");
+
+            final String nulls = "select ts, avg(v) from (select ts, v from " + TABLE1 + " where v > 0) sample by 1d align to calendar " +
+                    "time zone null with offset null";
+            execute("create materialized view test2 as (" + nulls + ") partition by day");
+            final MatViewDefinition definition = getMatViewDefinition("test2");
+            assertNotNull(definition);
+            assertNull(definition.getTimeZone());
+            assertEquals("00:00", definition.getTimeZoneOffset());
+        });
+    }
+
+    @Test
     public void testCreateMatViewSampleByFill() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -1268,6 +1530,135 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewSampleByNestedNonConstantAlignment() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String message = "SAMPLE BY in a materialized view requires a constant offset and time zone";
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "Europe/Berlin");
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select ts, sum(s) s from (select ts, sum(v) s from (select * from " + TABLE1 + " where v > 0) "
+                            + "sample by 1h align to calendar time zone $1) sample by 1d",
+                    "$1",
+                    message
+            );
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1h align to calendar time zone 'Asia/Kolkata') "
+                            + "sample by 1d align to calendar time zone $1",
+                    "$1",
+                    message
+            );
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "00:30");
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select ts, sum(s) s from (select ts, sum(v) s from (select * from " + TABLE1 + " where v > 0) "
+                            + "sample by 1h align to calendar with offset $1) sample by 1d",
+                    "$1",
+                    "non-deterministic function cannot be used in materialized view: coalesce"
+            );
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleByNestedSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String[] queries = {
+                    "select ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1h) sample by 1d",
+                    "select ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 1d) sample by 1h",
+                    "select ts, sum(s) s from (select ts, sum(v) s from (select * from " + TABLE1 + " where v > 0) sample by 1d) sample by 1h"
+            };
+            for (int i = 0; i < queries.length; i++) {
+                execute("create materialized view test" + i + " as (" + queries[i] + ") partition by day");
+                assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test" + i, queries[i], TABLE1, 1, 'd', null, null);
+            }
+            assertTimestampFloorRejected(
+                    TABLE1,
+                    "select ts, sum(s) s from (select ts, sum(v) s from " + TABLE1 + " sample by 5h) sample by 1d",
+                    "5h)",
+                    "the materialized view's sampling interval and a nested SAMPLE BY interval must have aligned buckets, one evenly dividing the other"
+            );
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleByNestedTimeZoneWithOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final String bucket = "select * from (select ts, avg(v) from " + TABLE1 + " where ts in '2024' " +
+                    "sample by 1h align to calendar time zone 'Europe/Berlin' with offset '00:15')";
+            execute("create materialized view test1 as (" + bucket + ") partition by day");
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test1", bucket, TABLE1, 1, 'h', "Europe/Berlin", "00:15");
+            assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test1", bucket, TABLE1, 1, 'h', "Europe/Berlin", "00:15");
+
+            final String cursor = "select * from (select ts, avg(v) from (select ts, v from " + TABLE1 + " where v > 0) " +
+                    "sample by 1h align to calendar time zone 'Europe/Berlin' with offset '00:30')";
+            execute("create materialized view test2 as (" + cursor + ") partition by day");
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test2", cursor, TABLE1, 1, 'h', "Europe/Berlin", "00:30");
+            assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test2", cursor, TABLE1, 1, 'h', "Europe/Berlin", "00:30");
+
+            final String period = "select * from (select ts, avg(v) from " + TABLE1 + " sample by 1h align to calendar time zone 'Europe/Berlin')";
+            execute("create materialized view test3 refresh period(sample by interval) as (" + period + ") partition by day");
+            final MatViewDefinition definition = getMatViewDefinition("test3");
+            assertNotNull(definition);
+            assertEquals("Europe/Berlin", definition.getTimeZone());
+            assertEquals("Europe/Berlin", definition.getTimerTimeZone());
+            assertEquals(1, definition.getPeriodLength());
+            assertEquals('h', definition.getPeriodLengthUnit());
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleByOrderedOutput() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String desc = "SELECT ts, k, avg(v) avg_v FROM " + TABLE1 + " SAMPLE BY 30s ORDER BY ts DESC";
+            final String aliasDesc = "SELECT ts AS bucket, k, avg(v) avg_v FROM " + TABLE1 + " SAMPLE BY 30s ORDER BY bucket DESC";
+            final String byKey = "SELECT ts, k, avg(v) avg_v FROM " + TABLE1 + " SAMPLE BY 30s ORDER BY k";
+            final String outerDesc = "SELECT * FROM (SELECT ts, k, avg(v) avg_v FROM " + TABLE1 + " SAMPLE BY 30s) ORDER BY ts DESC";
+            execute("CREATE MATERIALIZED VIEW desc_day AS (" + desc + ") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW desc_default AS (" + desc + ")");
+            execute("CREATE MATERIALIZED VIEW alias_desc AS (" + aliasDesc + ") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW by_key AS (" + byKey + ")");
+            execute("CREATE MATERIALIZED VIEW outer_desc AS (" + outerDesc + ") PARTITION BY DAY");
+
+            assertQuery0("ts\tk\tavg_v\n", "desc_day", "ts");
+            assertQuery0("ts\tk\tavg_v\n", "desc_default", "ts");
+            assertQuery0("bucket\tk\tavg_v\n", "alias_desc", "bucket");
+            assertQuery0("ts\tk\tavg_v\n", "by_key", "ts");
+            assertQuery0("ts\tk\tavg_v\n", "outer_desc", "ts");
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("desc_default"))) {
+                assertEquals(PartitionBy.DAY, metadata.getPartitionBy());
+            }
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "desc_day", desc, TABLE1, 30, 's', null, null);
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "desc_default", desc, TABLE1, 30, 's', null, null);
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "alias_desc", aliasDesc, TABLE1, 30, 's', null, null);
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "by_key", byKey, TABLE1, 30, 's', null, null);
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "outer_desc", outerDesc, TABLE1, 30, 's', null, null);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleBySubQueryOrderByTimestampDesc() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "SELECT ts, k, avg(v) avg_v FROM (SELECT * FROM " + TABLE1 + " WHERE v > 0) SAMPLE BY 30s ORDER BY ts DESC";
+            assertQuery("CREATE MATERIALIZED VIEW test AS (" + query + ") PARTITION BY DAY")
+                    .noLeakCheck()
+                    .fails(34, "materialized view query is required to have designated timestamp");
+            assertNull(getMatViewDefinition("test"));
+            assertQuery("CREATE MATERIALIZED VIEW test AS (" + query + ")")
+                    .noLeakCheck()
+                    .fails(34, "materialized view query is required to have designated timestamp");
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewSampleByTimeZone() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -1310,6 +1701,16 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertQuery0("ts\tavg\n", "test", "ts");
             assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 1, 'd', tz, offset);
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 1, 'd', tz, offset);
+        });
+    }
+
+    @Test
+    public void testCreateMatViewSampleByUnderscoreStride() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            final String query = "select ts, avg(v) from " + TABLE1 + " sample by 1_000s";
+            execute("create materialized view test as (" + query + ") partition by day");
+            assertMatViewDefinition(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 1000, 's', null, null);
         });
     }
 
@@ -2727,6 +3128,14 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 .expectSize()
                 .noLeakCheck()
                 .returns(expected);
+    }
+
+    private void assertTimestampFloorRejected(String baseTableName, String query, String offender, String message) throws Exception {
+        final String prefix = "create materialized view test with base " + baseTableName + " as (";
+        assertQuery(prefix + query + ") partition by day")
+                .noLeakCheck()
+                .fails(prefix.length() + query.indexOf(offender), message);
+        assertNull(getMatViewDefinition("test"));
     }
 
     private void createTable(String tableName, boolean walEnabled, String timestampType) throws SqlException {

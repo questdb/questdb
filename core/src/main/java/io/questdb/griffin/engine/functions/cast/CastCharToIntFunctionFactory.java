@@ -36,6 +36,11 @@ import io.questdb.std.ObjList;
 
 public class CastCharToIntFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
+
+    @Override
     public String getSignature() {
         return "cast(Ai)";
     }

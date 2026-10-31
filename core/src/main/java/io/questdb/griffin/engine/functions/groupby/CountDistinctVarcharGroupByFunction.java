@@ -148,6 +148,18 @@ public class CountDistinctVarcharGroupByFunction extends LongFunction implements
     }
 
     @Override
+    public void recomputeFirst(MapValue mapValue, Record record, long rowId) {
+        final int index = mapValue.getInt(valueIndex + 1);
+        if (index < 0) {
+            computeFirst(mapValue, record, rowId);
+            return;
+        }
+        sets.getQuick(index).clear();
+        mapValue.putLong(valueIndex, 0L);
+        computeNext(mapValue, record, rowId);
+    }
+
+    @Override
     public void setEmpty(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0L);
     }
@@ -160,6 +172,7 @@ public class CountDistinctVarcharGroupByFunction extends LongFunction implements
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putInt(valueIndex + 1, -1);
     }
 
     @Override

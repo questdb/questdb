@@ -54,9 +54,9 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
         this.offset = offset;
         this.unit = unit;
         // add()/dateadd use the lowercase microsecond unit while ceil/floor use the uppercase one
-        this.addUnit = unit == 'U' ? 'u' : unit;
+        this.addUnit = addUnit(unit);
         floor = this.timestampDriver.getTimestampFloorWithOffsetMethod(unit);
-        this.isExactlyInvertible = isExactlyInvertible();
+        this.isExactlyInvertible = isExactlyInvertible(timestampDriver, floor, unit, addUnit, stride, offset);
     }
 
     @Override
@@ -77,6 +77,34 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
 
     @Override
     public int invertTimestampInterval(Interval io) {
+        return invert(io, timestampDriver, floor, addUnit, stride, offset, isExactlyInvertible);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val(name).val("('");
+        sink.val(stride);
+        sink.val(unit).val("',");
+        sink.val(getArg());
+        if (offset != 0) {
+            sink.val(",'").val(timestampDriver.toMSecString(offset)).val('\'');
+        }
+        sink.val(')');
+    }
+
+    private static char addUnit(char unit) {
+        return unit == 'U' ? 'u' : unit;
+    }
+
+    private static int invert(
+            Interval io,
+            TimestampDriver timestampDriver,
+            TimestampDriver.TimestampFloorWithOffsetMethod floor,
+            char addUnit,
+            int stride,
+            long offset,
+            boolean isExactlyInvertible
+    ) {
         if (!isExactlyInvertible) {
             return NONE;
         }
@@ -113,26 +141,27 @@ public final class TimestampFloorOffsetFunction extends TimestampFunction implem
         return EXACT;
     }
 
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val(name).val("('");
-        sink.val(stride);
-        sink.val(unit).val("',");
-        sink.val(getArg());
-        if (offset != 0) {
-            sink.val(",'").val(timestampDriver.toMSecString(offset)).val('\'');
-        }
-        sink.val(')');
-    }
-
     // EXACT only when add() reproduces the floor's bucket boundaries; a sub-resolution
     // stride (e.g. nanoseconds on a micro column) does not, and must stay a row filter.
-    private boolean isExactlyInvertible() {
+    private static boolean isExactlyInvertible(
+            TimestampDriver timestampDriver,
+            TimestampDriver.TimestampFloorWithOffsetMethod floor,
+            char unit,
+            char addUnit,
+            int stride,
+            long offset
+    ) {
         if (!CommonUtils.isFixedAlignedUnit(unit)) {
             return false;
         }
         final long b0 = floor.floor(offset, stride, offset);
         final long next = timestampDriver.add(b0, addUnit, stride);
         return next > b0 && floor.floor(next, stride, offset) == next && floor.floor(next - 1, stride, offset) == b0;
+    }
+
+    static int invert(Interval io, TimestampDriver timestampDriver, char unit, int stride, long offset) {
+        final TimestampDriver.TimestampFloorWithOffsetMethod floor = timestampDriver.getTimestampFloorWithOffsetMethod(unit);
+        final char addUnit = addUnit(unit);
+        return invert(io, timestampDriver, floor, addUnit, stride, offset, isExactlyInvertible(timestampDriver, floor, unit, addUnit, stride, offset));
     }
 }

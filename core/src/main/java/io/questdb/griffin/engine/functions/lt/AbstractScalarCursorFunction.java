@@ -33,7 +33,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.ComparisonFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
 
 /**
@@ -53,7 +53,7 @@ import io.questdb.griffin.engine.functions.ScalarSubQueryUtils;
  * The per-row {@link #getBool(Record)} stays specialized in the concrete subclasses, so the hot
  * path is unaffected by this sharing.
  */
-public abstract class AbstractScalarCursorFunction extends NegatableBooleanFunction implements BinaryFunction {
+public abstract class AbstractScalarCursorFunction extends ComparisonFunction implements BinaryFunction {
     protected final Function leftFunc;
     private final RecordCursorFactory factory;
     private final Function rightFunc;
@@ -113,7 +113,7 @@ public abstract class AbstractScalarCursorFunction extends NegatableBooleanFunct
     }
 
     @Override
-    public void toPlan(PlanSink sink) {
+    protected void toComparisonPlan(PlanSink sink) {
         sink.val(leftFunc);
         if (leftFunc.isThreadSafe()) {
             sink.val(" [thread-safe]");

@@ -274,4 +274,28 @@ public class IntCursorFunctionFactoryTest extends AbstractCursorFunctionFactoryT
         assertParallelAsyncFilterAndKeyedSumLessThanBehavior("int");
     }
 
+    @Test
+    public void testNotNegatesOrderingComparisons() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, i INT)");
+            execute("INSERT INTO t VALUES (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, NULL)");
+            assertQuery("""
+                    SELECT id, NOT (i < (SELECT max(i) - 2 FROM t)) n_lt, NOT (i > (SELECT min(i) + 1 FROM t)) n_gt,
+                        NOT (i <= (SELECT max(i) - 2 FROM t)) n_le, NOT (i >= (SELECT min(i) + 1 FROM t)) n_ge,
+                        NOT (i < (SELECT i FROM t WHERE id = 6)) n_null
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tn_lt\tn_gt\tn_le\tn_ge\tn_null
+                            1\tfalse\ttrue\tfalse\ttrue\ttrue
+                            2\tfalse\ttrue\tfalse\tfalse\ttrue
+                            3\ttrue\tfalse\tfalse\tfalse\ttrue
+                            4\ttrue\tfalse\ttrue\tfalse\ttrue
+                            5\ttrue\tfalse\ttrue\tfalse\ttrue
+                            6\ttrue\ttrue\ttrue\ttrue\ttrue
+                            """);
+        });
+    }
 }

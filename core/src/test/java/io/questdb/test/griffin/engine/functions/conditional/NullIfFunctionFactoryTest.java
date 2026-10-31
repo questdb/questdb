@@ -219,6 +219,21 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4WithCharOperand() throws Exception {
+        assertQuery("SELECT ip, c, nullif(ip, c) n, nullif(ip, 'a') k FROM x")
+                .ddl("CREATE TABLE x (ip IPV4, c CHAR)",
+                        "INSERT INTO x VALUES ('1.2.3.4', 'a'), ('1.2.3.4', null), (null, 'a'), (null, null)")
+                .expectSize()
+                .returns("""
+                        ip\tc\tn\tk
+                        1.2.3.4\ta\t1.2.3.4\t1.2.3.4
+                        1.2.3.4\t\t1.2.3.4\t1.2.3.4
+                        \ta\t\t
+                        \t\t\t
+                        """);
+    }
+
+    @Test
     public void testIntConstNull() throws Exception {
         assertQuery("select nullif(null,5) nullif1, nullif(5,null) nullif2")
                 .expectSize()

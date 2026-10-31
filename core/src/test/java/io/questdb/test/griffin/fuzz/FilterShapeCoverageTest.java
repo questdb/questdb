@@ -677,13 +677,11 @@ public class FilterShapeCoverageTest {
      * two-row IPv4 table:
      * <ul>
      *     <li>{@code WHERE c_ip < c_ip} plans as "Empty table".
-     *     {@code WhereClauseParser.analyzeLess} finds
-     *     {@code nodesEqual(lhs, rhs)} on a STRICT operator, sets the model's
-     *     intrinsic value to FALSE, and no filter is compiled at all -- with or
+     *     {@code ScanFactoryGenerator.foldSelfComparisons} folds a STRICT
+     *     self-comparison to FALSE, and no filter is compiled at all -- with or
      *     without a sibling conjunct beside it;</li>
-     *     <li>{@code WHERE c_ip <= c_ip} does reach the compiled filter. The
-     *     non-strict arm records a tautology and leaves the node in the
-     *     residual. So does a self-comparison under an OR, or one nested inside
+     *     <li>{@code WHERE c_ip <= c_ip} does reach the compiled filter: the
+     *     fold leaves a non-strict self-comparison in the residual. So does a self-comparison under an OR, or one nested inside
      *     another comparison.</li>
      * </ul>
      * What every surviving case has in common is that it is constant-valued for

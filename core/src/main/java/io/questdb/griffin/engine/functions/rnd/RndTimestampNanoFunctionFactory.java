@@ -40,6 +40,11 @@ public class RndTimestampNanoFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = NAME + "(nni)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.TIMESTAMP_NANO;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

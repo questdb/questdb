@@ -292,7 +292,6 @@ public class ViewCycleTest extends AbstractViewTest {
             // Verify the view works
             assertQuery(VIEW1)
                     .noLeakCheck()
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
                             ts\tk\tv

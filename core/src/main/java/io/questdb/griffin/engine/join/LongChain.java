@@ -86,6 +86,7 @@ public class LongChain implements Closeable, Mutable, Reopenable {
     @Override
     public void clear() {
         heapPos = heapStart;
+        cursor.forgetCount();
     }
 
     @Override
@@ -95,6 +96,7 @@ public class LongChain implements Closeable, Mutable, Reopenable {
             heapLimit = heapPos = 0;
             heapSize = 0;
         }
+        cursor.forgetCount();
     }
 
     public Cursor getCursor(int tailOffset) {
@@ -133,7 +135,24 @@ public class LongChain implements Closeable, Mutable, Reopenable {
     }
 
     public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        if (memoryTracker != this.memoryTracker && heapStart != 0) {
+            Unsafe.chargeHeldMemory(heapSize, MemoryTag.NATIVE_DEFAULT, memoryTracker);
+        }
         this.memoryTracker = memoryTracker;
+    }
+
+    /**
+     * The value the chain put {@code index}-th since it was last cleared, whichever chain holds it.
+     */
+    public long valueAt(long index) {
+        return Unsafe.getLong(heapStart + index * CHAIN_VALUE_SIZE);
+    }
+
+    /**
+     * The number of values the chain put since it was last cleared, see {@link #valueAt}.
+     */
+    public long valueCount() {
+        return (heapPos - heapStart) / CHAIN_VALUE_SIZE;
     }
 
     private void checkCapacity() {
@@ -184,6 +203,11 @@ public class LongChain implements Closeable, Mutable, Reopenable {
     }
 
     public class Cursor {
+        // The position remaining() last counted from and the values it counted there. A value never changes its
+        // parent once put, so the count holds until clear() or close() lets the heap reuse the position, and a
+        // skip() over all of them that follows a count does not walk them again.
+        private int countedOffset = CHAIN_END;
+        private long countedValues;
         private int nextOffset;
 
         public boolean hasNext() {
@@ -199,8 +223,49 @@ public class LongChain implements Closeable, Mutable, Reopenable {
             return value;
         }
 
+        /**
+         * The values the cursor has not returned, counted without moving the cursor.
+         */
+        public long remaining() {
+            if (nextOffset != countedOffset) {
+                long count = 0;
+                for (int offset = nextOffset; offset != CHAIN_END; count++) {
+                    offset = parentOf(offset);
+                }
+                countedOffset = nextOffset;
+                countedValues = count;
+            }
+            return countedValues;
+        }
+
+        /**
+         * Moves the cursor past at most {@code count} values without reading them.
+         *
+         * @return the number of values the cursor moved past
+         */
+        public long skip(long count) {
+            if (nextOffset == countedOffset && countedValues <= count) {
+                nextOffset = CHAIN_END;
+                return countedValues;
+            }
+            long skipped = 0;
+            for (; skipped < count && nextOffset != CHAIN_END; skipped++) {
+                nextOffset = parentOf(nextOffset);
+            }
+            return skipped;
+        }
+
         void of(int startOffset) {
             this.nextOffset = startOffset;
+        }
+
+        private void forgetCount() {
+            countedOffset = CHAIN_END;
+            countedValues = 0;
+        }
+
+        private int parentOf(int offset) {
+            return Unsafe.getInt(heapStart + CompressedOffsets.uncompressAligned4(offset) + 8);
         }
     }
 }

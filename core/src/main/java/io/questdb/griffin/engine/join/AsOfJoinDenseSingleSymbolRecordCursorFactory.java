@@ -28,14 +28,16 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.model.JoinContext;
+import io.questdb.griffin.Plannable;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import org.jetbrains.annotations.Nullable;
@@ -52,10 +54,11 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
             int columnSplit,
             int slaveSymbolColumnIndex,
             SymbolJoinKeyMapping joinKeyMapping,
-            JoinContext joinContext,
-            long toleranceInterval
+            Plannable joinContext,
+            long toleranceInterval,
+            @Nullable Function keyCheck
     ) {
-        super(metadata, masterFactory, slaveFactory, joinContext, toleranceInterval);
+        super(metadata, masterFactory, slaveFactory, joinContext, toleranceInterval, keyCheck);
         this.joinKeyMapping = joinKeyMapping;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         Map fwdScanKeyToRowId = null;
@@ -71,12 +74,13 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
                     masterFactory.getMetadata().getTimestampIndex(),
                     masterFactory.getMetadata().getTimestampType(),
                     slaveFactory.getMetadata().getTimestampIndex(),
-                    slaveFactory.getMetadata().getTimestampType()
+                    slaveFactory.getMetadata().getTimestampType(),
+                    keyCheck
             );
         } catch (Throwable th) {
-            Misc.free(bwdScanKeyToRowId);
-            Misc.free(fwdScanKeyToRowId);
-            close();
+            Misc.free(bwdScanKeyToRowId, th);
+            Misc.free(fwdScanKeyToRowId, th);
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -97,7 +101,8 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
                 int masterTimestampIndex,
                 int masterTimestampType,
                 int slaveTimestampIndex,
-                int slaveTimestampType
+                int slaveTimestampType,
+                @Nullable Function keyCheck
         ) {
             super(
                     columnSplit,
@@ -107,7 +112,8 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
                     masterTimestampIndex,
                     masterTimestampType,
                     slaveTimestampIndex,
-                    slaveTimestampType
+                    slaveTimestampType,
+                    keyCheck
             );
         }
 
@@ -118,10 +124,10 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
         }
 
         @Override
-        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             // Reopen the symbol key cache before super.of() adopts the cursors so an open-time breach frees it exactly once.
             joinKeyMapping.reopen();
-            super.of(masterCursor, slaveCursor, circuitBreaker);
+            super.of(masterCursor, slaveCursor, executionContext);
             joinKeyMapping.of(slaveCursor);
         }
 

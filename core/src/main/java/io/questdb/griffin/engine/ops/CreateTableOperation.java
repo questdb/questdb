@@ -66,6 +66,12 @@ public interface CreateTableOperation extends TableStructure, Operation {
 
     boolean ignoreIfExists();
 
+    /**
+     * Whether the table requires the designated timestamp of its SELECT: it has no TIMESTAMP clause of its own and
+     * is not an unpartitioned parquet export table.
+     */
+    boolean isTimestampRequired();
+
     boolean needRegister();
 
     void setCopyDataProgressReporter(CopyDataProgressReporter reporter);

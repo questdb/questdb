@@ -36,6 +36,30 @@ import java.util.Map;
 public class LowerCaseCharSequenceObjHashMapTest {
 
     @Test
+    public void testClear() {
+        final LowerCaseCharSequenceObjHashMap<Integer> map = new LowerCaseCharSequenceObjHashMap<>();
+        map.clear();
+        Assert.assertEquals(0, map.size());
+        for (int i = 0; i < 100; i++) {
+            map.put("k" + i, i);
+        }
+        map.clear();
+        Assert.assertEquals(0, map.size());
+        Assert.assertEquals(0, map.keys().size());
+        for (int i = 0; i < 100; i++) {
+            Assert.assertNull(map.get("K" + i));
+        }
+        map.put("a", 1);
+        map.remove("A");
+        map.clear();
+        map.clear();
+        Assert.assertNull(map.get("a"));
+        map.put("A", 2);
+        Assert.assertEquals(Integer.valueOf(2), map.get("a"));
+        Assert.assertEquals(1, map.size());
+    }
+
+    @Test
     public void testPutIfAbsent() {
         final LowerCaseCharSequenceObjHashMap<Integer> lowerCaseMap = new LowerCaseCharSequenceObjHashMap<>();
         lowerCaseMap.put("a", 1);

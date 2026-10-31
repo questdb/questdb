@@ -24,12 +24,14 @@
 
 package io.questdb.cairo.view;
 
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileWriter;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentHashMap;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
@@ -37,6 +39,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.function.BiConsumer;
@@ -50,6 +53,7 @@ public class ViewGraph implements Mutable {
     private static final BiConsumer<ObjList<TableToken>, TableToken> ADD = ObjList::add;
     private static final Function<CharSequence, ViewDependencyList> CREATE_DEPENDENCY_LIST = name -> new ViewDependencyList();
     private static final BiConsumer<ObjList<TableToken>, TableToken> REMOVE = ObjList::remove;
+    private static final FiberLocal<LowerCaseCharSequenceHashSet> tlVisitedViews = new FiberLocal<>(LowerCaseCharSequenceHashSet::new);
     private final ConcurrentHashMap<ViewDefinition> definitionsByTableDirName = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<ViewDependencyList> dependentViewsByTableName = new ConcurrentHashMap<>(false);
 
@@ -72,6 +76,19 @@ public class ViewGraph implements Mutable {
         dependentViewsByTableName.clear();
     }
 
+    /**
+     * Adds to the sink the columns of the table that the view reads, directly or through the views it reads as they
+     * are defined now, which is what the view lends its authority to. A view records what it reads through another
+     * view as of its own CREATE VIEW or ALTER VIEW, which a later ALTER VIEW of the other view does not update, so the
+     * dependencies of the views it reads count as they are now. A recorded {@code *} stands for every column: it
+     * lands in the sink as {@code *} and ends the walk.
+     */
+    public void collectReadColumns(CairoEngine engine, ViewDefinition view, CharSequence tableName, LowerCaseCharSequenceHashSet sink) {
+        final LowerCaseCharSequenceHashSet visitedViews = tlVisitedViews.get();
+        visitedViews.clear();
+        walkReads(engine, view, tableName, sink, visitedViews);
+    }
+
     public void getDependentViews(TableToken tableToken, ObjList<TableToken> sink) {
         final ViewDependencyList list = getOrCreateDependentViews(tableToken.getTableName());
         final ReadOnlyObjList<TableToken> dependentViews = list.lockForRead();
@@ -90,6 +107,16 @@ public class ViewGraph implements Mutable {
         for (ViewDefinition viewDefinition : definitionsByTableDirName.values()) {
             sink.add(viewDefinition.getViewToken());
         }
+    }
+
+    /**
+     * Whether the view reads the table, directly or through the views it reads as they are defined now, see
+     * {@link #collectReadColumns}.
+     */
+    public boolean readsTable(CairoEngine engine, ViewDefinition view, CharSequence tableName) {
+        final LowerCaseCharSequenceHashSet visitedViews = tlVisitedViews.get();
+        visitedViews.clear();
+        return walkReads(engine, view, tableName, null, visitedViews);
     }
 
     public synchronized void removeView(TableToken viewToken) {
@@ -147,7 +174,7 @@ public class ViewGraph implements Mutable {
      * @param model     the query model containing referenced views
      * @throws CairoException if a circular dependency would be created
      */
-    public void validateNoCycle(TableToken viewToken, IQueryModel model) {
+    public void validateNoCycle(TableToken viewToken, QueryModel model) {
         final ObjList<ViewDefinition> referencedViews = model.getReferencedViews();
 
         for (int i = 0, n = referencedViews.size(); i < n; i++) {
@@ -173,6 +200,11 @@ public class ViewGraph implements Mutable {
         return dependentViewsByTableName.computeIfAbsent(tableName, CREATE_DEPENDENCY_LIST);
     }
 
+    private @Nullable ViewDefinition innerView(CairoEngine engine, CharSequence name) {
+        final TableToken token = engine.getTableTokenIfExists(name);
+        return token != null && token.isView() ? getViewDefinition(token) : null;
+    }
+
     private void updateDependencies(TableToken viewToken, ViewDefinition viewDefinition, BiConsumer<ObjList<TableToken>, TableToken> operation) {
         final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = viewDefinition.getDependencies();
         final ObjList<CharSequence> tableNames = dependencies.keys();
@@ -185,5 +217,47 @@ public class ViewGraph implements Mutable {
                 list.unlockAfterWrite();
             }
         }
+    }
+
+    /**
+     * Walks what the view reads of the table, directly or through the views it reads. Without a sink, returns true once
+     * the view reads the table at all. With one, adds the columns it reads to the sink, and returns true once the sink
+     * holds {@code *}.
+     */
+    private boolean walkReads(
+            CairoEngine engine,
+            ViewDefinition view,
+            CharSequence tableName,
+            @Nullable LowerCaseCharSequenceHashSet sink,
+            LowerCaseCharSequenceHashSet visitedViews
+    ) {
+        if (!visitedViews.add(view.getViewToken().getDirName())) {
+            return false;
+        }
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = view.getDependencies();
+        final LowerCaseCharSequenceHashSet columns = dependencies.get(tableName);
+        if (columns != null) {
+            if (sink == null) {
+                return true;
+            }
+            if (columns.contains("*")) {
+                sink.add("*");
+                return true;
+            }
+            for (int i = 0, n = columns.getKeyCount(); i < n; i++) {
+                final CharSequence column = columns.getKey(i);
+                if (column != null) {
+                    sink.add(column);
+                }
+            }
+        }
+        final ObjList<CharSequence> names = dependencies.keys();
+        for (int i = 0, n = names.size(); i < n; i++) {
+            final ViewDefinition innerView = innerView(engine, names.getQuick(i));
+            if (innerView != null && walkReads(engine, innerView, tableName, sink, visitedViews)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

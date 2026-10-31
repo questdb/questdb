@@ -680,7 +680,7 @@ public class LiveViewCheckpointFunctionCompilerTest extends AbstractCairoTest {
                 );
             }
 
-            // SqlOptimiser.normalizeWindowFrame() negates a Long.MAX_VALUE PRECEDING bound
+            // SqlUtil.normalizeWindowFrame() negates a Long.MAX_VALUE PRECEDING bound
             // into Long.MIN_VALUE, the encoding an unbounded look-behind uses, which leaves
             // the frame ending below its own start. The window layer answers that with a
             // constant null function carrying no descriptor at all, so the shape never

@@ -45,7 +45,16 @@ public enum ParquetDecodeHint {
      * declaration raises the cap to the declared frame count, since
      * row-filtered entries retain only the declared rows.
      */
-    SCATTERED(0, 256);
+    SCATTERED(0, 256),
+    /**
+     * Walk that passes over the same frames in the same order again and again
+     * (a read ordered by keys across page frames): the budget and the buffer cap
+     * of SCATTERED. A full cache recycles the most recently decoded unpinned
+     * buffer, so the frames the walk reaches first stay decoded across passes
+     * and each pass decodes only the frames past them, where evicting the least
+     * recently used buffer would decode every frame on every pass.
+     */
+    CYCLIC(0, 256);
 
     final int maxCachedBuffers;
     private final int rightShift;

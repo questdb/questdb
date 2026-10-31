@@ -33,17 +33,37 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.TimestampPrecisionUse;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.ObjList;
 
-public class ExtractFromTimestampFunctionFactory implements FunctionFactory {
+public class ExtractFromTimestampFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
 
     @Override
     public String getSignature() {
         return "extract(sN)";
+    }
+
+    @Override
+    public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
+        return SqlKeywords.isYearKeyword(arguments.constant(call.argumentAt(0)).getStrA(null)) ? 1 : -1;
+    }
+
+    @Override
+    public TimestampPrecisionUse getTimestampPrecisionUse(ExpressionNode call) {
+        return TimestampPrecisionUse.INVARIANT;
+    }
+
+    @Override
+    public int invertTimestampInterval(FunctionExpression call, Interval io, boolean isTimestampArgMonotonic, ConstantArguments arguments) {
+        return YearFunctionFactory.YearFunction.invert(io, ColumnType.getTimestampDriver(ColumnType.getTimestampType(call.argumentAt(1).getDataType())));
     }
 
     @Override

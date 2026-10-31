@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.sql;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
@@ -36,6 +37,7 @@ import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
@@ -66,12 +68,40 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
      * Notifies each function in the list that the cursor has closed, so it releases the
      * cursor-scoped state its init() built. The counterpart of
      * {@link #init(ObjList, SymbolTableSource, SqlExecutionContext, Function)}: whoever
-     * initializes a function list owns this call too.
+     * initializes a function list owns this call too. It notifies every function, skipping null
+     * slots, and then rethrows the first failure with the later ones suppressed.
      */
-    static void cursorClosed(ObjList<? extends Function> functions) {
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            functions.getQuick(i).cursorClosed();
+    static void cursorClosed(@Nullable ObjList<? extends Function> functions) {
+        CairoException.rethrowCleanupFailure(cursorClosed(null, functions));
+    }
+
+    /**
+     * Best-effort variant of {@link #cursorClosed(ObjList)} for cleanup paths that keep going past
+     * a failure: it notifies every function in the list, skipping null slots, and folds each
+     * failure into {@code failure}, which it returns.
+     */
+    static Throwable cursorClosed(@Nullable Throwable failure, @Nullable ObjList<? extends Function> functions) {
+        if (functions != null) {
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                failure = cursorClosed(failure, functions.getQuick(i));
+            }
         }
+        return failure;
+    }
+
+    /**
+     * Best-effort variant of {@link #cursorClosed()} for cleanup paths that keep going past a
+     * failure: it folds a failure of {@code function} into {@code failure} and returns the result.
+     */
+    static Throwable cursorClosed(@Nullable Throwable failure, @Nullable Function function) {
+        if (function != null) {
+            try {
+                function.cursorClosed();
+            } catch (Throwable th) {
+                return Misc.foldCleanupFailure(failure, th);
+            }
+        }
+        return failure;
     }
 
     /**
@@ -334,20 +364,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
     @SuppressWarnings("BooleanMethodIsAlwaysInverted")
     default boolean isConstantOrRuntimeConstant() {
         return isConstant() || isRuntimeConstant();
-    }
-
-    /**
-     * Performs a best-effort comparison to check if two functions are equivalent.
-     * This is used for optimization purposes to identify duplicate or equivalent expressions.
-     * <p>
-     * Note: A false result does not guarantee that the functions are different - it just means
-     * equivalence could not be determined through this best-effort comparison.
-     *
-     * @param obj the function to compare with
-     * @return true if the functions are definitely equivalent, false if they may or may not be equivalent.
-     */
-    default boolean isEquivalentTo(Function obj) {
-        return this == obj;
     }
 
     /**

@@ -75,6 +75,32 @@ public interface TimestampDriver {
     }
 
     /**
+     * The interval of a sampler that counts it in INT, as the week, month and year samplers do; an interval beyond
+     * INT fails at {@code position}.
+     */
+    static int intSamplerInterval(long interval, int position) throws SqlException {
+        if (interval != (int) interval) {
+            throw invalidSampleValue(interval, position);
+        }
+        return (int) interval;
+    }
+
+    /**
+     * The bucket of a sampler whose unit spans a fixed {@code unitSize}: the interval times that size. An interval
+     * whose bucket exceeds LONG fails at {@code position}, as one beyond {@link #intSamplerInterval INT} does.
+     */
+    static long samplerBucket(long interval, long unitSize, int position) throws SqlException {
+        if (interval > Long.MAX_VALUE / unitSize || interval < Long.MIN_VALUE / unitSize) {
+            throw invalidSampleValue(interval, position);
+        }
+        return interval * unitSize;
+    }
+
+    private static SqlException invalidSampleValue(long interval, int position) {
+        return SqlException.$(position, "invalid sample value [value=").put(interval).put(']');
+    }
+
+    /**
      * Adds a time period to a timestamp based on the specified type and stride.
      *
      * @param timestamp the base timestamp value
@@ -118,6 +144,26 @@ public interface TimestampDriver {
     // returns approximate partition duration in driver unit (nanos/micros)
     long approxPartitionDuration(int partitionBy);
 
+    /**
+     * The last value at the driver's precision that a BETWEEN of two bounds, each of its own type, admits.
+     */
+    default long betweenHi(long from, int fromType, long to, int toType) {
+        return Math.max(floorFrom(from, fromType), floorFrom(to, toType));
+    }
+
+    /**
+     * The first value at the driver's precision that a BETWEEN of two bounds, each of its own type, admits.
+     */
+    default long betweenLo(long from, int fromType, long to, int toType) {
+        return Math.min(ceilFrom(from, fromType), ceilFrom(to, toType));
+    }
+
+    /**
+     * Converts a timestamp of another type, or a DATE, to the smallest value of the driver's precision
+     * that is not before it; exact when the source is not finer. NULL stays NULL.
+     */
+    long ceilFrom(long timestamp, int timestampType);
+
     long ceilYYYY(long timestamp);
 
     long endOfDay(long start);
@@ -130,6 +176,12 @@ public interface TimestampDriver {
      * @return the adjusted interval
      */
     Interval fixInterval(Interval interval, int intervalType);
+
+    /**
+     * Converts a timestamp of another type, or a DATE, to the largest value of the driver's precision
+     * that is not after it; exact when the source is not finer. NULL stays NULL.
+     */
+    long floorFrom(long timestamp, int timestampType);
 
     long floorYYYY(long timestamp);
 
@@ -492,7 +544,7 @@ public interface TimestampDriver {
     int getTimestampType();
 
     /**
-     * Creates converted from a given type to the type supported by the driver implementation.
+     * Creates a converter for designated timestamp writes from a given type to this driver's type.
      *
      * @param srcTimestampType type of the timestamp to convert from.
      * @return either converter or null. When the value is null, the long should be taken verbatim. The driver decided
@@ -568,6 +620,14 @@ public interface TimestampDriver {
     }
 
     boolean inInterval(long value, int intervalType, Interval interval);
+
+    /**
+     * Whether a timestamp of another type, or a DATE, equals a value of the driver's precision, which
+     * {@link #ceilFrom} then returns.
+     */
+    default boolean isExactFrom(long timestamp, int timestampType) {
+        return ceilFrom(timestamp, timestampType) == floorFrom(timestamp, timestampType);
+    }
 
     long monthsBetween(long hi, long lo);
 

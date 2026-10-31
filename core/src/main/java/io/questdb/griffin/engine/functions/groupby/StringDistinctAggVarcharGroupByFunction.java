@@ -79,6 +79,7 @@ class StringDistinctAggVarcharGroupByFunction extends VarcharFunction implements
     public void close() {
         Misc.free(sinkA);
         Misc.free(sinkB);
+        UnaryFunction.super.close();
     }
 
     @Override
@@ -158,6 +159,17 @@ class StringDistinctAggVarcharGroupByFunction extends VarcharFunction implements
     @Override
     public boolean isScalar() {
         return false;
+    }
+
+    @Override
+    public void recomputeFirst(MapValue mapValue, Record record, long rowId) {
+        final int index = mapValue.getInt(valueIndex);
+        if (index < 0) {
+            computeFirst(mapValue, record, rowId);
+            return;
+        }
+        sets.getQuick(index).clear();
+        computeNext(mapValue, record, rowId);
     }
 
     @Override

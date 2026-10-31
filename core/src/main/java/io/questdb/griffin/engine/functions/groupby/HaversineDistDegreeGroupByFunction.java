@@ -76,6 +76,7 @@ public class HaversineDistDegreeGroupByFunction extends DoubleFunction implement
                 saveDistance(mapValue, distance);
             }
         } else {
+            saveFirstItem(mapValue, lat2Degrees, lon2Degrees, timestamp2);
             saveLastItem(mapValue, lat2Degrees, lon2Degrees, timestamp2);
         }
     }

@@ -247,9 +247,9 @@ requested NULL key matches nothing.
 The pre-repair engine behaved the same way for the unfiltered scan, `s = NULL` and
 `s IN (..., NULL)`. It did not for an OR of key equalities: `s = 'A' OR s = NULL` ran as a row
 filter, which never reads the flag, and returned the NULL group whenever the scan reached it
-before the distinct-key target. `SqlCodeGenerator.normaliseLatestByKeyOr()` now rewrites that
-OR to `s IN ('A', NULL)`, so on such a column the query loses a NULL group it returned before
-the upgrade. The OR form keeps its NULL group on an indexed column, where the key lookup
+before the distinct-key target. `SymbolKeyExtractor.extract()` now rewrites that OR to
+`s IN ('A', NULL)`, so on such a column the query loses a NULL group it returned before the
+upgrade. The OR form keeps its NULL group on an indexed column, where the key lookup
 resolves NULL without the flag.
 
 The maintainer accepts this, the OR form included, in exchange for an upgrade that does not

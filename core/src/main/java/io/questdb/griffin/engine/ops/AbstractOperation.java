@@ -140,6 +140,13 @@ public abstract class AbstractOperation implements AsyncWriterCommand, QuietClos
         this.correlationId = correlationId;
     }
 
+    /**
+     * Raises, in the context {@link #withContext} set, the errors the operation can tell before its caller takes the
+     * writer, commits anything or holds the role-switch lock. Does nothing by default.
+     */
+    public void validate() {
+    }
+
     public void withContext(@NotNull SqlExecutionContext sqlExecutionContext) {
         this.sqlExecutionContext = sqlExecutionContext;
         this.securityContext = sqlExecutionContext.getSecurityContext();

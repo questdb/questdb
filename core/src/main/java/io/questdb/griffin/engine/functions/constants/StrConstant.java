@@ -59,12 +59,15 @@ public class StrConstant extends StrFunction implements ConstantFunction {
         }
     }
 
-    public static StrConstant newInstance(CharSequence value) {
-        return value != null ? new StrConstant(value) : NULL;
+    /**
+     * Creates a constant from an already decoded value, without SQL unquoting.
+     */
+    public static StrConstant fromValue(CharSequence value) {
+        return value != null ? new StrConstant(value, false) : NULL;
     }
 
-    public static StrConstant newUnquotedInstance(CharSequence value) {
-        return new StrConstant(value, false);
+    public static StrConstant newInstance(CharSequence value) {
+        return value != null ? new StrConstant(value) : NULL;
     }
 
     @Override

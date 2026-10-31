@@ -97,6 +97,9 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
+        if (args.getQuick(0).isNullConstant()) {
+            throw SqlException.$(argPositions.getQuick(0), "table name cannot be NULL");
+        }
         CharSequence tableName = args.get(0).getStrA(null);
         final SqlExecutionContext.TableFunctionView view = sqlExecutionContext.getTableFunctionView();
         TableToken tableToken = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
@@ -121,13 +124,13 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
     // SecurityContext.isWalTableVisible(). Inside a view, the view's authority decides as usual, but only
     // for a table the view's definition names, see SqlExecutionContext.TableFunctionView.isDependency().
     private static boolean isVisible(SqlExecutionContext executionContext, TableToken tableToken, SqlExecutionContext.TableFunctionView view) {
-        return view != null && view.isDependency(tableToken)
+        return view != null && view.isDependency(tableToken, executionContext.getCairoEngine())
                 ? executionContext.isTableFunctionVisible(tableToken, view)
                 : executionContext.getSecurityContext().isWalTableVisible(tableToken);
     }
 
     private static boolean isVisibleAtCompile(SqlExecutionContext executionContext, TableToken tableToken, SqlExecutionContext.TableFunctionView view) {
-        return view != null && view.isDependency(tableToken)
+        return view != null && view.isDependency(tableToken, executionContext.getCairoEngine())
                 ? executionContext.isTableFunctionVisibleAtCompile(tableToken, view)
                 : executionContext.getSecurityContext().isWalTableVisible(tableToken);
     }

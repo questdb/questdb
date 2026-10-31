@@ -544,6 +544,10 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("[]\nnull\n");
+            assertQuery("SELECT arr[CASE WHEN n = 1 THEN 1:2 END] FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("[]\nnull\n");
             assertQuery("SELECT arr2[1, null::int] FROM tango")
                     .noLeakCheck()
                     .expectSize()
@@ -565,6 +569,21 @@ public class ArrayTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("[]\nnull\n");
         });
+    }
+
+    @Test
+    public void testAccessOrderedByDesignatedTimestamp() throws Exception {
+        assertQuery("SELECT arr[1], arr[2] x FROM tango ORDER BY timestamp DESC")
+                .ddl(
+                        "CREATE TABLE tango (arr DOUBLE[], timestamp TIMESTAMP) TIMESTAMP(timestamp)",
+                        "INSERT INTO tango VALUES (ARRAY[1.0, 2.0], '2025-01-01'), (ARRAY[3.0, 4.0], '2025-01-02')"
+                )
+                .expectSize()
+                .returns("""
+                        []	x
+                        3.0	4.0
+                        1.0	2.0
+                        """);
     }
 
     @Test
@@ -1401,6 +1420,29 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testArrayPositionNotFoundNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (arr DOUBLE[])");
+            execute("INSERT INTO tango VALUES (ARRAY[1.0, 2.0]), (ARRAY[1.0, null]), (ARRAY[]::DOUBLE[]), (null)");
+            assertQuery("SELECT array_position(arr, null) p FROM tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            p
+                            null
+                            2
+                            null
+                            null
+                            """);
+            // the transposed row has stride 2 over the flat [1.0, 2.0, null, 4.0]
+            assertQuery("SELECT array_position(transpose(ARRAY[[1.0, 2.0], [null, 4.0]])[1], null) p")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("p\n2\n");
+        });
+    }
+
+    @Test
     public void testArrayPositionNull() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango (arr DOUBLE[])");
@@ -1495,29 +1537,29 @@ public class ArrayTest extends AbstractCairoTest {
             assertSqlWithTypes("""
                             i\tarray_sum
                             [null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null]:DOUBLE[]\tnull:DOUBLE
                             [null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
                             [null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
                             [null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
-                            [null,null,null]:DOUBLE[]\tnull:DOUBLE
                             [null,null,null,null]:DOUBLE[]\tnull:DOUBLE
-                            [null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
-                            [null,null]:DOUBLE[]\tnull:DOUBLE
-                            [null,null,null]:DOUBLE[]\tnull:DOUBLE
                             [null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null]:DOUBLE[]\tnull:DOUBLE
+                            [null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE
                             """,
                     "select rnd_double_array(1,1) i, array_sum(i) from long_sequence(10);\n");
             assertSqlWithTypes("""
                             i\tarray_cum_sum
-                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
                             [null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
                             [null,null]:DOUBLE[]\tnull:DOUBLE[]
-                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
-                            [null,null,null]:DOUBLE[]\tnull:DOUBLE[]
-                            [null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
-                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
                             [null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
-                            [null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null]:DOUBLE[]\tnull:DOUBLE[]
                             [null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
+                            [null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null]:DOUBLE[]\tnull:DOUBLE[]
                             """,
                     "select rnd_double_array(1,1) i, array_cum_sum(i) from long_sequence(10);\n");
         });
@@ -2100,11 +2142,11 @@ public class ArrayTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("ARRAY\n[]\n");
-            execute("CREATE TABLE tango AS (SELECT ARRAY[])");
+            execute("CREATE TABLE tango AS (SELECT ARRAY[]::DOUBLE[])");
             assertQuery("tango")
                     .noLeakCheck()
                     .expectSize()
-                    .returns("ARRAY\n[]\n");
+                    .returns("cast\n[]\n");
         });
     }
 
@@ -2116,16 +2158,41 @@ public class ArrayTest extends AbstractCairoTest {
             assertQuery("SELECT array_sum(a) FROM (SELECT ARRAY[] a)")
                     .noLeakCheck()
                     .fails(17, "argument type mismatch");
-            execute("CREATE TABLE tango AS (SELECT ARRAY[] a FROM long_sequence(1))");
-            assertQuery("SELECT array_sum(a) FROM tango")
-                    .noLeakCheck()
-                    .fails(17, "argument type mismatch");
-            assertQuery("SELECT a = a FROM tango")
+            assertQuery("SELECT a = a FROM (SELECT ARRAY[] a)")
                     .noLeakCheck()
                     .fails(9, "no matching operator");
-            assertQuery("SELECT a[1] FROM tango")
+            assertQuery("SELECT a[1] FROM (SELECT ARRAY[] a)")
                     .noLeakCheck()
                     .fails(8, "no matching function");
+        });
+    }
+
+    @Test
+    public void testEmptyArrayColumnRequiresCast() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("CREATE TABLE tango AS (SELECT ARRAY[] a FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .fails(0, "cannot create untyped array column, please use type cast, e.g. a::DOUBLE[]");
+            assertQuery("CREATE TABLE tango AS (SELECT ARRAY[[]] a FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .fails(0, "cannot create untyped array column, please use type cast, e.g. a::DOUBLE[][]");
+            assertQuery("CREATE VIEW tango AS (SELECT ARRAY[] a FROM long_sequence(1))")
+                    .noLeakCheck()
+                    .fails(0, "cannot create untyped array column, please use type cast, e.g. a::DOUBLE[]");
+            execute("CREATE TABLE src (ts TIMESTAMP, d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            assertQuery("CREATE MATERIALIZED VIEW tango AS (SELECT ts, ARRAY[] a, max(d) m FROM src SAMPLE BY 1h)")
+                    .noLeakCheck()
+                    .fails(0, "cannot create untyped array column, please use type cast, e.g. a::DOUBLE[]");
+
+            execute("CREATE TABLE tango AS (SELECT ARRAY[]::DOUBLE[] a FROM long_sequence(1))");
+            execute("INSERT INTO tango VALUES (ARRAY[1.0])");
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("a\n[]\n[1.0]\n");
+            assertQuery("INSERT INTO tango SELECT ARRAY[] FROM long_sequence(1)")
+                    .noLeakCheck()
+                    .fails(30, "inconvertible types: ARRAY -> DOUBLE[]");
         });
     }
 
@@ -3162,7 +3229,7 @@ public class ArrayTest extends AbstractCairoTest {
         // to the shape header would read a different row's array, and one that fell through to
         // Record's ArrayView default would silently lose the O(1) shape read.
         //
-        // Reaching it needs all three: a parquet frame (AsyncFilterContext.shouldUseLateMaterialization
+        // Reaching it needs all three: a parquet frame (AsyncFilter.shouldUseLateMaterialization
         // returns false for native ones), an aggregate (the plain filter path uses the unfiltered
         // record), and a filter over a column the projection does not otherwise read. A WHERE over a
         // native table meets none of them.
@@ -3366,6 +3433,30 @@ public class ArrayTest extends AbstractCairoTest {
                             product
                             [[8.0],[14.0],[20.0]]
                             """);
+        });
+    }
+
+    @Test
+    public void testMatrixMultiplyConstant1d() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("""
+                    SELECT
+                        matmul(ARRAY[1.0, 2.0], ARRAY[1.0, 2.0]) vv,
+                        matmul(ARRAY[[2.0, 3.0], [4.0, 5.0], [6.0, 7.0]], ARRAY[1.0, 2.0]) mv,
+                        matmul(ARRAY[1.0, 2.0], ARRAY[[1.0, 3.0], [2.0, 4.0]]) vm
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            vv\tmv\tvm
+                            [[5.0]]\t[[8.0],[14.0],[20.0]]\t[[5.0,11.0]]
+                            """);
+            assertExceptionNoLeakCheck("SELECT matmul(ARRAY[1.0], ARRAY[1.0, 2.0])",
+                    19, "left array row length doesn't match right array column length [leftRowLen=1, rightColLen=2]");
+            assertExceptionNoLeakCheck("SELECT matmul(ARRAY[[[1.0, 2.0]]], ARRAY[1.0, 2.0])",
+                    19, "left array is not one or two-dimensional");
+            assertExceptionNoLeakCheck("SELECT matmul(ARRAY[1.0], ARRAY[[[1.0]]])",
+                    31, "right array is not one or two-dimensional");
         });
     }
 
@@ -3816,6 +3907,17 @@ public class ArrayTest extends AbstractCairoTest {
                     .expectSize()
                     .returns("rnd_double_array\n[null]\n");
         });
+    }
+
+    @Test
+    public void testRndDoubleArrayReleasesSubqueryArguments() throws Exception {
+        assertQuery("""
+                SELECT dim_length(rnd_double_array(1, CASE WHEN NOT (SELECT max(x) > 2 FROM long_sequence(3)) THEN 1 ELSE 2 END, 0, 2), 1) len
+                FROM long_sequence(1)
+                """)
+                .noRandomAccess()
+                .expectSize()
+                .returns("len\n2\n");
     }
 
     @Test
@@ -4318,6 +4420,12 @@ public class ArrayTest extends AbstractCairoTest {
             );
             assertExceptionNoLeakCheck("SELECT arr[(arr[1, 1] - 1)::int : 2] FROM tango",
                     32, "array slice bounds must be non-zero [dim=1, lowerBound=0]"
+            );
+            assertExceptionNoLeakCheck("SELECT arr[interval('2020-01-01'::TIMESTAMP, '2020-01-02'::TIMESTAMP)] FROM tango",
+                    11, "invalid type for array access [type=INTERVAL]"
+            );
+            assertExceptionNoLeakCheck("SELECT arr[1:2, NULL::INTERVAL] FROM tango",
+                    20, "invalid type for array access [type=INTERVAL]"
             );
         });
     }

@@ -37,7 +37,7 @@ import org.junit.Test;
  * again - so without a cap each nesting level doubles compile time, T(k) = 2*T(k+1) = O(2^D), and
  * nothing in code generation tests the circuit breaker, making the burn uncancellable.
  *
- * <p>{@code WhereClauseParser.MAX_SPECULATIVE_SCALAR_BOUND_DEPTH} stops the speculation past a
+ * <p>{@code IntervalExtractor.MAX_SPECULATIVE_SCALAR_BOUND_DEPTH} stops the speculation past a
  * small depth, which restores T(k) = T(k+1) for the tail. These tests pin the resulting bound and
  * verify that declining to prune never changes results.
  */

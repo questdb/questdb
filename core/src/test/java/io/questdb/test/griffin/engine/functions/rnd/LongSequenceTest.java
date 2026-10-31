@@ -27,7 +27,9 @@ package io.questdb.test.griffin.engine.functions.rnd;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.rnd.LongSequenceFunctionFactory;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.engine.AbstractFunctionFactoryTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 /**
@@ -38,7 +40,7 @@ import org.junit.Test;
  * count with {@code Math.max(0L, recordCount)}.
  * <p>
  * Released 9.4.3 answered 3000000000 rows for {@code long_sequence(100_000 * 30_000)}, because
- * {@code FunctionParser.functionToConstant0} folded an overflowing INT expression to a
+ * {@code FunctionResolver.functionToConstant0} folded an overflowing INT expression to a
  * {@code LongConstant} and the factory read the full-width count off it. This revision folds the
  * same expression to an {@code IntConstant}, so the count wraps before the factory ever sees it.
  * These are therefore characterization tests of a deliberate, disclosed divergence from released
@@ -86,6 +88,18 @@ public class LongSequenceTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testCountFromKeyedCaseWithEqualityConstant() throws Exception {
+        assertQuery("SELECT x FROM long_sequence(CASE 3 WHEN 1.5 THEN 4 ELSE 3 END)")
+                .expectSize()
+                .returns("""
+                        x
+                        1
+                        2
+                        3
+                        """);
+    }
+
+    @Test
     public void testSeedingArmReadsTheCountExactlyAsTheOneArgArmDoes() throws Exception {
         // The 3+ arg arm builds a different factory, but it reads the count through the same
         // getLong(null) and hands it to the same clamping cursor, so every answer above repeats.
@@ -113,6 +127,67 @@ public class LongSequenceTest extends AbstractFunctionFactoryTest {
             assertQuery("SELECT * FROM long_sequence(100_000 * 30_000, 1, 2)")
                     .noLeakCheck()
                     .assertsPlan("long_sequence count: 0 seedLo: 1 seedHi: 2\n");
+        });
+    }
+
+    @Test
+    public void testSubqueryArgumentsAreReleased() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k INT)");
+            execute("INSERT INTO t VALUES (1), (2), (3)");
+            final String[] predicates = {
+                    "(SELECT max(k) > 2 FROM t)",
+                    "(SELECT min(k) > 0 FROM t)",
+                    "(SELECT first(k) = 1 FROM t)",
+                    "(SELECT last(k) = 3 FROM t)",
+                    "(SELECT count_distinct(k) = 3 FROM t)",
+                    "(SELECT sum(k) = 6 FROM t)",
+                    "(SELECT avg(k) = 2 FROM t)",
+                    "(SELECT m > 2 FROM (SELECT k, max(k) m FROM t GROUP BY k ORDER BY k DESC LIMIT 1))",
+                    "(SELECT max(x) > 2 FROM long_sequence(3))",
+            };
+            for (String predicate : predicates) {
+                assertQuery("SELECT count() FROM long_sequence(CASE WHEN NOT " + predicate + " THEN 3 ELSE 4 END)")
+                        .noLeakCheck().noRandomAccess().expectSize()
+                        .returns("count\n4\n");
+                assertQuery("SELECT count() FROM long_sequence(CASE WHEN NOT " + predicate + " THEN 3 ELSE 4 END, 1, 2)")
+                        .noLeakCheck().noRandomAccess().expectSize()
+                        .returns("count\n4\n");
+            }
+            assertQuery("SELECT * FROM long_sequence(CASE WHEN NOT (SELECT max(k) > 2 FROM t) THEN 3 ELSE 4 END) WHERE missing = 1")
+                    .noLeakCheck()
+                    .fails(94, "Invalid column: missing");
+        });
+    }
+
+    @Test
+    public void testSubqueryCountIsReadWhenTheCursorOpens() throws Exception {
+        // A scalar sub-query count is a runtime constant: the cursor initializes it on every open, so the
+        // sequence has the length the sub-query yields at execution, not the one an uninitialized read gave.
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT count() FROM long_sequence(CASE WHEN NOT (SELECT true) THEN 3 ELSE 4 END)")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n4\n");
+            assertQuery("SELECT count() FROM long_sequence(CASE WHEN NOT (SELECT false) THEN 3 ELSE 4 END)")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n3\n");
+            assertQuery("SELECT count() FROM long_sequence(CASE WHEN NOT (SELECT true) THEN 3 ELSE 4 END, CASE WHEN NOT (SELECT true) THEN 1 ELSE 2 END, 3)")
+                    .noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n4\n");
+            // seeded draws repeat per open, not per toTop(), so the two single-pass prints are compared
+            final StringSink seededBySubquery = new StringSink();
+            printSql("SELECT rnd_long() FROM long_sequence(2, CASE WHEN NOT (SELECT true) THEN 1 ELSE 2 END, 3)", seededBySubquery);
+            printSql("SELECT rnd_long() FROM long_sequence(2, 2, 3)");
+            TestUtils.assertEquals(sink, seededBySubquery);
+            assertQuery("SELECT * FROM long_sequence(CASE WHEN NOT (SELECT x = 1 FROM long_sequence(2)) THEN 3 ELSE 4 END)")
+                    .noLeakCheck()
+                    .fails(43, "scalar sub-query returned more than one row");
+            assertQuery("SELECT * FROM long_sequence(CASE WHEN NOT (SELECT true) THEN 3 ELSE 4 END)")
+                    .noLeakCheck()
+                    .assertsPlanContaining("long_sequence count: case([not (cursor ");
+            assertQuery("SELECT * FROM long_sequence(3, CASE WHEN NOT (SELECT true) THEN 1 ELSE 2 END, 3)")
+                    .noLeakCheck()
+                    .assertsPlanContaining("long_sequence count: 3 seedLo: case([not (cursor ", "seedHi: 3");
         });
     }
 

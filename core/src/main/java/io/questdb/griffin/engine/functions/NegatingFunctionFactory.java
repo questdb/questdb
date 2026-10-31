@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions;
 import org.jetbrains.annotations.TestOnly;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 
@@ -54,8 +55,21 @@ public class NegatingFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return signature;
+    }
+
+    /**
+     * Every comparison result a delegate defers is a {@link NegatableBooleanFunction}.
+     */
+    @Override
+    public boolean isConstructionDeferrable(int position, @Transient ObjList<Function> args, @Transient IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        return delegate.isConstructionDeferrable(position, args, argPositions, configuration);
     }
 
     @Override

@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.str;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -41,6 +42,11 @@ import org.jetbrains.annotations.Nullable;
 public class LPadStrFunctionFactory implements FunctionFactory {
 
     private static final String SIGNATURE = "lpad(SIS)";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.STRING;
+    }
 
     @Override
     public String getSignature() {

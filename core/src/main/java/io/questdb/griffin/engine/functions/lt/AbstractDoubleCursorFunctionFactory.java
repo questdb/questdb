@@ -69,8 +69,7 @@ public abstract class AbstractDoubleCursorFunctionFactory implements FunctionFac
         // own (IC/LC) cursor factories and never reach this DOUBLE cursor factory.
         final int arg0Tag = ColumnType.tagOf(arg0.getType());
         if (arg0Tag != ColumnType.DOUBLE && arg0Tag != ColumnType.FLOAT && arg0Tag != ColumnType.NULL) {
-            throw SqlException.$(argPositions.getQuick(0), "left operand must be a DOUBLE or FLOAT, found: ")
-                    .put(ColumnType.nameOf(arg0.getType()));
+            throw ScalarSubQueryUtils.unsupportedOperand(argPositions.getQuick(0), arg0.getType());
         }
         final int cursorTag = ColumnType.tagOf(metadata.getColumnType(0));
         return switch (cursorTag) {

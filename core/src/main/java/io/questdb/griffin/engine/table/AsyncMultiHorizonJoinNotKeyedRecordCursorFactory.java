@@ -196,12 +196,11 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());
         sink.setMetadata(null);
+        sink.optAttr("filter", frameSequence.getAtom().getFilterContext().getFilter(-1), masterFactory);
         sink.child(masterFactory);
         for (int i = 0, n = slaveFactories.size(); i < n; i++) {
-            final Function slaveFilter = slaveStates.getQuick(i).getFilter();
-            if (slaveFilter != null) {
-                sink.attr("slave filter").val(slaveFilter, slaveFactories.getQuick(i));
-            }
+            sink.optAttr("keyCheck", slaveStates.getQuick(i).getKeyCheck(), masterFactory);
+            sink.optAttr("slave filter", slaveStates.getQuick(i).getFilter(), slaveFactories.getQuick(i));
             sink.child(slaveFactories.getQuick(i));
         }
     }
@@ -237,7 +236,7 @@ public class AsyncMultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRe
             final AsyncFilterContext filterCtx = atom.getFilterContext();
             final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
             final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
-            final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
+            final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame, false);
 
             frameMemoryPool = filterCtx.getMemoryPool(slotId);
             final PageFrameMemory frameMemory;

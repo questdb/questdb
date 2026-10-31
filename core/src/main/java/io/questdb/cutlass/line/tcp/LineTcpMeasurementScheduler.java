@@ -378,7 +378,7 @@ public class LineTcpMeasurementScheduler implements Closeable {
                 .$(", ex=").$(ex)
                 .I$();
         throw CairoException.critical(0).put("could not write ILP message to WAL [tableName=").put(measurementName)
-                .put(", error=").put(ex.getMessage())
+                .put(", error=").put(Misc.getMessageOrClassName(ex))
                 .put(']');
     }
 

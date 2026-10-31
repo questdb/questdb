@@ -27,29 +27,35 @@ package io.questdb.griffin;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
+import io.questdb.griffin.codegen.AggregateFactoryGenerator;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.groupby.HashJoinGroupByAggregates;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.plan.logical.AggregatePlan;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.HashJoinAggregation;
+import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 import java.io.Closeable;
-import java.util.ArrayDeque;
 
 /**
  * Compiled grouping, aggregate and post-join functions, with one mutable instance
@@ -61,7 +67,6 @@ import java.util.ArrayDeque;
  */
 public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSource {
     private final ObjList<GroupByFunction> groupByFunctions = new ObjList<>();
-    private final ObjList<Function> innerFunctions = new ObjList<>();
     private final ObjList<Function> keyFunctions = new ObjList<>();
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     private final ObjList<RecordSink> mapSinks = new ObjList<>();
@@ -76,12 +81,11 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
     private ObjList<ObjList<GroupByFunction>> workerGroupByFunctions;
     private ObjList<ObjList<Function>> workerKeyFunctions;
 
-    HashJoinGroupByFunctions(
-            SqlCodeGenerator generator,
+    public HashJoinGroupByFunctions(
             CairoConfiguration configuration,
             BytecodeAssembler asm,
-            FunctionParser parser,
-            IQueryModel model,
+            FunctionInstantiator instantiator,
+            HashJoinAggregation hashJoin,
             HashJoinGroupByMetadata metadata,
             int workerCount,
             SqlExecutionContext executionContext
@@ -91,45 +95,34 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
         }
         this.workerCount = workerCount;
         try {
-            RecordMetadata joined = metadata.getJoinedMetadata();
-            IntList flags = new IntList();
-            ListColumnFilter columnFilter = new ListColumnFilter();
-            GroupByUtils.assembleGroupByFunctions(parser, new ArrayDeque<>(), model, executionContext,
-                    joined, -1, false, true, groupByFunctions, new IntList(), outputFunctions,
-                    innerFunctions, new IntList(), flags, outputMetadata, valueTypes, keyTypes,
-                    columnFilter, null, false, metadata.getColumns(), null);
-            for (int i = 0; i < innerFunctions.size(); i++) {
-                Function function = innerFunctions.getQuick(i);
-                // A grouping expression reaches the fragments' key sink and never the build's row
-                // heap, so its branch repeats the planner's non-aggregate output gate rather than
-                // the payload one. The two must agree, or a shape the planner admits fails here.
-                if (flags.getQuick(i) == GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY) {
-                    if (!HashJoinGroupByCandidate.isSupportedAggregate(function)) {
-                        throw SqlException.$(0, "unsupported fused hash join aggregate");
-                    }
-                } else if (!HashJoinGroupByKeys.isSupportedKeyType(function.getType())
-                        || !function.supportsParallelism() || !function.isStableWithinExecution()) {
-                    throw SqlException.$(0, "unsupported fused hash join grouping function");
+            final AggregatePlan plan = hashJoin.getAggregate();
+            final OutputSchema input = metadata.getInput();
+            final RecordMetadata joined = metadata.getJoinedMetadata();
+            final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
+            final ListColumnFilter columnFilter = new ListColumnFilter();
+            AggregateFactoryGenerator.assemble(plan, input, joined, instantiator, executionContext, groupByFunctions, keyFunctions,
+                    outputFunctions, keyTypes, valueTypes, columnFilter, new IntList(keys.size()));
+            assert isSupported(groupByFunctions);
+            final ObjList<BoundExpression> computedKeys = new ObjList<>(keyFunctions.size());
+            for (int i = 0, n = keys.size(); i < n; i++) {
+                if (!(keys.getQuick(i) instanceof ColumnExpression)) {
+                    computedKeys.add(keys.getQuick(i));
                 }
-                if (flags.getQuick(i) == GroupByUtils.PROJECTION_FUNCTION_FLAG_VIRTUAL) {
-                    keyFunctions.add(function);
-                }
+            }
+            for (int i = 0; i < outputFunctions.size(); i++) {
+                Function function = outputFunctions.getQuick(i);
+                outputMetadata.add(new TableColumnMetadata(plan.getOutput().getColumnName(i).toString(), function.getType(),
+                        IndexType.NONE, 0, function instanceof SymbolFunction symbol && symbol.isSymbolTableStatic(), function.getMetadata()));
             }
             outputOnlyFunctions = GroupByUtils.extractNonGroupByFunctions(outputFunctions);
-            SqlCodeGenerator.WorkerFunctionLists workers = generator.compilePerWorkerInnerProjectionFunctions(
-                    executionContext, metadata.getColumns(), innerFunctions, workerCount, joined, flags);
-            if (workers != null) {
-                workerGroupByFunctions = workers.getGroupByFunctions();
-                workerKeyFunctions = workers.getKeyFunctions();
-            }
-            if (metadata.getPostJoinFilter() != null) {
-                filter = parser.parseFunction(metadata.getPostJoinFilter(), joined, executionContext);
-                if (filter.getType() != ColumnType.BOOLEAN
-                        || !filter.supportsParallelism() || !filter.isStableWithinExecution()) {
-                    throw SqlException.$(0, "unsupported fused hash join post-join filter");
-                }
-                workerFilters = generator.compileWorkerFiltersConditionally(executionContext,
-                        filter, workerCount, metadata.getPostJoinFilter(), joined);
+            workerGroupByFunctions = instantiator.instantiateWorkerAggregates(plan.getAggregates(), input, joined,
+                    groupByFunctions, workerCount, executionContext);
+            workerKeyFunctions = instantiator.instantiateWorkerFunctions(computedKeys, input, joined,
+                    keyFunctions, workerCount, executionContext);
+            BoundExpression postFilter = hashJoin.getPostJoinFilter();
+            if (postFilter != null) {
+                filter = instantiator.instantiate(postFilter, input, joined, executionContext);
+                workerFilters = instantiator.instantiateWorkers(postFilter, input, joined, filter, workerCount, executionContext);
             }
             final boolean isKeyed = isKeyed();
             // A null class requests LoopingRecordSink, which getInstance() builds, so branch on isKeyed only.
@@ -158,11 +151,10 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
         }
         failure = Misc.freeBestEffort(failure, filter);
         filter = null;
-        try {
-            GroupByUtils.freeAssembledProjectionFunctions(outputFunctions, innerFunctions);
-        } catch (Throwable th) {
-            failure = addFailure(failure, th);
-        }
+        failure = Misc.freeObjListBestEffort(failure, outputFunctions);
+        outputFunctions.clear();
+        failure = Misc.freeObjListBestEffort(failure, keyFunctions);
+        keyFunctions.clear();
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -170,26 +162,13 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
      * Release execution state after draining slots and finishing output, also after failed init.
      */
     public void cursorClosed() {
-        Throwable failure = cursorClosed(null, keyFunctions);
-        failure = cursorClosed(failure, groupByFunctions);
-        failure = cursorClosed(failure, outputOnlyFunctions);
-        for (int i = 0; i < workerCount; i++) {
-            if (workerKeyFunctions != null) {
-                failure = cursorClosed(failure, workerKeyFunctions.getQuick(i));
-            }
-            if (workerGroupByFunctions != null) {
-                failure = cursorClosed(failure, workerGroupByFunctions.getQuick(i));
-            }
-        }
-        failure = cursorClosed(failure, workerFilters);
-        if (filter != null) {
-            try {
-                filter.cursorClosed();
-            } catch (Throwable th) {
-                failure = addFailure(failure, th);
-            }
-        }
-        CairoException.rethrowCleanupFailure(failure);
+        Throwable failure = Function.cursorClosed(null, keyFunctions);
+        failure = Function.cursorClosed(failure, groupByFunctions);
+        failure = Function.cursorClosed(failure, outputOnlyFunctions);
+        failure = PerWorkerFunctionList.cursorClosedPerWorker(failure, workerKeyFunctions);
+        failure = PerWorkerFunctionList.cursorClosedPerWorker(failure, workerGroupByFunctions);
+        failure = Function.cursorClosed(failure, workerFilters);
+        CairoException.rethrowCleanupFailure(Function.cursorClosed(failure, filter));
     }
 
     public Function getFilter(int slot) {
@@ -286,14 +265,13 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
         return ((SymbolFunction) outputFunctions.getQuick(columnIndex)).newSymbolTable();
     }
 
-    private static Throwable addFailure(Throwable failure, Throwable th) {
-        if (failure == null) {
-            return th;
+    private static boolean isSupported(ObjList<GroupByFunction> aggregates) {
+        for (int i = 0, n = aggregates.size(); i < n; i++) {
+            if (!HashJoinGroupByAggregates.isSupportedAggregate(aggregates.getQuick(i))) {
+                return false;
+            }
         }
-        if (failure != th) {
-            failure.addSuppressed(th);
-        }
-        return failure;
+        return true;
     }
 
     private static Throwable closeWorkers(Throwable failure, ObjList<? extends ObjList<? extends Function>> workers) {
@@ -302,25 +280,10 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
                 try {
                     PerWorkerFunctionList.close(workers.getQuick(i));
                 } catch (Throwable th) {
-                    failure = addFailure(failure, th);
+                    failure = Misc.foldCleanupFailure(failure, th);
                 }
             }
             workers.clear();
-        }
-        return failure;
-    }
-
-    private static Throwable cursorClosed(Throwable failure, ObjList<? extends Function> functions) {
-        if (functions != null) {
-            for (int i = 0; i < functions.size(); i++) {
-                if (PerWorkerFunctionList.isOwned(functions, i)) {
-                    try {
-                        functions.getQuick(i).cursorClosed();
-                    } catch (Throwable th) {
-                        failure = addFailure(failure, th);
-                    }
-                }
-            }
         }
         return failure;
     }

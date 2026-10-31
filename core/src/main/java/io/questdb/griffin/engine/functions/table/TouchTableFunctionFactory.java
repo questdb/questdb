@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
@@ -54,8 +55,18 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 public class TouchTableFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.STRING;
+    }
+
+    @Override
     public String getSignature() {
         return "touch(C)";
+    }
+
+    @Override
+    public boolean isCursorArgumentExecutedPerWorker() {
+        return true;
     }
 
     @Override

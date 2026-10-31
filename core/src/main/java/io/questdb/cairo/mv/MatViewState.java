@@ -178,8 +178,6 @@ public class MatViewState implements QuietCloseable {
     // one facet succeeded before another allocation failed.
     private volatile int pendingTaskRetryFlags;
     // Protected by this.latch.
-    private long recordRowCopierMetadataVersion;
-    // Protected by this.latch.
     private RecordToRowCopier recordToRowCopier;
     // Protected by this.latch.
     // Base table txn that corresponds to refreshIntervals.
@@ -637,10 +635,6 @@ public class MatViewState implements QuietCloseable {
         return marker instanceof PendingInvalidation pending ? pending.reason : null;
     }
 
-    public long getRecordRowCopierMetadataVersion() {
-        return recordRowCopierMetadataVersion;
-    }
-
     public RecordToRowCopier getRecordToRowCopier() {
         return recordToRowCopier;
     }
@@ -936,7 +930,6 @@ public class MatViewState implements QuietCloseable {
     public void rangeRefreshSuccess(
             RecordCursorFactory factory,
             RecordToRowCopier copier,
-            long recordRowCopierMetadataVersion,
             long refreshFinishedTimestampUs,
             long refreshTriggeredTimestampUs,
             long periodHi
@@ -951,7 +944,6 @@ public class MatViewState implements QuietCloseable {
         }
         this.cursorFactory = factory;
         this.recordToRowCopier = copier;
-        this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
         this.lastRefreshFinishTimestampUs = refreshFinishedTimestampUs;
         this.lastPeriodHi = periodHi;
         telemetryFacade.store(
@@ -1037,7 +1029,6 @@ public class MatViewState implements QuietCloseable {
     public void refreshSuccess(
             RecordCursorFactory factory,
             RecordToRowCopier copier,
-            long recordRowCopierMetadataVersion,
             long refreshFinishedTimestamp,
             long refreshTriggeredTimestamp,
             long baseTableTxn,
@@ -1053,7 +1044,6 @@ public class MatViewState implements QuietCloseable {
         }
         this.cursorFactory = factory;
         this.recordToRowCopier = copier;
-        this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
         this.lastRefreshFinishTimestampUs = refreshFinishedTimestamp;
         this.lastRefreshBaseTxn = baseTableTxn;
         this.lastPeriodHi = periodHi;

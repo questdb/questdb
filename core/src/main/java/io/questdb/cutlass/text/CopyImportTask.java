@@ -59,6 +59,7 @@ import io.questdb.std.IOURingFacade;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
@@ -323,7 +324,7 @@ public class CopyImportTask {
                     .$(", ex=").$(t)
                     .I$();
             this.status = STATUS_FAILED;
-            this.errorMessage = t.getMessage();
+            this.errorMessage = Misc.getMessageOrClassName(t);
             return false;
         }
 
@@ -1091,7 +1092,7 @@ public class CopyImportTask {
                 timestamp = timestampAdapter.getTimestamp(dus);
             } catch (Throwable e) {
                 if (atomicity == Atomicity.SKIP_ALL) {
-                    throw TextException.$("could not parse timestamp [offset=").put(offset).put(", msg=").put(e.getMessage()).put(']');
+                    throw TextException.$("could not parse timestamp [offset=").put(offset).put(", msg=").put(Misc.getMessageOrClassName(e)).put(']');
                 } else {
                     logError(offset, timestampIndex, dus);
                     return null;
@@ -1435,7 +1436,7 @@ public class CopyImportTask {
                         break;
                 }
             } catch (Exception e) {
-                throw TextException.$("unexpected error [line offset=").put(offset).put(",column=").put(fieldIndex).put(",message=").put(e.getMessage()).put(']');
+                throw TextException.$("unexpected error [line offset=").put(offset).put(",column=").put(fieldIndex).put(",message=").put(Misc.getMessageOrClassName(e)).put(']');
             }
             return false;
         }

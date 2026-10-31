@@ -1469,6 +1469,29 @@ public class TimestampFloorFromOffsetFunctionFactoryTest extends AbstractCairoTe
     }
 
     @Test
+    public void testMonthsAndYearsFloorOnClampedGridLine() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String fraction : new String[]{"000000", "000000000"}) {
+                final String[][] cases = {
+                        // stride, value, from, offset, timezone, expected
+                        {"1M", "2024-02-29T23:00:00.", null, "-01:00", null, "2024-02-29T23:00:00."},
+                        {"1M", "2024-02-29T23:30:00.", null, "-01:00", null, "2024-02-29T23:00:00."},
+                        {"1M", "2024-02-29T22:59:00.", null, "-01:00", null, "2024-01-31T23:00:00."},
+                        {"1M", "2024-04-30T23:00:00.", null, "-01:00", null, "2024-04-30T23:00:00."},
+                        {"3M", "2024-06-30T23:00:00.", null, "-01:00", null, "2024-06-30T23:00:00."},
+                        {"1M", "2024-02-29T23:00:00.", "2024-01-31T00:00:00Z", null, null, "2024-02-29T00:00:00."},
+                        {"1M", "2024-02-29T22:00:00.", null, "-01:00", "Europe/Berlin", "2024-02-29T23:00:00."},
+                        {"1y", "2025-02-28T12:00:00.", "2024-02-29T00:00:00Z", null, null, "2025-02-28T00:00:00."},
+                        {"1y", "2024-12-31T23:00:00.", null, "-01:00", null, "2024-12-31T23:00:00."}
+                };
+                for (String[] c : cases) {
+                    assertTimestampFloor("timestamp_floor\n" + c[5] + fraction + "Z\n", c[0], c[1] + fraction + "Z", c[2], c[3], c[4]);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMonthsFloorWithStride() throws Exception {
         assertMemoryLeak(() -> {
             assertTimestampFloor(

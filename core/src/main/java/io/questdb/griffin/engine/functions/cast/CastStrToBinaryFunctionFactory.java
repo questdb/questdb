@@ -25,8 +25,10 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.NullBinConstant;
 import io.questdb.std.IntList;
@@ -34,13 +36,20 @@ import io.questdb.std.ObjList;
 
 public class CastStrToBinaryFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BINARY;
+    }
+
+    @Override
     public String getSignature() {
         return "cast(Su)";
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        // expression parser will only allow casting 'null' to binary, nothing else.
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (!args.getQuick(0).isNullConstant()) {
+            throw SqlException.$(argPositions.getQuick(1), "unsupported cast");
+        }
         return new NullBinConstant();
     }
 }

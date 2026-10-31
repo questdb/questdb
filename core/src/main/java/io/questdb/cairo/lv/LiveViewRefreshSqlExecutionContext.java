@@ -90,7 +90,7 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
      * but {@link LiveViewRefreshJob} recompiles the view's SELECT on its own
      * ({@code ensureCompiledFactory}), a path the CREATE gate never runs - a restart, for
      * instance, rebuilds the factory straight from the persisted definition. Forcing the
-     * guard off here makes {@code FunctionParser} reject a non-deterministic function on
+     * guard off here makes {@code NonDeterministicCalls} reject a non-deterministic function on
      * that recompile too, as defense in depth, mirroring
      * {@code MatViewRefreshSqlExecutionContext}.
      */
@@ -194,6 +194,16 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
 
     @Override
     public boolean isPartitionFormatChangeTolerated() {
+        return true;
+    }
+
+    /**
+     * The refresh keeps the view's compiled factory across cycles and compiles it again only by re-deriving the view
+     * from the whole base table, so it keeps the hash join build sides the compile chose from row counts, which cost
+     * memory and time but never change the rows, however the tables grow.
+     */
+    @Override
+    public boolean isTableRowCountChangeTolerated() {
         return true;
     }
 

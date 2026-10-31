@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.jit.JitUtil;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.StringSink;
@@ -95,7 +96,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testBetweenRuntimeLoNonConstHiFreesBoundFunction() throws Exception {
         // A runtime-constant BETWEEN lo bound parks in RuntimeIntervalModelBuilder.betweenBoundaryFunc
         // until the hi bound pairs with it and moves it into dynamicRangeList. A column-dependent hi
-        // bound never pairs - BETWEEN stays a residual filter - and analyzeBetween0's finally then
+        // bound never pairs - BETWEEN stays a residual filter - and IntervalExtractor.intersectBetween's finally then
         // dropped the parked reference without closing it, orphaning its native buffer for good.
         //
         // Nothing throws here: the query compiles and returns the right rows, so only assertMemoryLeak
@@ -119,8 +120,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testBindVariableOffsetPredicateResidual() throws Exception {
         // A bind-variable bound on an offset-derived timestamp must return the same rows as the
         // equivalent literal form. It gets there without any offset machinery: :b0 parses to
-        // BIND_VARIABLE, which isStaticTimestampPredicate() rejects, so SqlOptimiser never wraps the
-        // predicate in and_offset and it stays an ordinary filter over the virtual column.
+        // BIND_VARIABLE, so the predicate stays an ordinary filter over the virtual column.
         //
         // The earlier comment here claimed this covered the "unknown function name: and_offset" crash.
         // It never did - that gate has always rejected a bind variable, so no wrapper is built for
@@ -189,10 +189,9 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
     @Test
     public void testCastWrappedDynamicBoundOffsetPredicateRemainsAsFilter() throws Exception {
-        // isStaticTimestampPredicate() treats a cast as transparent so that a static bound like
-        // null::timestamp still pushes down (see testNullBoundOffsetPushdownReturnsEmpty). That
-        // transparency must not leak a dynamic bound through: the recursion still walks the cast's
-        // operand, so a bind variable under a cast stays a residual filter exactly as the bare one
+        // A cast is transparent so that a static bound like null::timestamp still pushes down
+        // (see testNullBoundOffsetPushdownReturnsEmpty). That transparency must not leak a dynamic
+        // bound through: a bind variable under a cast stays a residual filter exactly as the bare one
         // does in testDynamicBoundOffsetPredicateRemainsAsFilter. Baking the offset into an interval
         // here would read the bind variable at parse time, before it is set.
         assertMemoryLeak(() -> {
@@ -224,9 +223,9 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testConstantFalseResidualWithRuntimeBoundLatestOnFreesModel() throws Exception {
         // Companion to testUnsatisfiableKeyWithRuntimeBoundFreesModel for the OTHER early return: with
         // a latest-by clause, a residual filter that folds to a compile-time constant false (here
-        // "1 = 2", which the intrinsic parser leaves as a residual rather than absorbing) makes
-        // SqlCodeGenerator return an empty factory before buildIntervalModel() transfers ownership of
-        // the interval-bound functions. The runtime timestamp bound compiled into the interval builder
+        // "1 = 2", which interval extraction leaves as a residual rather than absorbing) makes
+        // ScanFactoryGenerator return an empty factory before it builds the interval model, which
+        // would transfer ownership of the interval-bound functions. The runtime timestamp bound compiled into the interval builder
         // must be freed here too. alloc_ts() makes the leak observable via its tracked native buffer.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (sym SYMBOL INDEX, price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
@@ -1335,13 +1334,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     """;
             assertDateaddOverUnorderedSubQuery("SELECT ts, avg(price) a FROM trades", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
             assertDateaddOverUnorderedSubQuery("SELECT ts, sym, avg(price) a FROM trades GROUP BY ts, sym", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
-            assertDateaddOverUnorderedSubQuery(
-                    "SELECT DISTINCT ts, price FROM trades",
-                    expectedHead,
-                    expectedBuckets,
-                    0,
-                    "TIMESTAMP column is required but not provided"
-            );
+            assertDateaddOverUnorderedSubQuery("SELECT DISTINCT ts, price FROM trades", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
             assertDateaddOverUnorderedSubQuery("SELECT ts, price FROM trades ORDER BY price", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
             assertDateaddOverUnorderedSubQuery("SELECT ts2 ts, price FROM trades", expectedHead, expectedBuckets, 0, NO_DESIGNATED_TIMESTAMP_ERROR);
             assertDateaddOverUnorderedSubQuery(
@@ -1370,8 +1363,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             x\tcount
                             2024-01-01T00:00:00.000000Z\t2000
                             """,
-                    59,
-                    "TIMESTAMP column is required but not provided"
+                    0,
+                    NO_DESIGNATED_TIMESTAMP_ERROR
             );
             assertDateaddOverUnorderedSubQuery(
                     "SELECT sym, max(ts) ts FROM trades GROUP BY sym",
@@ -1514,6 +1507,24 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeeplyNestedOffsetsCompile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, 0), (2, 100_000_000), (3, 1_000_000_000)");
+            String source = "t";
+            for (int i = 0; i < 60; i++) {
+                source = "(SELECT x, dateadd('s', 1, ts) ts FROM " + source + " TIMESTAMP(ts))";
+            }
+            assertQuery("SELECT x FROM " + source + " WHERE ts > 0 AND ts < 100_000_000 OR ts = 1_060_000_000")
+                    .returns("""
+                            x
+                            1
+                            3
+                            """);
+        });
+    }
+
+    @Test
     public void testDynamicBoundOffsetPredicateRemainsAsFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1575,13 +1586,34 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExtractThrowInsideOffsetFreesNestedModel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY");
+            execute("CREATE TABLE bounds (lo TIMESTAMP) TIMESTAMP(lo) PARTITION BY DAY");
+            execute("INSERT INTO bounds VALUES ('2020-01-02')");
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            TestFaultFunctionFactory.armToFailAfterCompiles(0);
+            try {
+                assertExceptionNoLeakCheck(
+                        "SELECT * FROM trades " +
+                                "WHERE and_offset(timestamp = alloc_ts('2020-01-01T00:00:00.000000Z'::timestamp) " +
+                                "OR timestamp = (SELECT max(lo) FROM bounds WHERE test_fault()), 'h', 1)",
+                        150,
+                        "test_fault: injected compile failure"
+                );
+            } finally {
+                TestFaultFunctionFactory.disarm();
+            }
+        });
+    }
+
+    @Test
     public void testHandWrittenAndOffsetDynamicBoundFreesTempModel() throws Exception {
-        // and_offset is registered in intrinsicOps by TOKEN, with no check that the node came from
-        // SqlOptimiser#wrapInAndOffset, so a hand-written and_offset in a WHERE clause reaches
-        // analyzeAndOffset having never passed isStaticTimestampPredicate(). That is the door through
-        // which a dynamic bound - which the optimiser's gate would have rejected - does reach the
-        // temp interval model. analyzeAndOffset must free it on the residual exit; alloc_ts() holds a
-        // tracked native buffer, so assertMemoryLeak sees the orphan if it does not.
+        // FunctionBinder.rewriteAndOffsets turns a hand-written and_offset in a WHERE clause into a
+        // projected offset, which is the door through which a dynamic bound reaches the nested
+        // interval builder of IntervalExtractor.intersectOffset. That builder must be freed on the
+        // residual exit; alloc_ts() holds a tracked native buffer, so assertMemoryLeak sees the
+        // orphan if it is not.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES " +
@@ -1689,12 +1721,11 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
     @Test
     public void testHandWrittenAndOffsetOverNonTimestampPredicateDoesNotDropIt() throws Exception {
-        // and_offset is an internal pseudo-function with no FunctionFactory, but intrinsicOps
-        // dispatches it on its token alone, so a hand-written call reached analyzeAndOffset
-        // ungated. Over a non-timestamp predicate the analysis consumed the conjunct without ever
-        // applying an interval - analyzeEquals0 set the key column and the merge reported full
-        // representation - so the predicate silently vanished and the query returned rows that
-        // fail it. A hand-written call now falls through to the function compiler instead.
+        // and_offset is an internal pseudo-function with no FunctionFactory. A hand-written call
+        // over a non-timestamp predicate used to be consumed without ever applying an interval, so
+        // the predicate silently vanished and the query returned rows that fail it.
+        // FunctionBinder.rewriteAndOffsets rewrites only a call whose predicate references the
+        // designated timestamp; any other falls through to the function compiler.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ao (s SYMBOL, l LONG, b BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -1728,65 +1759,46 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
     @Test
     public void testHandWrittenAndOffsetStrandedAboveLimitMatchesTableScan() throws Exception {
-        // isStaticTimestampPredicate() admits a hand-written and_offset, so SqlOptimiser wraps
-        // and_offset(y > ..., 'd', 1) over the dateadd() column y in a wrapper of its own and pushes
-        // the pair down. The LIMIT strands both wrappers above the table scan. generateFilter0()
-        // rebuilds the inner, hand-written wrapper before the optimiser's outer one, so the 'M' shift
-        // lands on ts itself: dateadd('d',-1,dateadd('M',1,ts)). Interval extraction builds the same
-        // filter without the LIMIT, and the explicit dateadd() spelling matches it. Month arithmetic
-        // does not commute with day arithmetic at month ends: the reversed nesting,
-        // dateadd('M',1,dateadd('d',-1,ts)), maps 2024-03-01 onto 2024-03-29 instead of 2024-03-31
-        // and drops that row.
+        // A hand-written and_offset rewrites only over the designated timestamp of the filter's input. A month
+        // projection has none, so the call stays unknown, with or without a LIMIT between the projection and the
+        // table scan. The explicit dateadd() spelling of the same predicate filters as the query asks.
         assertMemoryLeak(() -> {
             createMonthEndTable();
-            final String expected = """
-                    y\tv
-                    2024-04-01T00:00:00.000000Z\t3
-                    2024-04-30T00:00:00.000000Z\t4
-                    2024-04-30T00:00:00.000000Z\t5
-                    """;
-
-            // stranded above the LIMIT
-            assertQuery("""
-                    SELECT * FROM (SELECT dateadd('M', 1, ts) y, v FROM (SELECT ts, v FROM tab LIMIT 10))
-                    WHERE and_offset(y > '2024-03-30T00:00:00', 'd', 1)
-                    """)
-                    .noLeakCheck()
-                    .withPlan("""
-                            VirtualRecord
-                              functions: [dateadd('M',1,ts),v]
-                                Filter filter: 2024-03-30T00:00:00.000000Z<dateadd('d',-1,dateadd('M',1,ts))
-                                    Limit value: 10 skip-rows: 0 take-rows: 5
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
-                            """)
-                    .returns(expected);
-
-            // the same hand-written call on the table scan goes through interval extraction
-            assertQuery("""
-                    SELECT * FROM (SELECT dateadd('M', 1, ts) y, v FROM tab)
-                    WHERE and_offset(y > '2024-03-30T00:00:00', 'd', 1)
-                    """)
-                    .noLeakCheck()
-                    .withPlanContaining("filter: 2024-03-30T00:00:00.000000Z<dateadd('d',-1,dateadd('M',1,ts))")
-                    .returns(expected);
-
-            // the explicit dateadd() spelling of the same predicate
+            assertExceptionNoLeakCheck(
+                    """
+                            SELECT * FROM (SELECT dateadd('M', 1, ts) y, v FROM (SELECT ts, v FROM tab LIMIT 10))
+                            WHERE and_offset(y > '2024-03-30T00:00:00', 'd', 1)
+                            """,
+                    92,
+                    "unknown function name: and_offset(BOOLEAN,CHAR,INT)"
+            );
+            assertExceptionNoLeakCheck(
+                    """
+                            SELECT * FROM (SELECT dateadd('M', 1, ts) y, v FROM tab)
+                            WHERE and_offset(y > '2024-03-30T00:00:00', 'd', 1)
+                            """,
+                    63,
+                    "unknown function name: and_offset(BOOLEAN,CHAR,INT)"
+            );
             assertQuery("""
                     SELECT * FROM (SELECT dateadd('M', 1, ts) y, v FROM (SELECT ts, v FROM tab LIMIT 10))
                     WHERE dateadd('d', -1, y) > '2024-03-30T00:00:00'
                     """)
                     .noLeakCheck()
-                    .returns(expected);
+                    .returns("""
+                            y\tv
+                            2024-04-01T00:00:00.000000Z\t3
+                            2024-04-30T00:00:00.000000Z\t4
+                            2024-04-30T00:00:00.000000Z\t5
+                            """);
         });
     }
 
     @Test
     public void testHandwrittenAndOffsetMixedTimestampAndColumnWrapsOnlyTimestamp() throws Exception {
         // A hand-written and_offset whose predicate mixes the designated timestamp with another column
-        // passes analyzeAndOffset's referencesTimestamp guard (ts IS referenced), so it is not rejected.
-        // The offset must then apply ONLY to the timestamp literal. Before the fix, wrapTimestampLiterals
+        // passes FunctionBinder.rewriteAndOffsets' timestamp-reference guard (ts IS referenced), so it is
+        // not rejected. The offset must then apply ONLY to the timestamp literal. Before the fix, the rewrite
         // wrapped every literal, rewriting `and_offset(ts>0 AND s=5, 'h', 1)` to `5=dateadd('h',-1,s)`,
         // which treats a numeric column as a timestamp (wrong rows) and, for a symbol/string column,
         // fails with a cast error. Now only the timestamp literal is wrapped and the sibling stays intact.
@@ -1813,12 +1825,12 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
     @Test
     public void testHandwrittenAndOffsetOverNonTimestampIsRejected() throws Exception {
-        // and_offset is an internal pseudo-function SqlOptimiser inserts only over the designated
-        // timestamp. A hand-written call over a numeric column, reaching the residual filter via an OR
-        // branch (which skips interval extraction and analyzeAndOffset's guard), must be rejected as an
-        // unknown function - not silently rebuilt into dateadd(...) over that column, which would treat
-        // the number as a timestamp and drop rows. rebuildStrandedAndOffsets now gates on the wrapped
-        // predicate referencing the designated timestamp.
+        // and_offset is an internal pseudo-function that applies only over the designated timestamp.
+        // A hand-written call over a numeric column, reaching the residual filter via an OR branch
+        // (which skips interval extraction), must be rejected as an unknown function - not silently
+        // rebuilt into dateadd(...) over that column, which would treat the number as a timestamp and
+        // drop rows. FunctionBinder.rewriteAndOffsets gates on the wrapped predicate referencing the
+        // designated timestamp.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -2003,10 +2015,10 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     @Test
     public void testLossyCastBoundKeepsResidualFilter() throws Exception {
         // A cast that truncates - here TIMESTAMP_NS down to TIMESTAMP - makes the interval analysis a
-        // SUPERSET of the predicate, so removeAndIntrinsics applies the widened interval and returns
-        // false to keep the predicate as a residual filter. analyzeAndOffset used to consume the
-        // predicate anyway whenever intervals had been left behind, dropping the residual and
-        // returning rows that fail the predicate.
+        // SUPERSET of the predicate, so IntervalExtractor applies the widened interval and keeps the
+        // predicate as a residual filter. The offset extraction used to consume the predicate anyway
+        // whenever intervals had been left behind, dropping the residual and returning rows that fail
+        // the predicate.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -2322,7 +2334,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // A predicate that extracts multiple disjoint intervals (e.g. tt != <lit> -> two ranges) must
         // push down the UNION of the offset-shifted ranges, not their per-interval intersection. The
         // and_offset merge previously intersected each shifted range in turn, collapsing 2+ disjoint
-        // ranges to an empty scan; because analyzeAndOffset consumes the predicate (no residual filter),
+        // ranges to an empty scan; because IntervalExtractor.intersectOffset consumes the predicate (no residual filter),
         // the empty scan was the final result (0 rows instead of 2). The merge now unions the ranges.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
@@ -2426,7 +2438,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     @Test
     public void testNegativeIntegerOffsetPushdown() throws Exception {
         // Verify that negative integer offsets (using unary minus) are correctly handled
-        // This is a regression test for isConstantIntegerExpression handling of unary minus
+        // This is a regression test for constant-offset detection handling unary minus
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T02:00:00.000000Z');");
@@ -2463,7 +2475,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testNestedOffsetsCalendarUnitComposesInOrder() throws Exception {
         // Two nested models carrying different offset units leave a genuinely nested wrapper,
         // and_offset(and_offset(pred,'M',o1),'h',o2). Rebuilding that residual must recurse into the
-        // inner wrapper BEFORE wrapping the outer one: wrapTimestampLiteral only replaces LITERAL
+        // inner wrapper BEFORE wrapping the outer one: the rewrite only replaces LITERAL
         // nodes, so whichever pass runs first plants its dateadd at the leaf and the later pass nests
         // around it. Wrapping outer-first yields dateadd('M',1,dateadd('h',5,ts)) where the correct
         // composition is dateadd('h',5,dateadd('M',1,ts)). Calendar units do not commute with
@@ -2502,10 +2514,9 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
     @Test
     public void testNestedOffsetsCalendarUnitOnIndexedSymbolPath() throws Exception {
-        // The indexed-symbol filter path compiles intrinsicModel.filter through compileBooleanFilter
-        // rather than generateFilter0, so it never reached the stranded-wrapper rebuild that
-        // generateFilter0 performs. A nested and_offset left behind by rebuildAndOffsetResidual
-        // therefore went straight to the function compiler and surfaced as
+        // The indexed-symbol filter path used to compile its residual without the stranded-wrapper
+        // rebuild the plain filter path performed. A nested and_offset left behind therefore went
+        // straight to the function compiler and surfaced as
         // "unknown function name: and_offset(BOOLEAN,CHAR,INT)". Dropping the INDEX made the same
         // query compile. Rebuilding the nested wrapper at source removes it before any filter path
         // sees it; the second query is the no-pushdown oracle for the row count.
@@ -2703,8 +2714,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testNonLiteralColumnWithTimestampPredicateOrNoPushdown() throws Exception {
         // Test that when an OR predicate references BOTH the timestamp AND a non-literal column,
         // the ENTIRE predicate should NOT be pushed down because OR cannot be split.
-        // This is a regression test for the case where isTimestampPredicate returns true
-        // but the predicate also references other non-literal aliases that can't be resolved.
+        // This is a regression test for a predicate that references the timestamp but also
+        // references other non-literal aliases that can't be resolved.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, quantity INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, 10, '2022-01-01T01:30:00.000000Z');");
@@ -2811,11 +2822,11 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     "(150, '2022-01-02T12:00:00.000000Z'), (200, '2023-01-01T12:00:00.000000Z');");
 
             final String greater = "SELECT * FROM (SELECT dateadd('d', -1, timestamp) as ts, price FROM trades) WHERE ts > null::timestamp";
-            // The unsatisfiable model reaches the code generator as intrinsicValue = FALSE, so the scan
-            // is skipped outright instead of opening an interval scan over an empty interval list.
-            // This also pins isStaticTimestampPredicate() treating the cast bound as static: were the
-            // "cast" FUNCTION node rejected, the predicate would degrade to a residual filter and the
-            // plan would scan every row to return none.
+            // IntervalExtractor reports the unsatisfiable interval as intrinsic FALSE, so the scan is
+            // skipped outright instead of opening an interval scan over an empty interval list.
+            // This also pins the cast bound counting as static: were the "cast" node rejected, the
+            // predicate would degrade to a residual filter and the plan would scan every row to
+            // return none.
             assertQuery(greater)
                     .timestamp("ts")
                     .withPlanContaining("Empty table")
@@ -3309,11 +3320,10 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     .withPlan("""
                             Filter filter: (ts>=2022-01-01T00:00:00.000000Z and ts<2022-01-01T01:00:00.000000Z)
                                 VirtualRecord
-                                  functions: [dateadd('h',-1,timestamp),original_ts,price]
-                                    SelectedRecord
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: trades
+                                  functions: [dateadd('h',-1,timestamp),timestamp,price]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
                             """)
                     .returns("""
                             ts\toriginal_ts\tprice
@@ -3439,7 +3449,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testQualifiedPredicateWithQualifiedSourceTimestamp() throws Exception {
         // Test that when rewriting a qualified predicate (v.ts) to a qualified source (t.timestamp),
         // we don't produce a double-qualified result like "v.t.timestamp".
-        // This is a regression test for rewriteColumnToken incorrectly preserving prefix.
+        // This is a regression test for column substitution incorrectly preserving the prefix.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T01:30:00.000000Z');");
@@ -3731,15 +3741,9 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     @Test
     public void testRuntimeConstBoundOffsetDeclinesPushdown() throws Exception {
         // A runtime-constant bound must NOT be baked into an interval scan: its value is only known at
-        // execution time, so isStaticTimestampPredicate() rejects the predicate and SqlOptimiser never
-        // wraps it in and_offset. The predicate stays a plain residual filter over the virtual column
-        // and the scan keeps its full frame.
-        //
-        // This test previously claimed to cover analyzeAndOffset's residual free of a compiled bound.
-        // It never did: alloc_ts() is a general FUNCTION node, which is exactly what the gate above
-        // rejects, so no wrapper - and no temp interval model - is ever built for it. Deleting that
-        // free left the whole class green. The plan assertion below pins what the query actually
-        // exercises, so the test fails if the bound ever starts being pushed into an interval scan.
+        // execution time, so the predicate stays a plain residual filter over the virtual column and
+        // the scan keeps its full frame. The plan assertion below pins that, so the test fails if the
+        // bound ever starts being pushed into an interval scan.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES " +
@@ -3766,9 +3770,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // The result must be empty rather than every row - the mirror of the multi-interval bug in
         // testMultiIntervalOffsetPushdown.
         //
-        // Like its companion, this used to claim it covered mergeWithAddMethod's free on the
-        // isEmptySet() early return. It does not, and cannot: no runtime-constant bound survives
-        // isStaticTimestampPredicate(), so nothing owning native memory ever reaches that builder.
+        // Like its companion, this does not cover mergeWithAddMethod's free on the isEmptySet()
+        // early return: no runtime-constant bound reaches that builder through an offset pushdown.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES " +
@@ -3781,6 +3784,45 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     .timestamp("tt")
                     .returns("tt\tprice\n");
         });
+    }
+
+    @Test
+    public void testScalarBoundDoesNotPushThroughTimestampOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2024-01-01T01:00:00.000000Z', 10),
+                        ('2024-01-02T01:00:00.000000Z', 20),
+                        ('2024-01-03T01:00:00.000000Z', NULL)
+                    """);
+            execute("CREATE TABLE bounds (ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO bounds VALUES ('2024-01-02T00:00:00.000000Z')");
+
+            assertQuery("""
+                    SELECT shifted, doubled
+                    FROM (SELECT dateadd('h', -1, ts) shifted, price * 2 doubled FROM trades)
+                    WHERE shifted >= (SELECT max(ts) FROM bounds)
+                    """)
+                    .timestamp("shifted")
+                    .withPlanContaining("Filter filter: shifted [thread-safe] >= cursor", "Frame forward scan on: trades")
+                    .withPlanNotContaining("Interval forward scan on: trades")
+                    .returns("""
+                            shifted\tdoubled
+                            2024-01-02T00:00:00.000000Z\t40.0
+                            2024-01-03T00:00:00.000000Z\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testScalarBoundPushesThroughComputedProjection() throws Exception {
+        assertScalarBoundPushdown(true);
+    }
+
+    @Test
+    public void testScalarBoundPushesThroughUnpartitionedComputedProjection() throws Exception {
+        assertScalarBoundPushdown(false);
     }
 
     @Test
@@ -3819,12 +3861,12 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
     @Test
     public void testSelfComparisonOffsetPushdownContradictionReturnsEmpty() throws Exception {
-        // "ts != ts" is a contradiction that analyzeNotEquals0 folds by setting intrinsicValue = FALSE
-        // alone - it never touches the interval builder. mergeIntervalModelWithAddMethod must carry that
-        // FALSE across to this model and intersect it to empty; otherwise the builder sees no intervals,
+        // "ts != ts" is a contradiction that interval extraction folds to intrinsic FALSE alone - it
+        // never touches the interval builder. IntervalExtractor.intersectOffset must carry that
+        // FALSE across to the outer model and intersect it to empty; otherwise the builder sees no intervals,
         // reports the predicate as fully represented, and the caller consumes it with no constraint at
         // all - the offset pushdown then returns every row instead of none. Same shape as the NULL bound
-        // fixed in testNullBoundOffsetPushdownReturnsEmpty, reached through a different analyze method.
+        // fixed in testNullBoundOffsetPushdownReturnsEmpty, reached through a different comparison.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z'), " +
@@ -3865,8 +3907,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
     @Test
     public void testSelfComparisonOffsetPushdownTautologyReturnsAllRows() throws Exception {
-        // The twin of the contradiction above: "ts = ts" is a tautology that analyzeEquals0 consumes
-        // without applying an interval. That is the one shape left that legitimately reaches
+        // The twin of the contradiction above: "ts = ts" is a tautology that interval extraction
+        // consumes without applying an interval. That is the one shape left that legitimately reaches
         // mergeWithAddMethod with no interval applied, so it pins the "consume the predicate" arm -
         // the offset scan must return every row, not none.
         assertMemoryLeak(() -> {
@@ -3887,12 +3929,10 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
     @Test
     public void testStrandedAndOffsetCompilesAsResidualFilter() throws Exception {
-        // moveWhereInsideSubQueries pushes an and_offset wrapper onto whatever nested model it
-        // finds. A model that never reaches interval extraction - here a sub-query carrying a
-        // LIMIT - handed the wrapper straight to the function compiler, which failed with
-        // "unknown function name: and_offset(BOOLEAN,CHAR,INT)", leaking an internal name to the
-        // user. generateFilter0 now rebuilds a stranded wrapper into its dateadd residual before it
-        // compiles the filter.
+        // A predicate over a projected offset that never reaches interval extraction - here because
+        // a sub-query carrying a LIMIT blocks pushdown - must compile as an ordinary dateadd residual.
+        // It used to fail with "unknown function name: and_offset(BOOLEAN,CHAR,INT)", leaking an
+        // internal name to the user.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
@@ -3900,8 +3940,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                         ('2020-01-01T10:00:00.000000Z', 1.5),
                         ('2020-01-02T10:00:00.000000Z', 2.5)
                     """);
-            // Both spellings of the bound reach the same stranded wrapper; the cast one is what
-            // isStaticTimestampPredicate()'s cast arm newly admits.
+            // Both spellings of the bound, plain and cast, must compile the same way.
             assertQuery("""
                     SELECT * FROM (SELECT dateadd('h',-1,ts) tt, price FROM (SELECT * FROM trades LIMIT 10))
                     WHERE tt > '2020-01-02T08:00:00.000000Z'
@@ -4664,19 +4703,17 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
     @Test
     public void testUnknownOffsetUnitOnIndexedSymbolPathReportsInvalidPeriod() throws Exception {
-        // detectTimestampOffset's parseUnitCharacter accepts ANY single character, so an invalid
-        // dateadd unit still gets wrapped in and_offset. analyzeAndOffset then bails at
-        // getAddMethod(unit) == null, which used to leave the wrapper in the residual. On the
-        // non-indexed path generateFilter0 rebuilt it and the user saw dateadd's own
-        // "invalid time period" error; on the indexed-symbol path the wrapper reached the function
-        // compiler and leaked the internal name instead. Both paths must report the real error.
+        // An invalid dateadd unit still forms a projected offset. IntervalExtractor.intersectOffset
+        // bails at getAddMethod(unit) == null and leaves the predicate in the residual. The
+        // indexed-symbol path used to leak the internal and_offset name instead of dateadd's own
+        // "invalid time period" error. Every path must report the real error.
         assertMemoryLeak(() -> execute(
                 "CREATE TABLE tab (ts TIMESTAMP, s SYMBOL INDEX, v INT) TIMESTAMP(ts) PARTITION BY DAY"));
 
         // The three filter-compilation paths must all report the same error. Naming the unit pins
         // that the rebuilt dateadd carries the original token rather than some other bad unit.
-        // Indexed symbol and LATEST ON compile intrinsicModel.filter directly; the plain predicate
-        // goes through generateFilter0, which already rebuilt stranded wrappers.
+        // Indexed symbol, LATEST ON and the plain predicate each compile the residual on their own
+        // path.
         assertQuery("SELECT * FROM (SELECT dateadd('z',1,ts) tt, s, v FROM tab) timestamp(tt) "
                 + "WHERE tt IN '2022-01-01' AND s = 'k1'")
                 .fails(79, "invalid time period [unit=z]");
@@ -4690,8 +4727,8 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
 
     @Test
     public void testUnsatisfiableKeyWithRuntimeBoundFreesModel() throws Exception {
-        // A contradictory symbol key makes the WHERE clause unsatisfiable, so SqlCodeGenerator returns
-        // an empty factory early (intrinsicModel.intrinsicValue == FALSE) before it builds the interval
+        // A contradictory symbol key makes the WHERE clause unsatisfiable, so ScanFactoryGenerator
+        // returns an empty factory early (SymbolKeyExtractor.isFalse()) before it builds the interval
         // model (which would transfer ownership of interval-bound functions) or clears the interval
         // filters. A runtime-constant timestamp bound already compiled into the interval builder is then
         // orphaned. alloc_ts() makes the leak observable via its tracked native buffer.
@@ -4754,6 +4791,32 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                     .returns("""
                             ts\tprice
                             2022-01-01T12:00:00.000000Z\t150.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testVolatileScalarBoundDoesNotPushThroughComputedProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2024-01-01T00:00:00.000000Z', 10),
+                        ('2024-01-02T00:00:00.000000Z', 20)
+                    """);
+
+            assertQuery("""
+                    SELECT ts, doubled
+                    FROM (SELECT ts, price * 2 doubled FROM trades)
+                    WHERE ts >= (SELECT rnd_timestamp('2023-01-01'::TIMESTAMP, '2023-01-02'::TIMESTAMP, 0))
+                    """)
+                    .timestamp("ts")
+                    .withPlanContaining("Filter filter: ts [thread-safe] >= cursor", "Frame forward scan on: trades")
+                    .withPlanNotContaining("Interval forward scan on: trades")
+                    .returns("""
+                            ts\tdoubled
+                            2024-01-01T00:00:00.000000Z\t20.0
+                            2024-01-02T00:00:00.000000Z\t40.0
                             """);
         });
     }
@@ -5024,6 +5087,65 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             tt
                             2024-03-01T00:00:00.000000Z
                             """);
+        });
+    }
+
+    private void assertScalarBoundPushdown(boolean isPartitioned) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)" + (isPartitioned ? " PARTITION BY DAY" : ""));
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2024-01-01T00:00:00.000000Z', 10),
+                        ('2024-01-02T00:00:00.000000Z', 20),
+                        ('2024-01-02T00:00:00.000001Z', NULL),
+                        ('2024-01-03T00:00:00.000000Z', 40)
+                    """);
+            execute("CREATE TABLE bounds (ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO bounds VALUES ('2024-01-02T00:00:00.000000Z')");
+
+            final String query = """
+                    SELECT ts, doubled
+                    FROM (SELECT ts, price * 2 doubled FROM trades)
+                    WHERE ts >= (SELECT max(ts) FROM bounds)
+                    """;
+            final String expected = """
+                    ts\tdoubled
+                    2024-01-02T00:00:00.000000Z\t40.0
+                    2024-01-02T00:00:00.000001Z\tnull
+                    2024-01-03T00:00:00.000000Z\t80.0
+                    """;
+            assertQuery(query)
+                    .timestamp("ts")
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [ts,price*2]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("2024-01-02T00:00:00.000000Z","MAX")]
+                            """)
+                    .returns(expected);
+
+            assertQuery(query)
+                    .timestamp("ts")
+                    .mutateWith("INSERT INTO bounds VALUES ('2024-01-03T00:00:00.000000Z')")
+                    .returns(expected, """
+                            ts\tdoubled
+                            2024-01-03T00:00:00.000000Z\t80.0
+                            """);
+
+            assertQuery("""
+                    SELECT ts, doubled FROM (SELECT ts, price * 2 doubled FROM trades)
+                    WHERE ts >= (SELECT ts FROM bounds WHERE ts < '2024-01-01')
+                    """)
+                    .timestamp("ts")
+                    .returns("ts\tdoubled\n");
+            assertQuery("""
+                    SELECT ts, doubled FROM (SELECT ts, price * 2 doubled FROM trades)
+                    WHERE ts >= (SELECT max(ts) FROM bounds WHERE ts < '2024-01-01')
+                    """)
+                    .timestamp("ts")
+                    .returns("ts\tdoubled\n");
         });
     }
 

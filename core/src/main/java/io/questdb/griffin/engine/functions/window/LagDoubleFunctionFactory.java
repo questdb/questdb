@@ -46,6 +46,11 @@ public class LagDoubleFunctionFactory extends AbstractWindowFunctionFactory {
     private static final String SIGNATURE = LeadLagWindowFunctionFactoryHelper.LAG_NAME + "(DV)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

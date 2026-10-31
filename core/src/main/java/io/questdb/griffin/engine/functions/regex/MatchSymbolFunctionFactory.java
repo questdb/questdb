@@ -25,18 +25,24 @@
 package io.questdb.griffin.engine.functions.regex;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.*;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.TestOnly;
 
@@ -54,6 +60,19 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
     public static boolean isSymbolKeyScanCounterEnabled = false;
     @TestOnly
     public static final AtomicLong testSymbolKeyScans = new AtomicLong();
+    private static final MatchSymbolFunctionFactory INSTANCE = new MatchSymbolFunctionFactory();
+
+    /**
+     * The factory of the function that matches the positive form of a symbol pattern: this one for {@code !~}, else the
+     * overload of the pattern, or of the pattern its {@code not} negates.
+     */
+    public static FunctionFactory positivePatternFactory(FunctionExpression pattern) {
+        if ("!~".equals(pattern.getName())) {
+            return INSTANCE;
+        }
+        final FunctionExpression positive = pattern.getArgumentCount() == 1 ? (FunctionExpression) pattern.argumentAt(0) : pattern;
+        return positive.getOverload().getFactory();
+    }
 
     public static boolean symbolMatches(Function arg, Record rec, IntList symbolKeys) {
         final int key = arg.getInt(rec);
@@ -64,8 +83,30 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "~(KS)";
+    }
+
+    @Override
+    public boolean isSymbolKeySetProvider(ObjList<BoundExpression> args, boolean isSymbolTableStatic) {
+        if (!isSymbolTableStatic) {
+            return false;
+        }
+        final BoundExpression pattern = args.getQuick(1);
+        if (pattern instanceof ConstantExpression constant) {
+            return switch (ColumnType.tagOf(constant.getDataType())) {
+                case ColumnType.STRING, ColumnType.SYMBOL -> constant.getStrValue() != null;
+                case ColumnType.VARCHAR -> constant.getVarcharValue() != null;
+                case ColumnType.CHAR -> constant.getLongValue() != 0;
+                default -> false;
+            };
+        }
+        return (pattern.getFunctionFlags() & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) == BoundExpression.RUNTIME_CONSTANT;
     }
 
     @Override
@@ -83,6 +124,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
             if (pattern.isConstant()) {
                 final Matcher matcher = RegexUtils.createMatcher(pattern, patternPosition);
                 if (matcher == null) {
+                    Misc.freeObjList(args);
                     return BooleanConstant.FALSE;
                 }
                 return new MatchStaticSymbolTableConstPatternFunction(func, matcher);
@@ -93,6 +135,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
             if (pattern.isConstant()) {
                 final Matcher matcher = RegexUtils.createMatcher(pattern, patternPosition);
                 if (matcher == null) {
+                    Misc.freeObjList(args);
                     return BooleanConstant.FALSE;
                 }
                 return new MatchStrFunctionFactory.MatchStrConstPatternFunction(func, matcher);
@@ -211,7 +254,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         }
     }
 
-    private static class MatchStaticSymbolTableRuntimeConstPatternFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
+    private static class MatchStaticSymbolTableRuntimeConstPatternFunction extends BooleanFunction implements BinaryFunction, SymbolKeySetProvider {
         private final Function pattern;
         private final int patternPosition;
         private final SymbolFunction symbolFun;
@@ -229,10 +272,6 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
             this.patternPosition = patternPosition;
         }
 
-        @Override
-        public Function getArg() {
-            return symbolFun;
-        }
 
         @Override
         public boolean getBool(Record rec) {
@@ -249,14 +288,23 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public Function getLeft() {
+            return symbolFun;
+        }
+
+        @Override
         public IntList getMatchedSymbolKeys() {
             return symbolKeys;
         }
 
         @Override
+        public Function getRight() {
+            return pattern;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            UnaryFunction.super.init(symbolTableSource, executionContext);
-            pattern.init(symbolTableSource, executionContext);
+            BinaryFunction.super.init(symbolTableSource, executionContext);
             // RegexUtils.createMatcher() compiles the bind value verbatim, so the compiled pattern's
             // own source doubles as the last-value memo: recompile only when the text changed, and a
             // changed text forces the key set rebuild below no matter what the dictionary says.
@@ -317,7 +365,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
                 target.initialized = initialized;
                 target.isStateInherited = true;
             }
-            UnaryFunction.super.offerStateTo(that);
+            BinaryFunction.super.offerStateTo(that);
         }
 
         @Override

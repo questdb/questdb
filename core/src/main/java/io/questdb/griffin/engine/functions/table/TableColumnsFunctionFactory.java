@@ -56,6 +56,9 @@ public class TableColumnsFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (args.getQuick(0).isNullConstant()) {
+            throw SqlException.$(argPositions.getQuick(0), "table name cannot be NULL");
+        }
         final CharSequence tableName = args.getQuick(0).getStrA(null);
         final SqlExecutionContext.TableFunctionView view = sqlExecutionContext.getTableFunctionView();
         final TableToken token = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);

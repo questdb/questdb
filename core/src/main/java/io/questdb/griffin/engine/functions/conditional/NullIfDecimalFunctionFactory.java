@@ -51,6 +51,11 @@ import io.questdb.std.Transient;
 public class NullIfDecimalFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return "nullif(ΞΞ)";
     }

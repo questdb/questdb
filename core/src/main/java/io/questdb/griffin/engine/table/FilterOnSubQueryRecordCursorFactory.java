@@ -218,9 +218,6 @@ public class FilterOnSubQueryRecordCursorFactory extends AbstractPageFrameRecord
             cursorFactories.clear();
             targetFactories.clear();
             delegate.of(cursor, executionContext);
-            if (filter != null) {
-                filter.init(delegate, executionContext);
-            }
         }
 
         @Override

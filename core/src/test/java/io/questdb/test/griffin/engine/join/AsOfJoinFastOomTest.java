@@ -24,11 +24,14 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.test.AbstractOomSweepTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -56,6 +59,35 @@ public class AsOfJoinFastOomTest extends AbstractOomSweepTest {
                 "SELECT m.k1, m.v, s.v FROM master m ASOF JOIN (SELECT * FROM slave WHERE v > 0) s ON (k1, k2)",
                 FilteredAsOfJoinFastRecordCursorFactory.class
         );
+    }
+
+    @Test
+    public void testFilteredAsOfJoinFreesSlaveWhenFilterInitFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (k SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (k SYMBOL, v INT, t2 TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO master VALUES ('a', 1, '2024-01-01T00:00:01')");
+            execute("INSERT INTO slave VALUES ('a', 2, '2024-01-01', '2024-01-01')");
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "not a timestamp");
+            final String[] queries = {
+                    "SELECT m.v, s.v FROM master m ASOF JOIN (SELECT * FROM slave WHERE t2 > $1) s ON (k)",
+                    "SELECT m.v, s.v FROM master m ASOF JOIN (SELECT * FROM slave WHERE t2 > $1) s"
+            };
+            final Class<?>[] factories = {FilteredAsOfJoinFastRecordCursorFactory.class, FilteredAsOfJoinNoKeyFastRecordCursorFactory.class};
+            for (int i = 0; i < queries.length; i++) {
+                try (RecordCursorFactory factory = select(queries[i])) {
+                    TestUtils.assertFactoryInTree(factory, factories[i], queries[i]);
+                    for (int attempt = 0; attempt < 3; attempt++) {
+                        try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
+                            Assert.fail();
+                        } catch (Throwable e) {
+                            TestUtils.assertContains(e.getMessage(), "not a timestamp");
+                        }
+                    }
+                }
+            }
+        });
     }
 
     @Test

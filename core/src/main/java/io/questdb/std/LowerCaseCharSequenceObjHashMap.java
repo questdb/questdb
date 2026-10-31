@@ -45,8 +45,10 @@ public class LowerCaseCharSequenceObjHashMap<T> extends AbstractLowerCaseCharSeq
     }
 
     public void clear() {
-        super.clear();
-        Arrays.fill(values, null);
+        if (free != capacity) {
+            super.clear();
+            Arrays.fill(values, null);
+        }
     }
 
     public void forEach(CharSequenceObjConsumer<T> action) {

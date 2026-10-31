@@ -41,11 +41,17 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public final class InIPv4FunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public String getSignature() {
@@ -62,6 +68,7 @@ public final class InIPv4FunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final int n = args.size();
         if (n == 1) {
+            Misc.freeObjList(args);
             return BooleanConstant.FALSE;
         }
 
@@ -118,9 +125,7 @@ public final class InIPv4FunctionFactory implements FunctionFactory {
                     break;
                 case ColumnType.STRING:
                 case ColumnType.SYMBOL:
-                    // SymbolFunction.getIPv4 is final and throws UnsupportedOperationException,
-                    // so SYMBOL elements must go through the type-agnostic string getter.
-                    set.add(SqlUtil.implicitCastStrAsIPv4(func.getStrA(null)));
+                    set.add(func.getIPv4(null));
                     break;
                 case ColumnType.VARCHAR:
                     set.add(SqlUtil.implicitCastStrAsIPv4(func.getVarcharA(null)));

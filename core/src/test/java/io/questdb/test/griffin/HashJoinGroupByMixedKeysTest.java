@@ -55,6 +55,7 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.findChoic
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.rowCountTolerantContext;
 
 /**
  * Fused on/off differential coverage of the key shapes that the other suites reach only partly:
@@ -82,7 +83,9 @@ public class HashJoinGroupByMixedKeysTest extends AbstractCairoTest {
     public void testCompositeTranslatedSymbolKeyAcrossDictionaryGrowth() throws Exception {
         // The rebinding suites re-run a lone SYMBOL key, which takes the INT layout. A SYMBOL pair
         // inside a composite key stages the translated key into the build's map instead, so a
-        // factory compiled once has to translate through each execution's grown dictionaries.
+        // factory compiled once has to translate through each execution's grown dictionaries. The
+        // tables grow past the row counts the compile kept its choices for, which the context
+        // tolerates, as a holder that never compiles the statement again does.
         assertMemoryLeak(() -> {
             final String[] ons = {
                     "ks.sym=kt.sym AND ks.i=kt.i",
@@ -94,7 +97,7 @@ public class HashJoinGroupByMixedKeysTest extends AbstractCairoTest {
                 for (int threshold : new int[]{Integer.MAX_VALUE, 1}) {
                     setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, threshold);
                     createTranslatedSymbolTables();
-                    try (SqlExecutionContextImpl context = context(engine, 4)) {
+                    try (SqlExecutionContextImpl context = rowCountTolerantContext(engine, 4)) {
                         context.changePageFrameSizes(1, 2);
                         final ObjList<String> queries = new ObjList<>();
                         final ObjList<RecordCursorFactory> factories = new ObjList<>();

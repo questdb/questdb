@@ -28,13 +28,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlUtil;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.UnaryFunction;
 import org.jetbrains.annotations.NotNull;
 
-public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGroupByFunction implements UnaryFunction, GroupByFunction {
+public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGroupByFunction implements BinaryFunction, GroupByFunction {
     private final int[] indices = new int[2];
 
     public PercentileContDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg, @NotNull Function percentileFunc, int percentilePos) {
@@ -84,11 +83,6 @@ public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGro
     @Override
     public void setEmpty(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0L);
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val("percentile_cont(").val(arg).val(',').val(percentileFunc).val(')');
     }
 
 }

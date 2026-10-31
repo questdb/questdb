@@ -25,15 +25,19 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.std.IntList;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class BitAndLongGroupByFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
 
     @Override
     public String getSignature() {
@@ -53,14 +57,6 @@ public class BitAndLongGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function arg = args.getQuick(0);
-        if (arg.isConstant()) {
-            long val = arg.getLong(null);
-            if (val == Numbers.LONG_NULL) {
-                return LongConstant.NULL;
-            }
-            return new LongConstant(val);
-        }
-        return new BitAndLongGroupByFunction(arg);
+        return new BitAndLongGroupByFunction(args.getQuick(0));
     }
 }

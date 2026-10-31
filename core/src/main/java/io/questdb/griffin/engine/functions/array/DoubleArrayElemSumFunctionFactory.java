@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.array;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DoubleList;
@@ -35,6 +36,11 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 
 public class DoubleArrayElemSumFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.doubleArrayElementwise(argTypes);
+    }
 
     @Override
     public String getSignature() {
@@ -52,14 +58,14 @@ public class DoubleArrayElemSumFunctionFactory implements FunctionFactory {
         int resolvedDims = AbstractDoubleArrayElemFunction.validateArgsAndResolveDims(
                 position, args, argPositions, "array_elem_sum"
         );
-        return new Func(configuration, new ObjList<>(args), resolvedDims);
+        return new Func(configuration, position, new ObjList<>(args), resolvedDims);
     }
 
     private static final class Func extends AbstractDoubleArrayElemFunction {
         private final DoubleList compensation = new DoubleList();
 
-        Func(CairoConfiguration configuration, ObjList<Function> args, int resolvedDims) {
-            super(configuration, args, resolvedDims);
+        Func(CairoConfiguration configuration, int position, ObjList<Function> args, int resolvedDims) {
+            super(configuration, position, args, resolvedDims);
         }
 
         @Override

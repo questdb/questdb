@@ -240,6 +240,13 @@ impl FooterFeatureFlags {
     /// length])*]`.
     pub const SCRATCHPAD_BIT: u64 = 1 << 1;
 
+    /// QuestDB's parquet writer wrote every row group the footer references, so every SQL NULL in
+    /// them is a Parquet null: NaN included, which other writers store as an ordinary value that
+    /// neither the null count nor the min/max statistics record. Derived from the parquet
+    /// `created_by`, which an update of the file keeps. A footer flag rather than a header flag so
+    /// that a footer appended to an existing `_pm` can record it without rewriting the file.
+    pub const WRITTEN_BY_QUESTDB_BIT: u64 = 1 << 2;
+
     pub const fn new() -> Self {
         Self(0)
     }
@@ -266,6 +273,14 @@ impl FooterFeatureFlags {
 
     pub const fn with_scratchpad(self) -> Self {
         Self(self.0 | Self::SCRATCHPAD_BIT)
+    }
+
+    pub const fn is_written_by_questdb(self) -> bool {
+        self.0 & Self::WRITTEN_BY_QUESTDB_BIT != 0
+    }
+
+    pub const fn with_written_by_questdb(self) -> Self {
+        Self(self.0 | Self::WRITTEN_BY_QUESTDB_BIT)
     }
 
     /// Returns the unknown required bits given a mask of known required bits.

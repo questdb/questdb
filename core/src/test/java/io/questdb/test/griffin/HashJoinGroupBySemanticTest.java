@@ -56,6 +56,7 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.plan;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
+import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.rowCountTolerantContext;
 
 public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
     // The optimiser pushes the interval below dateadd() as and_offset, which the fused analysis cannot
@@ -252,7 +253,9 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
     public void testSymbolClonesRebindingAndDictionaryGrowth() throws Exception {
         assertMemoryLeak(() -> {
             createTables(false);
-            try (SqlExecutionContextImpl context = context(engine, 4)) {
+            // Each factory runs over every state, past the row counts its compile kept its choices
+            // for, which the context tolerates, as a holder that never compiles the statement again does.
+            try (SqlExecutionContextImpl context = rowCountTolerantContext(engine, 4)) {
                 context.with(AllowAllSecurityContext.INSTANCE, bindVariableService, null, -1, null);
                 context.changePageFrameSizes(1, 2);
                 for (int format = 0; format < 3; format++) {
@@ -642,9 +645,7 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                         // Only an INNER JOIN merges an ON constant into WHERE; for an outer join,
                         // generateJoins() replaces the build input with an empty table.
                         assertOutcome(select + from(join) + " AND 1 = 0" + order, context, false);
-                        // The analysis rejects the join's constant WHERE clause without evaluating it, so a
-                        // constant-true WHERE also keeps the ordinary plan.
-                        assertOutcome(select + from(join) + " WHERE 1 = 1" + order, context, false);
+                        assertOutcome(select + from(join) + " WHERE 1 = 1" + order, context, true);
                     }
                     assertOutcome("SELECT count(*) n, sum(d) d FROM (SELECT p.d" + from(join) + " WHERE 1 = 0)", context, false);
                 }
@@ -785,13 +786,13 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                         // The ordinary plan fails to compile FROM-TO and TIME ZONE over aliased inputs, so use table names.
                         String select = "SELECT " + (isKeyed ? "a.s, " : "") + "count(*) n, sum(b.d) d, avg(a.d) a"
                                 + " FROM a" + join + "b ON a.id = b.id";
-                        // generateFill() wraps the ordinary GROUP BY in a fill cursor.
+                        // Fill wraps the aggregate and does not prevent join/group-by fusion.
                         for (String fill : new String[]{"FILL(NULL)", "FILL(PREV)", "FILL(0)", "FILL(NULL, 0, PREV)"}) {
-                            assertOutcome(select + " SAMPLE BY 1h " + fill + " ALIGN TO CALENDAR", context, false);
-                            assertOutcome(select + " SAMPLE BY 1h " + fill + " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'", context, false);
-                            assertOutcome(select + " SAMPLE BY 1h FROM '2019-12-31T22:00:00' TO '2020-01-03T06:00:00' " + fill, context, false);
+                            assertOutcome(select + " SAMPLE BY 1h " + fill + " ALIGN TO CALENDAR", context, true);
+                            assertOutcome(select + " SAMPLE BY 1h " + fill + " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'", context, true);
+                            assertOutcome(select + " SAMPLE BY 1h FROM '2019-12-31T22:00:00' TO '2020-01-03T06:00:00' " + fill, context, true);
                         }
-                        // Without fill values generateFill() returns the GROUP BY unchanged.
+                        // No fill leaves the aggregate unchanged.
                         for (String fill : new String[]{"", " FILL(NONE)"}) {
                             assertOutcome(select + " SAMPLE BY 1h" + fill + " ALIGN TO CALENDAR", context, true);
                         }
@@ -990,20 +991,16 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                 bindVariableService.clear();
                 bindVariableService.setStr(0, "1");
                 assertOutcome("SELECT sum(r.d + $1) FROM a r JOIN b p ON r.id = p.id WHERE r.n = $1", context, true);
-                // So do undefined ones in the inputs' own WHERE clauses, whose types each input's
-                // compile infers, since the fused plan compiles the inputs in the ordinary plan's
-                // order, r first, whichever input it builds. A LEFT join's WHERE clause on p and a
-                // RIGHT join's WHERE clause on r filter the joined rows. A RIGHT join's WHERE clause
-                // on p filters p, which it preserves, so the RIGHT join keeps the ordinary plan.
+                // Binding resolves undefined variables before fusion, including LEFT post-join filters.
+                // RIGHT joins with preserved-side filters retain their ordinary build strategy.
                 for (String join : JOINS) {
                     for (String input : new String[]{"r", "p"}) {
                         bindVariableService.clear();
                         String sql = "SELECT sum(p.d) FROM a r" + join + "b p ON r.id = p.id WHERE "
                                 + input + ".t >= $1 AND " + input + ".d > $2";
-                        boolean isPostJoin = join.equals(input.equals("r") ? " right join " : " left join ");
                         try (RecordCursorFactory factory = engine.select(sql, context)) {
                             String actualPlan = plan(factory, context);
-                            Assert.assertEquals(sql + '\n' + actualPlan, !isPostJoin && !join.equals(" right join "), actualPlan.contains("Hash Join Group By"));
+                            Assert.assertEquals(sql + '\n' + actualPlan, !join.equals(" right join ") || input.equals("r"), actualPlan.contains("Hash Join Group By"));
                         }
                     }
                 }

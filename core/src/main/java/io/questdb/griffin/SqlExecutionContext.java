@@ -41,7 +41,7 @@ import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
-import io.questdb.griffin.model.IntrinsicModel;
+import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.std.Decimal128;
@@ -90,7 +90,6 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
             boolean isOrdered,
             int scanDirection,
             int orderByDirection,
-            boolean baseSupportsRandomAccess,
             int framingMode,
             long rowsLo,
             char rowsLoUnit,
@@ -317,7 +316,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // compile of a live view's SELECT. Compile-time switch that lets window
     // function factories opt into live-view-only machinery (e.g. the
     // tombstone value-layout slot that drives anchor-driven compaction)
-    // and lets WhereClauseParser suppress indexed-symbol key
+    // and lets the planner suppress indexed-symbol key
     // extraction so the planner falls back to a plain FilteredRecordCursorFactory
     // shape that the incremental refresh path can handle.
     default boolean isLiveViewCompile() {
@@ -328,6 +327,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // a catalogue function written in that SQL needs no SYSTEM ADMIN here, see
     // SqlExecutionRequirements.DISCLOSES_OBJECTS.
     default boolean isLiveViewRefresh() {
+        return false;
+    }
+
+    // Returns true while CREATE MATERIALIZED VIEW binds its SELECT. FunctionResolver then defers the checks of the
+    // functions the view may not store, which the compiler decides once binding finished, see
+    // SqlExecutionRequirements.checkDeferred().
+    default boolean isMatViewCompile() {
         return false;
     }
 
@@ -346,7 +352,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     /**
      * Returns true while a statement opens a cursor only to check a SELECT, not to hand anyone its
      * rows: {@code CREATE VIEW} derives the view's column types from it, and
-     * {@code CREATE MATERIALIZED VIEW} and {@code ALTER VIEW} validate their SELECT with it. No
+     * {@code CREATE MATERIALIZED VIEW} and {@code ALTER VIEW} validate their SELECT with it, and a WAL
+     * {@code UPDATE} checks the values of its statement with it before the WAL records the statement. No
      * principal is reading data through such a cursor, so view auditing skips it: an audit row for
      * it would assert an access to rows that nobody asked for.
      */
@@ -382,7 +389,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     /**
      * A table-name function or a SHOW statement in a view reads the object it names through that
      * view, not as the caller, when the view's definition names the object, see
-     * {@link TableFunctionView#isDependency(TableToken)}. Any other object, such as one a caller
+     * {@link TableFunctionView#isDependency(TableToken, CairoEngine)}. Any other object, such as one a caller
      * substitutes through an OVERRIDABLE variable of the view, is read as the caller. Recheck the
      * view's identity, definition and SELECT grant when the cursor opens: a cached cursor may outlive
      * a revoke, a replacement or a drop and recreation under the same name. A view that changed since
@@ -417,7 +424,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * missing, or fail a PostgreSQL Parse, which does not recompile.
      */
     default boolean isTableFunctionVisibleAtCompile(TableToken tableToken, TableFunctionView view) {
-        if (view == null || !view.isDependency(tableToken)) {
+        if (view == null || !view.isDependency(tableToken, getCairoEngine())) {
             return getSecurityContext().isTableVisible(tableToken);
         }
         final ViewDefinition viewDefinition = view.definition();
@@ -432,11 +439,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * Returns whether a factory may keep the plan choices that its compile took from the tables'
      * row counts after the tables change size. A context that runs a factory which no holder
      * compiles again, such as a queued export, tolerates the change: a fused GROUP BY over a hash
-     * join then keeps its compile-time build side and key table presizing, which cost memory and
-     * never change the rows, instead of throwing {@link TableReferenceOutOfDateException} to ask
-     * for a recompile. A RIGHT join that took the fused plan while the table before it held no
-     * more rows than the table after it therefore keeps building the table before it, however
-     * large that table grows.
+     * join then keeps its compile-time build side and key table presizing, and a light hash join
+     * keeps hashing the input its compile chose, which cost memory and never change the rows,
+     * instead of throwing {@link TableReferenceOutOfDateException} to ask for a recompile. A RIGHT
+     * join that took the fused plan while the table before it held no more rows than the table
+     * after it therefore keeps building the table before it, however large that table grows.
      */
     default boolean isTableRowCountChangeTolerated() {
         return false;
@@ -459,10 +466,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return 0;
     }
 
-    // This method is used to override intrinsic values in the query execution context
-    // Its initial usage is in the materialized view refresh
-    // where the queried timestamp of the base table is limited to the range affected since last refresh
-    default void overrideWhereIntrinsics(TableToken tableToken, IntrinsicModel intrinsicModel, int timestampType) {
+    /**
+     * Overrides the extracted designated-timestamp intervals of a scan. Materialized view refresh
+     * uses it to limit the base table scan to the range affected since the last refresh.
+     */
+    default void overrideWhereIntervals(TableToken tableToken, RuntimeIntervalModelBuilder intervals, int timestampType) {
     }
 
     RuntimeIntrinsicIntervalModel peekIntervalModel();
@@ -534,6 +542,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setJitMode(int jitMode);
 
     default void setLiveViewCompile(boolean value) {
+    }
+
+    default void setMatViewCompile(boolean value) {
     }
 
     /**
@@ -618,13 +629,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     record TableFunctionView(ViewDefinition definition) {
 
         /**
-         * Returns whether the view's definition names the object, i.e. whether CREATE VIEW or ALTER
-         * VIEW recorded it among the dependencies of the view, the tables it reads and the arguments of
-         * its table-name functions. The view lends its authority to those objects only: an object a
-         * caller substitutes into the view, e.g. through an OVERRIDABLE variable, is read as the caller.
+         * Returns whether the view's definition names the object, directly or through the views it reads as
+         * they are defined now, i.e. whether CREATE VIEW or ALTER VIEW recorded it among the dependencies of
+         * the view or of a view it reads, the tables they read and the arguments of their table-name
+         * functions, see {@link io.questdb.cairo.view.ViewGraph#readsTable}. The view lends its authority to
+         * those objects only: an object a caller substitutes into the view, e.g. through an OVERRIDABLE
+         * variable, is read as the caller.
          */
-        public boolean isDependency(TableToken tableToken) {
-            return definition.getDependencies().contains(tableToken.getTableName());
+        public boolean isDependency(TableToken tableToken, CairoEngine engine) {
+            return engine.getViewGraph().readsTable(engine, definition, tableToken.getTableName());
         }
     }
 }

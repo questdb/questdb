@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -53,15 +54,16 @@ public final class MergeUnionAllRecordCursorFactoryBuilder {
             ObjList<Function> castFunctionsB,
             boolean isAscending,
             @Nullable IntList symbolUnionColumns,
-            CastFunctionFactory castFunctionFactory
+            CastFunctionFactory castFunctionFactory,
+            SqlExecutionContext executionContext
     ) throws SqlException {
         OperandState operandsA = null;
         OperandState operandsB = null;
         try {
-            operandsA = take(factoryA, positionA, castFunctionsA, metadata, castFunctionFactory);
+            operandsA = take(factoryA, positionA, castFunctionsA, metadata, castFunctionFactory, executionContext);
             factoryA = null;
             castFunctionsA = null;
-            operandsB = take(factoryB, positionB, castFunctionsB, metadata, castFunctionFactory);
+            operandsB = take(factoryB, positionB, castFunctionsB, metadata, castFunctionFactory, executionContext);
             factoryB = null;
             castFunctionsB = null;
 
@@ -121,7 +123,8 @@ public final class MergeUnionAllRecordCursorFactoryBuilder {
             int position,
             ObjList<Function> edgeCastFunctions,
             RecordMetadata targetMetadata,
-            CastFunctionFactory castFunctionFactory
+            CastFunctionFactory castFunctionFactory,
+            SqlExecutionContext executionContext
     ) throws SqlException {
         if (factory instanceof UnionSymbolCastRecordCursorFactory symbolCastFactory
                 && symbolCastFactory.getBaseFactory() instanceof MergeUnionAllRecordCursorFactory) {
@@ -148,6 +151,7 @@ public final class MergeUnionAllRecordCursorFactoryBuilder {
                 for (int i = 0, n = state.factories.size(); i < n; i++) {
                     Misc.freeObjList(state.castFunctions.getQuick(i));
                     state.castFunctions.setQuick(i, castFunctionFactory.generate(
+                            executionContext,
                             targetMetadata,
                             state.factories.getQuick(i).getMetadata(),
                             state.positions.getQuick(i)
@@ -171,7 +175,12 @@ public final class MergeUnionAllRecordCursorFactoryBuilder {
 
     @FunctionalInterface
     public interface CastFunctionFactory {
-        ObjList<Function> generate(RecordMetadata toMetadata, RecordMetadata fromMetadata, int modelPosition) throws SqlException;
+        ObjList<Function> generate(
+                SqlExecutionContext executionContext,
+                RecordMetadata toMetadata,
+                RecordMetadata fromMetadata,
+                int modelPosition
+        ) throws SqlException;
     }
 
     static final class OperandState {

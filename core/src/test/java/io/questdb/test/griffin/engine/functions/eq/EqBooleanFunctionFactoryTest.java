@@ -40,6 +40,23 @@ public class EqBooleanFunctionFactoryTest extends AbstractFunctionFactoryTest {
         call(true, false).andAssert(false);
     }
 
+    @Test
+    public void testFoldedComparisonFreesOperands() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT 'a'::SYMBOL sym, x FROM long_sequence(2))");
+            final String[] predicates = {
+                    "(sym = sym) IS NOT NULL OR true",
+                    "(sym = sym) = NULL OR true",
+                    "(sym = sym)::STRING ~ NULL OR true",
+                    "(sym = sym)::STRING !~ NULL OR true",
+                    "(sym = sym)::VARCHAR ~ NULL OR true",
+            };
+            for (String predicate : predicates) {
+                assertQuery("SELECT x FROM t WHERE " + predicate).noLeakCheck().expectSize().returns("x\n1\n2\n");
+            }
+        });
+    }
+
     @Override
     protected FunctionFactory getFunctionFactory() {
         return new EqBooleanFunctionFactory();

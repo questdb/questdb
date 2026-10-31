@@ -27,6 +27,7 @@ package io.questdb.griffin;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
@@ -69,7 +70,7 @@ public final class InsertRowImpl implements QuietCloseable {
                 rowFactory = this::getRowWithStringTimestamp;
                 this.timestampFunctionConverter = null;
             } else {
-                timestampFunctionConverter = timestampDriver.getTimestampUnitConverter(type);
+                timestampFunctionConverter = timestampDriver.getTimestampUnitConverter(ColumnType.getTimestampType(type));
                 if (timestampFunctionConverter == null) {
                     rowFactory = this::getRowWithTimestamp;
                 } else {
@@ -83,7 +84,12 @@ public final class InsertRowImpl implements QuietCloseable {
     }
 
     public void append(SqlExecutionContext context, TableWriterAPI writer) {
-        final TableWriter.Row row = rowFactory.getRow(writer);
+        final TableWriter.Row row;
+        try {
+            row = rowFactory.getRow(writer);
+        } catch (ImplicitCastException e) {
+            throw e.position(timestampFunctionPosition);
+        }
         try {
             copier.copy(context, virtualRecord, row);
             row.append();
@@ -113,7 +119,7 @@ public final class InsertRowImpl implements QuietCloseable {
             try {
                 return tableWriter.newRow(
                         timestampDriver.fromStr(
-                                timestampFunction.getStrA(null),
+                                timestampValue,
                                 tupleIndex,
                                 timestampFunction.getType(),
                                 timestampType

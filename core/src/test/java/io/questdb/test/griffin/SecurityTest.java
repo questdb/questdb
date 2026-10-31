@@ -390,7 +390,7 @@ public class SecurityTest extends AbstractCairoTest {
         // access to one harmless column read every other column through a view it creates.
         //
         // The view deliberately carries no WHERE clause. A residual filter makes
-        // SqlCodeGenerator.generateFilter0 open a page-frame cursor at code-generation time,
+        // FilterFactoryGenerator open a page-frame cursor at code-generation time,
         // which authorizes the base read as a side effect - so a filtered view was already
         // covered by accident, and asserting on one would pass with or without the explicit
         // check. Unfiltered is the shape that reached CREATE with no base-read authorization
@@ -769,19 +769,25 @@ public class SecurityTest extends AbstractCairoTest {
     public void testMemoryRestrictionsWithInnerJoin() throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
+            // the restricted join map overflows on either input, whichever one the plan hashes
             execute("create table tb1 as (select" +
                     " rnd_symbol(4,4,4,20000) sym1," +
                     " rnd_double(2) d1," +
                     " timestamp_sequence(0, 1000000000) ts1" +
-                    " from long_sequence(10)) timestamp(ts1)");
+                    " from long_sequence(10_000)) timestamp(ts1)");
             execute("create table tb2 as (select" +
                     " rnd_symbol(3,3,3,20000) sym2," +
                     " rnd_double(2) d2," +
-                    " timestamp_sequence(0, 1000000000) ts2" +
+                    " timestamp_sequence(9_990_000_000_000, 1000000000) ts2" +
                     " from long_sequence(1000)) timestamp(ts2)");
             assertQuery("select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3")
                     .noRandomAccess()
-                    .returns("sym1\tsym2\nVTJW\tFJG\nVTJW\tULO\n");
+                    .returns("""
+                            sym1\tsym2
+                            PEHN\tVKU
+                            HYRX\tGTH
+                            PEHN\tVKU
+                            """);
 
             assertQuery("select sym1, sym2 from tb1 inner join tb2 on tb2.ts2=tb1.ts1 where d1 < 0.3")
                     .noLeakCheck()

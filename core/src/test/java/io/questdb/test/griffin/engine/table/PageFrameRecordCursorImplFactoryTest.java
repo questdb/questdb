@@ -51,6 +51,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.BwdTableReaderPageFrameCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
+import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
 import io.questdb.griffin.engine.table.PageFrameRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.griffin.model.RuntimeIntervalModel;
@@ -68,6 +69,11 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.io.InputStream;
+import java.lang.classfile.Attributes;
+import java.lang.classfile.ClassFile;
+import java.lang.classfile.MethodModel;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -115,6 +121,34 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
         super.setUp();
+    }
+
+    @Test
+    public void testCalculateSizeAfterPartialRead() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x, x::TIMESTAMP ts FROM long_sequence(1_000)) TIMESTAMP(ts) PARTITION BY DAY");
+            sqlExecutionContext.changePageFrameSizes(100, 100);
+            for (String query : new String[]{"SELECT * FROM t", "SELECT * FROM t WHERE ts >= 1 AND ts < 2_000", "SELECT * FROM t ORDER BY ts DESC"}) {
+                try (RecordCursorFactory factory = select(query)) {
+                    // the read leaves the page frame cursor inside its first partition frame
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                    }
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final RecordCursor.Counter counter = new RecordCursor.Counter();
+                        cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                        Assert.assertEquals(query, 1_000, counter.get());
+                    }
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        cursor.toTop();
+                        final RecordCursor.Counter counter = new RecordCursor.Counter();
+                        cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+                        Assert.assertEquals(query, 1_000, counter.get());
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -172,7 +206,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                         IndexReader.DIR_FORWARD,
                         null
                 );
-                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
+                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, TestUtils.tableDescriptor(metadata), ORDER_ASC, null, 0, false)) {
                     // entity index
                     final IntList columnIndexes = new IntList();
                     final IntList columnSizes = new IntList();
@@ -815,6 +849,48 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHasNextFitsHotInlineSize() throws Exception {
+        // C2 does not inline a hot callee whose bytecode exceeds FreqInlineSize, 325 bytes by default, so a larger
+        // hasNext() costs every row loop that drives the scan, such as a hash join's build and probe loops, a call.
+        final byte[] classBytes;
+        try (InputStream in = PageFrameRecordCursorImpl.class.getResourceAsStream("PageFrameRecordCursorImpl.class")) {
+            Assert.assertNotNull(in);
+            classBytes = in.readAllBytes();
+        }
+        int codeLength = -1;
+        for (MethodModel method : ClassFile.of().parse(classBytes).methods()) {
+            if (method.methodName().equalsString("hasNext") && method.methodType().equalsString("()Z")) {
+                codeLength = method.findAttribute(Attributes.code()).orElseThrow().codeLength();
+            }
+        }
+        Assert.assertTrue("hasNext() bytecode exceeds the C2 hot inline size", codeLength > 0 && codeLength <= 325);
+    }
+
+    @Test
+    public void testIndexReaderOfLightweightFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT timestamp_sequence(0, 1_000_000) ts FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE t ADD COLUMN sym SYMBOL INDEX");
+            execute("INSERT INTO t SELECT timestamp_sequence(10_000_000, 1_000_000), 'a' FROM long_sequence(5)");
+            execute("INSERT INTO t SELECT timestamp_sequence(86_400_000_000, 1_000_000), 'b' FROM long_sequence(5)");
+            for (int order : new int[]{ORDER_ASC, ORDER_DESC}) {
+                try (
+                        RecordCursorFactory factory = select("SELECT ts, sym FROM t");
+                        PageFrameCursor frameCursor = factory.getPageFrameCursor(sqlExecutionContext, order)
+                ) {
+                    // a lightweight frame describes a partition frame that no page frame has opened yet
+                    PageFrame frame;
+                    while ((frame = frameCursor.next(Long.MAX_VALUE)) != null) {
+                        final long columnTop = frame.getPartitionIndex() == 0 ? 5 : 0;
+                        Assert.assertEquals(columnTop, frame.getIndexReader(1, IndexReader.DIR_FORWARD).getColumnTop());
+                        Assert.assertEquals(columnTop, frame.getIndexReader(1, IndexReader.DIR_BACKWARD).getColumnTop());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPageFrameBwdCursorNoColTops() throws Exception {
         // pageFrameMaxSize < rowCount
         testBwdPageFrameCursor(64, 4, 8, -1);
@@ -1446,7 +1522,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 final IntList columnSizes = new IntList();
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
-                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
+                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, TestUtils.tableDescriptor(metadata), ORDER_ASC, null, 0, false)) {
                     PageFrameRowCursorFactory rowCursorFactory = new PageFrameRowCursorFactory(ORDER_ASC); // stub RowCursorFactory
                     try (PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,
@@ -1516,7 +1592,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 tableToken = reader.getTableToken();
             }
             final RowCursorFactory rowFactory = new PageFrameRowCursorFactory(order);
-            try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, order, null, 0, false)) {
+            try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, TestUtils.tableDescriptor(metadata), order, null, 0, false)) {
                 // entity index
                 final IntList columnIndexes = new IntList();
                 final IntList columnSizes = new IntList();
@@ -1650,7 +1726,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                         IndexReader.DIR_FORWARD,
                         null
                 );
-                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
+                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tableToken, TableUtils.ANY_TABLE_VERSION, TestUtils.tableDescriptor(metadata), ORDER_ASC, null, 0, false)) {
                     // entity index
                     final IntList columnIndexes = new IntList();
                     final IntList columnSizes = new IntList();
@@ -1730,18 +1806,16 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
             try (CairoEngine engine = new CairoEngine(configuration)) {
                 GenericRecordMetadata metadata;
                 int timestampType;
-                int timestampIndex;
                 try (TableReader reader = engine.getReader("x")) {
                     metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
                     timestampType = reader.getMetadata().getTimestampType();
-                    timestampIndex = reader.getMetadata().getTimestampIndex();
                 }
 
                 // Exercise both scan directions. calculateSize() must agree with the
                 // materialized row count regardless of order; the backward interval
                 // cursor in particular once stopped after the first partition.
-                assertIntervalCalculateSize(engine, tableToken, metadata, timestampType, timestampIndex, intervals, increment, skip, expectedNumOfRows, ORDER_ASC);
-                assertIntervalCalculateSize(engine, tableToken, metadata, timestampType, timestampIndex, intervals, increment, skip, expectedNumOfRows, ORDER_DESC);
+                assertIntervalCalculateSize(engine, tableToken, metadata, timestampType, intervals, increment, skip, expectedNumOfRows, ORDER_ASC);
+                assertIntervalCalculateSize(engine, tableToken, metadata, timestampType, intervals, increment, skip, expectedNumOfRows, ORDER_DESC);
             }
         });
     }
@@ -1751,7 +1825,6 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
             TableToken tableToken,
             GenericRecordMetadata metadata,
             int timestampType,
-            int timestampIndex,
             LongList intervals,
             long increment,
             int skip,
@@ -1766,7 +1839,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
         );
         final RowCursorFactory rowFactory = new PageFrameRowCursorFactory(order);
         try (IntervalPartitionFrameCursorFactory frameFactory = new IntervalPartitionFrameCursorFactory(
-                tableToken, TableUtils.ANY_TABLE_VERSION, intervalModel, timestampIndex, metadata, order, null, 0, false
+                tableToken, TableUtils.ANY_TABLE_VERSION, intervalModel, TestUtils.tableDescriptor(metadata), order, null, 0, false
         )) {
             final IntList columnIndexes = new IntList();
             final IntList columnSizes = new IntList();
@@ -1857,7 +1930,7 @@ public class PageFrameRecordCursorImplFactoryTest extends AbstractCairoTest {
                 final IntList columnSizes = new IntList();
                 populateColumnTypes(metadata, columnIndexes, columnSizes);
 
-                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tt, TableUtils.ANY_TABLE_VERSION, metadata, ORDER_ASC, null, 0, false)) {
+                try (FullPartitionFrameCursorFactory frameFactory = new FullPartitionFrameCursorFactory(tt, TableUtils.ANY_TABLE_VERSION, TestUtils.tableDescriptor(metadata), ORDER_ASC, null, 0, false)) {
                     PageFrameRowCursorFactory rowCursorFactory = new PageFrameRowCursorFactory(ORDER_ASC); // stub RowCursorFactory
                     try (PageFrameRecordCursorFactory factory = new PageFrameRecordCursorFactory(
                             configuration,

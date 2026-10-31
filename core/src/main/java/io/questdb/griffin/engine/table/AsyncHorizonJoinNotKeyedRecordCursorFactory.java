@@ -218,11 +218,10 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         sink.setMetadata(horizonJoinMetadata);
         sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions());
         sink.setMetadata(null);
+        sink.optAttr("filter", frameSequence.getAtom().getFilterContext().getFilter(-1), masterFactory);
         sink.child(masterFactory);
-        final Function slaveFilter = frameSequence.getAtom().getSlaveFilter();
-        if (slaveFilter != null) {
-            sink.attr("slave filter").val(slaveFilter, slaveFactory);
-        }
+        sink.optAttr("keyCheck", frameSequence.getAtom().getKeyCheck(), masterFactory);
+        sink.optAttr("slave filter", frameSequence.getAtom().getSlaveFilter(), slaveFactory);
         sink.child(slaveFactory);
     }
 
@@ -277,7 +276,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         final AsyncFilterContext filterCtx = atom.getFilterContext();
         final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
         final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
-        final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
+        final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame, false);
 
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
 

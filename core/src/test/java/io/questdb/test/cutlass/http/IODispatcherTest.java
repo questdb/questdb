@@ -7313,7 +7313,19 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testTriggerNPE() throws Exception {
         getSimpleTester().run((engine, _) -> {
-            testHttpClient.assertGet("{" + "\"query\":\"select npe()\"," + "\"columns\":[{\"name\":\"npe\",\"type\":\"BOOLEAN\"}]," + "\"timestamp\":-1," + "\"dataset\":[[]]," + "\"count\":1," + "\"error\":\"Internal server error\", " + "\"errorPos\":0" + "}", "select npe()");
+            testHttpClient.assertGet("{" + "\"query\":\"select npe()\"," + "\"columns\":[{\"name\":\"npe\",\"type\":\"BOOLEAN\"}]," + "\"timestamp\":-1," + "\"dataset\":[[]]," + "\"count\":1," + "\"error\":\"java.lang.NullPointerException\", " + "\"errorPos\":0" + "}", "select npe()");
+            Assert.assertEquals(1, engine.getMetrics().healthMetrics().unhandledErrorsCount());
+        });
+    }
+
+    @Test
+    public void testTriggerNPEBeforeFirstRow() throws Exception {
+        getSimpleTester().run((engine, _) -> {
+            testHttpClient.assertGet(
+                    "/exec",
+                    "{\"query\":\"SELECT * FROM long_sequence(1) WHERE npe()\",\"error\":\"java.lang.NullPointerException\",\"position\":0}",
+                    "SELECT * FROM long_sequence(1) WHERE npe()"
+            );
             Assert.assertEquals(1, engine.getMetrics().healthMetrics().unhandledErrorsCount());
         });
     }

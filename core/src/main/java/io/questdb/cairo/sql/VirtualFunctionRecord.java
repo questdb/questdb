@@ -286,7 +286,7 @@ public class VirtualFunctionRecord implements ColumnTypes, Record, QuietCloseabl
         this.internalJoinRecord.of(this, record);
     }
 
-    private Function getFunction(int columnIndex) {
+    protected Function getFunction(int columnIndex) {
         return functions.getQuick(columnIndex);
     }
 }

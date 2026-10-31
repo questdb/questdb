@@ -360,7 +360,12 @@ public class CopyExportContext {
         final CairoEngine engine = executionContext.getCairoEngine();
         CompiledQuery selectQuery;
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            selectQuery = compiler.compile(selectText, executionContext);
+            executionContext.pushTimestampRequiredFlag(partitionBy != -1 && partitionBy != PartitionBy.NONE);
+            try {
+                selectQuery = compiler.compile(selectText, executionContext);
+            } finally {
+                executionContext.popTimestampRequiredFlag();
+            }
             if (selectQuery.getType() != CompiledQuery.SELECT) {
                 selectQuery.closeAllButSelect();
                 throw SqlException.$(0, "Copy command only accepts SELECT queries");

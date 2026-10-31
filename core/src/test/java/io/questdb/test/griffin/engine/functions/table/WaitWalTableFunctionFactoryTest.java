@@ -205,6 +205,32 @@ public class WaitWalTableFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSeqTxnFromSubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE notwal AS (SELECT x v FROM long_sequence(1_000))");
+            execute("CREATE TABLE t2 (k INT, y INT)");
+            execute("INSERT INTO t2 VALUES (1, 300), (2, 100)");
+            assertQuery("SELECT count() FROM notwal WHERE wait_wal_table('notwal', CASE WHEN (SELECT max(y) > 200 FROM t2 WHERE k = 1) THEN 1 ELSE 2 END) AND v > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Async Filter", "[state-shared]")
+                    .returns("""
+                            count
+                            1000
+                            """);
+            assertQuery("SELECT wait_wal_table('notwal', CASE WHEN (SELECT max(y) > 200 FROM t2 WHERE k = 1) THEN 1 ELSE 2 END) w, count() FROM notwal GROUP BY w")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Async Group By", "[state-shared]")
+                    .returns("""
+                            w\tcount
+                            true\t1000
+                            """);
+        });
+    }
+
+    @Test
     public void testWalUpdateRejectsLiveWalProgress() throws Exception {
         // Leak-checked like its two non-WAL siblings: this is the variant that reaches furthest
         // into generateUpdate, so it is the one that exercises the recordCursorFactory.close()

@@ -29,11 +29,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.cast.*;
 import io.questdb.griffin.engine.functions.constants.Constants;
-import io.questdb.std.Decimals;
 import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.LongIntHashMap;
@@ -41,7 +41,6 @@ import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
-import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.ColumnType.*;
 
@@ -50,10 +49,9 @@ public class CaseCommon {
     private static final ObjList<CaseFunctionConstructor> constructors = new ObjList<>(NULL + 1);
     private static final FiberLocal<IntList> tlArgPositions = new FiberLocal<>(IntList::new);
     private static final FiberLocal<ObjList<Function>> tlArgs = new FiberLocal<>(ObjList::new);
+    private static final FiberLocal<IntList> tlFoldedTypes = new FiberLocal<>(IntList::new);
     private static final LongIntHashMap typeEscalationMap = new LongIntHashMap();
 
-    // public for testing
-    @TestOnly
     public static Function getCastFunction(
             Function arg,
             int argPosition,
@@ -78,9 +76,11 @@ public class CaseCommon {
             ObjList<Function> args = tlArgs.get();
             args.clear();
             args.add(arg);
+            args.add(Constants.getTypeConstant(toType));
 
             IntList argPositions = tlArgPositions.get();
             argPositions.clear();
+            argPositions.add(argPosition);
             argPositions.add(argPosition);
             return factory.newInstance(0, args, argPositions, configuration, sqlExecutionContext);
         }
@@ -88,38 +88,33 @@ public class CaseCommon {
         return arg;
     }
 
-    // public for testing
-    @TestOnly
     public static int getCommonType(int commonType, int valueType, int valuePos, String undefinedErrorMsg) throws SqlException {
         if (isUndefined(valueType)) {
             throw SqlException.$(valuePos, undefinedErrorMsg);
         }
-
-        if (commonType == -1 || isNull(commonType) || commonType == 0) {
-            return valueType;
-        }
-        if (isNull(valueType)) {
-            return commonType;
-        }
-
-        boolean arrayCommonType = ColumnType.isArray(commonType);
-        boolean arrayValueType = ColumnType.isArray(valueType);
-        if (arrayCommonType && arrayValueType) {
-            if (commonType == valueType) {
-                return commonType;
-            }
-            throw SqlException.inconvertibleTypes(valuePos, valueType, ColumnType.nameOf(valueType), commonType, ColumnType.nameOf(commonType));
-        }
-
-        if (ColumnType.isDecimal(commonType) || ColumnType.isDecimal(valueType)) {
-            return getDecimalCommonType(commonType, valueType, valuePos);
-        }
-
-        final int type = typeEscalationMap.get(Numbers.encodeLowHighInts(commonType, valueType));
-        if (type == LongIntHashMap.NO_ENTRY_VALUE) {
-            throw SqlException.inconvertibleTypes(valuePos, valueType, ColumnType.nameOf(valueType), commonType, ColumnType.nameOf(commonType));
+        final int type = getCommonTypeOrUndefined(commonType, valueType);
+        if (type == UNDEFINED) {
+            throw inconvertibleTypes(valuePos, valueType, commonType);
         }
         return type;
+    }
+
+    /**
+     * Adds the value type to {@code foldedTypes} and returns true, or returns false when {@code type}, the common
+     * type after the value, lifts {@code commonType} to one that a value before it does not convert to.
+     */
+    private static boolean foldType(int type, int commonType, int valueType, IntList foldedTypes) {
+        if (type != commonType) {
+            for (int i = 0, n = foldedTypes.size(); i < n; i++) {
+                if (!isConvertible(foldedTypes.getQuick(i), type)) {
+                    return false;
+                }
+            }
+        }
+        if (!foldedTypes.contains(valueType)) {
+            foldedTypes.add(valueType);
+        }
+        return true;
     }
 
     @NotNull
@@ -131,29 +126,27 @@ public class CaseCommon {
         return constructor;
     }
 
-    private static int getDecimalCommonType(int commonType, int valueType, int valuePos) throws SqlException {
-        if (commonType == valueType) {
-            return commonType;
+    private static SqlException inconvertibleTypes(int valuePos, int valueType, int commonType) {
+        if (!(ColumnType.isArray(commonType) && ColumnType.isArray(valueType))
+                && (ColumnType.isDecimal(commonType) || ColumnType.isDecimal(valueType))) {
+            commonType = DecimalUtil.getImplicitCastType(commonType);
+            valueType = DecimalUtil.getImplicitCastType(valueType);
         }
+        return SqlException.inconvertibleTypes(valuePos, valueType, ColumnType.nameOf(valueType), commonType, ColumnType.nameOf(commonType));
+    }
 
-        commonType = DecimalUtil.getImplicitCastType(commonType);
-        valueType = DecimalUtil.getImplicitCastType(valueType);
-        if (commonType == 0 || valueType == 0) {
-            throw SqlException.inconvertibleTypes(valuePos, valueType, ColumnType.nameOf(valueType), commonType, ColumnType.nameOf(commonType));
-        }
+    private static boolean isConvertible(int valueType, int commonType) {
+        return valueType == commonType || getCommonTypeOrUndefined(commonType, valueType) != UNDEFINED;
+    }
 
-        final int commonPrecision = ColumnType.getDecimalPrecision(commonType);
-        final int commonScale = ColumnType.getDecimalScale(commonType);
-        final int valuePrecision = ColumnType.getDecimalPrecision(valueType);
-        final int valueScale = ColumnType.getDecimalScale(valueType);
-
-        final int targetScale = Math.max(commonScale, valueScale);
-        final int targetPrecision = Math.min(
-                Math.max(commonPrecision - commonScale, valuePrecision - valueScale) + targetScale,
-                Decimals.MAX_PRECISION
-        );
-
-        return ColumnType.getDecimalType(targetPrecision, targetScale);
+    /**
+     * The fiber's empty scratch list of the value types a CASE-like fold has seen, see
+     * {@link #getCommonType(int, int, int, IntList, String)}.
+     */
+    static IntList foldedTypes() {
+        final IntList foldedTypes = tlFoldedTypes.get();
+        foldedTypes.clear();
+        return foldedTypes;
     }
 
     static Function getCaseFunction(int position, int returnType, CaseFunctionPicker picker, ObjList<Function> args) throws SqlException {
@@ -172,6 +165,84 @@ public class CaseCommon {
         return getCaseFunctionConstructor(position, returnType).getInstance(position, picker, args, returnType);
     }
 
+    /**
+     * The type of the function {@link #getCaseFunction} builds for the given common value type.
+     */
+    static int getCaseFunctionType(int returnType) {
+        return tagOf(returnType) == SYMBOL ? STRING : returnType;
+    }
+
+    /**
+     * The common type of CASE-like values after folding in one more value. The values fold in their order, and a
+     * value that lifts the common type to one that a value before it does not convert to fails at its own position,
+     * against the common type of the values before it: CHAR and SYMBOL fold into STRING and STRING into IPv4, but
+     * neither CHAR nor SYMBOL converts to IPv4. The common type of the values before the failing one does not
+     * depend on their order, so neither does the error.
+     *
+     * @param commonType  the common type of the values before this one, -1 before the first value
+     * @param foldedTypes the distinct types of the values before this one; the value's type is added to it
+     */
+    static int getCommonType(int commonType, int valueType, int valuePos, IntList foldedTypes, String undefinedErrorMsg) throws SqlException {
+        final int type = getCommonType(commonType, valueType, valuePos, undefinedErrorMsg);
+        if (!foldType(type, commonType, valueType, foldedTypes)) {
+            throw inconvertibleTypes(valuePos, valueType, commonType);
+        }
+        return type;
+    }
+
+    /**
+     * The common type of CASE-like value types after folding in one more value type, or {@link ColumnType#UNDEFINED}
+     * where {@link #getCommonType(int, int, int, IntList, String)} fails for the values.
+     *
+     * @param commonType  the common type of the value types before this one, -1 before the first one
+     * @param foldedTypes the distinct value types before this one; the value type is added to it
+     */
+    static int getCommonTypeOrUndefined(int commonType, int valueType, IntList foldedTypes) {
+        final int type = getCommonTypeOrUndefined(commonType, valueType);
+        return type != UNDEFINED && foldType(type, commonType, valueType, foldedTypes) ? type : UNDEFINED;
+    }
+
+    /**
+     * The common type of CASE-like values after folding in one more value type, or {@link ColumnType#UNDEFINED}
+     * when the value is a bind variable or does not convert to the common type.
+     *
+     * @param commonType the common type so far, -1 before the first value
+     */
+    static int getCommonTypeOrUndefined(int commonType, int valueType) {
+        if (isUndefined(valueType)) {
+            return UNDEFINED;
+        }
+        if (commonType == -1 || isNull(commonType) || commonType == UNDEFINED) {
+            return valueType;
+        }
+        if (isNull(valueType)) {
+            return commonType;
+        }
+        if (ColumnType.isArray(commonType) && ColumnType.isArray(valueType)) {
+            return commonType == valueType ? commonType : UNDEFINED;
+        }
+        if (commonType == valueType && (ColumnType.isGeoHash(commonType) || ColumnType.isInterval(commonType))) {
+            return commonType;
+        }
+        if (ColumnType.isDecimal(commonType) || ColumnType.isDecimal(valueType)) {
+            if (commonType == valueType) {
+                return commonType;
+            }
+            final int commonDecimalType = DecimalUtil.getImplicitCastType(commonType);
+            final int valueDecimalType = DecimalUtil.getImplicitCastType(valueType);
+            if (commonDecimalType == 0 || valueDecimalType == 0) {
+                return UNDEFINED;
+            }
+            return ResultTypes.decimalUnion(commonDecimalType, valueDecimalType);
+        }
+        final int type = typeEscalationMap.get(Numbers.encodeLowHighInts(commonType, valueType));
+        return type == LongIntHashMap.NO_ENTRY_VALUE ? UNDEFINED : type;
+    }
+
+    static boolean hasCastFactory(int fromType, int toType) {
+        return castFactories.keyIndex(Numbers.encodeLowHighInts(fromType, toType)) < 0;
+    }
+
     static {
         // self for all
         castFactories.put(Numbers.encodeLowHighInts(BYTE, LONG256), new CastByteToLong256FunctionFactory());
@@ -181,18 +252,21 @@ public class CaseCommon {
         castFactories.put(Numbers.encodeLowHighInts(BYTE, CHAR), new CastByteToCharFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(BYTE, DATE), new CastByteToDateFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(BYTE, TIMESTAMP_MICRO), new CastByteToTimestampFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(BYTE, TIMESTAMP_NANO), new CastByteToTimestampFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, LONG256), new CastCharToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, STRING), new CastCharToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, VARCHAR), new CastCharToVarcharFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, SYMBOL), new CastCharToSymbolFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, DATE), new CastCharToDateFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(CHAR, TIMESTAMP_MICRO), new CastCharToTimestampFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(CHAR, TIMESTAMP_NANO), new CastCharToTimestampFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, LONG256), new CastShortToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, STRING), new CastShortToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, VARCHAR), new CastShortToVarcharFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, SYMBOL), new CastShortToSymbolFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, DATE), new CastShortToDateFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(SHORT, TIMESTAMP_MICRO), new CastShortToTimestampFunctionFactory());
+        castFactories.put(Numbers.encodeLowHighInts(SHORT, TIMESTAMP_NANO), new CastShortToTimestampFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(INT, LONG256), new CastIntToLong256FunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(INT, STRING), new CastIntToStrFunctionFactory());
         castFactories.put(Numbers.encodeLowHighInts(INT, VARCHAR), new CastIntToVarcharFunctionFactory());
@@ -250,7 +324,7 @@ public class CaseCommon {
         typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, CHAR), CHAR);
         typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, STRING), STRING);
         typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, VARCHAR), VARCHAR);
-        typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, SYMBOL), SYMBOL);
+        typeEscalationMap.put(Numbers.encodeLowHighInts(CHAR, SYMBOL), STRING);
 
         typeEscalationMap.put(Numbers.encodeLowHighInts(SHORT, BYTE), SHORT);
         typeEscalationMap.put(Numbers.encodeLowHighInts(SHORT, SHORT), SHORT);
@@ -352,6 +426,7 @@ public class CaseCommon {
         constructors.extendAndSet(DECIMAL128, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(DECIMAL256, (position, picker, args, returnType) -> new DecimalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(VARCHAR, (position, picker, args, returnType) -> new VarcharCaseFunction(picker, args));
+        constructors.extendAndSet(INTERVAL, (position, picker, args, returnType) -> new IntervalCaseFunction(returnType, picker, args));
         constructors.extendAndSet(NULL, (position, picker, args, returnType) -> new NullCaseFunction(args));
         constructors.setPos(NULL + 1);
     }

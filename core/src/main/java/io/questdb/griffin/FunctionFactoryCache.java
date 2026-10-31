@@ -67,32 +67,37 @@ public class FunctionFactoryCache {
                     if (factory.isBoolean()) {
                         switch (name) {
                             case "=":
-                                addFactoryToList(factories, createNegatingFactory("!=", factory));
-                                addFactoryToList(factories, createNegatingFactory("<>", factory));
+                                addFactoryToList(factories, createNegatingFactory("!=", factory), descriptor);
+                                addFactoryToList(factories, createNegatingFactory("<>", factory), descriptor);
                                 if (descriptor.getArgTypeWithFlags(0) != descriptor.getArgTypeWithFlags(1)) {
                                     FunctionFactory swappingFactory = createSwappingFactory("=", factory);
-                                    addFactoryToList(factories, swappingFactory);
-                                    addFactoryToList(factories, createNegatingFactory("!=", swappingFactory));
-                                    addFactoryToList(factories, createNegatingFactory("<>", swappingFactory));
+                                    FunctionFactoryDescriptor swapped = new FunctionFactoryDescriptor(swappingFactory, descriptor.isRelocatableScalar());
+                                    descriptor.setCommutedEquality(swapped);
+                                    swapped.setCommutedEquality(descriptor);
+                                    addFactoryToList(factories, swapped);
+                                    addFactoryToList(factories, createNegatingFactory("!=", swappingFactory), descriptor);
+                                    addFactoryToList(factories, createNegatingFactory("<>", swappingFactory), descriptor);
+                                } else {
+                                    descriptor.setCommutedEquality(descriptor);
                                 }
                                 break;
                             case "<":
                                 // `a < b` == `a >= b`
-                                addFactoryToList(factories, createNegatingFactory(">=", factory));
+                                addFactoryToList(factories, createNegatingFactory(">=", factory), descriptor);
                                 FunctionFactory greaterThan = createSwappingFactory(">", factory);
                                 // `a < b` == `b > a`
-                                addFactoryToList(factories, greaterThan);
+                                addFactoryToList(factories, greaterThan, descriptor);
                                 // `b > a` == !(`b <= a`)
-                                addFactoryToList(factories, createNegatingFactory("<=", greaterThan));
+                                addFactoryToList(factories, createNegatingFactory("<=", greaterThan), descriptor);
                                 break;
                             case ">":
                                 // `a > b` == `a <= b`
-                                addFactoryToList(factories, createNegatingFactory("<=", factory));
+                                addFactoryToList(factories, createNegatingFactory("<=", factory), descriptor);
                                 FunctionFactory lessThan = createSwappingFactory("<", factory);
                                 // `a > b` == `b < a`
-                                addFactoryToList(factories, lessThan);
+                                addFactoryToList(factories, lessThan, descriptor);
                                 // `b < a` == !(`b >= a`)
-                                addFactoryToList(factories, createNegatingFactory(">=", lessThan));
+                                addFactoryToList(factories, createNegatingFactory(">=", lessThan), descriptor);
                                 break;
                         }
                     } else if (factory.isGroupBy()) {
@@ -107,7 +112,7 @@ public class FunctionFactoryCache {
                             descriptor.getArgTypeWithFlags(0) != descriptor.getArgTypeWithFlags(1)
                     ) {
                         FunctionFactory swappingFactory = createSwappingFactory(name, factory);
-                        addFactoryToList(factories, swappingFactory);
+                        addFactoryToList(factories, swappingFactory, descriptor);
                     }
                 } catch (SqlException e) {
                     LOG.error().$((Sinkable) e)
@@ -130,6 +135,27 @@ public class FunctionFactoryCache {
 
     public ObjList<FunctionFactoryDescriptor> getOverloadList(CharSequence token) {
         return factories.get(token);
+    }
+
+    /**
+     * How the value of the parsed call depends on the precision of its TIMESTAMP argument, as every overload of its
+     * arity answers, see {@link FunctionFactory#getTimestampPrecisionUse}; overloads that differ, and unknown functions,
+     * depend on it.
+     */
+    public TimestampPrecisionUse getTimestampPrecisionUse(ExpressionNode call) {
+        final ObjList<FunctionFactoryDescriptor> overloads = getOverloadList(call.token);
+        TimestampPrecisionUse use = null;
+        for (int i = 0, n = overloads == null ? 0 : overloads.size(); i < n; i++) {
+            final FunctionFactoryDescriptor overload = overloads.getQuick(i);
+            if (overload.getSigArgCount() == call.paramCount) {
+                final TimestampPrecisionUse overloadUse = overload.getFactory().getTimestampPrecisionUse(call);
+                if (use != null && use != overloadUse) {
+                    return TimestampPrecisionUse.DEPENDENT;
+                }
+                use = overloadUse;
+            }
+        }
+        return use != null ? use : TimestampPrecisionUse.DEPENDENT;
     }
 
     public boolean isCursor(CharSequence name) {
@@ -181,8 +207,12 @@ public class FunctionFactoryCache {
         return name != null && windowFunctionNames.contains(name);
     }
 
-    private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactory factory) throws SqlException {
-        addFactoryToList(list, new FunctionFactoryDescriptor(factory));
+    private void addFactoryToList(
+            LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list,
+            FunctionFactory factory,
+            FunctionFactoryDescriptor source
+    ) throws SqlException {
+        addFactoryToList(list, new FunctionFactoryDescriptor(factory, source.isRelocatableScalar()));
     }
 
     private void addFactoryToList(LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> list, FunctionFactoryDescriptor descriptor) {

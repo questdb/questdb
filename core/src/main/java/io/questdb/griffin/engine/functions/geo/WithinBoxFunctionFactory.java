@@ -25,6 +25,8 @@
 package io.questdb.griffin.engine.functions.geo;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -57,6 +59,11 @@ import io.questdb.std.ObjList;
 public class WithinBoxFunctionFactory implements FunctionFactory {
     // Threshold for NaN detection: values with (bits & 0x7FFFFFFFFFFFFFFF) > this are NaN
     private static final long INF_BITS = 0x7FF0000000000000L;
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public Function newInstance(
@@ -166,8 +173,7 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            Misc.free(xFunc);
-            Misc.free(yFunc);
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, xFunc), yFunc));
         }
 
         @Override
@@ -193,22 +199,6 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isEquivalentTo(Function other) {
-            if (this == other) {
-                return true;
-            }
-            if (other instanceof ConstBoxGeoWithinBoxFunction that) {
-                return minX == that.minX
-                        && minY == that.minY
-                        && maxX == that.maxX
-                        && maxY == that.maxY
-                        && xFunc.isEquivalentTo(that.xFunc)
-                        && yFunc.isEquivalentTo(that.yFunc);
-            }
-            return false;
-        }
-
-        @Override
         public boolean isNonDeterministic() {
             return xFunc.isNonDeterministic() || yFunc.isNonDeterministic();
         }
@@ -227,6 +217,14 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
         @Override
         public boolean isThreadSafe() {
             return xFunc.isThreadSafe() && yFunc.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof ConstBoxGeoWithinBoxFunction other) {
+                xFunc.offerStateTo(other.xFunc);
+                yFunc.offerStateTo(other.yFunc);
+            }
         }
 
         @Override
@@ -288,12 +286,11 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            Misc.free(xFunc);
-            Misc.free(yFunc);
-            Misc.free(minXFunc);
-            Misc.free(minYFunc);
-            Misc.free(maxXFunc);
-            Misc.free(maxYFunc);
+            Throwable failure = Misc.freeBestEffort(Misc.freeBestEffort(null, xFunc), yFunc);
+            failure = Misc.freeBestEffort(failure, minXFunc);
+            failure = Misc.freeBestEffort(failure, minYFunc);
+            failure = Misc.freeBestEffort(failure, maxXFunc);
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(failure, maxYFunc));
         }
 
         @Override
@@ -339,22 +336,6 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public boolean isEquivalentTo(Function other) {
-            if (this == other) {
-                return true;
-            }
-            if (other instanceof GeoWithinBoxFunction that) {
-                return xFunc.isEquivalentTo(that.xFunc)
-                        && yFunc.isEquivalentTo(that.yFunc)
-                        && minXFunc.isEquivalentTo(that.minXFunc)
-                        && minYFunc.isEquivalentTo(that.minYFunc)
-                        && maxXFunc.isEquivalentTo(that.maxXFunc)
-                        && maxYFunc.isEquivalentTo(that.maxYFunc);
-            }
-            return false;
-        }
-
-        @Override
         public boolean isNonDeterministic() {
             return xFunc.isNonDeterministic()
                     || yFunc.isNonDeterministic()
@@ -392,6 +373,18 @@ public class WithinBoxFunctionFactory implements FunctionFactory {
                     && minYFunc.isThreadSafe()
                     && maxXFunc.isThreadSafe()
                     && maxYFunc.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof GeoWithinBoxFunction other) {
+                xFunc.offerStateTo(other.xFunc);
+                yFunc.offerStateTo(other.yFunc);
+                maxXFunc.offerStateTo(other.maxXFunc);
+                maxYFunc.offerStateTo(other.maxYFunc);
+                minXFunc.offerStateTo(other.minXFunc);
+                minYFunc.offerStateTo(other.minYFunc);
+            }
         }
 
         @Override

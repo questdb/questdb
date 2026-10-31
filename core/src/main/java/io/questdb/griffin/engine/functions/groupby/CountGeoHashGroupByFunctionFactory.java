@@ -34,6 +34,11 @@ import io.questdb.std.ObjList;
 
 public class CountGeoHashGroupByFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
+
+    @Override
     public String getSignature() {
         return "count(G)";
     }

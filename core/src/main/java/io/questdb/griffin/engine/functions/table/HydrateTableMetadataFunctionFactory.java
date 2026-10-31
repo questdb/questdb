@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Function;
@@ -54,6 +55,11 @@ import org.jetbrains.annotations.NotNull;
 public class HydrateTableMetadataFunctionFactory implements FunctionFactory {
     private static final Log LOG = LogFactory.getLog(HydrateTableMetadataFunctionFactory.class);
     private static final String SIGNATURE = "hydrate_table_metadata(V)";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public String getSignature() {

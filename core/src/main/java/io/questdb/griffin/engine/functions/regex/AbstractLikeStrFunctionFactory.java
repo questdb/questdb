@@ -26,6 +26,8 @@ package io.questdb.griffin.engine.functions.regex;
 
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -88,6 +90,16 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
     }
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        return isPatternDeferrable(args.getQuick(1), argPositions);
+    }
+
+    @Override
     public Function newInstance(
             int position,
             ObjList<Function> args,
@@ -98,74 +110,72 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
         final Function value = args.getQuick(0);
         final Function pattern = args.getQuick(1);
 
-        if (pattern.isConstant()) {
-            final CharSequence likeSeq = pattern.getStrA(null);
-            int len;
-            if (likeSeq != null && (len = likeSeq.length()) > 0) {
-                if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
-                    final int anyCount = countChar(likeSeq, '%');
-                    if (anyCount == 1) {
-                        if (len == 1) {
-                            // LIKE '%' case
-                            final NegatableBooleanFunction notNullFunc = new EqStrFunctionFactory.NullCheckFunc(value);
-                            notNullFunc.setNegated();
-                            return notNullFunc;
-                        } else if (likeSeq.charAt(0) == '%') {
-                            // LIKE/ILIKE '%abc' case
-                            final String patternStr = likeSeq.subSequence(1, len).toString();
-                            if (isCaseInsensitive()) {
-                                return new ConstIEndsWithStrFunction(value, patternStr);
-                            } else {
-                                return new ConstEndsWithStrFunction(value, patternStr);
-                            }
-                        } else if (likeSeq.charAt(len - 1) == '%') {
-                            // LIKE/ILIKE 'abc%' case
-                            final String patternStr = likeSeq.subSequence(0, len - 1).toString();
-                            if (isCaseInsensitive()) {
-                                return new ConstIStartsWithStrFunction(value, patternStr);
-                            } else {
-                                return new ConstStartsWithStrFunction(value, patternStr);
-                            }
-                        }
-                    } else if (anyCount == 2) {
-                        if (len == 2) {
-                            // LIKE '%%' case
-                            final NegatableBooleanFunction notNullFunc = new EqStrFunctionFactory.NullCheckFunc(value);
-                            notNullFunc.setNegated();
-                            return notNullFunc;
-                        } else if (likeSeq.charAt(0) == '%' && likeSeq.charAt(len - 1) == '%') {
-                            // LIKE/ILIKE '%abc%' case
-                            final String patternStr = likeSeq.subSequence(1, len - 1).toString();
-                            if (isCaseInsensitive()) {
-                                return new ConstIContainsStrFunction(value, patternStr);
-                            } else {
-                                return new ConstContainsStrFunction(value, patternStr);
-                            }
-                        }
-                    }
-                }
-
-                String p = escapeSpecialChars(likeSeq, null);
-                assert p != null;
-                int flags = Pattern.DOTALL;
-                if (isCaseInsensitive()) {
-                    flags |= Pattern.CASE_INSENSITIVE;
-                    p = p.toLowerCase();
-                }
-                return new ConstLikeStrFunction(
-                        value,
-                        Pattern.compile(p, flags).matcher("")
-                );
-            }
+        if (!isMatchingPattern(pattern, argPositions)) {
+            CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, args));
             return BooleanConstant.FALSE;
         }
 
-        if (pattern.isRuntimeConstant()) {
-            // bind variable
-            return new BindLikeStrFunction(value, pattern, isCaseInsensitive());
+        if (pattern.isConstant()) {
+            final CharSequence likeSeq = pattern.getStrA(null);
+            final int len = likeSeq.length();
+            if (countChar(likeSeq, '_') == 0 && countChar(likeSeq, '\\') == 0) {
+                final int anyCount = countChar(likeSeq, '%');
+                if (anyCount == 1) {
+                    if (len == 1) {
+                        // LIKE '%' case
+                        final NegatableBooleanFunction notNullFunc = new EqStrFunctionFactory.NullCheckFunc(value);
+                        notNullFunc.setNegated();
+                        return notNullFunc;
+                    } else if (likeSeq.charAt(0) == '%') {
+                        // LIKE/ILIKE '%abc' case
+                        final String patternStr = likeSeq.subSequence(1, len).toString();
+                        if (isCaseInsensitive()) {
+                            return new ConstIEndsWithStrFunction(value, patternStr);
+                        } else {
+                            return new ConstEndsWithStrFunction(value, patternStr);
+                        }
+                    } else if (likeSeq.charAt(len - 1) == '%') {
+                        // LIKE/ILIKE 'abc%' case
+                        final String patternStr = likeSeq.subSequence(0, len - 1).toString();
+                        if (isCaseInsensitive()) {
+                            return new ConstIStartsWithStrFunction(value, patternStr);
+                        } else {
+                            return new ConstStartsWithStrFunction(value, patternStr);
+                        }
+                    }
+                } else if (anyCount == 2) {
+                    if (len == 2) {
+                        // LIKE '%%' case
+                        final NegatableBooleanFunction notNullFunc = new EqStrFunctionFactory.NullCheckFunc(value);
+                        notNullFunc.setNegated();
+                        return notNullFunc;
+                    } else if (likeSeq.charAt(0) == '%' && likeSeq.charAt(len - 1) == '%') {
+                        // LIKE/ILIKE '%abc%' case
+                        final String patternStr = likeSeq.subSequence(1, len - 1).toString();
+                        if (isCaseInsensitive()) {
+                            return new ConstIContainsStrFunction(value, patternStr);
+                        } else {
+                            return new ConstContainsStrFunction(value, patternStr);
+                        }
+                    }
+                }
+            }
+
+            String p = escapeSpecialChars(likeSeq, null);
+            assert p != null;
+            int flags = Pattern.DOTALL;
+            if (isCaseInsensitive()) {
+                flags |= Pattern.CASE_INSENSITIVE;
+                p = p.toLowerCase();
+            }
+            return new ConstLikeStrFunction(
+                    value,
+                    Pattern.compile(p, flags).matcher("")
+            );
         }
 
-        throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
+        // bind variable
+        return new BindLikeStrFunction(value, pattern, isCaseInsensitive());
     }
 
     static int countChar(@NotNull CharSequence seq, char c) {
@@ -176,6 +186,37 @@ public abstract class AbstractLikeStrFunctionFactory implements FunctionFactory 
             }
         }
         return count;
+    }
+
+    /**
+     * Whether a LIKE over this pattern needs a matcher: false for a constant NULL or empty pattern, which matches
+     * nothing. Raises the error for a pattern that is neither constant nor a bind variable.
+     */
+    static boolean isMatchingPattern(Function pattern, IntList argPositions) throws SqlException {
+        if (pattern.isConstant()) {
+            final CharSequence likeSeq = pattern.getStrA(null);
+            return likeSeq != null && !likeSeq.isEmpty();
+        }
+        if (pattern.isRuntimeConstant()) {
+            return true;
+        }
+        throw SqlException.$(argPositions.getQuick(1), "use constant or bind variable");
+    }
+
+    /**
+     * Whether a LIKE over this pattern builds a matcher, after the errors its construction raises for the pattern.
+     */
+    static boolean isPatternDeferrable(Function pattern, IntList argPositions) throws SqlException {
+        if (!isMatchingPattern(pattern, argPositions)) {
+            return false;
+        }
+        if (pattern.isConstant()) {
+            final CharSequence likeSeq = pattern.getStrA(null);
+            if (countChar(likeSeq, '\\') > 0) {
+                escapeSpecialChars(likeSeq, null);
+            }
+        }
+        return true;
     }
 
     protected abstract boolean isCaseInsensitive();

@@ -63,6 +63,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private long filteredRowCount;
     private int frameIndex = Integer.MAX_VALUE;
     private PageFrameMemory frameMemory;
+    // The task's position in the order its frame sequence dispatches frames.
+    private int frameOrdinal = Integer.MAX_VALUE;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId = -1;
     private int interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
@@ -183,6 +185,14 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return frameMemory;
     }
 
+    /**
+     * The task's position in the order its frame sequence dispatches frames, which is the frame index unless the
+     * sequence dispatches a range of frames, see {@link PageFrameSequence#toTop(int, int)}.
+     */
+    public int getFrameOrdinal() {
+        return frameOrdinal;
+    }
+
     public long getFrameRowCount() {
         return frameSequence.getFrameRowCount(frameIndex);
     }
@@ -233,12 +243,13 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return frameSequence.getPageFrameAddressCache().getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
     }
 
-    public void of(PageFrameSequence<?> frameSequence, int frameIndex, boolean countOnly) {
+    public void of(PageFrameSequence<?> frameSequence, int frameOrdinal, boolean countOnly) {
         this.frameSequence = frameSequence;
         final boolean sameQueryExecution = frameSequenceId == frameSequence.getId();
         this.frameSequenceId = frameSequence.getId();
         this.taskType = frameSequence.getTaskType();
-        this.frameIndex = frameIndex;
+        this.frameOrdinal = frameOrdinal;
+        this.frameIndex = frameSequence.getDispatchFrameIndex(frameOrdinal);
         this.isCountOnly = countOnly;
         // Rebind the per-query tracker on every frame: clear() nulls it on the
         // pool between frames, and the pool.of() below only re-runs on a fresh
@@ -333,11 +344,11 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     }
 
     void collected(boolean forceCollect) {
-        final long frameCount = frameSequence.getFrameCount();
+        final long frameCount = frameSequence.getDispatchFrameCount();
 
-        // we assume that frame indexes are published in ascending order
-        // and when we see the last index, we would free up the remaining resources
-        if (frameIndex + 1 == frameCount) {
+        // we assume that frames are published in dispatch order
+        // and when we see the last one, we would free up the remaining resources
+        if (frameOrdinal + 1 == frameCount) {
             frameSequence.markAsDone();
         }
 
@@ -348,7 +359,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         // What we are avoiding here is resetting capacity on 1000 frames given our queue size
         // is 32 items. If our particular producer resizes queue items to 10x of the initial size
         // we let these sizes stick until produce starts to wind down.
-        if (forceCollect || frameIndex >= frameCount - frameQueueCapacity) {
+        if (forceCollect || frameOrdinal >= frameCount - frameQueueCapacity) {
             clear();
         } else {
             // Never keep parquet buffers around to avoid OOM even if there is an ongoing query.

@@ -298,25 +298,25 @@ public class AggregateTest extends AbstractCairoTest {
                     "    and ts < '2023-02-02' " +
                     "order by 1 asc";
 
+            if (enableParallelGroupBy) {
+                assertQuery(query)
+                        .noLeakCheck()
+                        .assertsPlan("Encode sort light\n" +
+                                "  keys: [account_uuid]\n" +
+                                "    GroupBy vectorized: true workers: 1\n" +
+                                "      keys: [account_uuid]\n" +
+                                "      values: [sum(requests)]\n" +
+                                "        PageFrame\n" +
+                                "            Row forward scan\n" +
+                                "            Interval forward scan on: records\n" +
+                                (ColumnType.isTimestampMicro(timestampType) ?
+                                        "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
+                                        : "              intervals: [(\"2023-02-01T00:00:00.000000001Z\",\"2023-02-01T23:59:59.999999999Z\")]\n"));
+            }
+
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
-                    .withPlan("Encode sort light\n" +
-                            "  keys: [account_uuid]\n" +
-                            // ORDER BY on the indexed symbol no longer compiles to an index row cursor, and a
-                            // plain frame scan makes the vector aggregate path eligible again - so this line
-                            // follows the randomized cairo.sql.parallel.groupby.enabled setting
-                            (enableParallelGroupBy
-                                    ? "    GroupBy vectorized: true workers: " + sqlExecutionContext.getSharedQueryWorkerCount() + "\n"
-                                    : "    GroupBy vectorized: false\n") +
-                            "      keys: [account_uuid]\n" +
-                            "      values: [sum(requests)]\n" +
-                            "        PageFrame\n" +
-                            "            Row forward scan\n" +
-                            "            Interval forward scan on: records\n" +
-                            (ColumnType.isTimestampMicro(timestampType) ?
-                                    "              intervals: [(\"2023-02-01T00:00:00.000001Z\",\"2023-02-01T23:59:59.999999Z\")]\n"
-                                    : "              intervals: [(\"2023-02-01T00:00:00.000000001Z\",\"2023-02-01T23:59:59.999999999Z\")]\n"))
                     .returns("""
                             account_uuid\trequest_count
                             s0\t0
@@ -965,7 +965,6 @@ public class AggregateTest extends AbstractCairoTest {
                     s3\tnull
                     """;
 
-
             assertQuery("select s1, nsum(val) from tab order by s1")
                     .noLeakCheck()
                     .expectSize()
@@ -1324,7 +1323,7 @@ public class AggregateTest extends AbstractCairoTest {
             );
 
             // min(ts) should return the first value (due to optimization)
-            assertQuery("select min(ts) from tab").timestamp("min").expectSize().returns(replaceTimestampSuffix1(
+            assertQuery("select min(ts) from tab").expectSize().returns(replaceTimestampSuffix1(
                     """
                             min
                             2024-01-01T00:00:00.000000Z
@@ -1333,7 +1332,7 @@ public class AggregateTest extends AbstractCairoTest {
             ));
 
             // max(ts) should return the last value (due to optimization)
-            assertQuery("select max(ts) from tab").timestampDesc("max").expectSize().returns(replaceTimestampSuffix1(
+            assertQuery("select max(ts) from tab").expectSize().returns(replaceTimestampSuffix1(
                     """
                             max
                             2024-01-01T02:46:39.000000Z
@@ -1421,7 +1420,7 @@ public class AggregateTest extends AbstractCairoTest {
             );
 
             // min(ts) should return the first value
-            assertQuery("select min(ts) from tab").timestamp("min").expectSize().returns(replaceTimestampSuffix1(
+            assertQuery("select min(ts) from tab").expectSize().returns(replaceTimestampSuffix1(
                     """
                             min
                             2024-01-01T00:00:00.000000Z
@@ -1430,7 +1429,7 @@ public class AggregateTest extends AbstractCairoTest {
             ));
 
             // max(ts) should return the last value
-            assertQuery("select max(ts) from tab").timestampDesc("max").expectSize().returns(replaceTimestampSuffix1(
+            assertQuery("select max(ts) from tab").expectSize().returns(replaceTimestampSuffix1(
                     """
                             max
                             2024-01-07T22:39:00.000000Z

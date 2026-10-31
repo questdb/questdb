@@ -34,10 +34,12 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
+import io.questdb.griffin.engine.functions.test.TestMatchFunctionFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinAtom;
 import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.WindowJoinFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
@@ -536,6 +538,193 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantArgumentAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ca_trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE ca_prices (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO ca_trades VALUES
+                        ('a', '2024-01-01T09:00:00.000000Z'),
+                        ('a', '2024-01-01T09:01:00.000000Z'),
+                        ('b', '2024-01-01T09:02:00.000000Z')""");
+            execute("""
+                    INSERT INTO ca_prices VALUES
+                        ('a', 1.0, '2024-01-01T08:59:30.000000Z'),
+                        ('a', 2.0, '2024-01-01T09:00:30.000000Z'),
+                        ('b', 3.0, '2024-01-01T09:01:30.000000Z')""");
+
+            assertQuery("SELECT t.ts, bool_or(false) b, count() c FROM ca_trades t WINDOW JOIN ca_prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tb\tc
+                            2024-01-01T09:00:00.000000Z\tfalse\t1
+                            2024-01-01T09:01:00.000000Z\tfalse\t1
+                            2024-01-01T09:02:00.000000Z\tfalse\t1
+                            """);
+
+            assertQuery("SELECT t.ts, count() c, bit_or(5) o, bit_xor(5) x FROM ca_trades t WINDOW JOIN ca_prices p ON (t.sym = p.sym) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW INCLUDE PREVAILING")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tc\to\tx
+                            2024-01-01T09:00:00.000000Z\t1\t5\t5
+                            2024-01-01T09:01:00.000000Z\t2\t5\t0
+                            2024-01-01T09:02:00.000000Z\t1\t5\t5
+                            """);
+
+            assertQuery("SELECT t.ts, bool_or(false) b, count() c, sum(p.price) s, t.sym FROM ca_trades t WINDOW JOIN ca_prices p ON (t.sym = p.sym AND 1 = 0) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tb\tc\ts\tsym
+                            2024-01-01T09:00:00.000000Z\tfalse\t0\tnull\ta
+                            2024-01-01T09:01:00.000000Z\tfalse\t0\tnull\ta
+                            2024-01-01T09:02:00.000000Z\tfalse\t0\tnull\tb
+                            """);
+        });
+    }
+
+    @Test
+    public void testConstantFalseFilterAggregatesReadEmptyWindowValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cz_trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE cz_prices (sym SYMBOL, price DOUBLE, qty INT, s STRING, d DECIMAL(18, 2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO cz_trades VALUES
+                        ('a', '2024-01-01T09:00:00.000000Z'),
+                        ('a', '2024-01-01T09:01:00.000000Z'),
+                        ('b', '2024-01-01T09:02:00.000000Z')""");
+            execute("""
+                    INSERT INTO cz_prices VALUES
+                        ('a', 1.0, 1, 'x', 1.25m, '2024-01-01T08:59:30.000000Z'),
+                        ('a', 2.0, 2, 'y', 2.25m, '2024-01-01T09:00:30.000000Z'),
+                        ('b', 3.0, 3, 'z', 3.25m, '2024-01-01T09:01:30.000000Z')""");
+            final String aggregates = "count() c, count(p.price) cp, count_distinct(p.qty) cd, count_distinct(p.sym) cs, " +
+                    "approx_count_distinct(p.qty) acd, sum(p.price) s, bool_or(p.price > 0) b, string_agg(p.s, ',') sa, sum(p.d) sd, first(p.sym) fs";
+            final String expected = """
+                    ts\tc\tcp\tcd\tcs\tacd\ts\tb\tsa\tsd\tfs
+                    2024-01-01T09:00:00.000000Z\t0\t0\t0\t0\t0\tnull\tfalse\t\t\t
+                    2024-01-01T09:01:00.000000Z\t0\t0\t0\t0\t0\tnull\tfalse\t\t\t
+                    2024-01-01T09:02:00.000000Z\t0\t0\t0\t0\t0\tnull\tfalse\t\t\t
+                    """;
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                assertQuery("SELECT t.ts, " + aggregates + " FROM cz_trades t WINDOW JOIN cz_prices p ON (t.sym = p.sym AND p.price < 0) " +
+                        "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+                assertQuery("SELECT t.ts, " + aggregates + " FROM cz_trades t WINDOW JOIN cz_prices p ON (t.sym = p.sym AND 1 = 0) " +
+                        "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW")
+                        .noLeakCheck()
+                        .withPlan("""
+                                Empty Window Join
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: cz_trades
+                                """)
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns(expected);
+                assertQuery("SELECT sum(c) c, sum(cd) cd, sum(acd) acd, count(s) s FROM (" +
+                        "SELECT t.ts, count() c, count_distinct(p.qty) cd, approx_count_distinct(p.qty) acd, sum(p.price) s " +
+                        "FROM cz_trades t WINDOW JOIN cz_prices p ON (1 = 0) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW)")
+                        .noLeakCheck()
+                        .withPlan("""
+                                GroupBy vectorized: false
+                                  values: [sum(c),sum(cd),sum(acd),count(s)]
+                                    SelectedRecord
+                                        Empty Window Join
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: cz_trades
+                                """)
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                c\tcd\tacd\ts
+                                0\t0\t0\t0
+                                """);
+                assertQuery("SELECT t.ts, count() c, sum(p2.price) s2 FROM cz_trades t " +
+                        "WINDOW JOIN cz_prices p ON (1 = 0) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW " +
+                        "WINDOW JOIN cz_prices p2 ON (t.sym = p2.sym) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW")
+                        .noLeakCheck()
+                        .withPlan("""
+                                Window Fast Join
+                                  vectorized: true
+                                  symbol: t.sym=sym
+                                  window lo: 60000000 preceding (include prevailing)
+                                  window hi: current row
+                                    Empty Window Join
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cz_trades
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: cz_prices
+                                """)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                ts\tc\ts2
+                                2024-01-01T09:00:00.000000Z\t0\t1.0
+                                2024-01-01T09:01:00.000000Z\t0\t3.0
+                                2024-01-01T09:02:00.000000Z\t0\t3.0
+                                """);
+            }
+            assertQuery("SELECT t.ts, t.sym, count() c, first(p.sym) fs FROM cz_trades t WINDOW JOIN cz_prices p ON (1 = 0) " +
+                    "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW ORDER BY t.ts DESC LIMIT 2")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort light lo: 2
+                              keys: [ts desc]
+                                Empty Window Join
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: cz_trades
+                            """)
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tc\tfs
+                            2024-01-01T09:02:00.000000Z\tb\t0\t
+                            2024-01-01T09:01:00.000000Z\ta\t0\t
+                            """);
+            assertQuery("SELECT t.ts, sum(p2.price) s2, count(p.price) c FROM cz_trades t " +
+                    "WINDOW JOIN cz_prices p2 ON (t.sym = p2.sym) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW " +
+                    "WINDOW JOIN cz_prices p ON (1 = 0) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW")
+                    .noLeakCheck()
+                    .withPlanContaining("Empty Window Join")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\ts2\tc
+                            2024-01-01T09:00:00.000000Z\t1.0\t0
+                            2024-01-01T09:01:00.000000Z\t3.0\t0
+                            2024-01-01T09:02:00.000000Z\t3.0\t0
+                            """);
+            assertQuery("SELECT fs, sum(c) c, count() n FROM (SELECT t.ts, count() c, first(p.sym) fs FROM cz_trades t " +
+                    "WINDOW JOIN cz_prices p ON (1 = 0) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            fs\tc\tn
+                            \t0\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testConstantFalseFilterAsyncAggregateOverSplicedColumns() throws Exception {
         // Aggregating a spliced null column drives the query through the parallel group-by, which asks
         // ExtraNullColumnCursorFactory for a PAGE FRAME cursor rather than a record cursor. That cursor
@@ -774,6 +963,44 @@ public class WindowJoinTest extends AbstractCairoTest {
                             1
                             1
                             1
+                            """);
+        });
+    }
+
+    @Test
+    public void testDistinctRemovesDuplicateRows() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2000-01-01T00:00:00.000000Z', 'A', 10.0),
+                        ('2000-01-01T00:00:00.000000Z', 'A', 10.0),
+                        ('2000-01-01T00:00:01.000000Z', 'B', 20.0)
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                        ('2000-01-01T00:00:00.000000Z', 'A', 10.0),
+                        ('2000-01-01T00:00:01.000000Z', 'B', 20.0)
+                    """);
+            final String windowJoin = " FROM trades t WINDOW JOIN quotes q ON (t.sym = q.sym) " +
+                    "RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING" + (includePrevailing ? " INCLUDE PREVAILING" : " EXCLUDE PREVAILING");
+            final String expected = """
+                    sym\ta
+                    A\t10.0
+                    B\t20.0
+                    """;
+            assertQuery("SELECT DISTINCT t.sym, avg(q.bid) a" + windowJoin + " ORDER BY t.sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT count() FROM (SELECT DISTINCT t.sym, avg(q.bid) a" + windowJoin + ")")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            2
                             """);
         });
     }
@@ -1371,7 +1598,7 @@ public class WindowJoinTest extends AbstractCairoTest {
     @Test
     public void testDynamicWindowCoalesceBound() throws Exception {
         // Tests that coalesce (paramCount >= 3) works as a dynamic bound,
-        // exercising the args-based tree walking in resolveWindowJoinBoundColumns.
+        // exercising the args-based tree walking in TemporalJoinBinder.
         // The master table prefix inside a nested expression within coalesce
         // must be stripped for the bound function to compile correctly.
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
@@ -1499,7 +1726,7 @@ public class WindowJoinTest extends AbstractCairoTest {
     public void testDynamicWindowExpressionBound() throws Exception {
         // Tests that computed expressions (not bare columns) work as dynamic
         // bounds, exercising the expression tree walking in
-        // resolveWindowJoinBoundColumns for both lo and hi.
+        // TemporalJoinBinder for both lo and hi.
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
@@ -1636,7 +1863,7 @@ public class WindowJoinTest extends AbstractCairoTest {
     @Test
     public void testDynamicWindowFailsOnSlaveColumnInCoalesceBound() throws Exception {
         // Tests that a slave column reference nested inside coalesce (paramCount >= 3)
-        // is properly rejected by resolveWindowJoinBoundColumns.
+        // is properly rejected by TemporalJoinBinder.
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
         Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
         assertMemoryLeak(() -> {
@@ -3487,6 +3714,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
                     "ORDER BY t.ts")
                     .noLeakCheck()
+                    .noRandomAccess()
                     .returns("""
                             sym\tprice\twindow_price
                             TSLA\t100.0\t40.0
@@ -3576,6 +3804,50 @@ public class WindowJoinTest extends AbstractCairoTest {
                             """);
         });
 
+    }
+
+    @Test
+    public void testMasterFilterRewindsOnToTop() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        TestMatchFunctionFactory.clear();
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE master (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slave (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO master VALUES
+                    (1, '2023-01-01T09:00:00.000000Z'),
+                    (2, '2023-01-01T09:01:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO slave VALUES
+                    (1.0, '2023-01-01T08:59:00.000000Z'),
+                    (2.0, '2023-01-01T09:00:00.000000Z'),
+                    (3.0, '2023-01-01T09:01:00.000000Z')
+                    """);
+            final String sql = """
+                    SELECT m.ts, m.v, sum(s.val) agg
+                    FROM master m
+                    WINDOW JOIN slave s
+                    RANGE BETWEEN 1 minute PRECEDING AND CURRENT ROW
+                    EXCLUDE PREVAILING
+                    WHERE test_match()
+                    """;
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("master filter: test_match()");
+            TestMatchFunctionFactory.clear();
+            try (RecordCursorFactory factory = select(sql)) {
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .returns("""
+                                ts\tv\tagg
+                                2023-01-01T09:00:00.000000Z\t1\t3.0
+                                2023-01-01T09:01:00.000000Z\t2\t5.0
+                                """);
+            }
+            Assert.assertTrue(TestMatchFunctionFactory.assertAPI(sqlExecutionContext));
+        });
     }
 
     @Test
@@ -4045,6 +4317,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     (includePrevailing ? "INCLUDE PREVAILING " : "EXCLUDE PREVAILING ") +
                     "ORDER BY t.ts")
                     .noLeakCheck()
+                    .noRandomAccess()
                     .returns("""
                             price\twindow_price
                             100.0\t60.0
@@ -4359,9 +4632,8 @@ public class WindowJoinTest extends AbstractCairoTest {
     @Test
     public void testOrderByExpressionOverNonSelectedColumn() throws Exception {
         // ORDER BY an expression over a column that the select list does not output, such as
-        // t.price * 2, adds the expression to the select list as a hidden column. With DISTINCT, the
-        // distinct model above the window join model used to reference it as a regular column, so the
-        // query, and SELECT * over it, returned an extra column named "column".
+        // t.price * 2, sorts by a hidden column. DISTINCT rejects it: the selected columns do not
+        // determine t.price, so the hidden column would split the DISTINCT tuple.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)",
@@ -4411,13 +4683,17 @@ public class WindowJoinTest extends AbstractCairoTest {
             final String[][] queries = {
                     {"SELECT t.sym, avg(q.bid) a" + windowJoin, expected},
                     {"SELECT t.sym, avg(q.bid) + 1 a" + windowJoin, expectedPlusOne},
-                    {"SELECT DISTINCT t.sym, avg(q.bid) a" + windowJoin, expected},
             };
-            // only the sort over the distinct factory reports its size
-            final boolean[] isSizeKnown = {false, false, true};
-            for (int i = 0, n = queries.length; i < n; i++) {
-                assertOrderByHiddenKeyNoLeakCheck(queries[i][0], queries[i][1], isSizeKnown[i]);
+            for (String[] query : queries) {
+                assertOrderByHiddenKeyNoLeakCheck(query[0], query[1], false);
             }
+
+            final String distinct = "SELECT DISTINCT t.sym, avg(q.bid) a" + windowJoin;
+            assertExceptionNoLeakCheck(
+                    distinct,
+                    distinct.indexOf("t.price"),
+                    "ORDER BY expressions must appear in select list"
+            );
 
             // a re-sort over the query drops its ORDER BY
             assertQuery("SELECT * FROM (" + queries[0][0] + ") ORDER BY sym, a")
@@ -4429,6 +4705,127 @@ public class WindowJoinTest extends AbstractCairoTest {
                             B\t40.0
                             C\t40.0
                             """);
+        });
+    }
+
+    @Test
+    public void testParallelWindowJoinOverAlwaysFalseWindowJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (sym SYMBOL, k INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('a', 1, '2024-01-01T09:00:00.000000Z'),
+                        ('a', 2, '2024-01-01T09:01:00.000000Z'),
+                        ('b', 3, '2024-01-01T09:02:00.000000Z')""");
+            execute("""
+                    INSERT INTO prices VALUES
+                        ('a', 1.0, '2024-01-01T08:59:30.000000Z'),
+                        ('a', 2.0, '2024-01-01T09:00:30.000000Z'),
+                        ('b', 3.0, '2024-01-01T09:01:30.000000Z')""");
+            final String fraction = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000000Z" : "000000000Z";
+            final String expected = "ts\tn\tss\tsp\n"
+                    + "2024-01-01T09:00:00." + fraction + "\t0\tnull\t1.0\n"
+                    + "2024-01-01T09:01:00." + fraction + "\t0\tnull\t3.0\n"
+                    + "2024-01-01T09:02:00." + fraction + "\t0\tnull\t3.0\n";
+            for (String projection : new String[]{
+                    "p.sym, p.price, p.ts, max(p2.price) c, sum(p2.price) s2",
+                    "max(p2.price) c, p.ts, p.sym, sum(p2.price) s2, p.price"
+            }) {
+                final String query = "SELECT t.ts, count(q.c) n, sum(q.s2) ss, sum(q.price) sp FROM trades t WINDOW JOIN ((SELECT " + projection
+                        + " FROM prices p WINDOW JOIN prices p2 ON (p.sym = p2.sym AND 1 = 0) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW)"
+                        + " TIMESTAMP(ts)) q ON (t.sym = q.sym) RANGE BETWEEN 2 MINUTE PRECEDING AND CURRENT ROW";
+                engine.releaseAllReaders();
+                assertQuery(query)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .withPlanContaining("Async Window Fast Join")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testPrevailingWithFilterAfterFrameBoundary() throws Exception {
+        // The slave row on the window's lower bound is the last row of its partition and fails the join
+        // filter, so the serial cursor walks into the next partition before it scans back for the
+        // prevailing row.
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE m (ts #TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY DAY"
+                            .replace("#TIMESTAMP", leftTableTimestampType.getTypeName())
+            );
+            execute(
+                    "CREATE TABLE sl (ts #TIMESTAMP, id INT, v LONG) TIMESTAMP(ts) PARTITION BY DAY"
+                            .replace("#TIMESTAMP", rightTableTimestampType.getTypeName())
+            );
+            execute("INSERT INTO m VALUES ('2023-01-02T00:00:59.000000Z', 1)");
+            execute("""
+                    INSERT INTO sl VALUES
+                        ('2023-01-01T23:59:00.000000Z', 1, 100),
+                        ('2023-01-01T23:59:59.000000Z', 2, 200),
+                        ('2023-01-02T00:00:30.000000Z', 1, 300)
+                    """);
+            final String fraction = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000000Z" : "000000000Z";
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                assertQuery("""
+                        SELECT m.ts, m.id, sum(sl.v) s, count() c
+                        FROM m
+                        WINDOW JOIN sl ON m.id = sl.id
+                        RANGE BETWEEN 1 minute PRECEDING AND 1 minute FOLLOWING
+                        INCLUDE PREVAILING
+                        """)
+                        .noLeakCheck()
+                        .withBaseFactoryClass(isParallel ? AsyncWindowJoinRecordCursorFactory.class : WindowJoinRecordCursorFactory.class)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize(!isParallel)
+                        .returns("ts\tid\ts\tc\n" +
+                                "2023-01-02T00:00:59." + fraction + "\t1\t400\t2\n");
+            }
+        });
+    }
+
+    @Test
+    public void testPrevailingWithFilterAfterFrameBoundaryManyPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE m (ts #TIMESTAMP, id INT) TIMESTAMP(ts) PARTITION BY HOUR"
+                            .replace("#TIMESTAMP", leftTableTimestampType.getTypeName())
+            );
+            execute(
+                    "CREATE TABLE sl (ts #TIMESTAMP, id INT, v LONG) TIMESTAMP(ts) PARTITION BY HOUR"
+                            .replace("#TIMESTAMP", rightTableTimestampType.getTypeName())
+            );
+            execute("INSERT INTO m SELECT timestamp_sequence('2023-01-01', 10_000_000), (x % 3)::INT FROM long_sequence(2_000)");
+            execute("INSERT INTO sl SELECT timestamp_sequence('2023-01-01', 10_000_000), (x % 5)::INT, x FROM long_sequence(2_000)");
+            final String query = """
+                    SELECT m.ts, m.id, sum(sl.v) s, count() c, first(sl.v) f, last(sl.v) l
+                    FROM m
+                    WINDOW JOIN sl ON m.id = sl.id
+                    RANGE BETWEEN 20 seconds PRECEDING AND 20 seconds FOLLOWING
+                    INCLUDE PREVAILING
+                    """;
+            printSql(query, sink);
+            final String expected = sink.toString();
+            for (boolean isParallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .withBaseFactoryClass(isParallel ? AsyncWindowJoinRecordCursorFactory.class : WindowJoinRecordCursorFactory.class)
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize(!isParallel)
+                        .returns(expected);
+            }
         });
     }
 
@@ -4561,6 +4958,261 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionKeepsMasterTimestampReadAfterAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (sym SYMBOL, k INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE prices (sym SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    rightTableTimestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('a', 1, '2024-01-01T09:00:00.000000Z'),
+                        ('a', 2, '2024-01-01T09:01:00.000000Z'),
+                        ('b', 3, '2024-01-01T09:02:00.000000Z')""");
+            execute("""
+                    INSERT INTO prices VALUES
+                        ('a', 1.0, '2024-01-01T08:59:30.000000Z'),
+                        ('a', 2.0, '2024-01-01T09:00:30.000000Z'),
+                        ('a', 4.0, '2024-01-01T09:00:45.000000Z'),
+                        ('b', 3.0, '2024-01-01T09:01:30.000000Z')""");
+            final String fraction = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000000Z" : "000000000Z";
+            final String windowJoin = " FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym)"
+                    + " RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING";
+            final String aggregateFirst = "SELECT count() c, t.ts, sum(p.price) s, t.sym" + windowJoin;
+            for (boolean isParallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                assertQuery(aggregateFirst)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .sizeMayVary()
+                        .timestamp("ts")
+                        .returns("c\tts\ts\tsym\n"
+                                + "1\t2024-01-01T09:00:00." + fraction + "\t1.0\ta\n"
+                                + "2\t2024-01-01T09:01:00." + fraction + "\t6.0\ta\n"
+                                + "1\t2024-01-01T09:02:00." + fraction + "\t3.0\tb\n");
+                assertQuery("SELECT count() c, t.ts, t.k + 1 k1" + windowJoin)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .sizeMayVary()
+                        .timestamp("ts")
+                        .returns("c\tts\tk1\n"
+                                + "1\t2024-01-01T09:00:00." + fraction + "\t2\n"
+                                + "2\t2024-01-01T09:01:00." + fraction + "\t3\n"
+                                + "1\t2024-01-01T09:02:00." + fraction + "\t4\n");
+                assertQuery("SELECT c FROM (" + aggregateFirst + ") ORDER BY c")
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .returns("""
+                                c
+                                1
+                                1
+                                2
+                                """);
+                assertQuery("SELECT ts, sum(c) c FROM (" + aggregateFirst + ") SAMPLE BY 1m")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .sizeMayVary()
+                        .timestamp("ts")
+                        .returns("ts\tc\n"
+                                + "2024-01-01T09:00:00." + fraction + "\t1\n"
+                                + "2024-01-01T09:01:00." + fraction + "\t2\n"
+                                + "2024-01-01T09:02:00." + fraction + "\t1\n");
+                final String asOfRows = "c\tts\tk\n"
+                        + "1\t2024-01-01T09:00:00." + fraction + "\t1\n"
+                        + "2\t2024-01-01T09:01:00." + fraction + "\t2\n"
+                        + "1\t2024-01-01T09:02:00." + fraction + "\t3\n";
+                assertQuery("SELECT q.c, q.ts, t.k FROM trades t ASOF JOIN (" + aggregateFirst + ") q ON (sym)")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .sizeMayVary()
+                        .returns(asOfRows);
+                assertQuery("SELECT q.c, q.ts, t.k FROM trades t ASOF JOIN (SELECT t.ts, count() c, sum(p.price) s, t.sym" + windowJoin + ") q ON (sym)")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .sizeMayVary()
+                        .returns(asOfRows);
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionKeepsMasterTimestampReadBeforeAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)",
+                    leftTableTimestampType.getTypeName()
+            );
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE quotes (sym SYMBOL, bid DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)",
+                    rightTableTimestampType.getTypeName()
+            );
+            execute("INSERT INTO trades VALUES ('A', 10.0, '2000-01-01T00:00:00'), ('B', 20.0, '2000-01-01T00:00:01'), ('A', 30.0, '2000-01-01T00:00:02')");
+            execute("INSERT INTO quotes VALUES ('A', 1.0, '2000-01-01T00:00:00'), ('A', 2.0, '2000-01-01T00:00:01'), ('B', 3.0, '2000-01-01T00:00:01')");
+            final String fraction = ColumnType.isTimestampMicro(leftTableTimestampType.getTimestampType()) ? "000000Z" : "000000000Z";
+            final String windowJoin = " FROM trades t WINDOW JOIN quotes q ON (t.sym = q.sym) RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING";
+            assertQuery("SELECT 1 c, t.ts, count() n" + windowJoin)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("c\tts\tn\n"
+                            + "1\t2000-01-01T00:00:00." + fraction + "\t2\n"
+                            + "1\t2000-01-01T00:00:01." + fraction + "\t1\n"
+                            + "1\t2000-01-01T00:00:02." + fraction + "\t1\n");
+            assertQuery("SELECT t.price, t.ts, count() n" + windowJoin)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("price\tts\tn\n"
+                            + "10.0\t2000-01-01T00:00:00." + fraction + "\t2\n"
+                            + "20.0\t2000-01-01T00:00:01." + fraction + "\t1\n"
+                            + "30.0\t2000-01-01T00:00:02." + fraction + "\t1\n");
+            assertQuery("SELECT 1 c, t.ts, count() n" + windowJoin + " ORDER BY t.ts LIMIT 2")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("c\tts\tn\n"
+                            + "1\t2000-01-01T00:00:00." + fraction + "\t2\n"
+                            + "1\t2000-01-01T00:00:01." + fraction + "\t1\n");
+            assertQuery("SELECT count() n, t.ts, 1 c" + windowJoin)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("n\tts\tc\n"
+                            + "2\t2000-01-01T00:00:00." + fraction + "\t1\n"
+                            + "1\t2000-01-01T00:00:01." + fraction + "\t1\n"
+                            + "1\t2000-01-01T00:00:02." + fraction + "\t1\n");
+        });
+    }
+
+    @Test
+    public void testVectorizedAggregatesKeepDistinctArgumentExpressions() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (x INT, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s (sym SYMBOL, a INT, b INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        (1, 'A', '2024-01-01T00:00:01.000000Z'),
+                        (2, 'B', '2024-01-01T00:00:02.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO s VALUES
+                        ('A', 1, 2, 1.0, '2024-01-01T00:00:00.000000Z'),
+                        ('B', 3, 2, 2.0, '2024-01-01T00:00:01.000000Z'),
+                        ('A', NULL, 2, 4.0, '2024-01-01T00:00:02.000000Z'),
+                        ('B', 2, 2, 8.0, '2024-01-01T00:00:03.000000Z')
+                    """);
+            final String select = """
+                    SELECT m.x, sum((s.a < s.b)::int) lt, sum((NOT (s.a < s.b))::int) nlt, sum((s.a >= s.b)::int) ge,
+                        sum((s.a = s.b)::int) eq, sum((s.a != s.b)::int) ne, sum(s.v + 1) plus, sum(s.v - 1) minus
+                    FROM m WINDOW JOIN s
+                    """;
+            final String window = " RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING EXCLUDE PREVAILING ORDER BY m.x";
+            assertQuery(select + window)
+                    .noLeakCheck()
+                    .withPlanContaining("vectorized: true")
+                    .sizeMayVary()
+                    .returns("""
+                            x	lt	nlt	ge	eq	ne	plus	minus
+                            1	1	2	1	0	3	10.0	4.0
+                            2	0	3	2	1	2	17.0	11.0
+                            """);
+            for (boolean isParallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                assertQuery(select + "ON (m.sym = s.sym)" + window)
+                        .noLeakCheck()
+                        .withPlanContaining("vectorized: true")
+                        .sizeMayVary()
+                        .returns("""
+                                x	lt	nlt	ge	eq	ne	plus	minus
+                                1	1	1	0	0	2	7.0	3.0
+                                2	0	2	2	1	1	12.0	8.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testVectorizedAggregatesNeverShareArgumentsDifferingInConstants() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (x INT, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s (sym SYMBOL, a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        (1, 'A', '2024-01-01T00:00:01.000000Z'),
+                        (2, 'B', '2024-01-01T00:00:02.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO s VALUES
+                        ('A', 3, '2024-01-01T00:00:00.000000Z'),
+                        ('B', 7, '2024-01-01T00:00:01.000000Z'),
+                        ('A', 10, '2024-01-01T00:00:02.000000Z'),
+                        ('B', 8, '2024-01-01T00:00:03.000000Z')
+                    """);
+            final String select = """
+                    SELECT m.x, sum((s.sym = 'A')::int) sa, sum((s.sym = 'B')::int) sb, sum((s.a IN (3, 7))::int) i37,
+                        sum((s.a IN (8, 9))::int) i89, max(timestamp_floor('s', s.ts)) fs, max(timestamp_floor('d', s.ts)) fd
+                    FROM m WINDOW JOIN s
+                    """;
+            final String window = " RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING EXCLUDE PREVAILING ORDER BY m.x";
+            assertQuery(select + window)
+                    .noLeakCheck()
+                    .withPlanContaining("vectorized: true")
+                    .sizeMayVary()
+                    .returns("""
+                            x	sa	sb	i37	i89	fs	fd
+                            1	2	1	2	0	2024-01-01T00:00:02.000000Z	2024-01-01T00:00:00.000000Z
+                            2	1	2	1	1	2024-01-01T00:00:03.000000Z	2024-01-01T00:00:00.000000Z
+                            """);
+            for (boolean isParallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                assertQuery(select + "ON (m.sym = s.sym)" + window)
+                        .noLeakCheck()
+                        .withPlanContaining("vectorized: true")
+                        .sizeMayVary()
+                        .returns("""
+                                x	sa	sb	i37	i89	fs	fd
+                                1	2	0	1	0	2024-01-01T00:00:02.000000Z	2024-01-01T00:00:00.000000Z
+                                2	0	2	1	1	2024-01-01T00:00:03.000000Z	2024-01-01T00:00:00.000000Z
+                                """);
+            }
+
+            sqlExecutionContext.setParallelWindowJoinEnabled(true);
+            final String shared = """
+                    SELECT m.x, sum(s.a) s1, max(s.a) m1, sum(s.a + 1) s2, max(s.a + 1) m2, sum(s.a - 1) s3, count() c,
+                        sum((s.sym = 'A')::int) sa, sum((s.sym = 'B')::int) sb
+                    FROM m WINDOW JOIN s
+                    """;
+            assertQuery(shared + window)
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns("""
+                            x	s1	m1	s2	m2	s3	c	sa	sb
+                            1	20	10	23	11	17	3	2	1
+                            2	25	10	28	11	22	3	1	2
+                            """);
+            for (String on : new String[]{"", "ON (m.sym = s.sym)"}) {
+                try (RecordCursorFactory factory = select(shared + on + " RANGE BETWEEN 1 second PRECEDING AND 1 second FOLLOWING EXCLUDE PREVAILING")) {
+                    RecordCursorFactory base = factory;
+                    while (!(base instanceof AsyncWindowJoinRecordCursorFactory) && !(base instanceof AsyncWindowJoinFastRecordCursorFactory)) {
+                        base = base.getBaseFactory();
+                    }
+                    final AsyncWindowJoinAtom atom = base instanceof AsyncWindowJoinRecordCursorFactory general
+                            ? general.getAtom() : ((AsyncWindowJoinFastRecordCursorFactory) base).getAtom();
+                    Assert.assertEquals(on, "[0,0,1,1,2,3,4,5]", atom.getGroupByFunctionToColumnIndex().toString());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testVectorizedWindowJoin() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
@@ -4613,6 +5265,30 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "            Frame forward scan on: prices\n")
                     .timestamp("ts")
                     .returns(sink);
+        });
+    }
+
+    @Test
+    public void testWindowJoinAggregateAliasShadowsMasterColumn() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 1, 1_000_000), ('b', 2, 2_000_000), ('a', 3, 3_000_000)");
+            execute("CREATE TABLE q (sym SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO q VALUES ('a', 10, 1_000_000), ('b', 20, 2_000_000), ('a', 30, 2_500_000)");
+            assertQuery("""
+                    SELECT t.s, t.v, sum(px) s, count() v
+                    FROM t WINDOW JOIN q ON (t.s = q.sym) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            s1\tv1\ts\tv
+                            a\t1\t10.0\t1
+                            b\t2\t20.0\t1
+                            a\t3\t40.0\t2
+                            """);
         });
     }
 
@@ -5190,7 +5866,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         // WindowContextImpl.toTimestampUnits already refused this for a plain RANGE frame; the
         // four WINDOW JOIN conversion sites now share that one guard rather than carrying a
         // fourth copy of the arithmetic. The interval-pruning site is the worse of the two: its
-        // converted bounds feed intrinsicModel.mergeIntervalModel, so a wrapped bound narrows
+        // converted bounds feed IntervalExtractor.merge, so a wrapped bound narrows
         // the slave scan interval and drops rows before evaluation.
         //
         // 300_000 days is in range for microseconds (ceiling 106_751_991 days), so pin the
@@ -5215,7 +5891,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             // Without a WHERE there is no pushed interval model, so the interval-pruning
             // conversion never runs and only the join site is covered. This variant pushes one,
-            // which is the site whose bounds feed mergeIntervalModel and so narrow the slave
+            // which is the site whose bounds feed IntervalExtractor.merge and so narrow the slave
             // scan. It throws first, before the join site.
             assertQuery("""
                     SELECT m.ts, sum(s.val) AS agg
@@ -5247,6 +5923,21 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinFailsOnWildcard() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            prepareTable();
+            assertQuery("SELECT * FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING")
+                    .noLeakCheck()
+                    .fails(7, "WINDOW join cannot reference right table non-aggregate column: p.ts");
+            assertQuery("SELECT p.*, sum(p.price) FROM trades t WINDOW JOIN prices p ON (t.sym = p.sym) RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING")
+                    .noLeakCheck()
+                    .fails(7, "WINDOW join cannot reference right table non-aggregate column: p.ts");
+        });
+    }
+
+    @Test
     public void testWindowJoinFailsWhenSlaveDoesNotSupportTimeFrames() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
@@ -5262,6 +5953,18 @@ public class WindowJoinTest extends AbstractCairoTest {
                     "order by t.ts, t.sym;")
                     .noLeakCheck()
                     .fails(82, "right side of window join must be a table, not sub-query");
+        });
+    }
+
+    @Test
+    public void testWindowJoinFailsWhenSlaveRedesignatesTimestamp() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s AS (SELECT x v, (x * 43_200_000_000)::TIMESTAMP ts, (x * 43_200_000_000 + 172_800_000_000)::TIMESTAMP ts2 FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x l, (x * 43_200_000_000 + 100_000_000_000)::TIMESTAMP ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+            final String sql = "SELECT m.l, count(x.v) c FROM m WINDOW JOIN (s TIMESTAMP(ts2)) x RANGE BETWEEN 12 HOUR PRECEDING AND CURRENT ROW";
+            assertQuery(sql).noLeakCheck().fails(sql.indexOf("WINDOW"), "right side of window join must be a table, not sub-query");
         });
     }
 
@@ -7011,6 +7714,63 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinSlaveWithoutDesignatedTimestamp() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s AS (SELECT x v, (x * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(10))");
+            execute("CREATE TABLE sd AS (SELECT * FROM s) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE sn AS (SELECT x v, ((x - 6) * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(10))");
+            execute("CREATE TABLE m AS (SELECT x l, (x * 3_600_000_000 + 1_800_000_000)::TIMESTAMP ts FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE VIEW s_view AS (SELECT * FROM s TIMESTAMP(ts))");
+            for (String slave : new String[]{"sd", "(s TIMESTAMP(ts))", "(SELECT * FROM s TIMESTAMP(ts))", "s_view"}) {
+                for (String prevailing : new String[]{"INCLUDE", "EXCLUDE"}) {
+                    assertQuery("SELECT m.l, count(x.v) c, sum(x.v) sv FROM m WINDOW JOIN " + slave + " x "
+                            + "RANGE BETWEEN 1 HOUR PRECEDING AND 1 HOUR FOLLOWING " + prevailing + " PREVAILING")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns(prevailing.equals("INCLUDE") ? """
+                                    l\tc\tsv
+                                    1\t2\t3
+                                    2\t3\t6
+                                    3\t3\t9
+                                    4\t3\t12
+                                    5\t3\t15
+                                    """ : """
+                                    l\tc\tsv
+                                    1\t2\t3
+                                    2\t2\t5
+                                    3\t2\t7
+                                    4\t2\t9
+                                    5\t2\t11
+                                    """);
+                }
+            }
+            for (String prevailing : new String[]{"INCLUDE", "EXCLUDE"}) {
+                assertQuery("SELECT m.l, count(x.v) c, sum(x.v) sv FROM m WINDOW JOIN (sn TIMESTAMP(ts)) x "
+                        + "RANGE BETWEEN 3 HOUR PRECEDING AND 2 HOUR PRECEDING " + prevailing + " PREVAILING")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(prevailing.equals("INCLUDE") ? """
+                                l\tc\tsv
+                                1\t2\t9
+                                2\t2\t11
+                                3\t2\t13
+                                4\t2\t15
+                                5\t2\t17
+                                """ : """
+                                l\tc\tsv
+                                1\t1\t5
+                                2\t1\t6
+                                3\t1\t7
+                                4\t1\t8
+                                5\t1\t9
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testWindowJoinStaticWindowOverflow() throws Exception {
         // A static FOLLOWING bound large enough to push masterTs + windowHi past Long.MAX_VALUE. The
         // designated timestamp is never negative, so this is the only direction the frame arithmetic
@@ -7161,16 +7921,16 @@ public class WindowJoinTest extends AbstractCairoTest {
             executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
-                        // v is LONG256, whose first/last are thread-unsafe, so the planner builds
+                        // v is CHAR, whose first/last are thread-unsafe, so the planner builds
                         // per-worker group-by function copies - the path the bug lives on. n is INT for
                         // the second, distinct column slot.
                         engine.execute(
-                                "create table trades (ts timestamp, sym symbol, v long256, n int) " +
+                                "create table trades (ts timestamp, sym symbol, v char, n int) " +
                                         "timestamp(ts) partition by day",
                                 sqlExecutionContext
                         );
                         engine.execute(
-                                "create table prices (ts timestamp, sym symbol, v long256, n int) " +
+                                "create table prices (ts timestamp, sym symbol, v char, n int) " +
                                         "timestamp(ts) partition by day",
                                 sqlExecutionContext
                         );
@@ -7179,14 +7939,14 @@ public class WindowJoinTest extends AbstractCairoTest {
                         engine.execute(
                                 "insert into trades select " +
                                         "'2023-01-01T00:00:00.000000Z'::timestamp + (1_000_000 * x), " +
-                                        "rnd_symbol('TSLA', 'AMZN', 'META'), rnd_long256(), rnd_int() " +
+                                        "rnd_symbol('TSLA', 'AMZN', 'META'), rnd_char(), rnd_int() " +
                                         "from long_sequence(4000)",
                                 sqlExecutionContext
                         );
                         engine.execute(
                                 "insert into prices select " +
                                         "'2023-01-01T00:00:00.000000Z'::timestamp + (100_000 * x), " +
-                                        "rnd_symbol('TSLA', 'AMZN', 'META'), rnd_long256(), rnd_int() " +
+                                        "rnd_symbol('TSLA', 'AMZN', 'META'), rnd_char(), rnd_int() " +
                                         "from long_sequence(40_000)",
                                 sqlExecutionContext
                         );
@@ -7229,7 +7989,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         // same [M-5s, M+5s] window computes count(p.n) through a different code path than
                         // the WINDOW JOIN reduce, so a miscompute shared by the single-threaded and parallel
                         // window-join paths (which the cross-check above would not catch) is caught here.
-                        // Only count is checked: first/last over LONG256 are order-dependent and have no
+                        // Only count is checked: first/last over CHAR are order-dependent and have no
                         // simple plain-SQL oracle. INCLUDE PREVAILING adds the carried prevailing row and
                         // has no plain-SQL oracle either, so it relies on the cross-check above.
                         if (!includePrevailing) {
@@ -7307,8 +8067,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     .withPlan("""
                             Encode sort
                               keys: [ts, sym]
-                                VirtualRecord
-                                  functions: [ts,sym,price,agg0,agg1,agg2,agg1]
+                                SelectedRecord
                                     Async Window Join workers: 1
                                       vectorized: true
                             """ +
@@ -7336,8 +8095,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     .withPlan("""
                             Encode sort
                               keys: [ts, sym]
-                                VirtualRecord
-                                  functions: [ts,sym,price,agg0,agg1,agg2,agg1]
+                                SelectedRecord
                                     Async Window Join workers: 1
                                       vectorized: true
                             """ +

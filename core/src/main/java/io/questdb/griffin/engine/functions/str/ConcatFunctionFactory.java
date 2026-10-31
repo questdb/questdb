@@ -54,8 +54,18 @@ public class ConcatFunctionFactory implements FunctionFactory {
     private static final ObjList<TypeAdapter> adapterReferences = new ObjList<>();
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.STRING;
+    }
+
+    @Override
     public String getSignature() {
         return "concat(V)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
+        return true;
     }
 
     @Override

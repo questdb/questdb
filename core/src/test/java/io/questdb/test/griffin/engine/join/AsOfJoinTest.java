@@ -31,7 +31,9 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.jit.JitUtil;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -410,6 +412,273 @@ public class AsOfJoinTest extends AbstractCairoTest {
         assertQuery("select a.tag, a.seq hi, b.seq lo from tab a asof join tab b on (tag) where b.seq < a.seq")
                 .noRandomAccess()
                 .returns(expected);
+    }
+
+    @Test
+    public void testAsOfJoinFullFatSharedSlaveSymbolKey() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setFullFatJoins(true);
+                executeWithRewriteTimestamp(
+                        "CREATE TABLE master_sv (s STRING, v VARCHAR, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        leftTableTimestampType.getTypeName()
+                );
+                executeWithRewriteTimestamp(
+                        "CREATE TABLE slave_sym (sym SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                        rightTableTimestampType.getTypeName()
+                );
+                execute(compiler, """
+                        INSERT INTO master_sv VALUES
+                            ('A', 'A', '2024-01-01T10:00:00.000000Z'),
+                            ('B', 'B', '2024-01-01T10:01:00.000000Z'),
+                            ('C', 'C', '2024-01-01T10:02:00.000000Z'),
+                            (NULL, NULL, '2024-01-01T10:03:00.000000Z')
+                        """);
+                execute(compiler, """
+                        INSERT INTO slave_sym VALUES
+                            ('A', 1.0, '2024-01-01T09:00:00.000000Z'),
+                            ('B', 2.0, '2024-01-01T09:30:00.000000Z'),
+                            (NULL, 9.0, '2024-01-01T09:45:00.000000Z')
+                        """);
+
+                final String expected = """
+                        s\tv\tsym\tprice
+                        A\tA\tA\t1.0
+                        B\tB\tB\t2.0
+                        C\tC\t\tnull
+                        \t\t\t9.0
+                        """;
+                assertQuery("SELECT m.s, m.v, s.sym, s.price FROM master_sv m ASOF JOIN slave_sym s ON m.s = s.sym AND m.v = s.sym")
+                        .withCompiler(compiler)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expected);
+                assertQuery("SELECT m.s, m.v, s.sym, s.price FROM master_sv m LT JOIN slave_sym s ON m.s = s.sym AND m.v = s.sym")
+                        .withCompiler(compiler)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinFullFatSharedSlaveSymbolKeyReversedOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.setFullFatJoins(true);
+                createSharedSymbolKeyTables(compiler);
+                for (String join : new String[]{"ASOF", "LT"}) {
+                    assertQuery("SELECT m.s, m.v, s.sym, s.price FROM master_sv m " + join + " JOIN slave_sym s ON m.v = s.sym AND m.s = s.sym")
+                            .withCompiler(compiler)
+                            .withContext(sqlExecutionContext)
+                            .noRandomAccess()
+                            .expectSize()
+                            .noLeakCheck()
+                            .returns("""
+                                    s\tv\tsym\tprice
+                                    A\tA\tA\t1.0
+                                    B\tB\tB\t2.0
+                                    C\tC\t\tnull
+                                    \t\t\t9.0
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinSharedSlaveSymbolKeyWithSymbolMasterKey() throws Exception {
+        assertMemoryLeak(() -> {
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                createSharedSymbolKeyTables(compiler);
+                final String[] conditions = {
+                        "m.y = s.sym AND m.v = s.sym",
+                        "m.v = s.sym AND m.y = s.sym",
+                        "m.y = s.sym AND m.s = s.sym",
+                        "m.s = s.sym AND m.y = s.sym"
+                };
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    compiler.setFullFatJoins(isFullFat);
+                    for (String join : new String[]{"ASOF", "LT"}) {
+                        for (String condition : conditions) {
+                            assertQuery("SELECT m.y, m.v, s.sym, s.price FROM master_sv m " + join + " JOIN slave_sym s ON " + condition)
+                                    .withCompiler(compiler)
+                                    .withContext(sqlExecutionContext)
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .noLeakCheck()
+                                    .returns("""
+                                            y\tv\tsym\tprice
+                                            A\tA\tA\t1.0
+                                            B\tB\tB\t2.0
+                                            C\tC\t\tnull
+                                            \t\t\t9.0
+                                            """);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinSharedSlaveKeyChecksMasterColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE q (s SYMBOL, k INT, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO q VALUES
+                        ('A', 1, 1.0, '2024-01-01T00:00:01Z'),
+                        ('B', 2, 2.0, '2024-01-01T00:00:02Z'),
+                        (NULL, NULL, 3.0, '2024-01-01T00:00:03Z'),
+                        ('A', 1, 4.0, '2024-01-01T00:00:04Z')
+                    """);
+            execute("CREATE TABLE t (s1 SYMBOL, s2 SYMBOL, v VARCHAR, i1 INT, i2 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('A', 'A', 'A', 1, 1, '2024-01-01T00:00:02Z'),
+                        ('A', 'B', 'A', 1, 2, '2024-01-01T00:00:03Z'),
+                        ('B', 'B', 'B', 2, 2, '2024-01-01T00:00:04Z'),
+                        ('A', 'A', 'A', 1, 1, '2024-01-01T00:00:04Z'),
+                        (NULL, NULL, NULL, NULL, NULL, '2024-01-01T00:00:05Z'),
+                        ('C', 'C', 'C', 3, 3, '2024-01-01T00:00:06Z'),
+                        ('A', 'A', NULL, 1, 1, '2024-01-01T00:00:07Z'),
+                        (NULL, 'A', '', NULL, 1, '2024-01-01T00:00:08Z')
+                    """);
+            final String asOfTwoSymbols = """
+                    ts\tpx
+                    2024-01-01T00:00:02.000000Z\t1.0
+                    2024-01-01T00:00:03.000000Z\tnull
+                    2024-01-01T00:00:04.000000Z\t2.0
+                    2024-01-01T00:00:04.000000Z\t4.0
+                    2024-01-01T00:00:05.000000Z\t3.0
+                    2024-01-01T00:00:06.000000Z\tnull
+                    2024-01-01T00:00:07.000000Z\t4.0
+                    2024-01-01T00:00:08.000000Z\tnull
+                    """;
+            final String ltTwoSymbols = """
+                    ts\tpx
+                    2024-01-01T00:00:02.000000Z\t1.0
+                    2024-01-01T00:00:03.000000Z\tnull
+                    2024-01-01T00:00:04.000000Z\t2.0
+                    2024-01-01T00:00:04.000000Z\t1.0
+                    2024-01-01T00:00:05.000000Z\t3.0
+                    2024-01-01T00:00:06.000000Z\tnull
+                    2024-01-01T00:00:07.000000Z\t4.0
+                    2024-01-01T00:00:08.000000Z\tnull
+                    """;
+            final String asOfSymbolVarchar = """
+                    ts\tpx
+                    2024-01-01T00:00:02.000000Z\t1.0
+                    2024-01-01T00:00:03.000000Z\t1.0
+                    2024-01-01T00:00:04.000000Z\t2.0
+                    2024-01-01T00:00:04.000000Z\t4.0
+                    2024-01-01T00:00:05.000000Z\t3.0
+                    2024-01-01T00:00:06.000000Z\tnull
+                    2024-01-01T00:00:07.000000Z\tnull
+                    2024-01-01T00:00:08.000000Z\tnull
+                    """;
+            final String ltSymbolVarchar = """
+                    ts\tpx
+                    2024-01-01T00:00:02.000000Z\t1.0
+                    2024-01-01T00:00:03.000000Z\t1.0
+                    2024-01-01T00:00:04.000000Z\t2.0
+                    2024-01-01T00:00:04.000000Z\t1.0
+                    2024-01-01T00:00:05.000000Z\t3.0
+                    2024-01-01T00:00:06.000000Z\tnull
+                    2024-01-01T00:00:07.000000Z\tnull
+                    2024-01-01T00:00:08.000000Z\tnull
+                    """;
+            final String[] slaves = {
+                    "q",
+                    "((SELECT * FROM q UNION ALL SELECT * FROM q WHERE 1 = 0) TIMESTAMP(ts))",
+                    "(SELECT * FROM q WHERE px > 0)"
+            };
+            final String[] asOfHints = {"", "/*+ asof_linear(t q) */ ", "/*+ asof_dense(t q) */ ", "/*+ asof_memoized(t q) */ "};
+            for (String slave : slaves) {
+                for (String hint : asOfHints) {
+                    assertSharedSlaveKey("SELECT " + hint + "t.ts, q.px FROM t ASOF JOIN " + slave + " q ON t.s1 = q.s AND t.s2 = q.s", "s1=s2", asOfTwoSymbols);
+                    assertSharedSlaveKey("SELECT " + hint + "t.ts, q.px FROM t ASOF JOIN " + slave + " q ON t.i1 = q.k AND t.i2 = q.k", "i1=i2", asOfTwoSymbols);
+                    assertSharedSlaveKey("SELECT " + hint + "t.ts, q.px FROM t ASOF JOIN " + slave + " q ON t.s1 = q.s AND t.v = q.s", "s1=v", asOfSymbolVarchar);
+                    assertSharedSlaveKey("SELECT " + hint + "t.ts, q.px FROM t ASOF JOIN " + slave + " q ON t.v = q.s AND t.s1 = q.s", "s1=v", asOfSymbolVarchar);
+                }
+                assertSharedSlaveKey("SELECT t.ts, q.px FROM t LT JOIN " + slave + " q ON t.s1 = q.s AND t.s2 = q.s", "s1=s2", ltTwoSymbols);
+                assertSharedSlaveKey("SELECT t.ts, q.px FROM t LT JOIN " + slave + " q ON t.i1 = q.k AND t.i2 = q.k", "i1=i2", ltTwoSymbols);
+                assertSharedSlaveKey("SELECT t.ts, q.px FROM t LT JOIN " + slave + " q ON t.s1 = q.s AND t.v = q.s", "s1=v", ltSymbolVarchar);
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinSharedSlaveKeysKeepSymbolKeyJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (a SYMBOL, c SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO s VALUES
+                        ('X', 'Y', 1.0, '2024-01-01T00:00:01Z'),
+                        ('Y', 'X', 2.0, '2024-01-01T00:00:02Z'),
+                        ('X', 'X', 3.0, '2024-01-01T00:00:03Z'),
+                        ('Y', 'Y', 4.0, '2024-01-01T00:00:04Z')
+                    """);
+            execute("CREATE TABLE m (mx SYMBOL, my SYMBOL, mz SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('X', 'X', 'X', '2024-01-01T00:00:03Z'),
+                        ('X', 'Y', 'X', '2024-01-01T00:00:04Z'),
+                        ('X', 'X', 'Y', '2024-01-01T00:00:04Z'),
+                        ('Y', 'Y', 'Y', '2024-01-01T00:00:05Z'),
+                        ('Z', 'Z', 'Z', '2024-01-01T00:00:05Z')
+                    """);
+            final String asOf = """
+                    ts\tv
+                    2024-01-01T00:00:03.000000Z\t3.0
+                    2024-01-01T00:00:04.000000Z\tnull
+                    2024-01-01T00:00:04.000000Z\tnull
+                    2024-01-01T00:00:05.000000Z\t4.0
+                    2024-01-01T00:00:05.000000Z\tnull
+                    """;
+            final String lt = """
+                    ts\tv
+                    2024-01-01T00:00:03.000000Z\tnull
+                    2024-01-01T00:00:04.000000Z\tnull
+                    2024-01-01T00:00:04.000000Z\tnull
+                    2024-01-01T00:00:05.000000Z\t4.0
+                    2024-01-01T00:00:05.000000Z\tnull
+                    """;
+            final String on = "s.a = m.mx AND s.c = m.mz AND s.c = m.mx AND s.a = m.my";
+            assertQuery("SELECT m.ts, s.v FROM m ASOF JOIN s ON " + on)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("AsOf Join Fast", "keyCheck: (mz=mx and mx=my)", "symbolKeyJoin: true")
+                    .returns(asOf);
+            assertQuery("SELECT m.ts, s.v FROM m LT JOIN s ON " + on)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Lt Join Light", "keyCheck: (mz=mx and mx=my)", "symbolKeyJoin: true")
+                    .returns(lt);
+            assertQuery("SELECT m.ts, s.v FROM m ASOF JOIN s ON s.c = m.mx AND s.a = m.mz AND s.a = m.mx")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("AsOf Join Fast", "keyCheck: mz=mx", "symbolKeyJoin: true")
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:03.000000Z\t3.0
+                            2024-01-01T00:00:04.000000Z\t3.0
+                            2024-01-01T00:00:04.000000Z\tnull
+                            2024-01-01T00:00:05.000000Z\t4.0
+                            2024-01-01T00:00:05.000000Z\tnull
+                            """);
+        });
     }
 
     @Test
@@ -949,6 +1218,11 @@ public class AsOfJoinTest extends AbstractCairoTest {
             assertAlgoAndResult(queryBody2, "asof_index(t q)", "Indexed", expected2);
             assertAlgoAndResult(queryBody2, "asof_memoized(t q)", "Memoized", expected2);
             assertAlgoAndResult(queryBody2, "asof_dense(t q)", "Dense", expected2);
+
+            String queryBody3 = "t.symbol, t.price, q.bid, q.ask FROM trades t " +
+                    "ASOF JOIN quotes q ON t.symbol = q.symbol " +
+                    "TOLERANCE 1_500s";
+            assertAlgoAndResult(queryBody3, "", "Fast", expected2);
         });
     }
 
@@ -1267,6 +1541,147 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinMasterKeyOnTwoSlaveColumnsFiltersSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (a SYMBOL, c SYMBOL, cv VARCHAR, d1 DOUBLE, d2 DOUBLE, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO s VALUES
+                        ('X', 'X', 'X', 1.0, 1.0, 1.0, '2024-01-01T00:00:01Z'),
+                        ('X', 'Y', 'Y', 1.0, 2.0, 2.0, '2024-01-01T00:00:02Z'),
+                        (NULL, NULL, NULL, NULL, NULL, 3.0, '2024-01-01T00:00:03Z'),
+                        ('Y', 'Y', 'Y', 0.0, -0.0, 4.0, '2024-01-01T00:00:04Z'),
+                        ('Y', NULL, NULL, 2.0, NULL, 5.0, '2024-01-01T00:00:05Z'),
+                        (NULL, 'Y', 'Y', NULL, 2.0, 6.0, '2024-01-01T00:00:06Z')
+                    """);
+            execute("CREATE TABLE m (mx SYMBOL, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('X', 1.0, '2024-01-01T00:00:02Z'),
+                        (NULL, NULL, '2024-01-01T00:00:04Z'),
+                        ('Y', 0.0, '2024-01-01T00:00:06Z'),
+                        ('Z', 3.0, '2024-01-01T00:00:06Z')
+                    """);
+            final String expected = """
+                    ts\tsts\tv
+                    2024-01-01T00:00:02.000000Z\t2024-01-01T00:00:01.000000Z\t1.0
+                    2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\t3.0
+                    2024-01-01T00:00:06.000000Z\t2024-01-01T00:00:04.000000Z\t4.0
+                    2024-01-01T00:00:06.000000Z\t\tnull
+                    """;
+            final String asOf = "SELECT m.ts, s.ts sts, s.v FROM m ASOF JOIN s ON s.a = m.mx AND s.c = m.mx";
+            final String lt = "SELECT m.ts, s.ts sts, s.v FROM m LT JOIN s ON s.a = m.mx AND s.c = m.mx";
+            assertQuery(asOf)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Filtered AsOf Join Fast", "filter: c=a", "symbolKeyJoin: true")
+                    .returns(expected);
+            assertQuery(lt)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Lt Join Light", "condition: s.a=m.mx", "symbolKeyJoin: true", "filter: c=a")
+                    .returns(expected);
+            assertQuery(asOf)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery(lt)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT m.ts, s.ts sts, s.v FROM m ASOF JOIN s ON s.a = m.mx AND s.cv = m.mx")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("Filtered AsOf Join Fast", "filter: a=cv", "symbolKeyJoin: true")
+                    .returns(expected);
+            assertQuery("SELECT m.ts, s.ts sts, s.v FROM m ASOF JOIN s ON s.d1 = m.d AND s.d2 = m.d")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("AsOf Join Fast", "condition: s.d1=m.d and s.d2=m.d")
+                    .returns("""
+                            ts\tsts\tv
+                            2024-01-01T00:00:02.000000Z\t2024-01-01T00:00:01.000000Z\t1.0
+                            2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\t3.0
+                            2024-01-01T00:00:06.000000Z\t\tnull
+                            2024-01-01T00:00:06.000000Z\t\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinMasterKeyOnTwoSlaveColumnsOfMixedTypes() throws Exception {
+        // An ASOF or LT join that pairs one master column with a slave column of its type and one of another type keys
+        // on the first pair and filters the slave on the equality of the two slave columns, in either order. A slave
+        // column paired with master columns of two types still fails: the join has no ON residual to evaluate it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (x INT, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        (1, 1, '2024-01-01T00:00:02Z'),
+                        (2, 5, '2024-01-01T00:00:04Z'),
+                        (3, 3, '2024-01-01T00:00:06Z'),
+                        (NULL, NULL, '2024-01-01T00:00:08Z')
+                    """);
+            execute("CREATE TABLE s (x INT, l LONG, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO s VALUES
+                        (1, 1, 1.0, '2024-01-01T00:00:01Z'),
+                        (2, 2, 2.0, '2024-01-01T00:00:03Z'),
+                        (3, 7, 3.0, '2024-01-01T00:00:05Z'),
+                        (NULL, NULL, 4.0, '2024-01-01T00:00:07Z')
+                    """);
+            final String expected = """
+                    ts\tsts\tv
+                    2024-01-01T00:00:02.000000Z\t2024-01-01T00:00:01.000000Z\t1.0
+                    2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\t2.0
+                    2024-01-01T00:00:06.000000Z\t\tnull
+                    2024-01-01T00:00:08.000000Z\t2024-01-01T00:00:07.000000Z\t4.0
+                    """;
+            final String[] conditions = {"s.l = m.x AND s.x = m.x", "s.x = m.x AND s.l = m.x"};
+            for (String condition : conditions) {
+                final String asOf = "SELECT m.ts, s.ts sts, s.v FROM m ASOF JOIN s ON " + condition;
+                final String lt = "SELECT m.ts, s.ts sts, s.v FROM m LT JOIN s ON " + condition;
+                assertQuery(asOf)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("Filtered AsOf Join Fast", "filter: l=x")
+                        .returns(expected);
+                assertQuery(lt)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("Lt Join Light", "condition: s.x=m.x", "filter: l=x")
+                        .returns(expected);
+                assertQuery(asOf)
+                        .noLeakCheck()
+                        .fullFatJoins()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+            }
+            final String mirrored = "SELECT m.ts, s.v FROM m ASOF JOIN s ON s.x = m.x AND s.x = m.l";
+            assertQuery(mirrored).noLeakCheck().fails(mirrored.lastIndexOf("s.x"), "join column type mismatch");
+        });
+    }
+
+    @Test
     public void testAsOfJoinNoAliasDuplication() throws Exception {
         assertMemoryLeak(() -> {
             // ASKS
@@ -1406,6 +1821,62 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnNullDeclaredSlaveTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (l LONG, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 42, '2024-01-01T01:00:00.000000Z'),
+                        (2, 42, '2024-01-01T02:00:00.000000Z'),
+                        (3, 42, '2024-01-01T03:00:00.000000Z')
+                    """);
+            final String[] slaves = {
+                    "SELECT min(ts) r, 42 k FROM t WHERE l > 1000",
+                    "SELECT NULL::TIMESTAMP r, 42 k FROM long_sequence(1)",
+                    "SELECT CASE WHEN x = 1 THEN NULL ELSE (x * 3_600_000_000)::TIMESTAMP END r, 42 k FROM long_sequence(3)"
+            };
+            for (String join : new String[]{"ASOF", "LT"}) {
+                for (String slave : slaves) {
+                    for (String keys : new String[]{"", " ON (k)"}) {
+                        for (boolean isFullFat : new boolean[]{false, true}) {
+                            assertQuery("SELECT t.l, x.k FROM t " + join + " JOIN ((" + slave + ") TIMESTAMP(r)) x" + keys)
+                                    .noLeakCheck()
+                                    .fullFatJoins(isFullFat)
+                                    .failsWith("designated timestamp column cannot be NULL");
+                        }
+                    }
+                }
+            }
+            for (String keys : new String[]{"", " ON (k)"}) {
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    assertQuery("SELECT t.l, x.k FROM t ASOF JOIN ((SELECT min(ts) r, 42 k FROM t) TIMESTAMP(r)) x" + keys)
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    l\tk
+                                    1\t42
+                                    2\t42
+                                    3\t42
+                                    """);
+                    assertQuery("SELECT t.l, x.k FROM t LT JOIN ((SELECT min(ts) r, 42 k FROM t) TIMESTAMP(r)) x" + keys)
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    l\tk
+                                    1\tnull
+                                    2\t42
+                                    3\t42
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinOnNullSymbolKeys() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -1463,6 +1934,77 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             AA\t1573662097\t1573662097
                             AA\t339631474\t339631474
                             """);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnRedesignatedTableSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s AS (SELECT x v, (x * 43_200_000_000)::TIMESTAMP ts, (x * 43_200_000_000 + 172_800_000_000)::TIMESTAMP ts2 FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x l, (x * 43_200_000_000 + 100_000_000_000)::TIMESTAMP ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+            final String[] slaves = {"s TIMESTAMP(ts2)", "(SELECT v, ts2, ts FROM s) TIMESTAMP(ts2)", "(SELECT v, ts2 FROM s) TIMESTAMP(ts2)"};
+            for (String join : new String[]{"ASOF", "LT"}) {
+                for (String slave : slaves) {
+                    assertQuery("SELECT m.l, x.v, x.ts2 FROM m " + join + " JOIN (" + slave + ") x")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    l\tv\tts2
+                                    1\tnull\t
+                                    2\tnull\t
+                                    3\t1\t1970-01-03T12:00:00.000000Z
+                                    4\t2\t1970-01-04T00:00:00.000000Z
+                                    5\t3\t1970-01-04T12:00:00.000000Z
+                                    6\t4\t1970-01-05T00:00:00.000000Z
+                                    7\t5\t1970-01-05T12:00:00.000000Z
+                                    8\t6\t1970-01-06T00:00:00.000000Z
+                                    9\t7\t1970-01-06T12:00:00.000000Z
+                                    10\t8\t1970-01-07T00:00:00.000000Z
+                                    """);
+                }
+            }
+            assertQuery("SELECT m.l, x.v FROM m ASOF JOIN s x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("AsOf Join Fast")
+                    .returns("""
+                            l\tv
+                            1\t3
+                            2\t4
+                            3\t5
+                            4\t6
+                            5\t7
+                            6\t8
+                            7\t9
+                            8\t10
+                            9\t10
+                            10\t10
+                            """);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnSlaveWithoutDesignatedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s AS (SELECT x v, (x * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(10))");
+            execute("CREATE TABLE m AS (SELECT x l, (x * 3_600_000_000 + 1_800_000_000)::TIMESTAMP ts FROM long_sequence(5)) TIMESTAMP(ts) PARTITION BY DAY");
+            for (String join : new String[]{"ASOF", "LT"}) {
+                assertQuery("SELECT m.l, x.v FROM m " + join + " JOIN (s TIMESTAMP(ts)) x")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining(join.equals("ASOF") ? "AsOf Join Fast" : "Lt Join Fast")
+                        .returns("""
+                                l\tv
+                                1\t1
+                                2\t2
+                                3\t3
+                                4\t4
+                                5\t5
+                                """);
+            }
         });
     }
 
@@ -1655,6 +2197,298 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         .expectSize()
                         .returns(expected);
             }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOrderInsensitiveAggregateOverDescendingInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createDescendingInputTables();
+            execute("CREATE VIEW trades_desc AS (SELECT * FROM trades ORDER BY ts DESC)");
+            drainWalAndViewQueues();
+            assertSameAsUnordered(
+                    "SELECT sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC) t ASOF JOIN quotes q",
+                    "SELECT sum(q.bid) FROM trades t ASOF JOIN quotes q",
+                    """
+                            sum
+                            115
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT count(), sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC) t ASOF JOIN quotes q ON (sym)",
+                    "SELECT count(), sum(q.bid) FROM trades t ASOF JOIN quotes q ON (sym)",
+                    """
+                            count\tsum
+                            4\t105
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT count(), count(q.bid), sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC) t ASOF JOIN quotes q TOLERANCE 400T",
+                    "SELECT count(), count(q.bid), sum(q.bid) FROM trades t ASOF JOIN quotes q TOLERANCE 400T",
+                    """
+                            count\tcount1\tsum
+                            4\t2\t75
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT count(q.bid), sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC, qty) t ASOF JOIN quotes q ON (sym) TOLERANCE 400T",
+                    "SELECT count(q.bid), sum(q.bid) FROM trades t ASOF JOIN quotes q ON (sym) TOLERANCE 400T",
+                    """
+                            count\tsum
+                            1\t25
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT count(DISTINCT q.sym) FROM (SELECT * FROM trades ORDER BY ts DESC) t ASOF JOIN quotes q",
+                    "SELECT count(DISTINCT q.sym) FROM trades t ASOF JOIN quotes q",
+                    """
+                            count_distinct
+                            2
+                            """
+            );
+            final String keyed = """
+                    sym\tsum
+                    A\t40
+                    B\t75
+                    """;
+            assertQuery("SELECT t.sym, sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC) t ASOF JOIN quotes q ORDER BY t.sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(keyed);
+            assertQuery("SELECT t.sym, sum(q.bid) FROM trades t ASOF JOIN quotes q ORDER BY t.sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(keyed);
+            assertSameAsUnordered(
+                    "SELECT sum(bid) FROM (SELECT t.qty, q.bid FROM (SELECT ts, sym, qty FROM trades WHERE qty > 1 ORDER BY ts DESC) t ASOF JOIN quotes q)",
+                    "SELECT sum(bid) FROM (SELECT t.qty, q.bid FROM (SELECT ts, sym, qty FROM trades WHERE qty > 1) t ASOF JOIN quotes q)",
+                    """
+                            sum
+                            105
+                            """
+            );
+            assertSameAsUnordered(
+                    "WITH d AS (SELECT * FROM trades ORDER BY ts DESC) SELECT sum(q.bid), sum(p.bid) FROM d ASOF JOIN quotes q LT JOIN quotes p",
+                    "SELECT sum(q.bid), sum(p.bid) FROM trades d ASOF JOIN quotes q LT JOIN quotes p",
+                    """
+                            sum\tsum1
+                            115\t110
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT sum(q.bid) FROM trades_desc t ASOF JOIN quotes q",
+                    "SELECT sum(q.bid) FROM trades t ASOF JOIN quotes q",
+                    """
+                            sum
+                            115
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT sum(q.bid) FROM trades t ASOF JOIN (SELECT * FROM quotes ORDER BY ts DESC) q",
+                    "SELECT sum(q.bid) FROM trades t ASOF JOIN quotes q",
+                    """
+                            sum
+                            115
+                            """
+            );
+            assertQuery("SELECT t.qty, q.bid FROM trades_desc t ASOF JOIN quotes q")
+                    .noLeakCheck()
+                    .fails(39, "left side of time series join doesn't have ASC timestamp order");
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOrderInsensitiveAggregateOverNonTimestampOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createDescendingInputTables();
+            assertSameAsUnordered(
+                    "SELECT sum(q.bid) FROM (SELECT * FROM trades ORDER BY qty DESC) t ASOF JOIN quotes q",
+                    "SELECT sum(q.bid) FROM trades t ASOF JOIN quotes q",
+                    """
+                            sum
+                            115
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT count(), sum(q.bid) FROM (SELECT ts, sym FROM trades WHERE qty > 1 ORDER BY sym, qty) t LT JOIN quotes q ON (sym)",
+                    "SELECT count(), sum(q.bid) FROM (SELECT ts, sym FROM trades WHERE qty > 1) t LT JOIN quotes q ON (sym)",
+                    """
+                            count\tsum
+                            3\t90
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT count(q.bid), sum(q.bid) FROM (SELECT * FROM trades ORDER BY qty) t ASOF JOIN quotes q TOLERANCE 400T",
+                    "SELECT count(q.bid), sum(q.bid) FROM trades t ASOF JOIN quotes q TOLERANCE 400T",
+                    """
+                            count\tsum
+                            2\t75
+                            """
+            );
+            final String resorted = """
+                    qty\tbid
+                    1\t10
+                    2\t25
+                    3\t30
+                    4\t50
+                    """;
+            assertQuery("SELECT t.qty, q.bid FROM (SELECT * FROM trades ORDER BY qty DESC) t ASOF JOIN quotes q ORDER BY t.ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(resorted);
+            assertQuery("SELECT t.qty, q.bid FROM trades t ASOF JOIN quotes q ORDER BY t.ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(resorted);
+            assertQuery("SELECT t.qty, q.bid FROM (SELECT * FROM trades ORDER BY qty DESC) t ASOF JOIN quotes q ORDER BY t.qty")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(resorted);
+            final String ltResorted = """
+                    qty\tbid
+                    1\t10
+                    2\t20
+                    3\t30
+                    4\t50
+                    """;
+            assertQuery("SELECT t.qty, q.bid FROM (SELECT * FROM trades ORDER BY qty DESC) t LT JOIN quotes q ORDER BY t.qty")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(ltResorted);
+            assertQuery("SELECT t.qty, q.bid FROM trades t LT JOIN quotes q ORDER BY t.qty")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(ltResorted);
+            final String noTimestamp = "left side of time series join has no timestamp";
+            assertQuery("SELECT t.qty, q.bid FROM (SELECT * FROM trades ORDER BY qty DESC) t ASOF JOIN quotes q")
+                    .noLeakCheck()
+                    .fails(68, noTimestamp);
+            assertQuery("SELECT first(t.qty), sum(q.bid) FROM (SELECT * FROM trades ORDER BY qty DESC) t ASOF JOIN quotes q")
+                    .noLeakCheck()
+                    .fails(80, noTimestamp);
+            assertQuery("SELECT sum(q.bid) FROM (SELECT * FROM trades ORDER BY qty DESC LIMIT 2) t ASOF JOIN quotes q")
+                    .noLeakCheck()
+                    .fails(74, noTimestamp);
+            assertQuery("SELECT sum(q.bid) FROM trades t ASOF JOIN (SELECT * FROM quotes ORDER BY bid) q")
+                    .noLeakCheck()
+                    .fails(32, "right side of time series join has no timestamp");
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOverTimestampOrderedUnionAllVarSizeColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (ts TIMESTAMP, k INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE a (ts TIMESTAMP, s STRING, v VARCHAR, bin BINARY, arr DOUBLE[], d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (ts TIMESTAMP, s STRING, v VARCHAR, bin BINARY, arr DOUBLE[], d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('2024-01-01T00:00:01Z', 1),
+                        ('2024-01-01T00:00:02Z', 2),
+                        ('2024-01-01T00:00:04Z', 3),
+                        ('2024-01-01T00:00:05Z', 4)
+                    """);
+            execute("""
+                    INSERT INTO a VALUES
+                        ('2024-01-01T00:00:00Z', 'a0', 'va0', NULL, ARRAY[0.0], 0.0),
+                        ('2024-01-01T00:00:04Z', 'a4', 'va4', NULL, ARRAY[4.0], 4.0)
+                    """);
+            execute("INSERT INTO b VALUES ('2024-01-01T00:00:02Z', 'b2', 'vb2', NULL, ARRAY[2.0], 2.0)");
+            final String union = "(SELECT * FROM (SELECT * FROM a UNION ALL SELECT * FROM b) ORDER BY ts) u";
+            assertQuery("SELECT m.ts, m.k, u.s, u.v, u.bin, u.arr, u.d FROM m ASOF JOIN " + union)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                AsOf Join
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: m
+                                    Encode sort
+                                      keys: [ts]
+                                        Union All
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                            """)
+                    .returns("""
+                            ts\tk\ts\tv\tbin\tarr\td
+                            2024-01-01T00:00:01.000000Z\t1\ta0\tva0\t\t[0.0]\t0.0
+                            2024-01-01T00:00:02.000000Z\t2\tb2\tvb2\t\t[2.0]\t2.0
+                            2024-01-01T00:00:04.000000Z\t3\ta4\tva4\t\t[4.0]\t4.0
+                            2024-01-01T00:00:05.000000Z\t4\ta4\tva4\t\t[4.0]\t4.0
+                            """);
+            assertQuery("SELECT m.ts, m.k, u.s, u.v, u.bin, u.arr, u.d FROM m LT JOIN " + union)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                Lt Join
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: m
+                                    Encode sort
+                                      keys: [ts]
+                                        Union All
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                            """)
+                    .returns("""
+                            ts\tk\ts\tv\tbin\tarr\td
+                            2024-01-01T00:00:01.000000Z\t1\ta0\tva0\t\t[0.0]\t0.0
+                            2024-01-01T00:00:02.000000Z\t2\ta0\tva0\t\t[0.0]\t0.0
+                            2024-01-01T00:00:04.000000Z\t3\tb2\tvb2\t\t[2.0]\t2.0
+                            2024-01-01T00:00:05.000000Z\t4\ta4\tva4\t\t[4.0]\t4.0
+                            """);
+            assertQuery("SELECT m.ts, m.k, u.d FROM m ASOF JOIN " + union)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            SelectedRecord
+                                AsOf Join
+                                  condition:\s
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: m
+                                    Union All Merge
+                                      order: [ts asc]
+                                      branches: 2
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                            """)
+                    .returns("""
+                            ts\tk\td
+                            2024-01-01T00:00:01.000000Z\t1\t0.0
+                            2024-01-01T00:00:02.000000Z\t2\t2.0
+                            2024-01-01T00:00:04.000000Z\t3\t4.0
+                            2024-01-01T00:00:05.000000Z\t4\t4.0
+                            """);
+            assertQuery("SELECT m.ts, m.k, u.s FROM m ASOF JOIN " + union)
+                    .fullFatJoins()
+                    .noLeakCheck()
+                    .fails(29, "right side column 's' is of unsupported type");
+            assertQuery("SELECT m.ts, x.s FROM m ASOF JOIN (SELECT ts, first(s) s FROM a SAMPLE BY 1s FILL(PREV)) x")
+                    .noLeakCheck()
+                    .fails(24, "right side column 's' is of unsupported type");
         });
     }
 
@@ -1855,6 +2689,67 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinSymbolAndVarcharKeyIndexCollision() throws Exception {
         assertMemoryLeak(() -> assertAsOfJoinSymbolAndStringKeyIndexCollision("VARCHAR", "quotes", "", "Fast"));
+    }
+
+    @Test
+    public void testAsOfJoinSymbolKeysSharedMasterColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (a SYMBOL, c SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO s VALUES
+                        ('X', 'Y', '2024-01-01T00:00:01Z'),
+                        ('Y', 'X', '2024-01-01T00:00:02Z'),
+                        ('X', 'X', '2024-01-01T00:00:03Z')
+                    """);
+            execute("CREATE TABLE m (mx SYMBOL, my SYMBOL, mz SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                        ('X', 'X', 'X', '2024-01-01T00:00:03Z'),
+                        ('X', 'X', 'X', '2024-01-01T00:00:04Z'),
+                        ('Y', 'Y', 'Y', '2024-01-01T00:00:05Z')
+                    """);
+
+            printSql("EXPLAIN SELECT m.ts, s.ts sts, s.a, s.c FROM m ASOF JOIN s ON s.c = m.mx AND s.a = m.mx");
+            TestUtils.assertContains(sink, "filter: a=c");
+            TestUtils.assertContains(sink, "symbolKeyJoin: true");
+
+            final String asOfExpected = """
+                    ts\tsts\ta\tc
+                    2024-01-01T00:00:03.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    2024-01-01T00:00:05.000000Z\t\t\t
+                    """;
+            final String asOfMatchedExpected = """
+                    ts\tsts\ta\tc
+                    2024-01-01T00:00:03.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    """;
+            final String ltExpected = """
+                    ts\tsts\ta\tc
+                    2024-01-01T00:00:03.000000Z\t\t\t
+                    2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    2024-01-01T00:00:05.000000Z\t\t\t
+                    """;
+            final String ltMatchedExpected = """
+                    ts\tsts\ta\tc
+                    2024-01-01T00:00:04.000000Z\t2024-01-01T00:00:03.000000Z\tX\tX
+                    """;
+            final ObjList<String> onClauses = new ObjList<>();
+            collectOnClausePermutations(new String[]{"s.c = m.mx", "s.a = m.mz", "s.a = m.mx"}, 0, onClauses);
+            collectOnClausePermutations(new String[]{"s.a = m.mx", "s.c = m.mz", "s.c = m.mx", "s.a = m.my"}, 0, onClauses);
+            final String[] asOfHints = {"", "/*+ asof_linear(m s) */ ", "/*+ asof_dense(m s) */ "};
+            for (int i = 0, n = onClauses.size(); i < n; i++) {
+                final String on = onClauses.getQuick(i);
+                for (String hint : asOfHints) {
+                    final String asOf = "SELECT " + hint + "m.ts, s.ts sts, s.a, s.c FROM m ASOF JOIN s ON " + on;
+                    assertSymbolKeysSharedMasterColumn(asOf, asOfExpected, false);
+                    assertSymbolKeysSharedMasterColumn(asOf + " WHERE s.ts IS NOT NULL", asOfMatchedExpected, true);
+                }
+                final String lt = "SELECT m.ts, s.ts sts, s.a, s.c FROM m LT JOIN s ON " + on;
+                assertSymbolKeysSharedMasterColumn(lt, ltExpected, false);
+                assertSymbolKeysSharedMasterColumn(lt + " WHERE s.ts IS NOT NULL", ltMatchedExpected, true);
+            }
+        });
     }
 
     @Test
@@ -3575,7 +4470,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
     @Test
     public void testAsOfSelfJoinSymbolAndStringKeyIndexCollision() throws Exception {
         // A self-join compares a.sym = b.sym as raw symbol keys and does not set its bits, but
-        // processJoinContext() sets the bits for a.side = b.side_str on both sides. The projection puts
+        // JoinBinder.bindJoinConditions() sets the bits for a.side = b.side_str on both sides. The projection puts
         // b.side_str at slave column 1, so the stray bit makes the master sink write a.sym (master
         // column 1) as a string while the slave sink writes b.sym as an int.
         assertMemoryLeak(() -> {
@@ -5052,6 +5947,45 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLtJoinOrderInsensitiveAggregateOverDescendingInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createDescendingInputTables();
+            assertSameAsUnordered(
+                    "SELECT sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC) t LT JOIN quotes q",
+                    "SELECT sum(q.bid) FROM trades t LT JOIN quotes q",
+                    """
+                            sum
+                            110
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT count(), sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC) t LT JOIN quotes q ON (sym)",
+                    "SELECT count(), sum(q.bid) FROM trades t LT JOIN quotes q ON (sym)",
+                    """
+                            count\tsum
+                            4\t100
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT count(q.bid), sum(q.bid) FROM (SELECT * FROM trades ORDER BY ts DESC) t LT JOIN quotes q TOLERANCE 400T",
+                    "SELECT count(q.bid), sum(q.bid) FROM trades t LT JOIN quotes q TOLERANCE 400T",
+                    """
+                            count\tsum
+                            1\t50
+                            """
+            );
+            assertSameAsUnordered(
+                    "SELECT sum(q.bid) FROM trades t LT JOIN (SELECT * FROM quotes ORDER BY ts DESC) q ON (sym)",
+                    "SELECT sum(q.bid) FROM trades t LT JOIN quotes q ON (sym)",
+                    """
+                            sum
+                            100
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testLtJoinSequenceGap() throws Exception {
         assertMemoryLeak(() -> {
             // create table
@@ -6323,7 +7257,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                         Row forward scan
                                         Frame forward scan on: dyn_master
                                     VirtualRecord
-                                      functions: [ts,sym_str::symbol]
+                                      functions: [sym_str::symbol,ts]
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: dyn_slave_src
@@ -6511,6 +7445,26 @@ public class AsOfJoinTest extends AbstractCairoTest {
         TestUtils.assertEquals(expectedSink, actualSink);
     }
 
+    private void assertSymbolKeysSharedMasterColumn(String query, String expected, boolean isFiltered) throws Exception {
+        assertQuery(query).noLeakCheck().timestamp("ts").noRandomAccess().expectSize(!isFiltered).returns(expected);
+        assertQuery(query).noLeakCheck().fullFatJoins().timestamp("ts").noRandomAccess().expectSize(!isFiltered).returns(expected);
+    }
+
+    private void assertSharedSlaveKey(String query, String keyCheck, String expected) throws Exception {
+        assertQuery(query)
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("keyCheck: " + keyCheck)
+                .returns(expected);
+    }
+
+    private void assertSameAsUnordered(String query, String unorderedQuery, String expected) throws Exception {
+        assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(expected);
+        assertQuery(unorderedQuery).noLeakCheck().noRandomAccess().expectSize().returns(expected);
+    }
+
     private void createBook() throws Exception {
         executeWithRewriteTimestamp(
                 "CREATE TABLE book (ts #TIMESTAMP, sym SYMBOL, side SYMBOL, side_str STRING, qty LONG) TIMESTAMP(ts) PARTITION BY DAY",
@@ -6522,6 +7476,33 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ('2024-01-01T00:00:02.000000Z', 'MSFT', 'sell', 'sell', 2),
                     ('2024-01-01T00:00:03.000000Z', 'IBM', 'buy', 'sell', 3),
                     ('2024-01-01T00:00:04.000000Z', 'AAPL', 'buy', 'buy', 4)
+                """);
+    }
+
+    private void createDescendingInputTables() throws Exception {
+        executeWithRewriteTimestamp(
+                "CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                leftTableTimestampType.getTypeName()
+        );
+        executeWithRewriteTimestamp(
+                "CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, bid LONG) TIMESTAMP(ts) PARTITION BY DAY",
+                rightTableTimestampType.getTypeName()
+        );
+        execute("""
+                INSERT INTO trades VALUES
+                    ('2024-01-01T00:00:01.000000Z', 'A', 1),
+                    ('2024-01-01T00:00:02.000000Z', 'B', 2),
+                    ('2024-01-01T00:00:03.000000Z', 'A', 3),
+                    ('2024-01-01T00:00:04.000000Z', 'B', 4)
+                """);
+        execute("""
+                INSERT INTO quotes VALUES
+                    ('2024-01-01T00:00:00.500000Z', 'A', 10),
+                    ('2024-01-01T00:00:01.500000Z', 'B', 20),
+                    ('2024-01-01T00:00:02.000000Z', 'B', 25),
+                    ('2024-01-01T00:00:02.500000Z', 'A', 30),
+                    ('2024-01-01T00:00:03.500000Z', 'B', 40),
+                    ('2024-01-01T00:00:03.800000Z', 'A', 50)
                 """);
     }
 
@@ -6549,6 +7530,30 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ('2024-01-01T00:00:00.000000Z', 'IBM', 'ARCA', 30.0),
                     ('2024-01-01T00:00:01.000000Z', 'AAPL', 'NYSE', 11.0),
                     ('2024-01-01T00:00:04.000000Z', 'MSFT', 'NASDAQ', 21.0)
+                """);
+    }
+
+    private void createSharedSymbolKeyTables(SqlCompiler compiler) throws SqlException {
+        executeWithRewriteTimestamp(
+                "CREATE TABLE master_sv (s STRING, v VARCHAR, y SYMBOL, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                leftTableTimestampType.getTypeName()
+        );
+        executeWithRewriteTimestamp(
+                "CREATE TABLE slave_sym (sym SYMBOL, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                rightTableTimestampType.getTypeName()
+        );
+        execute(compiler, """
+                INSERT INTO master_sv VALUES
+                    ('A', 'A', 'A', '2024-01-01T10:00:00.000000Z'),
+                    ('B', 'B', 'B', '2024-01-01T10:01:00.000000Z'),
+                    ('C', 'C', 'C', '2024-01-01T10:02:00.000000Z'),
+                    (NULL, NULL, NULL, '2024-01-01T10:03:00.000000Z')
+                """);
+        execute(compiler, """
+                INSERT INTO slave_sym VALUES
+                    ('A', 1.0, '2024-01-01T09:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-01T09:30:00.000000Z'),
+                    (NULL, 9.0, '2024-01-01T09:45:00.000000Z')
                 """);
     }
 
@@ -6600,5 +7605,20 @@ public class AsOfJoinTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    static void collectOnClausePermutations(String[] equalities, int from, ObjList<String> sink) {
+        if (from == equalities.length) {
+            sink.add(String.join(" AND ", equalities));
+            return;
+        }
+        for (int i = from; i < equalities.length; i++) {
+            String t = equalities[from];
+            equalities[from] = equalities[i];
+            equalities[i] = t;
+            collectOnClausePermutations(equalities, from + 1, sink);
+            equalities[i] = equalities[from];
+            equalities[from] = t;
+        }
     }
 }

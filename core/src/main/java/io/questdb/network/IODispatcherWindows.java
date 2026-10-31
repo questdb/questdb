@@ -39,13 +39,18 @@ public class IODispatcherWindows<C extends IOContext<C>> extends AbstractIODispa
             IOContextFactory<C> ioContextFactory
     ) {
         super(configuration, ioContextFactory);
-        this.sf = configuration.getSelectFacade();
-        this.readFdSet = new FDSet(configuration.getEventCapacity());
-        this.writeFdSet = new FDSet(configuration.getEventCapacity());
-        readFdSet.add(serverFd);
-        readFdSet.setCount(1);
-        writeFdSet.setCount(0);
-        listenerRegistered = true;
+        try {
+            this.sf = configuration.getSelectFacade();
+            this.readFdSet = new FDSet(configuration.getEventCapacity());
+            this.writeFdSet = new FDSet(configuration.getEventCapacity());
+            readFdSet.add(serverFd);
+            readFdSet.setCount(1);
+            writeFdSet.setCount(0);
+            listenerRegistered = true;
+        } catch (Throwable th) {
+            close();
+            throw th;
+        }
     }
 
     @Override

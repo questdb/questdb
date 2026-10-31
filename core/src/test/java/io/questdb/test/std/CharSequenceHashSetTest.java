@@ -56,6 +56,22 @@ public class CharSequenceHashSetTest {
     }
 
     @Test
+    public void testNullThenRehash() {
+        final CharSequenceHashSet set = new CharSequenceHashSet();
+        Assert.assertTrue(set.add((CharSequence) null));
+        final int n = 1000;
+        for (int i = 0; i < n; i++) {
+            Assert.assertTrue(set.add("k" + i));
+        }
+        Assert.assertEquals(n + 1, set.size());
+        Assert.assertTrue(set.contains(null));
+        for (int i = 0; i < n; i++) {
+            Assert.assertTrue(set.contains("k" + i));
+        }
+        Assert.assertFalse(set.contains("k" + n));
+    }
+
+    @Test
     public void testStress() {
         Rnd rnd = new Rnd();
         CharSequenceHashSet set = new CharSequenceHashSet();

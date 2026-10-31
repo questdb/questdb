@@ -29,7 +29,6 @@ import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
@@ -74,21 +73,15 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
  * page frames to fit; the owner thread matches the rest of a larger (Parquet) frame itself.
  * <p>
  * The native frames shrink as the slots per master row, offsets times slaves, grow, down to the
- * floor of {@link #MIN_FRAME_BUDGET_DIVISOR}. The code generator picks this factory for at most
- * {@link #MAX_SLOTS_PER_MASTER_ROW} slots and the serial {@link HorizonJoinProjectionRecordCursorFactory}
- * past that, unless the master lacks the random access the serial factory needs, as a covering
- * index scan does.
+ * floor of {@link #MIN_FRAME_BUDGET_DIVISOR}. The planner picks this factory for at most
+ * {@link io.questdb.griffin.plan.logical.PlanToFactoryRules#MAX_HORIZON_SLOTS_PER_MASTER_ROW} slots and the serial
+ * {@link HorizonJoinProjectionRecordCursorFactory} past that, unless the master lacks the random
+ * access the serial factory needs, as a covering index scan does. Within the cap, the task budget
+ * of {@code cairo.sql.page.frame.max.rows} divided by the slots, 10,000 rows or more at the default
+ * of 1,000,000, covers a frame of that floor. Above the cap, the frames of a master without random
+ * access shrink with the task budget.
  */
 public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecordCursorFactory {
-    /**
-     * The most slots per master row, offsets times slaves, for which the code generator picks this
-     * factory over a master with random access. Within the cap, the task budget of
-     * {@code cairo.sql.page.frame.max.rows} divided by the slots, 10,000 rows or more at the
-     * default of 1,000,000, covers a frame of the floor that {@link #MIN_FRAME_BUDGET_DIVISOR}
-     * sets. A master without random access, such as a covering index scan, keeps this factory
-     * above the cap, as the class javadoc says, and its frames shrink with the task budget there.
-     */
-    public static final int MAX_SLOTS_PER_MASTER_ROW = 100;
     private static final PageFrameReducer FILTER_AND_MATCH = AsyncHorizonJoinProjectionRecordCursorFactory::filterAndMatch;
     private static final PageFrameReducer MATCH = AsyncHorizonJoinProjectionRecordCursorFactory::match;
     /**
@@ -170,7 +163,7 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
                     resources,
                     workerCount
             );
-            final boolean isFiltered = atom.isFiltered();
+            final boolean isFiltered = atom.getMasterFilter().getFilter(-1) != null;
             // The frame sequence adopts the atom, freeing it on its own constructor failure.
             this.frameSequence = new PageFrameSequence<>(
                     engine,
@@ -203,14 +196,6 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
             Misc.free(this, th);
             throw th;
         }
-    }
-
-    /**
-     * Returns whether a projection with the given numbers of offsets and slaves stays within
-     * {@link #MAX_SLOTS_PER_MASTER_ROW}.
-     */
-    public static boolean isWithinSlotCap(int offsetCount, int slaveCount) {
-        return (long) offsetCount * slaveCount <= MAX_SLOTS_PER_MASTER_ROW;
     }
 
     @Override
@@ -255,23 +240,18 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
         sink.meta("workers").val(workerCount);
         sink.meta("offsets").val(offsetCount);
         final AsyncHorizonJoinProjectionAtom atom = frameSequence.getAtom();
-        final Function filter = atom.getFilter(-1);
-        if (filter != null) {
-            sink.attr("filter").val(filter, masterFactory);
-        }
+        sink.optAttr("filter", atom.getMasterFilter().getFilter(-1), masterFactory);
         sink.child(masterFactory);
         for (int i = 0, n = slaveFactories.size(); i < n; i++) {
-            final Function slaveFilter = slaveStates.getQuick(i).getFilter();
-            if (slaveFilter != null) {
-                sink.attr("slave filter").val(slaveFilter, slaveFactories.getQuick(i));
-            }
+            sink.optAttr("keyCheck", slaveStates.getQuick(i).getKeyCheck(), masterFactory);
+            sink.optAttr("slave filter", slaveStates.getQuick(i).getFilter(), slaveFactories.getQuick(i));
             sink.child(slaveFactories.getQuick(i));
         }
     }
 
     @Override
     public boolean usesCompiledFilter() {
-        return frameSequence.getAtom().getCompiledFilter() != null;
+        return frameSequence.getAtom().getMasterFilter().getCompiledFilter() != null;
     }
 
     @Override
@@ -306,25 +286,26 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
 
         final boolean isOwner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, isOwner, circuitBreaker);
+        final AsyncFilter masterFilter = atom.getMasterFilter();
         // populateFrameMemory() decodes the frame and can throw, so it sits inside the try that
         // releases the slot, see PerWorkerLocks.acquireSlot().
         try {
             final boolean isParquetFrame = task.isParquetFrame();
             final boolean isCountOnly = task.isCountOnly();
-            final boolean isLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame, isCountOnly);
+            final boolean isLateMaterialization = masterFilter.shouldUseLateMaterialization(slotId, isParquetFrame, isCountOnly);
             final PageFrameMemory frameMemory = isLateMaterialization
-                    ? task.populateFrameMemory(atom.getFilterUsedColumnIndexes())
+                    ? task.populateFrameMemory(masterFilter.getFilterUsedColumnIndexes())
                     : task.populateFrameMemory();
             record.init(frameMemory);
 
-            final CompiledFilter compiledFilter = atom.getCompiledFilter();
+            final CompiledFilter compiledFilter = masterFilter.getCompiledFilter();
             if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
-                applyFilter(atom.getFilter(slotId), rows, record, frameRowCount);
+                applyFilter(masterFilter.getFilter(slotId), rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(
                         compiledFilter,
-                        atom.getBindVarMemory(),
-                        atom.getBindVarFunctions(),
+                        masterFilter.getBindVarMemory(),
+                        masterFilter.getBindVarFunctions(),
                         frameMemory,
                         frameSequence.getPageFrameAddressCache(),
                         task.getDataAddresses(),
@@ -337,7 +318,7 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
             final long filteredRowCount = rows.size();
             task.setFilteredRowCount(filteredRowCount);
             if (isParquetFrame) {
-                atom.getSelectivityStats(slotId).update(filteredRowCount, frameRowCount);
+                masterFilter.getSelectivityStats(slotId).update(filteredRowCount, frameRowCount);
             }
             if (filteredRowCount == 0 || isCountOnly) {
                 return;
@@ -345,7 +326,7 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
 
             // Decode the remaining columns before the slots extend the list: the call reads the
             // filtered row indexes, which occupy the whole list until then.
-            if (isLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
+            if (isLateMaterialization && task.populateRemainingColumns(masterFilter.getFilterUsedColumnIndexes(), rows, true)) {
                 record.init(frameMemory);
             }
             final long matchedRowCount = Math.min(filteredRowCount, atom.getMaxTaskRows());

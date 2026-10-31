@@ -47,6 +47,11 @@ public class CountDecimalWindowFunctionFactory extends AbstractWindowFunctionFac
             (arg, record) -> arg.getDecimal8(record) != Decimals.DECIMAL8_NULL;
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
+
+    @Override
     public String getSignature() {
         return "count(Ξ)";
     }

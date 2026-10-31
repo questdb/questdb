@@ -222,8 +222,7 @@ public class MonotonicSubqueryBoundBoundaryTest extends AbstractCairoTest {
                     )
                     """)
                     .timestamp("ts")
-                    .withPlanContaining("Frame forward scan on: outer_t")
-                    .withPlanNotContaining("Interval forward scan on: outer_t")
+                    .withPlanContaining("Interval forward scan on: outer_t")
                     .returns(expected);
         });
     }
@@ -293,7 +292,7 @@ public class MonotonicSubqueryBoundBoundaryTest extends AbstractCairoTest {
     // range lies strictly below every row, so the predicate is always true and the result is
     // deterministic (all rows) even though the bound value is random.
     @Test
-    public void testMonotonicSubqueryUnstableBoundStaysResidualOnly() throws Exception {
+    public void testMonotonicSubqueryNonDeterministicBoundPrunesOnce() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t VALUES " +
@@ -305,8 +304,7 @@ public class MonotonicSubqueryBoundBoundaryTest extends AbstractCairoTest {
             assertQuery("SELECT ts, v FROM t WHERE dateadd('h', 1, ts) >= " +
                     "(SELECT rnd_timestamp('2020-01-01T00:00:00.000000Z'::timestamp, '2020-01-02T00:00:00.000000Z'::timestamp, 0))")
                     .timestamp("ts")
-                    .withPlanContaining("Frame forward scan on: t")
-                    .withPlanNotContaining("Interval forward scan")
+                    .withPlanContaining("Interval forward scan on: t")
                     .returns("ts\tv\n" +
                             "2024-01-01T00:00:00.000000Z\t1\n" +
                             "2024-01-01T01:00:00.000000Z\t2\n" +

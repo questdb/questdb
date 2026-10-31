@@ -43,6 +43,11 @@ import io.questdb.std.str.Sinkable;
 
 public class RndStringListFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.STRING;
+    }
+
+    @Override
     public String getSignature() {
         return "rnd_str(V)";
     }

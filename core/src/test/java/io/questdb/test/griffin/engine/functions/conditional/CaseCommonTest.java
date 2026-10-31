@@ -28,6 +28,13 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.*;
 import io.questdb.griffin.engine.functions.conditional.CaseCommon;
+import io.questdb.griffin.engine.functions.conditional.CaseFunctionFactory;
+import io.questdb.griffin.engine.functions.conditional.CoalesceFunctionFactory;
+import io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory;
+import io.questdb.griffin.engine.functions.constants.ByteConstant;
+import io.questdb.griffin.engine.functions.constants.CharConstant;
+import io.questdb.griffin.engine.functions.constants.ShortConstant;
+import io.questdb.std.IntList;
 import io.questdb.test.griffin.BaseFunctionFactoryTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -38,6 +45,7 @@ import java.util.*;
 public class CaseCommonTest extends BaseFunctionFactoryTest {
     private static final short MAX_COLUMN_TYPE_ID = ColumnType.VARCHAR;
     private static final short MIN_COLUMN_TYPE_ID = ColumnType.BOOLEAN;
+    private static final int NO_COMMON_TYPE = -1;
     private static final Map<Short, Set<Short>> IGNORED_TYPE = buildIgnoredTypeMap();
     private FunctionParser functionParser;
 
@@ -47,6 +55,15 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
                 configuration,
                 new FunctionFactoryCacheBuilder().scan(LOG).build()
         ));
+    }
+
+    @Test
+    public void testCastToTimestamp() throws Exception {
+        for (int timestampType : new int[]{ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO}) {
+            assertCastToTimestamp(new CharConstant('1'), timestampType, 1);
+            assertCastToTimestamp(new ByteConstant((byte) 2), timestampType, 2);
+            assertCastToTimestamp(new ShortConstant((short) 3), timestampType, 3);
+        }
     }
 
     @Test
@@ -136,6 +153,48 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
         });
     }
 
+    @Test
+    public void testCommonTypeIsSymmetric() {
+        // CASE, SWITCH and coalesce fold their value types in order, so the common type of a pair must not
+        // depend on which value comes first
+        for (short l = MIN_COLUMN_TYPE_ID; l <= MAX_COLUMN_TYPE_ID; l++) {
+            for (short r = MIN_COLUMN_TYPE_ID; r <= MAX_COLUMN_TYPE_ID; r++) {
+                Assert.assertEquals(
+                        "l = " + ColumnType.nameOf(l) + ", r = " + ColumnType.nameOf(r),
+                        getCommonTypeOrNone(l, r),
+                        getCommonTypeOrNone(r, l)
+                );
+            }
+        }
+        Assert.assertEquals(ColumnType.STRING, getCommonTypeOrNone(ColumnType.CHAR, ColumnType.SYMBOL));
+    }
+
+    @Test
+    public void testResultTypeMatchesInstantiation() {
+        // CHAR and STRING fold into STRING and STRING into IPv4, but CHAR does not convert to IPv4
+        final CoalesceFunctionFactory coalesce = new CoalesceFunctionFactory();
+        Assert.assertEquals(ColumnType.UNDEFINED, coalesce.getResultType(types(ColumnType.CHAR, ColumnType.STRING, ColumnType.IPv4)));
+        Assert.assertEquals(ColumnType.UNDEFINED, coalesce.getResultType(types(ColumnType.STRING, ColumnType.CHAR, ColumnType.IPv4)));
+        Assert.assertEquals(ColumnType.IPv4, coalesce.getResultType(types(ColumnType.STRING, ColumnType.IPv4)));
+
+        final CaseFunctionFactory caseFactory = new CaseFunctionFactory();
+        Assert.assertEquals(ColumnType.UNDEFINED, caseFactory.getResultType(
+                types(ColumnType.BOOLEAN, ColumnType.CHAR, ColumnType.BOOLEAN, ColumnType.STRING, ColumnType.IPv4)
+        ));
+        Assert.assertEquals(ColumnType.IPv4, caseFactory.getResultType(types(ColumnType.BOOLEAN, ColumnType.STRING, ColumnType.IPv4)));
+
+        final SwitchFunctionFactory switchFactory = new SwitchFunctionFactory();
+        Assert.assertEquals(ColumnType.UNDEFINED, switchFactory.getResultType(
+                types(ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.INT, ColumnType.IPv4, ColumnType.CHAR)
+        ));
+        Assert.assertEquals(ColumnType.UNDEFINED, switchFactory.getResultType(
+                types(ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.UNDEFINED)
+        ));
+        Assert.assertEquals(ColumnType.IPv4, switchFactory.getResultType(
+                types(ColumnType.INT, ColumnType.INT, ColumnType.STRING, ColumnType.IPv4)
+        ));
+    }
+
     private static void addGlobalExceptions(Map<Short, Set<Short>> map) {
         for (short i = MIN_COLUMN_TYPE_ID; i <= MAX_COLUMN_TYPE_ID; i++) {
             Set<Short> ignored = map.get(i);
@@ -153,6 +212,12 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
         for (short t : to) {
             ignored.add(t);
         }
+    }
+
+    private static void assertCastToTimestamp(Function value, int timestampType, long expected) throws SqlException {
+        final Function cast = CaseCommon.getCastFunction(value, 0, timestampType, configuration, null);
+        Assert.assertEquals(timestampType, cast.getType());
+        Assert.assertEquals(expected, cast.getTimestamp(null));
     }
 
     private static Map<Short, Set<Short>> buildIgnoredTypeMap() {
@@ -476,6 +541,14 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
         return res;
     }
 
+    private static int getCommonTypeOrNone(short l, short r) {
+        try {
+            return CaseCommon.getCommonType(l, r, 0, "UNDEFINED is not expected");
+        } catch (SqlException e) {
+            return NO_COMMON_TYPE;
+        }
+    }
+
     private static boolean isAuxType(short type) {
         return type == ColumnType.CURSOR || type == ColumnType.VAR_ARG || type == ColumnType.RECORD;
     }
@@ -486,6 +559,14 @@ public class CaseCommonTest extends BaseFunctionFactoryTest {
 
     private static boolean isIgnoredType(short lType, short rType) {
         return IGNORED_TYPE.get(lType).contains(rType);
+    }
+
+    private static IntList types(int... types) {
+        final IntList list = new IntList();
+        for (int type : types) {
+            list.add(type);
+        }
+        return list;
     }
 
     private Function getRndFunction(short type) throws SqlException {

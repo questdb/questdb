@@ -71,8 +71,6 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
 
     PartitionFrameCursor getCursor(SqlExecutionContext executionContext, IntList columnIndexes, int order) throws SqlException;
 
-    RecordMetadata getMetadata();
-
     /**
      * Order of records in the partition frame in regard to timestamp.
      *
@@ -93,12 +91,9 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
     }
 
     /**
-     * Returns {@code true} if repeated cursor opens within one query execution produce the same
-     * partition frames. Unknown implementations inherit the fail-safe determinism-derived default.
+     * The table the factory reads, at the metadata version of its scan; a column index is a position among its columns.
      */
-    default boolean isStableWithinExecution() {
-        return !isNonDeterministic();
-    }
+    TableDescriptor getTableDescriptor();
 
     TableToken getTableToken();
 
@@ -113,10 +108,24 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
         return false;
     }
 
+    /**
+     * Sets the table indexes, in reporting order, of the columns the query references; opening a cursor checks the
+     * SELECT permission on them as well as on the columns the cursor reads.
+     */
+    void setAuthorizedColumnIndexes(IntList columnIndexes);
+
     void setPushdownFilterCondition(
             long partitionTableVersion,
             @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions
     );
+
+    /**
+     * Sets the row counts of the table outside which a choice the plan made from the table's row count no longer holds:
+     * opening a cursor over a table with another row count throws {@link TableReferenceOutOfDateException}, so the
+     * holder of the factory compiles the statement again, unless the execution context
+     * {@link SqlExecutionContext#isTableRowCountChangeTolerated() tolerates} row count changes.
+     */
+    void setRowCountRange(long minRowCount, long maxRowCount);
 
     boolean supportsTableRowId(TableToken tableToken);
 

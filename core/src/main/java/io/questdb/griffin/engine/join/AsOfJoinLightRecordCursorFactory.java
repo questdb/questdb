@@ -34,6 +34,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -41,20 +42,22 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
-import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.nullSlaveTimestamp;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
 public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private static final ArrayColumnTypes TYPES_VALUE = new ArrayColumnTypes();
 
+    private final @Nullable Function keyCheck;
     private final RecordSink masterKeyCopier;
     private final RecordSink slaveKeyCopier;
     private final @Nullable SymbolJoinKeyMapping symbolJoinKeyMapping;
@@ -72,18 +75,20 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordSink slaveKeyCopier,
             @Nullable SymbolJoinKeyMapping symbolJoinKeyMapping,
             int columnSplit,
-            JoinContext joinContext,
+            Plannable joinContext,
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable Function keyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.keyCheck = keyCheck;
         this.symbolJoinKeyMapping = symbolJoinKeyMapping;
-        this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
-                ? new SymbolTranslatingRecord(configuration, masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
-                : null;
         Map joinKeyMap = null;
         try {
+            this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
+                    ? new SymbolTranslatingRecord(configuration, masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
+                    : null;
             this.masterKeyCopier = masterKeyCopier;
             this.slaveKeyCopier = slaveKeyCopier;
             this.toleranceInterval = toleranceInterval;
@@ -99,8 +104,8 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                     slaveFactory.getMetadata().getTimestampType()
             );
         } catch (Throwable th) {
-            Misc.free(joinKeyMap);
-            close();
+            Misc.free(joinKeyMap, th);
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -143,6 +148,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Light");
         sink.attr("condition").val(joinContext);
+        sink.optAttr("keyCheck", keyCheck, masterFactory);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
@@ -159,6 +165,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         Throwable failure = closeJoinOwnersBestEffort();
         failure = Misc.freeBestEffort(failure, cursor);
         failure = Misc.freeBestEffort(failure, symbolTranslatingRecord);
+        failure = Misc.freeBestEffort(failure, keyCheck);
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -211,6 +218,9 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 joinKeyToRowId.close();
                 Misc.free(symbolTranslatingRecord);
                 Misc.free(symbolJoinKeyMapping);
+                if (keyCheck != null) {
+                    keyCheck.cursorClosed();
+                }
                 super.close();
             }
         }
@@ -240,6 +250,13 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                             value = key.createValue();
                             value.putLong(0, lastSlaveRowID);
                         }
+                    } else {
+                        if (!hasFirstSlaveRow(masterTimestamp, minSlaveTimestamp)) {
+                            record.hasSlave(false);
+                            return true;
+                        }
+                        slaveTimestamp = this.slaveTimestamp;
+                        slaveRowID = this.lastSlaveRowID;
                     }
 
                     // NOTE: unlike full fat ASOF JOIN, we don't evacuate joinKeyMap here.
@@ -270,6 +287,10 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                     this.lastSlaveRowID = slaveRowID;
                 }
 
+                if (keyCheck != null && !keyCheck.getBool(masterRecord)) {
+                    record.hasSlave(false);
+                    return true;
+                }
                 key = joinKeyToRowId.withKey();
                 // Use the translating record (if available) so that getInt() on symbol
                 // key columns returns slave symbol IDs for integer-based map lookup.
@@ -316,9 +337,36 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             lastSlaveRowID = Long.MIN_VALUE;
             masterCursor.toTop();
             slaveCursor.toTop();
+            if (keyCheck != null) {
+                keyCheck.toTop();
+            }
         }
 
-        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {
+        /**
+         * Reads the first slave row and keeps it, false when there is none at or before the master row.
+         */
+        private boolean hasFirstSlaveRow(long masterTimestamp, long minSlaveTimestamp) {
+            if (!slaveCursor.hasNext()) {
+                return false;
+            }
+            final Record rec = slaveCursor.getRecord();
+            slaveTimestamp = scaleTimestamp(rec.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+            if (slaveTimestamp == Numbers.LONG_NULL) {
+                throw nullSlaveTimestamp();
+            }
+            lastSlaveRowID = rec.getRowId();
+            if (slaveTimestamp > masterTimestamp) {
+                return false;
+            }
+            if (slaveTimestamp >= minSlaveTimestamp) {
+                final MapKey key = joinKeyToRowId.withKey();
+                key.put(rec, slaveKeyCopier);
+                key.createValue().putLong(0, lastSlaveRowID);
+            }
+            return true;
+        }
+
+        void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             if (!isOpen) {
                 isOpen = true;
                 joinKeyToRowId.setMemoryTracker(executionContext.getMemoryTracker());
@@ -329,6 +377,9 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 }
             }
             this.circuitBreaker = executionContext.getCircuitBreaker();
+            if (keyCheck != null) {
+                keyCheck.init(masterCursor, executionContext);
+            }
             if (symbolJoinKeyMapping != null) {
                 symbolJoinKeyMapping.of(slaveCursor);
             }

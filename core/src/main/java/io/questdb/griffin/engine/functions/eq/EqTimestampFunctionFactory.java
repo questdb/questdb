@@ -33,6 +33,8 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.RuntimeConstFunction.TimestampTextRuntimeConstFunction;
+import io.questdb.griffin.engine.functions.cast.CastDateToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -41,12 +43,22 @@ import io.questdb.std.ObjList;
 public class EqTimestampFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "=(NN)";
     }
 
     @Override
     public boolean isBoolean() {
+        return true;
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
         return true;
     }
 
@@ -60,10 +72,21 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
     ) {
         Function left = args.getQuick(0);
         Function right = args.getQuick(1);
+        if (right instanceof TimestampTextRuntimeConstFunction text) {
+            return new TextFunc(left, text);
+        }
+        if (left instanceof TimestampTextRuntimeConstFunction text) {
+            return new TextFunc(right, text);
+        }
+        final int timestampType = ColumnType.getHigherPrecisionTimestampType(
+                ColumnType.getTimestampType(left.getType()),
+                ColumnType.getTimestampType(right.getType())
+        );
+        assert ColumnType.isTimestamp(timestampType);
+        left = CastDateToTimestampFunctionFactory.toNanosOperand(left, timestampType);
+        right = CastDateToTimestampFunctionFactory.toNanosOperand(right, timestampType);
         int leftType = ColumnType.getTimestampType(left.getType());
         int rightType = ColumnType.getTimestampType(right.getType());
-        int timestampType = ColumnType.getHigherPrecisionTimestampType(leftType, rightType);
-        assert ColumnType.isTimestamp(timestampType);
 
         // Equality is symmetric: normalize so the lower-precision (converting) side is
         // always on the left. That removes the need for mirrored Right* variants.
@@ -80,7 +103,7 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         // That shortcuts every future evaluation and also skips the per-row virtual
         // call into a constant function. The args are no longer referenced by the
         // returned function, so close them here per the factory contract (same as
-        // FunctionParser.functionToConstant does when folding).
+        // FunctionResolver.functionToConstant does when folding).
         if (left.isConstant() && right.isConstant()) {
             long leftVal = left.getTimestamp(null);
             long rightVal = right.getTimestamp(null);
@@ -362,6 +385,25 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             value = left.getTimestamp(null);
+        }
+    }
+
+    /**
+     * Compares the operand with text at the operand's precision: equal only when the text spells a value of the
+     * operand's type, so text finer than the operand equals no value.
+     */
+    private static class TextFunc extends AbstractEqBinaryFunction {
+        private final TimestampTextRuntimeConstFunction text;
+
+        public TextFunc(Function operand, TimestampTextRuntimeConstFunction text) {
+            super(operand, text);
+            this.text = text;
+        }
+
+        @Override
+        public boolean getBool(Record rec) {
+            final long value = left.getTimestamp(rec);
+            return negated != (text.getCeil() <= value && value <= text.getFloor());
         }
     }
 }

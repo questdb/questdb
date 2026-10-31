@@ -50,8 +50,10 @@ public class LowerCaseCharSequenceIntHashMap extends AbstractLowerCaseCharSequen
 
     @Override
     public void clear() {
-        super.clear();
-        Arrays.fill(values, noEntryValue);
+        if (free != capacity) {
+            super.clear();
+            Arrays.fill(values, noEntryValue);
+        }
     }
 
     public int get(CharSequence key) {

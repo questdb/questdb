@@ -25,7 +25,7 @@
 package io.questdb.griffin.engine.ops;
 
 import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.QueryModel;
 
 /**
  * The execution model {@code CREATE LIVE VIEW} parses into, and the seam an edition can wrap.
@@ -45,5 +45,5 @@ public interface CreateLiveViewOperationBuilder extends ExecutionModel {
         return CREATE_LIVE_VIEW;
     }
 
-    void setSelectModel(IQueryModel selectModel);
+    void setSelectModel(QueryModel selectModel);
 }

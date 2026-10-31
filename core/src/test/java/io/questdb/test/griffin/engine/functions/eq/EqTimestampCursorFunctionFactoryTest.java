@@ -592,16 +592,13 @@ public class EqTimestampCursorFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testPreventVarcharImplicitCastingToTimestampInSubQuery() throws Exception {
+        // A VARCHAR left operand compares as text with a text scalar sub-query; neither side casts to TIMESTAMP.
         assertMemoryLeak(() -> {
-            execute("create table x as (" +
-                    "select rnd_varchar() a, timestamp_sequence(0, 2500000) ts from long_sequence(2)" +
-                    ") timestamp(ts) partition by day");
-
-            // a VARCHAR left operand now re-routes to the numeric =(DC) overload, whose guard
-            // rejects a non-DOUBLE/FLOAT left operand, so the diagnostic reports the numeric
-            // candidate instead of the timestamp one (same tradeoff as the < / > overloads).
-            assertQuery("select * from x where a != (select '1970-01-01T00:00:00.000000Z'::varchar)")
-                    .fails(22, "left operand must be a DOUBLE or FLOAT, found: VARCHAR");
+            execute("create table x (a varchar, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into x values ('0', '1970-01-01T00:00:00.000000Z'), ('zzz', '1970-01-01T00:00:01.000000Z')");
+            assertQuery("select a from x where a != (select '1970-01-01T00:00:00.000000Z'::varchar)")
+                    .noLeakCheck()
+                    .returns("a\n0\nzzz\n");
         });
     }
 

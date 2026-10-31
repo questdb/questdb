@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -54,6 +55,11 @@ import io.questdb.std.str.Utf8s;
  * passed via the BIND message. There is no SQL literal syntax for VARCHAR arrays.
  */
 public class InSymbolVarcharArrayFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
     @Override
     public String getSignature() {
         return "in(KØ[])";

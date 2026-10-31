@@ -31,7 +31,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.ComparisonFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -84,7 +84,7 @@ public class LtVarcharFunctionFactory implements FunctionFactory {
      * {@link Function#getVarcharA(Record)} for null instead of
      * {@link Function#getStrA(Record)}.
      */
-    static final class VarcharNullSideFunc extends NegatableBooleanFunction implements UnaryFunction {
+    static final class VarcharNullSideFunc extends ComparisonFunction implements UnaryFunction {
         private final Function arg;
         private final boolean nullOnLeft;
 
@@ -100,7 +100,7 @@ public class LtVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated && arg.getVarcharA(rec) == null;
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -111,16 +111,20 @@ public class LtVarcharFunctionFactory implements FunctionFactory {
         // See StrNullSideFunc.toPlan for the swap-form caveat -- EXPLAIN can
         // read `null >= s` for a user-written `s <= null`.
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             if (nullOnLeft) {
                 sink.val("null").val(getName()).val(arg);
             } else {
                 sink.val(arg).val(getName()).val("null");
             }
         }
+
+        private boolean isMatch(Record rec) {
+            return negated && arg.getVarcharA(rec) == null;
+        }
     }
 
-    static class Func extends NegatableBooleanFunction implements BinaryFunction {
+    static class Func extends ComparisonFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
@@ -131,11 +135,7 @@ public class LtVarcharFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Utf8s.lessThan(
-                    left.getVarcharA(rec),
-                    right.getVarcharB(rec),
-                    negated
-            );
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -158,10 +158,18 @@ public class LtVarcharFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(left);
             sink.val(getName());
             sink.val(right);
+        }
+
+        private boolean isMatch(Record rec) {
+            return Utf8s.lessThan(
+                    left.getVarcharA(rec),
+                    right.getVarcharB(rec),
+                    negated
+            );
         }
     }
 }

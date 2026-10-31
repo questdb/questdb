@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -37,6 +38,11 @@ import static io.questdb.griffin.engine.functions.groupby.ApproxPercentileLongGr
 
 public class ApproxMedianLongGroupByDefaultFunctionFactory implements FunctionFactory {
     private static final DoubleConstant percentileFunc = DoubleConstant.newInstance(0.5);
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
 
     @Override
     public String getSignature() {

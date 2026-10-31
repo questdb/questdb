@@ -47,6 +47,11 @@ public class LeadLongFunctionFactory extends AbstractWindowFunctionFactory {
     private static final String SIGNATURE = LeadLagWindowFunctionFactoryHelper.LEAD_NAME + "(LV)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

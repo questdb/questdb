@@ -779,6 +779,20 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public boolean reload() {
+        final boolean isTracked = partitionOverwriteControl != null && isActive();
+        if (isTracked) {
+            partitionOverwriteControl.releasePartitions(this);
+        }
+        try {
+            return reload0();
+        } finally {
+            if (isTracked && isActive()) {
+                partitionOverwriteControl.acquirePartitions(this);
+            }
+        }
+    }
+
+    private boolean reload0() {
         if (acquireTxn()) {
             return false;
         }
@@ -804,6 +818,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public void setActiveColumns(@Nullable IntList columnIndexes) {
+        setActiveColumns(columnIndexes, -1);
+    }
+
+    public void setActiveColumns(@Nullable IntList columnIndexes, int requiredColumnIndex) {
         resetAllColumnsOpenFlag();
 
         if (columnIndexes == null || columnIndexes.size() == 0) {
@@ -816,6 +834,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (!activeColumns.getAndSet(columnIndexes.getQuick(i))) {
                 distinctCount++;
             }
+        }
+        if (requiredColumnIndex > -1 && !activeColumns.getAndSet(requiredColumnIndex)) {
+            distinctCount++;
         }
         // When all columns are referenced, skip per-column BitSet checks
         // in openPartitionColumns().

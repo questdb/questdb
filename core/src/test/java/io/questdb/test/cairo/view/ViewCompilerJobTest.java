@@ -100,18 +100,18 @@ public class ViewCompilerJobTest extends AbstractViewTest {
      * <ul>
      *     <li>While {@code raceCatsSchemaChangesLeft} is positive, each open of a reader on
      *     {@code cats} at a known metadata version adds a column to {@code cats} just before the
-     *     open and decrements it, as a concurrent ALTER would between the optimiser recording the
-     *     version of the PIVOT IN sub-query's table and the sub-query opening its reader.</li>
+     *     open and decrements it, as a concurrent ALTER would just before the PIVOT IN sub-query
+     *     opens its reader.</li>
      *     <li>While {@code raceRecreateTableSql} is set, the next open of a reader on {@code race_t}
      *     drops {@code race_t} and recreates it with that statement, as a concurrent DROP TABLE and
-     *     CREATE TABLE would between the optimiser resolving the table token and opening the
+     *     CREATE TABLE would between the parser resolving the table token and binding opening the
      *     reader.</li>
      *     <li>While {@code raceAddColumnThenRecreateSql} is set, the next open of a reader on
-     *     {@code race_t} at a known metadata version adds a column to {@code race_t} just before the
-     *     open, as a concurrent ALTER would between the optimiser and code generation. It then moves
-     *     the statement to {@code raceRecreateTableSql}, so the next open without a version, which
-     *     the optimiser makes when code generation re-parses the statement, loses a DROP TABLE and
-     *     CREATE TABLE race.</li>
+     *     {@code race_t} without a version, which binding makes, adds a column to {@code race_t}
+     *     just after the open, as a concurrent ALTER would between binding and code generation. It
+     *     then moves the statement to {@code raceRecreateTableSql}, so the next open, which binding
+     *     makes when code generation re-parses the statement, loses a DROP TABLE and CREATE TABLE
+     *     race.</li>
      *     <li>Every reader open on either table records the watched views that are invalid at that
      *     moment into {@code raceInvalidViews}, so a test sees an invalid state that a later compile
      *     repairs.</li>
@@ -133,6 +133,18 @@ public class ViewCompilerJobTest extends AbstractViewTest {
                         }
                     }
                     recordInvalidWatchedViews(this);
+                    final TableReader reader = super.getReader(tableToken, readerPoolSupervisor);
+                    final String recreateAfterAddColumnSql = raceAddColumnThenRecreateSql.getAndSet(null);
+                    if (recreateAfterAddColumnSql != null) {
+                        try (TableWriter writer = TestUtils.getWriter(this, "race_t")) {
+                            writer.addColumn("extra", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                        } catch (Throwable th) {
+                            reader.close();
+                            throw th;
+                        }
+                        raceRecreateTableSql.set(recreateAfterAddColumnSql);
+                    }
+                    return reader;
                 }
                 return super.getReader(tableToken, readerPoolSupervisor);
             }
@@ -140,13 +152,6 @@ public class ViewCompilerJobTest extends AbstractViewTest {
             @Override
             public TableReader getReader(TableToken tableToken, long metadataVersion, @Nullable ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
                 if (metadataVersion > -1 && Chars.equals(tableToken.getTableName(), "race_t")) {
-                    final String recreateSql = raceAddColumnThenRecreateSql.getAndSet(null);
-                    if (recreateSql != null) {
-                        try (TableWriter writer = TestUtils.getWriter(this, "race_t")) {
-                            writer.addColumn("extra", ColumnType.INT, AllowAllSecurityContext.INSTANCE);
-                        }
-                        raceRecreateTableSql.set(recreateSql);
-                    }
                     recordInvalidWatchedViews(this);
                 }
                 if (metadataVersion > -1 && Chars.equals(tableToken.getTableName(), "cats")) {
@@ -175,9 +180,9 @@ public class ViewCompilerJobTest extends AbstractViewTest {
 
     @Test
     public void testCompileInvalidatesViewWhenRetriesRunOut() throws Exception {
-        // Every compile attempt loses the race. The job must give up after the configured number
-        // of recompile attempts, leave nothing open, and report the out-of-date table as the
-        // reason the view is invalid.
+        // Every compile attempt loses the race. Binding's retries and code generation's share one
+        // budget, so the compile must give up after the configured number of recompile attempts,
+        // leave nothing open, and report the out-of-date table as the reason the view is invalid.
         assertMemoryLeak(() -> {
             createPivotRaceTables();
             createView("pv", PIVOT_RACE_SQL);
@@ -207,10 +212,9 @@ public class ViewCompilerJobTest extends AbstractViewTest {
 
     @Test
     public void testCompileRetriesWhenPivotSubqueryTableChanges() throws Exception {
-        // The view's PIVOT IN sub-query runs while the view's SQL is optimised, so the out-of-date
-        // table surfaces from the model generation, not from the code generation the compiler
-        // retries by itself. The job must recompile the view's SQL instead of invalidating the view
-        // and its dependent view.
+        // The view's PIVOT IN sub-query runs while the view's SQL binds, so the out-of-date
+        // table surfaces from binding. The compiler must bind the view's SQL again instead of
+        // invalidating the view and its dependent view.
         assertMemoryLeak(() -> {
             createPivotRaceTables();
             createView("pv", PIVOT_RACE_SQL);
@@ -242,9 +246,9 @@ public class ViewCompilerJobTest extends AbstractViewTest {
     @Test
     public void testCompileRetriesWhenTableIsRecreated() throws Exception {
         // The table the view reads is dropped and recreated with another column between the
-        // optimiser resolving its token and opening its reader. The job must recompile the view's
-        // SQL against the new table instead of invalidating the view until the CREATE TABLE's own
-        // compile event repairs it.
+        // parser resolving its token and binding opening its reader. The compiler must bind the
+        // view's SQL again against the new table instead of invalidating the view until the
+        // CREATE TABLE's own compile event repairs it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE race_t (a INT)");
             execute("INSERT INTO race_t VALUES (1)");
@@ -268,9 +272,8 @@ public class ViewCompilerJobTest extends AbstractViewTest {
     @Test
     public void testCompileRetriesWhenTableIsRecreatedDuringPlanRetry() throws Exception {
         // Code generation loses a race to an ADD COLUMN and re-parses the view's SQL by itself.
-        // That re-parse loses a second race, to a DROP TABLE and CREATE TABLE, so the out-of-date
-        // table escapes code generation's own retry and surfaces from the metadata update rather
-        // than from the model generation. The job must recompile the view's SQL instead of
+        // Binding that re-parse loses a second race, to a DROP TABLE and CREATE TABLE, inside
+        // code generation's retry. The compiler must bind the view's SQL a third time instead of
         // invalidating the view until the CREATE TABLE's own compile event repairs it.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE race_t (a INT)");
