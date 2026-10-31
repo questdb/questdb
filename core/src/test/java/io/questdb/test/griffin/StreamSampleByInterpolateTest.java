@@ -160,6 +160,34 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntegralAverages() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE ints (ts " + timestampType + ", k SYMBOL, b BYTE, s SHORT) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("""
+                    INSERT INTO ints VALUES
+                        ('2024-01-01', 'a', 1, -32768), ('2024-01-01', 'b', -128, 100),
+                        ('2024-01-01T02:00', 'a', 2, 32767), ('2024-01-01T02:00', 'b', 127, -100)""", context);
+            query(context, "SELECT ts, k, avg(b) ab, avg(s) avs FROM ints SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR ORDER BY ts, k")
+                    .returns(precision("""
+                            ts\tk\tab\tavs
+                            2024-01-01T00:00:00.000000Z\ta\t1.0\t-32768.0
+                            2024-01-01T00:00:00.000000Z\tb\t-128.0\t100.0
+                            2024-01-01T01:00:00.000000Z\ta\t1.5\t-0.5
+                            2024-01-01T01:00:00.000000Z\tb\t-0.5\t0.0
+                            2024-01-01T02:00:00.000000Z\ta\t2.0\t32767.0
+                            2024-01-01T02:00:00.000000Z\tb\t127.0\t-100.0
+                            """));
+            query(context, "SELECT ts, avg(b) ab, avg(s) avs FROM ints SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR")
+                    .returns(precision("""
+                            ts\tab\tavs
+                            2024-01-01T00:00:00.000000Z\t-63.5\t-16334.0
+                            2024-01-01T01:00:00.000000Z\t0.5\t-0.25
+                            2024-01-01T02:00:00.000000Z\t64.5\t16333.5
+                            """));
+        });
+    }
+
+    @Test
     public void testKeyedBoundaryExtrapolation() throws Exception {
         run((engine, compiler, context) -> {
             createPrices(context);

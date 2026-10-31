@@ -36,7 +36,6 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
-import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
@@ -54,21 +53,16 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
     @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
-            final long batchSum = Vect.sumShort(dataAddr, rowCount);
-            final long existing = mapValue.getLong(valueIndex);
-            if (existing == Numbers.LONG_NULL) {
-                mapValue.putLong(valueIndex, batchSum);
-            } else {
-                mapValue.putLong(valueIndex, existing + batchSum);
-            }
-            mapValue.addLong(valueIndex + 1, rowCount);
+            final double batchSum = Vect.sumShort(dataAddr, rowCount);
+            final long count = mapValue.getLong(valueIndex + 1);
+            mapValue.putDouble(valueIndex, count > 0 ? mapValue.getDouble(valueIndex) + batchSum : batchSum);
+            mapValue.putLong(valueIndex + 1, count + rowCount);
         }
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
-        final short value = arg.getShort(record);
-        mapValue.putLong(valueIndex, value);
+        mapValue.putDouble(valueIndex, arg.getShort(record));
         mapValue.putLong(valueIndex + 1, 1);
     }
 
@@ -81,9 +75,9 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
             long rowCount,
             long baseRowId
     ) {
-        // Two-slot layout: [sum:long][count:long]. setEmpty seeds (LONG_NULL, 0),
-        // so new entries need computeFirst semantics (value, 1) instead of addLong
-        // which would land on LONG_NULL + value.
+        // Two-slot layout: [sum:double][count:long]. setEmpty seeds (NaN, 0),
+        // so new entries need computeFirst semantics (value, 1) instead of an add
+        // which would land on NaN + value.
         final long sumOffset = mapValue.getOffset(valueIndex);
         final long countOffset = mapValue.getOffset(valueIndex + 1);
         // Fast path: arg is a direct short column with data on the current frame.
@@ -110,8 +104,7 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        final short value = arg.getShort(record);
-        mapValue.addLong(valueIndex, value);
+        mapValue.addDouble(valueIndex, arg.getShort(record));
         mapValue.addLong(valueIndex + 1, 1);
     }
 
@@ -127,12 +120,8 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
 
     @Override
     public double getDouble(Record rec) {
-        final long sum = rec.getLong(valueIndex);
         final long count = rec.getLong(valueIndex + 1);
-        if (sum != Numbers.LONG_NULL && count > 0) {
-            return (double) rec.getLong(valueIndex) / rec.getLong(valueIndex + 1);
-        }
-        return Double.NaN;
+        return count > 0 ? rec.getDouble(valueIndex) / count : Double.NaN;
     }
 
     @Override
@@ -158,7 +147,7 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
     @Override
     public void initValueTypes(ArrayColumnTypes columnTypes) {
         this.valueIndex = columnTypes.getColumnCount();
-        columnTypes.add(ColumnType.LONG);
+        columnTypes.add(ColumnType.DOUBLE);
         columnTypes.add(ColumnType.LONG);
     }
 
@@ -174,16 +163,15 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
-        final long srcSum = srcValue.getLong(valueIndex);
         final long srcCount = srcValue.getLong(valueIndex + 1);
         if (srcCount > 0) {
-            final long destSum = destValue.getLong(valueIndex);
+            final double srcSum = srcValue.getDouble(valueIndex);
             final long destCount = destValue.getLong(valueIndex + 1);
             if (destCount > 0) {
-                destValue.putLong(valueIndex, destSum + srcSum);
+                destValue.putDouble(valueIndex, destValue.getDouble(valueIndex) + srcSum);
                 destValue.putLong(valueIndex + 1, destCount + srcCount);
             } else {
-                destValue.putLong(valueIndex, srcSum);
+                destValue.putDouble(valueIndex, srcSum);
                 destValue.putLong(valueIndex + 1, srcCount);
             }
         }
@@ -197,7 +185,7 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
 
     @Override
     public void setNull(MapValue mapValue) {
-        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+        mapValue.putDouble(valueIndex, Double.NaN);
         mapValue.putLong(valueIndex + 1, 0);
     }
 
@@ -218,10 +206,10 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
 
     private static void applyAvg(long sumAddr, long countAddr, short value, boolean isNew) {
         if (isNew) {
-            Unsafe.putLong(sumAddr, value);
+            Unsafe.putDouble(sumAddr, value);
             Unsafe.putLong(countAddr, 1L);
         } else {
-            Unsafe.putLong(sumAddr, Unsafe.getLong(sumAddr) + value);
+            Unsafe.putDouble(sumAddr, Unsafe.getDouble(sumAddr) + value);
             Unsafe.putLong(countAddr, Unsafe.getLong(countAddr) + 1L);
         }
     }

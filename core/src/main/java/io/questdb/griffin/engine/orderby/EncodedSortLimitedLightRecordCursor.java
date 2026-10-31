@@ -509,7 +509,6 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             if (rows.size() == trigger) {
                 final long start = findTailStart(rows);
                 if (start == 0) {
-                    // One timestamp group fills the copies, so only the sort keys can bound them.
                     isGroupBound = false;
                 } else {
                     copyRows(rows, start, spare);

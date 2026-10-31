@@ -699,6 +699,22 @@ public class DoubleGroupByFunctionBatchTest extends AbstractGroupByFunctionBatch
     }
 
     @Test
+    public void testNSumDoubleMergeKeepsCompensation() {
+        NSumDoubleGroupByFunction function = new NSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
+        try (
+                SimpleMapValue dest = prepare(function);
+                SimpleMapValue src = prepare(function);
+                SimpleMapValue cancel = prepare(function)
+        ) {
+            function.computeBatch(src, allocateDoubles(1e16, 1.0), 2, 0);
+            function.computeBatch(cancel, allocateDoubles(-1e16), 1, 0);
+            function.merge(dest, src);
+            function.merge(dest, cancel);
+            Assert.assertEquals(1.0, function.getDouble(dest), 0.0);
+        }
+    }
+
+    @Test
     public void testNSumDoubleSetEmpty() {
         NSumDoubleGroupByFunction function = new NSumDoubleGroupByFunction(DoubleColumn.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {

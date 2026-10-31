@@ -334,6 +334,53 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMemoryLimitStreamsExactRows() throws Exception {
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 65_536);
+        run((engine, compiler, context) -> {
+            createTables(engine, context);
+            engine.execute(
+                    """
+                            CREATE TABLE big AS (
+                                SELECT timestamp_sequence('2024-01-01', 1_000_000L) ts, x v FROM long_sequence(10_000)
+                            ) TIMESTAMP(ts) PARTITION BY DAY""",
+                    context
+            );
+            final String sub = "SELECT ts, count() c, sum(v) s FROM big GROUP BY ts";
+            try (MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.QUERY)) {
+                context.setMemoryTracker(tracker);
+                try {
+                    assertQuery("SELECT count() n, sum(s.c) c, sum(s.s) s, min(s.ts) lo, max(s.ts) hi, "
+                            + "sum(s.ts::LONG - 1_704_067_200_000_000) offsets FROM m CROSS JOIN (" + sub + ") s")
+                            .withEngine(engine)
+                            .withContext(context)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Materialize")
+                            .returns("""
+                                    n\tc\ts\tlo\thi\toffsets
+                                    50000\t50000\t250025000\t2024-01-01T00:00:00.000000Z\t2024-01-01T02:46:39.000000Z\t249975000000000
+                                    """);
+                    assertQuery("SELECT count() n, sum(c) c, sum(s) s, min(ts) lo, max(ts) hi FROM (" + sub + " ORDER BY ts LIMIT -9000)")
+                            .withEngine(engine)
+                            .withContext(context)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining("Materialize")
+                            .returns("""
+                                    n\tc\ts\tlo\thi
+                                    9000\t9000\t49504500\t2024-01-01T00:16:40.000000Z\t2024-01-01T02:46:39.000000Z
+                                    """);
+                    Assert.assertEquals(0, tracker.getUsed());
+                } finally {
+                    context.setMemoryTracker(null);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMemoryTrackerBalanced() throws Exception {
         // The single-key SAMPLE BY copy fits in 1024 bytes, the others stream or, under FULL JOIN, fail.
         setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 256);

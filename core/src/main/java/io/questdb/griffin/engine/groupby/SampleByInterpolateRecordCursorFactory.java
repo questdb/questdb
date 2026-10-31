@@ -606,6 +606,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                         throw CairoException.nonCritical().put("SAMPLE BY FILL(LINEAR) requires ascending designated timestamp order");
                     }
                     do {
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         lastBucket = sampler.nextTimestamp(lastBucket);
                         appendBucket(lastBucket);
                     } while (lastBucket < sample);
@@ -694,12 +695,15 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         }
 
         private void growKeys() {
-            final int capacity = keyCapacity * 2;
+            final int capacity = bucketCount == 1 ? keyCapacity + 1 : keyCapacity * 2;
             final long size = capacity * cellSize;
             extendGrid(bucketCount * size);
             for (long bucket = bucketCount - 1; bucket >= 0; bucket--) {
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 final long row = gridAddress + bucket * size;
-                Vect.memmove(row, gridAddress + bucket * rowSize, rowSize);
+                if (bucket > 0) {
+                    Vect.memmove(row, gridAddress + bucket * rowSize, rowSize);
+                }
                 for (long p = row + rowSize, hi = row + size; p < hi; p += cellSize) {
                     Unsafe.putByte(p, (byte) 1);
                 }
@@ -747,6 +751,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             final long x1Timestamp = bucketTimestamps.get(x1);
             final long x2Timestamp = bucketTimestamps.get(x2);
             for (long bucket = lo; bucket < hi; bucket++) {
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 value.of(cell(bucket, key));
                 for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
                     InterpolationUtil.interpolateGap(groupByTwoPointFunctions.getQuick(i), value, sampler.getBucketSize(), x1Value, x2Value);
@@ -826,6 +831,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
         private void nullify(int key, long lo, long hi) {
             for (long bucket = lo; bucket < hi; bucket++) {
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 value.of(cell(bucket, key));
                 value.putByte(0, (byte) 0);
                 for (int i = 0; i < groupByFunctionCount; i++) {

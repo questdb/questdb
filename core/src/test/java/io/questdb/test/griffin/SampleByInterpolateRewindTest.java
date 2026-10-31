@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
@@ -37,10 +38,13 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 
 public class SampleByInterpolateRewindTest extends AbstractCairoTest {
@@ -80,6 +84,100 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
                             3\ta\t1
                             4\ta\t1
                             """);
+        });
+    }
+
+    @Test
+    public void testFirstBucketKeysTakeExactCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE wide AS (
+                        SELECT CASE WHEN x <= 65 THEN 0 ELSE (x - 65) * 3_600_000_000 END::TIMESTAMP ts, (x % 65)::SYMBOL k, x v
+                        FROM long_sequence(130)
+                    ) TIMESTAMP(ts)""");
+            final String sql = "SELECT ts, k, sum(v) s FROM wide SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR";
+            try (RecordCursorFactory factory = select(sql)) {
+                assertRowCount(factory, 66 * 65);
+                Assert.assertEquals(65, interpolation(factory).getKeyCapacity());
+                execute("INSERT INTO wide VALUES (66 * 3_600_000_000, 'late', 1)");
+                assertRowCount(factory, 67 * 66);
+                Assert.assertEquals(130, interpolation(factory).getKeyCapacity());
+            }
+        });
+    }
+
+    @Test
+    public void testGapExpansionCancellationThenReuse() throws Exception {
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1 << 20);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE gaps (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO gaps VALUES (1, '2025-01-01'), (2, '2025-01-01T00:10')");
+            final String sql = "SELECT ts, avg(v) v FROM gaps SAMPLE BY 1T FILL(LINEAR) ALIGN TO FIRST OBSERVATION";
+            final StackWalker stackWalker = StackWalker.getInstance();
+            final AtomicLong buildChecks = new AtomicLong();
+            try (
+                    NetworkSqlExecutionCircuitBreaker network = new NetworkSqlExecutionCircuitBreaker(engine,
+                            new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                                @Override
+                                public int getCircuitBreakerThrottle() {
+                                    return 0;
+                                }
+                            });
+                    SqlExecutionContextImpl cancellable = new SqlExecutionContextImpl(engine, 1)
+                            .with(sqlExecutionContext.getSecurityContext(), null, null, -1, new CountingSqlExecutionCircuitBreaker(network) {
+                                @Override
+                                public void statefulThrowExceptionIfTripped() {
+                                    super.statefulThrowExceptionIfTripped();
+                                    final boolean isBuildCheck = stackWalker.walk(frames -> frames
+                                            .filter(frame -> !frame.getClassName().startsWith("io.questdb.test.")
+                                                    && !frame.getClassName().endsWith("CircuitBreaker"))
+                                            .findFirst()
+                                            .map(frame -> frame.getMethodName().equals("aggregate")
+                                                    && frame.getClassName().endsWith("SampleByInterpolateRecordCursor"))
+                                            .orElse(false));
+                                    if (isBuildCheck && buildChecks.incrementAndGet() == 2) {
+                                        network.cancel();
+                                    }
+                                }
+                            });
+                    RecordCursorFactory factory = select(sql)
+            ) {
+                try (MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(
+                        sqlExecutionContext.getSecurityContext(), 42, MemoryTrackerWorkload.QUERY)) {
+                    cancellable.setMemoryTracker(tracker);
+                    try (RecordCursor cursor = factory.getCursor(cancellable)) {
+                        cursor.hasNext();
+                        Assert.fail("expected cancellation during the gap expansion");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.getFlyweightMessage().toString(), e.isCancellation());
+                        Assert.assertFalse(interpolation(factory).isBuilt());
+                    } finally {
+                        network.clear();
+                    }
+                    Assert.assertEquals(0, tracker.getUsed());
+                } finally {
+                    cancellable.setMemoryTracker(null);
+                }
+
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                try (MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(
+                        sqlExecutionContext.getSecurityContext(), 43, MemoryTrackerWorkload.QUERY)) {
+                    cancellable.setMemoryTracker(tracker);
+                    try (RecordCursor cursor = factory.getCursor(cancellable)) {
+                        final Record record = cursor.getRecord();
+                        long bucket = 0;
+                        while (cursor.hasNext()) {
+                            Assert.assertEquals(1_735_689_600_000_000L + bucket * 1_000, record.getTimestamp(0));
+                            Assert.assertEquals(1 + bucket / 600_000.0, record.getDouble(1), 1e-12);
+                            bucket++;
+                        }
+                        Assert.assertEquals(600_001, bucket);
+                    }
+                    Assert.assertEquals(0, tracker.getUsed());
+                } finally {
+                    cancellable.setMemoryTracker(null);
+                }
+            }
         });
     }
 
@@ -336,6 +434,16 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
                                 """);
             }
         });
+    }
+
+    private static void assertRowCount(RecordCursorFactory factory, long expected) throws Exception {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            long count = 0;
+            while (cursor.hasNext()) {
+                count++;
+            }
+            Assert.assertEquals(expected, count);
+        }
     }
 
     private static void createPrices(String type, String lateKey) throws Exception {

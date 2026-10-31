@@ -36,7 +36,6 @@ import org.junit.Test;
 
 public class OrderByLimitTest extends AbstractCairoTest {
     // The second branch comes first, so input order differs from id order and ties show it.
-    // Four rows share each timestamp; the join has no random access and emits them in ascending order.
     private static final String GROUPS = "(SELECT a.ts, a.id, a.s, a.v, b.ts bts FROM g a ASOF JOIN g b)";
     private static final String GROUPS_REFERENCE = "(SELECT ts, id, s, v, ts bts FROM g)";
     private static final String UNION = "(SELECT * FROM t WHERE id > 5 UNION ALL SELECT * FROM t WHERE id <= 5)";
@@ -106,7 +105,6 @@ public class OrderByLimitTest extends AbstractCairoTest {
                     .timestampDesc("ts")
                     .expectSize()
                     .returns(printReference("SELECT * FROM " + GROUPS_REFERENCE + " ORDER BY ts DESC, s DESC LIMIT 5"));
-            // A bind-variable step leaves the series order unknown at plan time, so the top-K reads it as unordered.
             bindVariableService.setStr(0, "-1h");
             assertQuery("SELECT * FROM generate_series('2024-01-02', '2024-01-01', $1) ORDER BY 1 DESC LIMIT 3")
                     .noLeakCheck()
@@ -142,7 +140,6 @@ public class OrderByLimitTest extends AbstractCairoTest {
                 }
             }
 
-            // One timestamp group spans the whole input, so no older group can go.
             execute("CREATE TABLE same AS (SELECT x id, 0::TIMESTAMP ts FROM long_sequence(10_000)) TIMESTAMP(ts)");
             assertQuery("SELECT a.ts, a.id, b.ts bts FROM same a ASOF JOIN same b ORDER BY a.ts DESC LIMIT 3")
                     .noLeakCheck()
@@ -160,7 +157,6 @@ public class OrderByLimitTest extends AbstractCairoTest {
 
     @Test
     public void testCopyingTopKAlongTimestampWithinSortValueBudget() throws Exception {
-        // The budget holds the rows the top-K keeps, but not every row of the input.
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4_096);
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 262_144);
         assertMemoryLeak(() -> {
@@ -178,7 +174,6 @@ public class OrderByLimitTest extends AbstractCairoTest {
                             """);
             assertExceptionNoLeakCheck("SELECT * FROM " + join + " ORDER BY ts DESC", -1, "cairo.sql.sort.value.max.bytes");
 
-            // One timestamp group spans the input, so the sort keys bound the copies instead.
             execute("CREATE TABLE same AS (SELECT x id, 0::TIMESTAMP ts FROM long_sequence(20_000)) TIMESTAMP(ts)");
             final String same = "(SELECT a.ts, a.id, b.ts bts FROM same a ASOF JOIN same b)";
             assertQuery("SELECT * FROM " + same + " ORDER BY ts DESC LIMIT 3")
@@ -604,8 +599,6 @@ public class OrderByLimitTest extends AbstractCairoTest {
 
     @Test
     public void testCopyingTopKStopsEarlyWithinSortValueBudget() throws Exception {
-        // The budget holds a few dozen rows: the top-K stops after the third group starts,
-        // while a scan to the end would copy thousands of rows before its first compaction.
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 1_024);
         node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 1_024);
         assertMemoryLeak(() -> {

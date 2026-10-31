@@ -742,6 +742,32 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCompensatedSumAcrossFrames() throws Exception {
+        run((engine, compiler, context) -> {
+            for (String[] table : new String[][]{{"a", "1e16", "1", "-1e16"}, {"b", "1e8", "1e-8", "-1e8"}}) {
+                engine.execute("CREATE TABLE " + table[0] + " (ts TIMESTAMP, k SYMBOL, d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", context);
+                engine.execute("INSERT INTO " + table[0] + " VALUES ('2024-01-01', '" + table[0] + "', " + table[1] + "), ('2024-01-01T01:00', '"
+                        + table[0] + "', " + table[2] + "), ('2024-01-02', '" + table[0] + "', " + table[3] + ")", context);
+            }
+            engine.execute("CREATE TABLE ab AS (SELECT * FROM a UNION ALL SELECT * FROM b ORDER BY ts) TIMESTAMP(ts) PARTITION BY DAY", context);
+            for (String[] query : new String[][]{
+                    {"SELECT ts, nsum(d) s FROM a SAMPLE BY 1y", "ts\ts\n2024-01-01T00:00:00.000000Z\t1.0\n"},
+                    {"SELECT ts, nsum(d) s FROM b SAMPLE BY 1y", "ts\ts\n2024-01-01T00:00:00.000000Z\t1.0E-8\n"},
+                    {"SELECT timestamp_floor('1y', ts) ts, nsum(d) s FROM a ORDER BY ts DESC", "ts\ts\n2024-01-01T00:00:00.000000Z\t1.0\n"},
+                    {"SELECT ts, k, nsum(d) s FROM ab SAMPLE BY 1y ORDER BY k", "ts\tk\ts\n2024-01-01T00:00:00.000000Z\ta\t1.0\n2024-01-01T00:00:00.000000Z\tb\t1.0E-8\n"},
+                    {"SELECT nsum(d) s FROM a", "s\n1.0\n"},
+                    {"SELECT nsum(d) s FROM b", "s\n1.0E-8\n"},
+            }) {
+                try (RecordCursorFactory factory = compiler.compile(query[0], context).getRecordCursorFactory()) {
+                    for (int i = 0; i < 2; i++) {
+                        Assert.assertEquals(query[0], query[1], read(factory, context));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDescendingKeyKeepsFirstAndLastInStorageOrder() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("CREATE TABLE dup (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", context);
