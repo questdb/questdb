@@ -89,7 +89,9 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
         this.sortColumnFilter = sortColumnFilter;
         this.timestampIndex = timestampIndex;
         this.isCopying = recordSink != null;
-        this.cursor = new EncodedSortLimitedLightRecordCursor(configuration, metadata, sortColumnFilter, timestampIndex, recordSink);
+        final boolean isScanAgainstOrder = timestampIndex != -1
+                && base.getScanDirection() != SortedRecordCursorFactory.getScanDirection(sortColumnFilter);
+        this.cursor = new EncodedSortLimitedLightRecordCursor(configuration, metadata, sortColumnFilter, timestampIndex, isScanAgainstOrder, recordSink);
     }
 
     @Override

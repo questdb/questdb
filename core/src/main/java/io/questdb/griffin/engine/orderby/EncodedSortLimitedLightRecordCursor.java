@@ -58,7 +58,10 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * For a FIRST N selection over a base presorted by its designated timestamp,
  * the scan additionally stops once a completed timestamp group pushes the
- * cumulative row count past the limit.
+ * cumulative row count past the limit. When the base scans its timestamp
+ * against the order, the newest timestamp groups that cover the limit hold
+ * the top-K: the copying build keeps only those groups and encodes them once
+ * the scan ends.
  * <p>
  * Given a record sink, the cursor serves a base without random access: it copies
  * each row the buffer keeps into a record array and encodes the row's index in
@@ -69,9 +72,11 @@ import org.jetbrains.annotations.Nullable;
  * never re-reads the base.
  */
 class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, RecordCursor.RowIdSource {
+    private static final long MIN_TAIL_ROWS = 4096;
     private final IntHashSet buildReadColumns;
     private final SortKeyEncoder encoder;
     private final EncodedTopKBuffer entries;
+    private final boolean isScanAgainstOrder;
     // Copies of the kept rows when the base lacks random access, null otherwise.
     private final RecordArray records;
     // Compaction re-stores the surviving rows here, then copies them back to records.
@@ -88,6 +93,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
     private boolean isEarlyStopEnabled;
     private boolean isFirstN;
     private boolean isOpen;
+    private boolean isTailBuild;
     private long limit;
     private int rowIdOffset;
     private long skipFirst;
@@ -98,10 +104,10 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             RecordMetadata metadata,
             IntList sortColumnFilter,
             int timestampIndex,
+            boolean isScanAgainstOrder,
             @Nullable RecordSink recordSink
     ) {
-        // The timestamp early stop is not wired to copy the rows it keeps.
-        assert recordSink == null || timestampIndex == -1;
+        assert recordSink != null || !isScanAgainstOrder;
         SortKeyEncoder encoderInit = null;
         EncodedTopKBuffer entriesInit = null;
         RecordArray recordsInit = null;
@@ -132,6 +138,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         this.records = recordsInit;
         this.spareRecords = spareRecordsInit;
         this.timestampIndex = timestampIndex;
+        this.isScanAgainstOrder = isScanAgainstOrder;
         this.buildReadColumns = SortKeyEncoder.extractSortKeyColumnIndexes(sortColumnFilter);
         this.isOpen = true;
     }
@@ -236,10 +243,10 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             spareRecords.setSymbolTableResolver(baseCursor);
         } else {
             baseCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
-            if (isEarlyStopEnabled) {
-                baseCursor.expectLimitedIteration();
-            }
             baseCursor.setParentUsedColumns(buildReadColumns);
+        }
+        if (isEarlyStopEnabled) {
+            baseCursor.expectLimitedIteration();
         }
         final SortKeyType keyType = encoder.init(baseCursor);
         assert keyType != SortKeyType.UNSUPPORTED;
@@ -287,7 +294,8 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         this.limit = limit < 0 ? Long.MAX_VALUE : limit;
         this.skipFirst = Math.max(skipFirst, 0);
         this.skipLast = Math.max(skipLast, 0);
-        this.isEarlyStopEnabled = isFirstN && timestampIndex != -1;
+        this.isEarlyStopEnabled = isFirstN && timestampIndex != -1 && !isScanAgainstOrder;
+        this.isTailBuild = isFirstN && isScanAgainstOrder;
     }
 
     @Override
@@ -347,11 +355,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         // records, and a consumer may hold it before the first hasNext(). reset() keeps
         // the memory of both arrays across compactions.
         records.reset();
-        final Record spareRecord = spareRecords.getRecordB();
-        for (long i = 0, n = spareRecords.size(); i < n; i++) {
-            spareRecords.recordAtRowIndex(spareRecord, i);
-            records.put(spareRecord);
-        }
+        copyRows(spareRecords, 0, records);
         spareRecords.reset();
     }
 
@@ -368,15 +372,65 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         emitEndAddr = entries.getAddress() + rowIdOffset + end * entrySize;
     }
 
+    private void copyRows(RecordArray source, long from, RecordArray target) {
+        final Record record = source.getRecordB();
+        for (long i = from, n = source.size(); i < n; i++) {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            source.recordAtRowIndex(record, i);
+            target.put(record);
+        }
+    }
+
+    private void encodeCopies() {
+        final Record record = records.getRecordB();
+        for (long i = 0, n = records.size(); i < n; i++) {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            records.recordAtRowIndex(record, i);
+            encoder.encodeTopK(record, i, entries);
+        }
+    }
+
     private long encodeCurrentRow() {
         final long addr = entries.beginAppend();
-        encoder.encode(baseRecord, addr, baseRecord.getRowId());
+        encoder.encode(baseRecord, addr, records != null ? records.size() : baseRecord.getRowId());
         return addr;
+    }
+
+    private void endAppend() {
+        final long compactions = entries.getCompactionCount();
+        entries.endAppend();
+        if (records != null) {
+            final long rowId = records.size();
+            if (entries.getCompactionCount() != compactions && rowId >> 2 >= limit) {
+                compactRecords(rowId);
+            } else {
+                records.put(baseRecord);
+            }
+        }
+    }
+
+    private long findTailStart(RecordArray rows) {
+        final Record record = rows.getRecordB();
+        long start = rows.size() - limit;
+        rows.recordAtRowIndex(record, start);
+        final long timestamp = record.getTimestamp(timestampIndex);
+        while (start > 0) {
+            rows.recordAtRowIndex(record, start - 1);
+            if (record.getTimestamp(timestampIndex) != timestamp) {
+                break;
+            }
+            start--;
+        }
+        return start;
     }
 
     private void runBuild() {
         if (isEarlyStopEnabled) {
             runBuildTimestampEarlyStop();
+            return;
+        }
+        if (isTailBuild) {
+            runTailBuild();
             return;
         }
         if (records != null) {
@@ -406,7 +460,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         }
         long addr = encodeCurrentRow();
         long groupKey = Unsafe.getLong(addr);
-        entries.endAppend();
+        endAppend();
         long rowsInGroup = 1;
         long rowsSoFar = 0;
         while (baseCursor.hasNext()) {
@@ -424,7 +478,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
                 groupKey = currentKey;
                 rowsInGroup = 1;
             }
-            entries.endAppend();
+            endAppend();
         }
     }
 
@@ -441,6 +495,38 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             } else if (isCompacted || entries.getCount() != count) {
                 records.put(baseRecord);
             }
+        }
+    }
+
+    private void runTailBuild() {
+        final long trigger = limit > Long.MAX_VALUE >> 2 ? Long.MAX_VALUE : Math.max(limit << 2, MIN_TAIL_ROWS);
+        RecordArray rows = records;
+        RecordArray spare = spareRecords;
+        boolean isGroupBound = true;
+        while (isGroupBound && baseCursor.hasNext()) {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            rows.put(baseRecord);
+            if (rows.size() == trigger) {
+                final long start = findTailStart(rows);
+                if (start == 0) {
+                    // One timestamp group fills the copies, so only the sort keys can bound them.
+                    isGroupBound = false;
+                } else {
+                    copyRows(rows, start, spare);
+                    rows.reset();
+                    final RecordArray swap = rows;
+                    rows = spare;
+                    spare = swap;
+                }
+            }
+        }
+        if (rows != records) {
+            copyRows(rows, 0, records);
+            rows.reset();
+        }
+        encodeCopies();
+        if (!isGroupBound) {
+            runCopyingBuild();
         }
     }
 }

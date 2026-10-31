@@ -1705,7 +1705,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort lo: 1000000
+                            Encode sort lo: 1000000 partiallySorted: true
                               keys: [ts, s]
                                 SelectedRecord
                                     AsOf Join Fast
@@ -2253,7 +2253,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort lo: 1000000
+                            Encode sort lo: 1000000 partiallySorted: true
                               keys: [ts, s]
                                 SelectedRecord
                                     Cross Join
@@ -2359,7 +2359,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort lo: 1000000
+                            Encode sort lo: 1000000 partiallySorted: true
                               keys: [ts, s1, s, ts1]
                                 SelectedRecord
                                     Cross Join
@@ -6684,7 +6684,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertQuery(q5)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Encode sort lo: 40
+                        Encode sort lo: 40 partiallySorted: true
                           keys: [ts2, hostname]
                             Window
                               functions: [max(usage_system) over (partition by [hostname] range between 3000000 preceding and current row)]

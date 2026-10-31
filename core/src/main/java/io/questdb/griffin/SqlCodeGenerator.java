@@ -9854,11 +9854,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // we have to copy entire record into ordered structure
                 entityColumnFilter.of(orderedMetadata.getColumnCount());
                 if (isEncodedSortSupported) {
-                    // Every row of a base that the scan orders against the leading sort key enters the top-K,
-                    // so copying the rows that enter costs more than the full sort.
-                    final boolean isScanAgainstOrder = firstOrderByColumnIndex == timestampIndex
-                            && !directionMatchesScan(orderByColumnNameToIndexMap.get(orderByColumnNames.getQuick(0)), recordCursorFactory.getScanDirection());
-                    if (!isScanAgainstOrder && canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
+                    if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
                         // copies only the rows that can enter the LIMIT window
                         return new EncodedSortLimitedLightRecordCursorFactory(
                                 configuration,
@@ -9867,7 +9863,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 loFunc,
                                 hiFunc,
                                 listColumnFilterA.copy(),
-                                -1,
+                                firstOrderByColumnIndex == timestampIndex
+                                        && recordCursorFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER
+                                        ? timestampIndex : -1,
                                 RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter)
                         );
                     }

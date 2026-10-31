@@ -12485,7 +12485,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             SelectedRecord
                                 Lt Join Fast
-                                    Encode sort lo: 10
+                                    Encode sort lo: 10 partiallySorted: true
                                       keys: [ts, l]
                                         SelectedRecord
                                             Cross Join

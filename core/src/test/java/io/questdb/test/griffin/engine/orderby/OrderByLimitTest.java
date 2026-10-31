@@ -36,6 +36,9 @@ import org.junit.Test;
 
 public class OrderByLimitTest extends AbstractCairoTest {
     // The second branch comes first, so input order differs from id order and ties show it.
+    // Four rows share each timestamp; the join has no random access and emits them in ascending order.
+    private static final String GROUPS = "(SELECT a.ts, a.id, a.s, a.v, b.ts bts FROM g a ASOF JOIN g b)";
+    private static final String GROUPS_REFERENCE = "(SELECT ts, id, s, v, ts bts FROM g)";
     private static final String UNION = "(SELECT * FROM t WHERE id > 5 UNION ALL SELECT * FROM t WHERE id <= 5)";
 
     @Test
@@ -83,6 +86,122 @@ public class OrderByLimitTest extends AbstractCairoTest {
                             ts\tprice\tsize\tts1\tbid_price\tbid_size\ttask_price\ttask_size
                             2020-01-01T01:01:00.000000Z\t42.0\t42\t2020-01-01T01:01:00.000000Z\t3.0\t3\t4.0\t4
                             """);
+        });
+    }
+
+    @Test
+    public void testCopyingTopKAgainstScanKeepsNewestGroups() throws Exception {
+        assertMemoryLeak(() -> {
+            createGroupTable();
+            for (String limit : new String[]{"6", "3_000", "2, 7", "9_223_372_036_854_775_807"}) {
+                assertQuery("SELECT * FROM " + GROUPS + " ORDER BY ts DESC LIMIT " + limit)
+                        .noLeakCheck()
+                        .timestampDesc("ts")
+                        .expectSize()
+                        .withPlanContaining("Encode sort lo:", "partiallySorted: true", "AsOf Join")
+                        .returns(printReference("SELECT * FROM " + GROUPS_REFERENCE + " ORDER BY ts DESC, id LIMIT " + limit));
+            }
+            assertQuery("SELECT * FROM " + GROUPS + " ORDER BY ts DESC, s DESC LIMIT 5")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns(printReference("SELECT * FROM " + GROUPS_REFERENCE + " ORDER BY ts DESC, s DESC LIMIT 5"));
+            // A bind-variable step leaves the series order unknown at plan time, so the top-K reads it as unordered.
+            bindVariableService.setStr(0, "-1h");
+            assertQuery("SELECT * FROM generate_series('2024-01-02', '2024-01-01', $1) ORDER BY 1 DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("generate_series")
+                    .expectSize()
+                    .withPlanContaining("Encode sort lo: 3")
+                    .withPlanNotContaining("partiallySorted")
+                    .returns("""
+                            generate_series
+                            2024-01-02T00:00:00.000000Z
+                            2024-01-01T23:00:00.000000Z
+                            2024-01-01T22:00:00.000000Z
+                            """);
+            bindVariableService.clear();
+            assertQuery("SELECT * FROM " + GROUPS + " ORDER BY ts DESC LIMIT 0")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns("ts\tid\ts\tv\tbts\n");
+
+            bindVariableService.setLong(0, 3L);
+            try (RecordCursorFactory factory = select("SELECT id FROM " + GROUPS + " ORDER BY ts DESC LIMIT $1")) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("id\n19997\n19998\n19999\n", cursor, factory.getMetadata());
+                }
+                bindVariableService.setLong(0, -3L);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("id\n2\n3\n4\n", cursor, factory.getMetadata());
+                }
+                bindVariableService.setLong(0, 5L);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    assertCursorTwoPass("id\n19997\n19998\n19999\n20000\n19993\n", cursor, factory.getMetadata());
+                }
+            }
+
+            // One timestamp group spans the whole input, so no older group can go.
+            execute("CREATE TABLE same AS (SELECT x id, 0::TIMESTAMP ts FROM long_sequence(10_000)) TIMESTAMP(ts)");
+            assertQuery("SELECT a.ts, a.id, b.ts bts FROM same a ASOF JOIN same b ORDER BY a.ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .withPlanContaining("partiallySorted: true")
+                    .returns("""
+                            ts\tid\tbts
+                            1970-01-01T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t2\t1970-01-01T00:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t3\t1970-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testCopyingTopKAlongTimestampWithinSortValueBudget() throws Exception {
+        // The budget holds the rows the top-K keeps, but not every row of the input.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4_096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 262_144);
+        assertMemoryLeak(() -> {
+            createGroupTable();
+            final String join = "(SELECT a.ts, a.id, b.ts bts FROM g a ASOF JOIN g b)";
+            assertQuery("SELECT * FROM " + join + " ORDER BY ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tid\tbts
+                            1970-01-01T00:00:04.999000Z\t19997\t1970-01-01T00:00:04.999000Z
+                            1970-01-01T00:00:04.999000Z\t19998\t1970-01-01T00:00:04.999000Z
+                            1970-01-01T00:00:04.999000Z\t19999\t1970-01-01T00:00:04.999000Z
+                            """);
+            assertExceptionNoLeakCheck("SELECT * FROM " + join + " ORDER BY ts DESC", -1, "cairo.sql.sort.value.max.bytes");
+
+            // One timestamp group spans the input, so the sort keys bound the copies instead.
+            execute("CREATE TABLE same AS (SELECT x id, 0::TIMESTAMP ts FROM long_sequence(20_000)) TIMESTAMP(ts)");
+            final String same = "(SELECT a.ts, a.id, b.ts bts FROM same a ASOF JOIN same b)";
+            assertQuery("SELECT * FROM " + same + " ORDER BY ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tid\tbts
+                            1970-01-01T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t2\t1970-01-01T00:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t3\t1970-01-01T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT * FROM " + same + " ORDER BY ts, id DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tid\tbts
+                            1970-01-01T00:00:00.000000Z\t20000\t1970-01-01T00:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t19999\t1970-01-01T00:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t19998\t1970-01-01T00:00:00.000000Z
+                            """);
+            assertExceptionNoLeakCheck("SELECT * FROM " + same + " ORDER BY ts DESC", -1, "cairo.sql.sort.value.max.bytes");
         });
     }
 
@@ -274,6 +393,48 @@ public class OrderByLimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyingTopKOverSerialSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE ss AS (
+                                SELECT (x % 7)::INT v, ('k' || (x % 3))::SYMBOL k, (x * 10_000)::TIMESTAMP ts
+                                FROM long_sequence(200_000)
+                            ) TIMESTAMP(ts) PARTITION BY HOUR"""
+            );
+            execute("CREATE TABLE agg AS (SELECT ts, count() c, sum(v) s FROM ss SAMPLE BY 100T)");
+            execute("CREATE TABLE kagg AS (SELECT ts, k, count() c, sum(v) s FROM ss SAMPLE BY 100T)");
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            assertQuery("SELECT ts, count() c, sum(v) s FROM ss SAMPLE BY 100T ORDER BY ts DESC LIMIT 5")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestampDesc("ts")
+                    .withPlanContaining("Encode sort lo: 5 partiallySorted: true", "Stream Group By")
+                    .withPlanNotContaining("Limit")
+                    .returns(printReference("SELECT * FROM agg ORDER BY ts DESC LIMIT 5"));
+            assertQuery("SELECT ts, k, count() c, sum(v) s FROM ss SAMPLE BY 100T ORDER BY ts DESC, k LIMIT 7")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestampDesc("ts")
+                    .returns(printReference("SELECT * FROM kagg ORDER BY ts DESC, k LIMIT 7"));
+            assertQuery("SELECT ts, k, count() c, sum(v) s FROM ss SAMPLE BY 100T ORDER BY ts, k DESC LIMIT 7")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("partiallySorted: true", "Stream Group By")
+                    .returns(printReference("SELECT * FROM kagg ORDER BY ts, k DESC LIMIT 7"));
+
+            sqlExecutionContext.setParallelGroupByEnabled(true);
+            assertQuery("SELECT * FROM (SELECT ts, count() c, sum(v) s FROM ss SAMPLE BY 100T ORDER BY ts DESC LIMIT 10_000) ORDER BY ts, c LIMIT 4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("partiallySorted: true", "Frame backward scan")
+                    .returns(printReference("SELECT * FROM (SELECT * FROM agg ORDER BY ts DESC LIMIT 10_000) ORDER BY ts, c LIMIT 4"));
+        });
+    }
+
+    @Test
     public void testCopyingTopKOverStreamSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -411,6 +572,63 @@ public class OrderByLimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyingTopKStopsEarlyAlongScan() throws Exception {
+        assertMemoryLeak(() -> {
+            createGroupTable();
+            for (String orderBy : new String[]{" ORDER BY ts, id DESC LIMIT 6", " ORDER BY ts, s LIMIT 2, 9", " ORDER BY ts, id LIMIT 30_000"}) {
+                assertQuery("SELECT * FROM " + GROUPS + orderBy)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .withPlanContaining("partiallySorted: true", "AsOf Join")
+                        .returns(printReference("SELECT * FROM " + GROUPS_REFERENCE + orderBy));
+            }
+            execute("CREATE TABLE same AS (SELECT x id, 0::TIMESTAMP ts FROM long_sequence(10_000)) TIMESTAMP(ts)");
+            assertQuery("SELECT a.ts, a.id, b.ts bts FROM same a ASOF JOIN same b ORDER BY a.ts, a.id DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tid\tbts
+                            1970-01-01T00:00:00.000000Z\t10000\t1970-01-01T00:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t9999\t1970-01-01T00:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t9998\t1970-01-01T00:00:00.000000Z
+                            """);
+            assertQuery("SELECT a.ts, a.id, b.ts bts FROM same a ASOF JOIN same b ORDER BY a.ts, a.id DESC LIMIT 3_000")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(printReference("SELECT ts, id, ts bts FROM same ORDER BY ts, id DESC LIMIT 3_000"));
+        });
+    }
+
+    @Test
+    public void testCopyingTopKStopsEarlyWithinSortValueBudget() throws Exception {
+        // The budget holds a few dozen rows: the top-K stops after the third group starts,
+        // while a scan to the end would copy thousands of rows before its first compaction.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 1_024);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES, 1_024);
+        assertMemoryLeak(() -> {
+            createGroupTable();
+            final String join = "(SELECT a.ts, a.id, b.ts bts FROM g a ASOF JOIN g b)";
+            assertQuery("SELECT * FROM " + join + " ORDER BY ts, id DESC LIMIT 6")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tid\tbts
+                            1970-01-01T00:00:00.000000Z\t4\t1970-01-01T00:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t3\t1970-01-01T00:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t2\t1970-01-01T00:00:00.000000Z
+                            1970-01-01T00:00:00.000000Z\t1\t1970-01-01T00:00:00.000000Z
+                            1970-01-01T00:00:00.001000Z\t8\t1970-01-01T00:00:00.001000Z
+                            1970-01-01T00:00:00.001000Z\t7\t1970-01-01T00:00:00.001000Z
+                            """);
+            assertExceptionNoLeakCheck("SELECT * FROM " + join + " ORDER BY id DESC, ts LIMIT 6", -1, "cairo.sql.sort.value.max.bytes");
+        });
+    }
+
+    @Test
     public void testCopyingTopKWithinSortKeyBudget() throws Exception {
         // A full sort of the input needs more entries than the budget holds, while
         // the top-K keeps at most its compaction trigger of entries.
@@ -511,6 +729,16 @@ public class OrderByLimitTest extends AbstractCairoTest {
                         price\tts
                         0.6607777894187332\t2024-01-01T00:00:00.000000Z
                         """);
+    }
+
+    private static void createGroupTable() throws SqlException {
+        execute(
+                """
+                        CREATE TABLE g AS (
+                            SELECT x id, ('s' || x)::STRING s, ('v' || x)::VARCHAR v, ((x - 1) / 4 * 1_000)::TIMESTAMP ts
+                            FROM long_sequence(20_000)
+                        ) TIMESTAMP(ts)"""
+        );
     }
 
     private static void createSmallTable() throws SqlException {

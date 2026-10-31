@@ -16031,6 +16031,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ") timestamp(created_at) partition by day")
                 .timestampDesc("timestamp")
+                .expectSize()
                 .returns("""
                         open\thigh\tlow\tclose\tvolume\ttimestamp
                         22.463013424972587\t90.75843364017028\t16.381374773748515\t75.88175403454873\t440.2232295756601\t1970-01-03T00:00:00.000000Z
@@ -16059,6 +16060,7 @@ public class SampleByTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ") timestamp(created_at) partition by day")
                 .timestampDesc("timestamp")
+                .expectSize()
                 .returns("""
                         open\thigh\tlow\tclose\tvolume\ttimestamp
                         65.51335839796312\t94.55893004802432\t18.336217509438512\t77.0079809007092\t519.2795145577336\t1970-01-03T00:00:00.000000Z
