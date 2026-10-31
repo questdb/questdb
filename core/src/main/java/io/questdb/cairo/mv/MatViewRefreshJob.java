@@ -38,6 +38,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
@@ -1278,12 +1279,25 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return true;
     }
 
-    private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) throws SqlException {
-        columnFilter.of(factory.getMetadata().getColumnCount());
+    private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) {
+        final RecordMetadata fromMetadata = factory.getMetadata();
+        final RecordMetadata toMetadata = tableWriter.getMetadata();
+        for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
+            final int fromType = fromMetadata.getColumnType(i);
+            final int toType = toMetadata.getColumnType(i);
+            if (!RecordToRowCopierUtils.isCopierConvertible(fromType, toType)) {
+                // The error describes a view/query schema mismatch, not a SQL token, so it carries no position.
+                throw CairoException.nonCritical().put("inconvertible types: ").put(ColumnType.nameOf(fromType))
+                        .put(" -> ").put(ColumnType.nameOf(toType))
+                        .put(" [from=").put(fromMetadata.getColumnName(i))
+                        .put(", to=").put(toMetadata.getColumnName(i)).put(']');
+            }
+        }
+        columnFilter.of(fromMetadata.getColumnCount());
         return RecordToRowCopierUtils.generateCopier(
                 compiler.getAsm(),
-                factory.getMetadata(),
-                tableWriter.getMetadata(),
+                fromMetadata,
+                toMetadata,
                 columnFilter,
                 configuration
         );
@@ -1485,6 +1499,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         try {
             factory = viewState.acquireRecordFactory();
             copier = viewState.getRecordToRowCopier();
+            if (walWriter.getMetadata().getMetadataVersion() != viewState.getRecordRowCopierMetadataVersion()) {
+                factory = Misc.free(factory);
+            }
 
             OUTER:
             for (int i = 0; i <= maxRetries; i++) {
@@ -1503,9 +1520,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             final CompiledQuery compiledQuery = compiler.compile(viewSql, refreshSqlExecutionContext);
                             assert compiledQuery.getType() == CompiledQuery.SELECT;
                             factory = compiledQuery.getRecordCursorFactory();
-                            if (copier == null || walWriter.getMetadata().getMetadataVersion() != viewState.getRecordRowCopierMetadataVersion()) {
-                                copier = getRecordToRowCopier(walWriter, factory, compiler);
-                            }
+                            // A new factory can expose different result types even when the view schema is unchanged.
+                            copier = getRecordToRowCopier(walWriter, factory, compiler);
                         } catch (SqlException e) {
                             factory = Misc.free(factory);
                             if (e.isTableBusy()) {
