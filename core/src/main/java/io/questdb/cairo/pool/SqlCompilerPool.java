@@ -40,6 +40,8 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
@@ -177,6 +179,15 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
                 boolean generateProgressLogger
         ) throws SqlException {
             return delegate.generateSelectWithoutRetries(queryModel, executionContext, generateProgressLogger);
+        }
+
+        @Override
+        public ExecutionModel generateViewExecutionModel(
+                CharSequence viewSql,
+                SqlExecutionContext executionContext,
+                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+        ) throws SqlException {
+            return delegate.generateViewExecutionModel(viewSql, executionContext, dependencies);
         }
 
         @Override

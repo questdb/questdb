@@ -215,6 +215,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
+    private final SqlUtil.ViewWildcardSources viewWildcardSources = new SqlUtil.ViewWildcardSources();
     private final ObjList<CharSequence> views = new ObjList<>();
     protected CharSequence sqlText;
     private boolean closed = false;
@@ -586,6 +587,35 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @Override
+    public ExecutionModel generateViewExecutionModel(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) throws SqlException {
+        clear();
+        lexer.of(viewSql);
+        final ExecutionModel model = parser.parse(lexer, executionContext, this);
+        if (model.getModelType() != ExecutionModel.QUERY) {
+            throw SqlException.$(0, "SELECT query expected");
+        }
+        // The parsed model names the objects and the wildcards of the view, the optimised one resolves
+        // the columns it reads, and which wildcards it keeps whole. Optimisation rewrites the model it is
+        // given, so the parsed one goes first.
+        SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, dependencies, viewWildcardSources);
+        try {
+            final IQueryModel queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
+            SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources);
+            return queryModel;
+        } catch (Throwable e) {
+            // like compileExecutionModel(): nothing generates the factories optimise() left in flight
+            optimiser.freeTableFactoriesInFlight(e);
+            throw e;
+        } finally {
+            viewWildcardSources.clear();
+        }
+    }
+
+    @Override
     public BytecodeAssembler getAsm() {
         return asm;
     }
@@ -597,6 +627,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     public FunctionFactoryCache getFunctionFactoryCache() {
         return functionParser.getFunctionFactoryCache();
+    }
+
+    /**
+     * Returns how many times the walks that record the columns a view reads have reached a model of the
+     * view's optimised SELECT over the life of this compiler, a model reached twice counting twice. Tests
+     * check with it that the walks reach each model a bounded number of times, see
+     * {@link SqlUtil#collectTableColumnReads(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, SqlUtil.ViewWildcardSources)}.
+     */
+    @TestOnly
+    public long getViewDependencyVisitCountForTesting() {
+        return viewWildcardSources.getVisitCount();
     }
 
     @TestOnly
@@ -2147,37 +2188,48 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
-            final IQueryModel queryModel = executionModel.getQueryModel();
-            SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
-            engine.getViewGraph().validateNoCycle(viewToken, queryModel);
-
-            try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, executionContext)) {
-                final RecordMetadata metadata = factory.getMetadata();
-                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    final CharSequence columnName = metadata.getColumnName(i);
-                    if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
-                        throw SqlException.position(0)
-                                .put("invalid column name [name=")
-                                .put(columnName)
-                                .put(", position=")
-                                .put(i)
-                                .put(']');
-                    }
-                }
-                // test the cursor, if no exception thrown viewSql is working
-                // Nobody is handed the row this reads, so the open is flagged like the probe in
-                // executeCreateView: an audited view in the new body must not record a read.
-                final boolean wasMetadataProbe = executionContext.isMetadataProbe();
-                executionContext.setMetadataProbe(true);
-                final RecordCursor cursor;
+            for (int retryCount = 0; ; retryCount++) {
                 try {
-                    cursor = factory.getCursor(executionContext);
-                } finally {
-                    executionContext.setMetadataProbe(wasMetadataProbe);
-                }
-                try (cursor) {
-                    cursor.hasNext();
+                    // A retry must replace both the plan and the permissions collected for it.
+                    dependencies.clear();
+                    final ExecutionModel executionModel = compiler.generateViewExecutionModel(viewSql, executionContext, dependencies);
+                    final IQueryModel queryModel = executionModel.getQueryModel();
+                    engine.getViewGraph().validateNoCycle(viewToken, queryModel);
+
+                    try (RecordCursorFactory factory = compiler.generateSelectWithoutRetries(queryModel, executionContext, false)) {
+                        final RecordMetadata metadata = factory.getMetadata();
+                        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                            final CharSequence columnName = metadata.getColumnName(i);
+                            if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
+                                throw SqlException.position(0)
+                                        .put("invalid column name [name=")
+                                        .put(columnName)
+                                        .put(", position=")
+                                        .put(i)
+                                        .put(']');
+                            }
+                        }
+                        // test the cursor, if no exception thrown viewSql is working
+                        // Nobody is handed the row this reads, so the open is flagged like the probe in
+                        // executeCreateView: an audited view in the new body must not record a read.
+                        final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                        executionContext.setMetadataProbe(true);
+                        final RecordCursor cursor;
+                        try {
+                            cursor = factory.getCursor(executionContext);
+                        } finally {
+                            executionContext.setMetadataProbe(wasMetadataProbe);
+                        }
+                        try (cursor) {
+                            cursor.hasNext();
+                        }
+                    }
+                    break;
+                } catch (TableReferenceOutOfDateException e) {
+                    if (retryCount >= maxRecompileAttempts) {
+                        throw SqlException.$(0, e.getFlyweightMessage());
+                    }
+                    LOG.info().$("retrying view plan [q=`").$(viewSql).$("`]").$();
                 }
             }
         } catch (SqlException e) {
@@ -4614,18 +4666,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             final IQueryModel queryModel;
             final boolean cacheable;
+            final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = createViewOp.getViewDefinition().getDependencies();
+            // The map lists what the plan this compiles reads, and no plan before it: executeCreateView()
+            // compiles the SELECT again when a table changes under the plan, and the earlier plan may have
+            // read a column of the table the new one does not.
+            dependencies.clear();
             try {
                 try {
                     final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
                     if (executionModel.getModelType() != ExecutionModel.QUERY) {
                         throw SqlException.$(startPos, "SELECT query expected");
                     }
+                    // The parser recorded the objects and the wildcards of the view, see
+                    // SqlParser.parseCreateView(), but whether a wildcard under a SELECT list that names its
+                    // columns reads every column only the optimised model tells. The walk of the parsed model
+                    // that collects such wildcards records the same objects and wildcards into the map again.
+                    SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) executionModel, dependencies, viewWildcardSources);
                     queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
                 } catch (SqlException e) {
                     e.setPosition(e.getPosition() + selectTextPosition);
                     throw e;
                 }
                 createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+                // the optimised model resolves the columns the view reads, and which wildcards it keeps whole
+                SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources);
                 // Same read-before-generation rule as compileMatViewQuery, and inside the same try for the
                 // same reason: a throw must free the table factories optimise() left in flight.
                 cacheable = queryModel.isCacheable();
@@ -4634,10 +4698,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // cursor functions to the model and generation has not taken them over yet.
                 optimiser.freeTableFactoriesInFlight(th);
                 throw th;
+            } finally {
+                viewWildcardSources.clear();
             }
 
             try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), cacheable);
+                // Let executeCreateView() retry the whole compilation, including its dependency map.
+                compiledQuery.ofSelect(generateSelectWithoutRetries(queryModel, executionContext, false), cacheable);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
@@ -5213,7 +5280,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
-                            if (retryCount == maxRecompileAttempts) {
+                            if (retryCount >= maxRecompileAttempts) {
                                 Misc.free(newFactory);
                                 throw SqlException.$(0, e.getFlyweightMessage());
                             }

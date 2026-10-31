@@ -1,0 +1,1152 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo.view;
+
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.view.ViewDefinition;
+import io.questdb.griffin.SqlCompilerImpl;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.ops.Operation;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
+import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.junit.Assert;
+import org.junit.Test;
+
+import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.function.IntFunction;
+
+/**
+ * A view's dependency map lists, for every table the view reads, the columns the view reads from it.
+ * A reader of the view needs no permission on those columns, see
+ * {@code AbstractPartitionFrameCursorFactory.authorizeSelect()}. These tests check that CREATE VIEW,
+ * ALTER VIEW and CREATE OR REPLACE VIEW record exactly the columns the plan of the view reads through
+ * the view, whichever alias, join, CTE or nested view the SELECT reads them through, and that a principal
+ * with SELECT on the view only reads it.
+ */
+public class ViewColumnDependencyTest extends AbstractViewTest {
+
+    @Test
+    public void testAliasNamedLikeAnotherTableIsNotADependency() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // a table named like the alias the view reads x through
+            execute("CREATE TABLE t (ts TIMESTAMP, a LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            assertDependencies("SELECT t.a FROM x t", "{x=[a]}");
+            assertDependencies("SELECT t.a, u.c FROM x t JOIN y u ON t.k = u.k", "{x=[a, k], y=[c, k]}");
+        });
+    }
+
+    @Test
+    public void testAliasedColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertDependencies("SELECT t.ts, t.a FROM x t", "{x=[a, ts]}");
+            assertDependencies("SELECT x.a FROM x", "{x=[a]}");
+            assertDependencies("SELECT t.a FROM x t WHERE t.b > 0 ORDER BY t.ts", "{x=[a, b, ts]}");
+            assertDependencies("SELECT t.k, count() FROM x t GROUP BY t.k", "{x=[k]}");
+            assertDependencies("SELECT DISTINCT t.k FROM x t", "{x=[k]}");
+            assertDependencies("SELECT t.a FROM x t WHERE t.ts IN '1970-01-01'", "{x=[a, ts]}");
+        });
+    }
+
+    @Test
+    public void testColumnsOfJoinedTables() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertDependencies("SELECT a, c FROM x JOIN y ON (k)", "{x=[a, k], y=[c, k]}");
+            assertDependencies("SELECT x.a, y.c FROM x JOIN y ON (k)", "{x=[a, k], y=[c, k]}");
+            assertDependencies("SELECT t.a FROM x t JOIN y u ON t.k = u.k AND u.d > t.b", "{x=[a, b, k], y=[d, k]}");
+            assertDependencies("SELECT e.ts, e.a, l.c FROM x e JOIN y l ON (k, ts)", "{x=[a, k, ts], y=[c, k, ts]}");
+            assertDependencies("SELECT t.a, u.b FROM x t JOIN x u ON (k)", "{x=[a, b, k]}");
+        });
+    }
+
+    @Test
+    public void testCte() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertDependencies("WITH c AS (SELECT a, k FROM x) SELECT c.a FROM c JOIN y ON (k)", "{x=[a, k], y=[k]}");
+            assertDependencies("WITH c AS (SELECT t.a, t.k FROM x t) SELECT c.a FROM c", "{x=[a]}");
+        });
+    }
+
+    @Test
+    public void testExplicitTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE TABLE x2 (ts TIMESTAMP, ts2 TIMESTAMP, k SYMBOL, a LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x2 VALUES (0, 0, 'k1', 1), (3_600_000_000, 3_600_000_000, 'k1', 3)");
+            drainWalQueue();
+            // A TIMESTAMP() clause names the timestamp that a temporal join or SAMPLE BY reads from the query
+            // it follows, so the scan of x2 reads ts2, and not the designated timestamp ts.
+            assertDependencies(
+                    "SELECT t.a, u.c FROM (SELECT k, a, ts2 FROM x2) t TIMESTAMP(ts2) ASOF JOIN y u ON (k)",
+                    "{x2=[a, k, ts2], y=[c, k, ts]}"
+            );
+            assertDependencies(
+                    "SELECT t.k, u.c FROM (SELECT k, ts2 FROM x2) t TIMESTAMP(ts2) SPLICE JOIN y u ON (k)",
+                    "{x2=[k, ts2], y=[c, k, ts]}"
+            );
+            assertDependencies(
+                    "SELECT count() FROM (SELECT * FROM x2) t TIMESTAMP(ts2) ASOF JOIN y u ON (k)",
+                    "{x2=[k, ts2], y=[k, ts]}"
+            );
+            assertDependencies(
+                    "WITH c AS (SELECT k, a, ts2 FROM x2) SELECT t.a, u.c FROM c t TIMESTAMP(ts2) ASOF JOIN y u ON (k)",
+                    "{x2=[a, k, ts2], y=[c, k, ts]}"
+            );
+            assertDependencies("SELECT count() FROM (SELECT k, ts2 FROM x2) TIMESTAMP(ts2) SAMPLE BY 1h", "{x2=[ts2]}");
+            // the view reads no ts, so a reader cannot read it by overriding @c
+            assertOverrideDenied(
+                    "DECLARE OVERRIDABLE @c := a SELECT t.v, u.c FROM (SELECT k, @c AS v, ts2 FROM x2) t TIMESTAMP(ts2) ASOF JOIN y u ON (k)",
+                    "DECLARE @c := ts SELECT * FROM v",
+                    "permission denied [table=x2, columns=ts]"
+            );
+        });
+    }
+
+    @Test
+    public void testLateralJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertDependencies(
+                    "SELECT t.a, l.c FROM x t CROSS JOIN LATERAL (SELECT c FROM y u WHERE u.k = t.k LIMIT 1) l",
+                    "{x=[a, k], y=[c, k]}"
+            );
+        });
+    }
+
+    @Test
+    public void testLatestOn() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertDependencies("SELECT a FROM x LATEST ON ts PARTITION BY k", "{x=[a, k]}");
+        });
+    }
+
+    @Test
+    public void testNarrowedNestedWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A SELECT list that names its columns keeps only those of the wildcard under it, so the view
+            // selects no other column of the tables the wildcard selects from, and none of them gets "*".
+            assertDependencies("SELECT a FROM (SELECT * FROM x)", "{x=[a]}");
+            assertDependencies("SELECT a FROM (x WHERE a > 1)", "{x=[a]}");
+            assertDependencies("SELECT * FROM (SELECT a FROM (SELECT * FROM x))", "{x=[a]}");
+            assertDependencies("SELECT k, a, c FROM (SELECT * FROM x JOIN y ON (k))", "{x=[a, k], y=[c, k]}");
+            assertDependencies("SELECT k, a FROM (SELECT * FROM x JOIN y ON (k)) WHERE k = 'k1'", "{x=[a, k], y=[k]}");
+            assertDependencies("WITH j AS (SELECT * FROM x JOIN y ON (k)) SELECT k, a FROM j", "{x=[a, k], y=[k]}");
+            assertDependencies("DECLARE @q := (SELECT * FROM x) SELECT a FROM @q", "{x=[a]}");
+            assertDependencies("SELECT k FROM (SELECT * FROM x UNION ALL SELECT * FROM y)", "{x=[k], y=[k]}");
+            // a qualified wildcard selects every column of the source it names only
+            assertDependencies("SELECT u.* FROM (SELECT * FROM x) s JOIN y u ON (k)", "{x=[k], y=[*, c, d, k, ts]}");
+            // PIVOT selects the columns it groups and aggregates, not the ones of its source
+            assertDependencies("SELECT * FROM (SELECT * FROM x) PIVOT (sum(a) FOR k IN ('k1'))", "{x=[a, k]}");
+            // A sub-query in an expression selects no column into the view, and its scan of y authorizes
+            // as the reader, so the view lists no column of y, and a principal without permission on y
+            // does not read the view.
+            assertDependencies(
+                    "SELECT a FROM x WHERE k IN (SELECT k FROM (SELECT * FROM y))",
+                    "{x=[a, k], y=[]}",
+                    "permission denied [table=y, columns=k]"
+            );
+
+            // The view reads no column the base table gains later, even when its SELECT list names every
+            // column the wildcard under it selects, so a reader cannot reach such a column through it.
+            execute("CREATE VIEW v_narrowed AS (SELECT k, a FROM (SELECT * FROM x))");
+            execute("CREATE VIEW v_named AS (DECLARE OVERRIDABLE @c := a SELECT ts, k, @c AS a, b FROM (SELECT * FROM x))");
+            drainWalAndViewQueues();
+            execute("ALTER TABLE x ADD COLUMN e INT");
+            execute("INSERT INTO x VALUES (7_200_000_000, 'k2', 5, 6, 42)");
+            drainWalAndViewQueues();
+            Assert.assertEquals("{x=[a, k]}", dependenciesOf("v_narrowed"));
+            Assert.assertEquals("{x=[a, b, k, ts]}", dependenciesOf("v_named"));
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                assertQuery("SELECT * FROM v_narrowed")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\ta
+                                k1\t1
+                                k1\t3
+                                k2\t5
+                                """);
+                assertQuery("DECLARE @c := e SELECT * FROM v_named")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .failsWith("permission denied [table=x, columns=e]");
+            }
+        });
+    }
+
+    @Test
+    public void testNestedLateralJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                // The optimiser shares the left side of a LATERAL join with the sub-query that decorrelates its
+                // right side, so the walk of the columns the plan reads reaches the models of the inner joins
+                // along a number of paths that doubles with each join. Nothing reads the column the right sides
+                // select, so the plan reads no column of y.
+                assertLateralJoinDependencies(compiler, count -> lateralJoins("SELECT k, a FROM x", count), "{x=[a, k], y=[]}");
+                // the optimiser keeps every column of the left side of a LATERAL join
+                assertLateralJoinDependencies(compiler, count -> lateralJoins("SELECT * FROM x", count), "{x=[*, a, b, k, ts], y=[]}");
+                // It also keeps every column of a sub-query whose columns the query above it names none of. The
+                // search for the scan of x under the sub-query of the wildcard goes through the LATERAL joins
+                // before it reaches the scan.
+                assertLateralJoinDependencies(
+                        compiler,
+                        count -> "SELECT count() FROM (SELECT * FROM (SELECT * FROM x) w CROSS JOIN (" + lateralJoins("SELECT k, a FROM x", count) + ") c)",
+                        "{x=[*, a, b, k, ts], y=[]}"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testNestedView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW v2 AS (SELECT u.a, u.k, u.ts FROM x u)");
+            drainWalAndViewQueues();
+            Assert.assertEquals("{x=[a, k, ts]}", dependenciesOf("v2"));
+            // a read of the outer view reads the tables of the inner one through the outer one
+            assertDependencies("SELECT w.a FROM v2 w", "{v2=[], x=[a]}");
+            assertDependencies("SELECT * FROM v2", "{v2=[], x=[a, k, ts]}");
+        });
+    }
+
+    @Test
+    public void testNestedViewWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW v_join AS (SELECT * FROM x JOIN y ON (k))");
+            drainWalAndViewQueues();
+            // A read of the outer view reads the tables of the inner one on the authority of the outer one,
+            // which selects every column of them only through a wildcard of its own.
+            assertDependencies("SELECT * FROM v_join", "{v_join=[], x=[*, a, b, k, ts], y=[*, c, d, k, ts]}");
+            assertDependencies("SELECT w.* FROM v_join w", "{v_join=[], x=[*, a, b, k, ts], y=[*, c, d, k, ts]}");
+            assertDependencies("SELECT a FROM v_join", "{v_join=[], x=[a, k], y=[k]}");
+            assertDependencies("SELECT * FROM (SELECT k, c FROM v_join)", "{v_join=[], x=[k], y=[c, k]}");
+        });
+    }
+
+    @Test
+    public void testNestedWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // a wildcard over a sub-query, a CTE or a view that selects every column of a table selects
+            // every column of it too
+            assertDependencies("SELECT * FROM (SELECT * FROM x)", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT * FROM (x WHERE a > 1)", "{x=[*, a, b, k, ts]}");
+            assertDependencies("WITH c AS (SELECT * FROM x) SELECT * FROM c WHERE a > 1", "{x=[*, a, b, k, ts]}");
+            assertDependencies("DECLARE @q := (SELECT * FROM x) SELECT * FROM @q", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT * FROM x JOIN (SELECT * FROM y) s ON (k)", "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}");
+            assertDependencies("SELECT s.* FROM (SELECT * FROM x) s JOIN y u ON (k)", "{x=[*, a, b, k, ts], y=[k]}");
+            assertDependencies(
+                    "SELECT * FROM (SELECT * FROM x UNION ALL SELECT * FROM y)",
+                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+            );
+            assertDependencies(
+                    "SELECT t.* FROM x t CROSS JOIN LATERAL (SELECT * FROM y u WHERE u.k = t.k) l",
+                    "{x=[*, a, b, k, ts], y=[k]}"
+            );
+        });
+    }
+
+    @Test
+    public void testOverridableVariableReadsNoColumnOnlyASubQueryReads() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The sub-query reads b as the reader, and a read of the view with @m at 1 skips it. The
+            // scan of x that goes through the view reads no b, so a reader cannot read it by overriding @c.
+            final String viewSql = """
+                    DECLARE OVERRIDABLE @c := a, OVERRIDABLE @m := 1
+                    SELECT k, @c AS v FROM x WHERE @m = 1 OR a < (SELECT max(u.b) FROM x u)
+                    """;
+            assertDependencies(viewSql, "{x=[a, k]}");
+            assertOverrideDenied(viewSql, "DECLARE @c := b SELECT * FROM v", "permission denied [table=x, columns=b]");
+        });
+    }
+
+    @Test
+    public void testOverridableVariableReadsNoColumnTheViewDoesNot() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String viewSql = "DECLARE OVERRIDABLE @c := t.a SELECT t.ts, @c FROM x t";
+            assertDependencies(viewSql, "{x=[a, ts]}");
+            assertOverrideDenied(viewSql, "DECLARE @c := t.b SELECT * FROM v", "permission denied [table=x, columns=b]");
+        });
+    }
+
+    @Test
+    public void testOverridableVariableReadsNoColumnTheViewDropsFromAWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW v_join AS (SELECT * FROM x JOIN y ON (k))");
+            drainWalAndViewQueues();
+            // the first table of the wildcard's FROM clause
+            assertOverrideDenied(
+                    "DECLARE OVERRIDABLE @c := a SELECT ts, @c AS v FROM (SELECT * FROM x)",
+                    "DECLARE @c := b SELECT * FROM v",
+                    "permission denied [table=x, columns=b]"
+            );
+            // a table joined to the first one, in a sub-query, a CTE and a nested view
+            assertOverrideDenied(
+                    "DECLARE OVERRIDABLE @c := c SELECT k, @c AS v FROM (SELECT * FROM x JOIN y ON (k))",
+                    "DECLARE @c := d SELECT * FROM v",
+                    "permission denied [table=y, columns=d]"
+            );
+            assertOverrideDenied(
+                    "DECLARE OVERRIDABLE @c := c WITH j AS (SELECT * FROM x JOIN y ON (k)) SELECT k, @c AS v FROM j",
+                    "DECLARE @c := d SELECT * FROM v",
+                    "permission denied [table=y, columns=d]"
+            );
+            assertOverrideDenied(
+                    "DECLARE OVERRIDABLE @c := c SELECT k, @c AS v FROM v_join",
+                    "DECLARE @c := d SELECT * FROM v",
+                    "permission denied [table=y, columns=d]"
+            );
+            // a filter turned into a test of a column the view does not select
+            assertOverrideDenied(
+                    "DECLARE OVERRIDABLE @s := 'k1' SELECT k, a FROM (SELECT * FROM x JOIN y ON (k)) WHERE k = @s",
+                    "DECLARE @s := CASE WHEN d = 6 THEN 'k1' ELSE 'k2' END SELECT * FROM v",
+                    "permission denied [table=y, columns=d]"
+            );
+        });
+    }
+
+    @Test
+    public void testSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertDependencies("SELECT count() FROM x SAMPLE BY 1h", "{x=[ts]}");
+            assertDependencies("SELECT t.k, sum(t.a) FROM x t SAMPLE BY 1h", "{x=[a, k, ts]}");
+            // SAMPLE BY over a sub-query requires the timestamp the sub-query does not select
+            assertDependencies("SELECT k, count() FROM (SELECT k, a FROM x) SAMPLE BY 1h", "{x=[k, ts]}");
+        });
+    }
+
+    @Test
+    public void testSelectStarViewReadsColumnAddedLater() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW v_created AS (SELECT * FROM x)");
+            execute("CREATE VIEW v_altered AS (SELECT a FROM x)");
+            execute("CREATE VIEW v_nested AS (SELECT * FROM (SELECT * FROM x))");
+            drainWalAndViewQueues();
+            execute("ALTER VIEW v_altered AS (SELECT * FROM x)");
+            execute("CREATE VIEW v_outer AS (SELECT * FROM v_created)");
+            drainWalAndViewQueues();
+
+            execute("ALTER TABLE x ADD COLUMN e INT");
+            execute("INSERT INTO x VALUES (7_200_000_000, 'k2', 5, 6, 42)");
+            drainWalAndViewQueues();
+            final String expected = """
+                    ts\tk\ta\tb\te
+                    1970-01-01T00:00:00.000000Z\tk1\t1\t2\tnull
+                    1970-01-01T01:00:00.000000Z\tk1\t3\t4\tnull
+                    1970-01-01T02:00:00.000000Z\tk2\t5\t6\t42
+                    """;
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                for (String viewName : new String[]{"v_created", "v_altered", "v_nested", "v_outer"}) {
+                    assertQuery("SELECT * FROM " + viewName)
+                            .withContext(context)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSetOperation() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertDependencies("SELECT t.a FROM x t UNION ALL SELECT u.c FROM y u", "{x=[a], y=[c]}");
+            assertDependencies("SELECT t.k FROM x t EXCEPT SELECT u.k FROM y u WHERE u.d > 6", "{x=[k], y=[d, k]}");
+        });
+    }
+
+    @Test
+    public void testStoragePolicyShapedView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE sp_entries (
+                        ts TIMESTAMP, policy_name VARCHAR, to_parquet INT, drop_local INT, status CHAR
+                    ) TIMESTAMP(ts) PARTITION BY MONTH WAL
+                    """);
+            execute("""
+                    CREATE TABLE sp_links (
+                        ts TIMESTAMP, table_id INT, table_dir_name VARCHAR, policy_name VARCHAR, status CHAR
+                    ) TIMESTAMP(ts) PARTITION BY MONTH WAL
+                    """);
+            execute("""
+                    INSERT INTO sp_entries VALUES
+                        (1, 'p1', 24, 48, 'A'),
+                        (2, 'p2', 12, 0, 'A'),
+                        (3, 'p2', 0, 0, 'R')
+                    """);
+            execute("""
+                    INSERT INTO sp_links VALUES
+                        (1, 1, 't1~1', 'p1', 'A'),
+                        (2, 2, 't2~2', 'p2', 'A'),
+                        (3, 2, 't2~2', 'p2', 'R')
+                    """);
+            drainWalQueue();
+            // the entries are joined and read only through table aliases, the status of an entry as e.status
+            assertDependencies(
+                    """
+                            WITH
+                              policies AS (
+                                SELECT ts, table_dir_name, status, to_parquet, drop_local
+                                FROM (
+                                  SELECT e.ts, l.table_dir_name, e.status, to_parquet, drop_local
+                                  FROM sp_entries e
+                                  JOIN sp_links l ON (policy_name, ts)
+                                ) LATEST ON ts PARTITION BY table_dir_name
+                              ),
+                              links AS (
+                                SELECT ts, table_id, table_dir_name, policy_name, status
+                                FROM sp_links
+                                LATEST ON ts PARTITION BY table_dir_name, policy_name
+                              )
+                            SELECT
+                              l.table_dir_name,
+                              CASE WHEN p.to_parquet < 0 THEN (-(p.to_parquet))::VARCHAR || 'm' ELSE p.to_parquet::VARCHAR || 'h' END AS to_parquet,
+                              CASE WHEN (l.status = 'A' AND p.status = 'A') THEN 'A' ELSE 'D' END AS status,
+                              CASE WHEN l.ts > p.ts THEN l.ts ELSE p.ts END AS last_updated
+                            FROM policies p
+                            JOIN links l ON table_dir_name
+                            WHERE p.status != 'R' AND l.status != 'R'
+                            """,
+                    // drop_local is selected by the CTE, but nothing reads it from there
+                    "{sp_entries=[policy_name, status, to_parquet, ts], sp_links=[policy_name, status, table_dir_name, ts]}"
+            );
+        });
+    }
+
+    @Test
+    public void testSubQueryInExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A sub-query in an expression reads y as the reader, not through the view, so the view lists
+            // y with none of its columns, and a principal without permission on y does not read the view.
+            assertDependencies(
+                    "SELECT t.a FROM x t WHERE t.k IN (SELECT u.k FROM y u WHERE u.c > 0)",
+                    "{x=[a, k], y=[]}",
+                    "permission denied [table=y, columns=k,c]"
+            );
+        });
+    }
+
+    @Test
+    public void testTableReplacedWhileViewCompiles() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // the table that takes the name of x: its designated timestamp is ts2, and ts is a plain column
+            execute("CREATE TABLE x2 (ts LONG, ts2 TIMESTAMP, k SYMBOL, a LONG, b LONG) TIMESTAMP(ts2) PARTITION BY DAY WAL");
+            execute("INSERT INTO x2 VALUES (1, 0, 'k1', 1, 2), (2, 3_600_000_000, 'k1', 3, 4)");
+            drainWalQueue();
+            // CREATE VIEW plans a read of ts, the timestamp of x the ASOF JOIN requires, and x2 takes the name
+            // of x before the plan opens it. The statement compiles the SELECT again, into a plan that reads
+            // ts2 instead, and the view lists no column only the first plan reads, so a reader that overrides
+            // @c does not read ts.
+            final String viewSql = "DECLARE OVERRIDABLE @c := a SELECT t.v, u.c FROM (SELECT k, @c AS v FROM x) t ASOF JOIN y u ON (k)";
+            final TableReplacingSecurityContext securityContext = new TableReplacingSecurityContext();
+            try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null)) {
+                securityContext.replaceTableOnce();
+                execute("CREATE VIEW v AS (" + viewSql + ")", context);
+                drainWalAndViewQueues();
+                Assert.assertFalse(securityContext.isReplacementPending());
+            }
+            assertViewDependencies(viewSql, "{x=[a, k, ts2], y=[c, k, ts]}", null, "CREATE VIEW");
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                assertQuery("DECLARE @c := ts SELECT * FROM v")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .failsWith("permission denied [table=x, columns=ts]");
+            }
+        });
+    }
+
+    @Test
+    public void testTemporalJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // a temporal join reads the timestamps of both sides, whether the SELECT names them or not
+            assertDependencies("SELECT t.a, u.c FROM x t ASOF JOIN y u ON (k)", "{x=[a, k, ts], y=[c, k, ts]}");
+            assertDependencies("SELECT t.a, u.c FROM x t LT JOIN y u ON (k)", "{x=[a, k, ts], y=[c, k, ts]}");
+            assertDependencies("SELECT t.a, u.c FROM x t SPLICE JOIN y u ON (k)", "{x=[a, k, ts], y=[c, k, ts]}");
+            // a sub-query on either side of a temporal join reads the timestamp its SELECT does not name
+            assertDependencies("SELECT t.a, u.c FROM x t ASOF JOIN (SELECT k, c FROM y) u ON (k)", "{x=[a, k, ts], y=[c, k, ts]}");
+            assertDependencies("SELECT t.k, t.a FROM x t SPLICE JOIN (SELECT k, c FROM y) u ON (k)", "{x=[a, k, ts], y=[k, ts]}");
+            assertDependencies("SELECT t.a, u.c FROM (SELECT k, a FROM x) t ASOF JOIN y u ON (k)", "{x=[a, k, ts], y=[c, k, ts]}");
+            // The first table in join order provides the timestamp of a temporal join after an inner one, and
+            // the table joined to it by the inner join reads none, whether the temporal join comes after it
+            // or before it.
+            execute("CREATE TABLE z (ts TIMESTAMP, k SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO z VALUES (0, 'k1', 9), (3_600_000_000, 'k1', 10)");
+            drainWalQueue();
+            assertDependencies(
+                    "SELECT t.a, u.c, w.v FROM x t JOIN y u ON (k) ASOF JOIN z w ON (k)",
+                    "{x=[a, k, ts], y=[c, k], z=[k, ts, v]}"
+            );
+            assertDependencies(
+                    "SELECT t.a, w.v, u.c FROM x t ASOF JOIN z w ON (k) JOIN y u ON (k)",
+                    "{x=[a, k, ts], y=[c, k], z=[k, ts, v]}"
+            );
+        });
+    }
+
+    @Test
+    public void testUnionWithLimitReadsColumnAddedLater() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, a LONG, b LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE y (ts TIMESTAMP, a LONG, b LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (0, 7, 11)");
+            execute("INSERT INTO y VALUES (0, 7, 13)");
+            drainWalQueue();
+            execute("CREATE VIEW v_named AS (SELECT a FROM (SELECT ts, a, b FROM x UNION SELECT ts, a, b FROM y LIMIT 1))");
+            drainWalAndViewQueues();
+            // Every input has a=7, so the single result does not depend on UNION's iteration order.
+            final String expected = "a\n7\n";
+            forEachViewStatement("SELECT a FROM (SELECT * FROM x UNION SELECT * FROM y LIMIT 1)", statement -> {
+                try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                    assertQuery("SELECT a FROM x").withContext(context).noLeakCheck()
+                            .failsWith("permission denied [table=x, columns=a]");
+                    assertQuery("SELECT * FROM v").withContext(context).noLeakCheck().noRandomAccess().returns(expected);
+                    final int columnCount;
+                    try (TableReader reader = engine.getReader("x")) {
+                        columnCount = reader.getMetadata().getColumnCount();
+                    }
+                    final String column = "extra" + columnCount;
+                    // Both UNION branches must grow compatibly. Existing rows get NULL in the new column.
+                    execute("ALTER TABLE x ADD COLUMN " + column + " INT");
+                    execute("ALTER TABLE y ADD COLUMN " + column + " INT");
+                    execute("INSERT INTO x (ts, a, b, " + column + ") VALUES (" + columnCount + ", 7, 17, 19)");
+                    execute("INSERT INTO y (ts, a, b, " + column + ") VALUES (" + columnCount + ", 7, 23, 29)");
+                    drainWalAndViewQueues();
+                    assertQuery("SELECT * FROM v").noLeakCheck().noRandomAccess().returns(expected);
+                    assertQuery("SELECT * FROM v_named").withContext(context).noLeakCheck().noRandomAccess().returns(expected);
+                    assertQuery("SELECT * FROM v").withContext(context).noLeakCheck().noRandomAccess().returns(expected);
+                    Assert.assertTrue(statement, getViewDefinition("v").getDependencies().get("x").contains("*"));
+                    Assert.assertTrue(statement, getViewDefinition("v").getDependencies().get("y").contains("*"));
+                    Assert.assertFalse(getViewDefinition("v_named").getDependencies().get("x").contains("*"));
+                    Assert.assertFalse(getViewDefinition("v_named").getDependencies().get("y").contains("*"));
+                }
+            });
+        });
+    }
+
+    @Test
+    public void testUnnarrowedNestedWildcard() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The optimiser keeps every column of a sub-query whose columns the query above it names none of,
+            // and of the left side of a LATERAL join, so the view reads every column the wildcard in such a
+            // sub-query selects, including one the table gains later.
+            assertDependencies("SELECT count() FROM (SELECT * FROM x)", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT count() FROM (SELECT * FROM (SELECT * FROM x))", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT count() FROM (SELECT * FROM x) WHERE a > 0", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT 1 AS one FROM (SELECT * FROM x)", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT count() FROM (SELECT *, a + 1 AS a1 FROM x)", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT count() FROM (SELECT x.* FROM x JOIN y ON (k))", "{x=[*, a, b, k, ts], y=[k]}");
+            assertDependencies("WITH c AS (SELECT * FROM x) SELECT count() FROM c", "{x=[*, a, b, k, ts]}");
+            assertDependencies(
+                    "SELECT count() FROM (SELECT * FROM x UNION ALL SELECT * FROM y)",
+                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+            );
+            assertDependencies("SELECT y.c FROM y CROSS JOIN (SELECT * FROM x)", "{x=[*, a, b, k, ts], y=[c]}");
+            assertDependencies(
+                    "SELECT * FROM (SELECT count() FROM (SELECT * FROM x)) PIVOT (sum(count) FOR count IN (1))",
+                    "{x=[*, a, b, k, ts]}"
+            );
+            assertDependencies(
+                    "SELECT t.a, l.c FROM (SELECT * FROM x) t CROSS JOIN LATERAL (SELECT c, k FROM y u WHERE u.k = t.k LIMIT 1) l",
+                    "{x=[*, a, b, k, ts], y=[c, k]}"
+            );
+            execute("CREATE VIEW v_star AS (SELECT * FROM x)");
+            drainWalAndViewQueues();
+            assertDependencies("SELECT count() FROM v_star", "{v_star=[], x=[*, a, b, k, ts]}");
+
+            // a SELECT list that names its columns, every one of them included, reads no column added later
+            assertDependencies("SELECT count() FROM (SELECT ts, k, a, b FROM (SELECT * FROM x))", "{x=[a, b, k, ts]}");
+            assertDependencies("SELECT count() FROM (SELECT a, b FROM x)", "{x=[a, b]}");
+        });
+    }
+
+    @Test
+    public void testUnnarrowedNestedWildcardOfSelfJoinedTableAlteredBetweenItsScans() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The sub-query scans x twice, and its wildcard selects the first scan only. x gains a column after
+            // the optimiser has read the columns of that scan and before it reads those of x2, which then lists
+            // the column the plan built before the ALTER TABLE does not read. Only the scan the wildcard
+            // selects decides its "*".
+            assertWildcardKeptWhileTableAltered(
+                    "SELECT count() FROM (SELECT x.* FROM x CROSS JOIN y CROSS JOIN x x2)",
+                    """
+                            count
+                            8
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testUnnarrowedNestedWildcardOfTableAlteredBetweenItsScans() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // The view scans x twice. x gains a column after the optimiser has read the columns of the scan
+            // under the wildcard and before it reads those of the other scan, which then lists the column the
+            // plan built before the ALTER TABLE does not read. Only the scan under the wildcard decides its "*".
+            assertWildcardKeptWhileTableAltered(
+                    "SELECT count() FROM (SELECT * FROM x) CROSS JOIN y CROSS JOIN (SELECT a FROM x)",
+                    """
+                            count
+                            8
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testUnnarrowedNestedWildcardOfTableAlteredWhileViewCompiles() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // x gains a column after the optimiser has read its columns and before the statement records the
+            // dependencies, as it does when an ALTER TABLE commits while the view compiles. The plan, built
+            // again on the new metadata, reads the added column, and the "*" the view records for x covers it.
+            assertWildcardKeptWhileTableAltered(
+                    "SELECT count() FROM (SELECT * FROM x) CROSS JOIN y",
+                    """
+                            count
+                            4
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testUnnarrowedNestedWildcardReadsColumnAddedLater() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW v_star AS (SELECT * FROM x)");
+            execute("CREATE VIEW v_count AS (SELECT count() FROM (SELECT * FROM x) WHERE a > 1)");
+            execute("CREATE VIEW v_cross AS (SELECT y.c FROM y CROSS JOIN (SELECT * FROM x))");
+            execute("""
+                    CREATE VIEW v_lateral AS (
+                        SELECT t.a, l.c
+                        FROM (SELECT * FROM x) t
+                        CROSS JOIN LATERAL (SELECT c, k FROM y u WHERE u.k = t.k LIMIT 1) l
+                    )
+                    """);
+            execute("CREATE VIEW v_altered AS (SELECT a FROM x)");
+            drainWalAndViewQueues();
+            execute("ALTER VIEW v_altered AS (SELECT count() FROM (SELECT * FROM x) WHERE a > 1)");
+            execute("CREATE VIEW v_outer AS (SELECT count() FROM v_star)");
+            drainWalAndViewQueues();
+
+            // each view reads the column x gains, and a principal with SELECT on the view only still reads it
+            execute("ALTER TABLE x ADD COLUMN e INT");
+            execute("INSERT INTO x VALUES (7_200_000_000, 'k2', 5, 6, 42)");
+            drainWalAndViewQueues();
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                for (String viewName : new String[]{"v_count", "v_altered"}) {
+                    assertQuery("SELECT * FROM " + viewName)
+                            .withContext(context)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    count
+                                    2
+                                    """);
+                }
+                assertQuery("SELECT * FROM v_outer")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count
+                                3
+                                """);
+                assertQuery("SELECT * FROM v_cross ORDER BY c")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                c
+                                5
+                                5
+                                5
+                                7
+                                7
+                                7
+                                """);
+                assertQuery("SELECT * FROM v_lateral ORDER BY a")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                a\tc
+                                1\t5
+                                3\t5
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testViewReadingWholeRowsReadsColumnAddedLater() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW v_distinct AS (SELECT a FROM (SELECT DISTINCT * FROM x))");
+            execute("CREATE VIEW v_grouped AS (SELECT a FROM (SELECT *, count() AS n FROM x))");
+            execute("CREATE VIEW v_union AS (SELECT a FROM (SELECT * FROM x UNION SELECT * FROM x))");
+            execute("CREATE VIEW v_altered AS (SELECT a FROM x)");
+            execute("CREATE VIEW v_rows AS (SELECT DISTINCT * FROM x)");
+            drainWalAndViewQueues();
+            execute("ALTER VIEW v_altered AS (SELECT a FROM (SELECT DISTINCT * FROM x))");
+            execute("CREATE VIEW v_outer AS (SELECT a FROM v_rows)");
+            drainWalAndViewQueues();
+
+            // each view reads the column x gains, and a principal with SELECT on the view only still reads it
+            execute("ALTER TABLE x ADD COLUMN e INT");
+            execute("INSERT INTO x VALUES (7_200_000_000, 'k2', 5, 6, 42)");
+            drainWalAndViewQueues();
+            final String expected = """
+                    a
+                    1
+                    3
+                    5
+                    """;
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                for (String viewName : new String[]{"v_distinct", "v_grouped", "v_altered", "v_outer"}) {
+                    assertQuery("SELECT * FROM " + viewName + " ORDER BY a")
+                            .withContext(context)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns(expected);
+                }
+                assertQuery("SELECT * FROM v_union ORDER BY a")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testWildcards() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // a wildcard selects every column of its tables, including one they gain later
+            assertDependencies("SELECT * FROM x", "{x=[*, a, b, k, ts]}");
+            assertDependencies("x WHERE a > 1", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT * FROM x JOIN y ON (k)", "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}");
+            assertDependencies("SELECT t.* FROM x t JOIN y u ON (k)", "{x=[*, a, b, k, ts], y=[k]}");
+            // the columns of a sub-query are the ones it selects
+            assertDependencies("SELECT * FROM (SELECT a FROM x)", "{x=[a]}");
+            assertDependencies("SELECT s.* FROM (SELECT t.a, t.k FROM x t) s JOIN y u ON (k)", "{x=[a, k], y=[k]}");
+        });
+    }
+
+    @Test
+    public void testWildcardsOfSelectsReadingWholeRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            // A SELECT DISTINCT, a SELECT that groups and the branches of a set operation other than UNION ALL
+            // read every column their wildcards select, whichever columns the query above them keeps.
+            assertDependencies("SELECT a FROM (SELECT DISTINCT * FROM x)", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT count() FROM (SELECT DISTINCT * FROM x)", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT a FROM (SELECT DISTINCT * FROM (SELECT * FROM x))", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT a FROM (SELECT DISTINCT t.* FROM x t JOIN y u ON (k))", "{x=[*, a, b, k, ts], y=[k]}");
+            assertDependencies("SELECT a FROM (SELECT *, count() AS n FROM x)", "{x=[*, a, b, k, ts]}");
+            assertDependencies(
+                    "SELECT a FROM (SELECT * FROM x UNION SELECT * FROM y)",
+                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+            );
+            assertDependencies(
+                    "SELECT a FROM (SELECT * FROM x EXCEPT SELECT * FROM y)",
+                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+            );
+            assertDependencies(
+                    "SELECT a FROM (SELECT * FROM x INTERSECT ALL SELECT * FROM y)",
+                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+            );
+            // an operation other than UNION ALL compares the rows of every branch
+            assertDependencies(
+                    "SELECT a FROM (SELECT * FROM x UNION ALL SELECT * FROM y UNION SELECT * FROM x)",
+                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+            );
+            execute("CREATE VIEW v_rows AS (SELECT DISTINCT * FROM x)");
+            drainWalAndViewQueues();
+            assertDependencies("SELECT a FROM v_rows", "{v_rows=[], x=[*, a, b, k, ts]}");
+
+            // such a SELECT reads only the columns a SELECT list names, its own or one under it
+            assertDependencies("SELECT a FROM (SELECT DISTINCT * FROM (SELECT a, b FROM x))", "{x=[a, b]}");
+            assertDependencies("SELECT a FROM (SELECT DISTINCT a, b FROM (SELECT * FROM x))", "{x=[a, b]}");
+            // a window function groups no rows
+            assertDependencies("SELECT a FROM (SELECT *, sum(b) OVER () AS s FROM x)", "{x=[a]}");
+            // a sub-query in an expression reads no column through the view
+            assertDependencies(
+                    "SELECT a FROM x WHERE k IN (SELECT k FROM (SELECT DISTINCT * FROM y))",
+                    "{x=[a, k], y=[]}",
+                    "permission denied [table=y, columns=k,ts,c,d]"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertDependencies("SELECT a, row_number() OVER (PARTITION BY k ORDER BY b) FROM x", "{x=[a, b, k]}");
+            assertDependencies(
+                    "SELECT t.a, row_number() OVER (PARTITION BY t.k ORDER BY t.b) FROM x t",
+                    "{x=[a, b, k]}"
+            );
+        });
+    }
+
+    @Test
+    public void testWindowJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String windowJoin = " FROM x t WINDOW JOIN y w ON (t.k = w.k) RANGE BETWEEN 1 hour PRECEDING AND 1 hour FOLLOWING";
+            // The aggregates of a WINDOW JOIN group no rows of their SELECT, so a SELECT list above it that
+            // names its columns keeps only those of the wildcard, and the view reads no other column of x.
+            assertDependencies("SELECT ts, s FROM (SELECT t.*, sum(w.c) s" + windowJoin + ')', "{x=[k, ts], y=[c, k, ts]}");
+            assertDependencies("SELECT ts, s FROM (SELECT *, sum(w.c) s" + windowJoin + ')', "{x=[k, ts], y=[c, k, ts]}");
+            assertOverrideDenied(
+                    "DECLARE OVERRIDABLE @c := ts SELECT @c AS v, s FROM (SELECT t.*, sum(w.c) s" + windowJoin + ')',
+                    "DECLARE @c := b SELECT * FROM v",
+                    "permission denied [table=x, columns=b]"
+            );
+            // the SELECT list of the view, and one that names none of the columns under it, keep them all
+            assertDependencies("SELECT t.*, sum(w.c) s" + windowJoin, "{x=[*, a, b, k, ts], y=[c, k, ts]}");
+            assertDependencies("SELECT count() FROM (SELECT t.*, sum(w.c) s" + windowJoin + ')', "{x=[*, a, b, k, ts], y=[c, k, ts]}");
+        });
+    }
+
+    // Asserts the dependencies CREATE VIEW records for the SELECT of a view with 8 and with 16 LATERAL joins,
+    // and the ones ALTER VIEW and CREATE OR REPLACE VIEW record, and that the walks of the optimised SELECT
+    // reach about twice as many models with twice as many joins. A walk of every path to the models reaches
+    // 2^8 times as many with 16 joins as with 8.
+    private static void assertLateralJoinDependencies(
+            SqlCompilerImpl compiler,
+            IntFunction<String> viewSql,
+            String expectedDependencies
+    ) throws Exception {
+        final long visits8 = recordViewDependencies(compiler, viewSql.apply(8), expectedDependencies);
+        final long visits16 = recordViewDependencies(compiler, viewSql.apply(16), expectedDependencies);
+        Assert.assertTrue(visits16 + " visits with 16 LATERAL joins, " + visits8 + " with 8", visits16 < 3 * visits8);
+    }
+
+    private static void createTables() throws Exception {
+        execute("CREATE TABLE x (ts TIMESTAMP, k SYMBOL, a LONG, b LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE y (ts TIMESTAMP, k SYMBOL, c LONG, d LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO x VALUES (0, 'k1', 1, 2), (3_600_000_000, 'k1', 3, 4)");
+        execute("INSERT INTO y VALUES (0, 'k1', 5, 6), (3_600_000_000, 'k1', 7, 8)");
+        drainWalQueue();
+    }
+
+    private static SqlExecutionContext denyBaseTableSelectContext() {
+        return new SqlExecutionContextImpl(engine, 1).with(
+                new DenyBaseTableSelectSecurityContext(),
+                bindVariableService,
+                null,
+                -1,
+                null
+        );
+    }
+
+    private static String dependenciesOf(String viewName) {
+        final ViewDefinition viewDefinition = getViewDefinition(viewName);
+        Assert.assertNotNull(viewDefinition);
+        return dependenciesOf(viewDefinition.getDependencies());
+    }
+
+    private static String dependenciesOf(LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies) {
+        final TreeMap<String, TreeSet<String>> sorted = new TreeMap<>();
+        final ObjList<CharSequence> tableNames = dependencies.keys();
+        for (int i = 0, n = tableNames.size(); i < n; i++) {
+            final LowerCaseCharSequenceHashSet columnNames = dependencies.get(tableNames.getQuick(i));
+            final TreeSet<String> columns = new TreeSet<>();
+            for (int j = 0, m = columnNames.getKeyCount(); j < m; j++) {
+                final CharSequence columnName = columnNames.getKey(j);
+                if (columnName != null) {
+                    columns.add(columnName.toString());
+                }
+            }
+            sorted.put(tableNames.getQuick(i).toString(), columns);
+        }
+        return sorted.toString();
+    }
+
+    // Records the SELECT as the definition of the view v with CREATE VIEW, ALTER VIEW and CREATE OR REPLACE
+    // VIEW in turn, and runs the assertion after each.
+    private static void forEachViewStatement(String viewSql, ViewStatementAssertion assertion) throws Exception {
+        execute("CREATE VIEW v AS (" + viewSql + ")");
+        drainWalAndViewQueues();
+        assertion.assertView("CREATE VIEW");
+
+        // a definition that reads no table first, so that the statement records every dependency itself
+        execute("ALTER VIEW v AS (SELECT x FROM long_sequence(1))");
+        drainWalAndViewQueues();
+        execute("ALTER VIEW v AS (" + viewSql + ")");
+        drainWalAndViewQueues();
+        assertion.assertView("ALTER VIEW");
+
+        execute("ALTER VIEW v AS (SELECT x FROM long_sequence(1))");
+        drainWalAndViewQueues();
+        execute("CREATE OR REPLACE VIEW v AS (" + viewSql + ")");
+        drainWalAndViewQueues();
+        assertion.assertView("CREATE OR REPLACE VIEW");
+
+        execute("DROP VIEW v");
+        drainWalAndViewQueues();
+    }
+
+    // The SELECT of count LATERAL joins, each in the left side of the next, the innermost over the SELECT
+    // innermost. The number of paths to the models of a LATERAL join doubles with each one around it.
+    private static String lateralJoins(String innermost, int count) {
+        String sql = innermost;
+        for (int i = 0; i < count; i++) {
+            sql = "SELECT t.k, t.a, count() n FROM (" + sql + ") t CROSS JOIN LATERAL (SELECT c + t.a v FROM y u LIMIT 1) l";
+        }
+        return sql;
+    }
+
+    private static String print(SqlExecutionContext context, String sql) throws Exception {
+        return TestUtils.printSqlToString(engine, context, sql, new StringSink());
+    }
+
+    // Records the SELECT as the definition of the view v with CREATE VIEW, and as the definition ALTER VIEW and
+    // CREATE OR REPLACE VIEW give a view, both on the compiler, asserts the dependencies they record, and
+    // returns the number of times the walks of the optimised SELECT reached a model.
+    private static long recordViewDependencies(SqlCompilerImpl compiler, String viewSql, String expectedDependencies) throws Exception {
+        final long visitCount = compiler.getViewDependencyVisitCountForTesting();
+        try (Operation operation = compiler.compile("CREATE VIEW v AS (" + viewSql + ")", sqlExecutionContext).getOperation()) {
+            compiler.execute(operation, sqlExecutionContext);
+        }
+        drainWalAndViewQueues();
+        Assert.assertEquals("CREATE VIEW: " + viewSql, expectedDependencies, dependenciesOf("v"));
+        execute("DROP VIEW v");
+        drainWalAndViewQueues();
+
+        // the compilation ALTER VIEW and CREATE OR REPLACE VIEW run, see SqlCompilerImpl.alterViewExecution()
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+        compiler.generateViewExecutionModel(viewSql, sqlExecutionContext, dependencies);
+        Assert.assertEquals("ALTER VIEW: " + viewSql, expectedDependencies, dependenciesOf(dependencies));
+        return compiler.getViewDependencyVisitCountForTesting() - visitCount;
+    }
+
+    private void assertDependencies(String viewSql, String expectedDependencies) throws Exception {
+        assertDependencies(viewSql, expectedDependencies, null);
+    }
+
+    // Asserts the dependency map CREATE VIEW, ALTER VIEW and CREATE OR REPLACE VIEW give the SELECT of a
+    // view, and that a principal with no permission on the columns of the base tables reads the view
+    // exactly as a principal with every permission does or, given expectedReadFailure, fails to read it.
+    private void assertDependencies(String viewSql, String expectedDependencies, @Nullable String expectedReadFailure) throws Exception {
+        forEachViewStatement(
+                viewSql,
+                statement -> assertViewDependencies(viewSql, expectedDependencies, expectedReadFailure, statement)
+        );
+    }
+
+    // Asserts that a principal with no permission on the columns of the base tables cannot read through
+    // the view, by overriding a variable the view declares OVERRIDABLE, a column the view does not read.
+    private void assertOverrideDenied(String viewSql, String readSql, String expectedFailure) throws Exception {
+        forEachViewStatement(viewSql, statement -> {
+            try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                assertQuery(readSql).withContext(context).noLeakCheck().failsWith(expectedFailure);
+            } catch (AssertionError e) {
+                throw new AssertionError(statement + ": " + viewSql, e);
+            }
+        });
+    }
+
+    private void assertViewDependencies(String viewSql, String expectedDependencies, @Nullable String expectedReadFailure, String statement) throws Exception {
+        Assert.assertEquals(statement + ": " + viewSql, expectedDependencies, dependenciesOf("v"));
+        try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+            if (expectedReadFailure == null) {
+                // The views differ in timestamp, size and random access, which the read infers. It returns the
+                // rows a principal with every permission reads.
+                final String expected = print(sqlExecutionContext, "SELECT * FROM v");
+                assertQuery("SELECT * FROM v")
+                        .withContext(context)
+                        .noLeakCheck()
+                        .inferTimestamp()
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns(expected);
+            } else {
+                assertQuery("SELECT * FROM v").withContext(context).noLeakCheck().failsWith(expectedReadFailure);
+            }
+        } catch (AssertionError e) {
+            throw new AssertionError(statement + ": " + viewSql, e);
+        }
+    }
+
+    // Records the SELECT as the definition of the view v with CREATE VIEW, then with ALTER VIEW, while x gains
+    // a column after the optimiser has read the columns of x, and asserts that the view records "*" for x and
+    // that a principal with no permission on the columns of the base tables reads it.
+    private void assertWildcardKeptWhileTableAltered(String viewSql, String expectedResult) throws Exception {
+        final ColumnAddingSecurityContext securityContext = new ColumnAddingSecurityContext();
+        try (
+                SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null);
+                SqlExecutionContext denyContext = denyBaseTableSelectContext()
+        ) {
+            final ObjList<String> statements = new ObjList<>();
+            statements.add("CREATE VIEW");
+            statements.add("ALTER VIEW");
+            // Each complete retry reads the column this iteration adds: e1, then e2.
+            final ObjList<String> expectedDependencies = new ObjList<>();
+            expectedDependencies.add("{x=[*, a, b, e1, k, ts], y=[]}");
+            expectedDependencies.add("{x=[*, a, b, e1, e2, k, ts], y=[]}");
+            for (int i = 0; i < statements.size(); i++) {
+                final String statement = statements.getQuick(i);
+                securityContext.addColumnOnce("e" + (i + 1));
+                execute(statement + " v AS (" + viewSql + ")", context);
+                drainWalAndViewQueues();
+                Assert.assertFalse(statement, securityContext.isColumnPending());
+                Assert.assertEquals(statement, expectedDependencies.getQuick(i), dependenciesOf("v"));
+                assertQuery("SELECT * FROM v")
+                        .withContext(denyContext)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expectedResult);
+            }
+        }
+    }
+
+    @FunctionalInterface
+    private interface ViewStatementAssertion {
+        void assertView(String statement) throws Exception;
+    }
+
+    /**
+     * Grants everything, and adds a column to x the first time a statement checks whether y is visible
+     * after {@link #addColumnOnce(String)}. The optimiser checks that once it has read the columns of x
+     * when the FROM clause reads x before y, so x gains the column while the statement compiles.
+     */
+    private static final class ColumnAddingSecurityContext extends AllowAllSecurityContext {
+        private String pendingColumnName;
+
+        @Override
+        public boolean isTableVisible(TableToken tableToken) {
+            if (pendingColumnName != null && "y".equals(tableToken.getTableName())) {
+                final String columnName = pendingColumnName;
+                pendingColumnName = null;
+                try {
+                    execute("ALTER TABLE x ADD COLUMN " + columnName + " INT");
+                } catch (SqlException e) {
+                    throw new AssertionError(e);
+                }
+                drainWalQueue();
+            }
+            return true;
+        }
+
+        private void addColumnOnce(String columnName) {
+            pendingColumnName = columnName;
+        }
+
+        private boolean isColumnPending() {
+            return pendingColumnName != null;
+        }
+    }
+
+    /**
+     * Grants everything but SELECT on the columns of a table, so that a principal reads a view, and a
+     * base table through it, only on the authority of the view.
+     */
+    private static final class DenyBaseTableSelectSecurityContext extends AllowAllSecurityContext {
+        @Override
+        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+            final CairoException e = CairoException.nonCritical()
+                    .put("permission denied [table=").put(tableToken.getTableName())
+                    .put(", columns=");
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                if (i > 0) {
+                    e.put(',');
+                }
+                e.put(columnNames.getQuick(i));
+            }
+            throw e.put(']');
+        }
+    }
+
+    /**
+     * Grants everything, and gives the name of x to x2 the first time a statement authorizes a read of x
+     * after {@link #replaceTableOnce()}. A statement authorizes the read as it opens the cursor of its plan,
+     * which then finds that x is no longer the table it planned to read.
+     */
+    private static final class TableReplacingSecurityContext extends AllowAllSecurityContext {
+        private boolean isReplacementPending;
+
+        @Override
+        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+            if (isReplacementPending && "x".equals(tableToken.getTableName())) {
+                isReplacementPending = false;
+                try {
+                    execute("RENAME TABLE x TO x_replaced");
+                    execute("RENAME TABLE x2 TO x");
+                } catch (SqlException e) {
+                    throw new AssertionError(e);
+                }
+            }
+        }
+
+        private boolean isReplacementPending() {
+            return isReplacementPending;
+        }
+
+        private void replaceTableOnce() {
+            isReplacementPending = true;
+        }
+    }
+}
