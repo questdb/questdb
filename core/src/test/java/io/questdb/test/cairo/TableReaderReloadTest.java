@@ -46,6 +46,16 @@ import static io.questdb.test.cairo.TableReaderTest.assertOpenPartitionCount;
 public class TableReaderReloadTest extends AbstractCairoTest {
 
     @Test
+    public void testReloadAfterDropBitmapIndexedColumnBeforePostingIndexedColumn() throws Exception {
+        testReloadAfterDropIndexedColumnBeforeIndexedColumn("BITMAP", "POSTING");
+    }
+
+    @Test
+    public void testReloadAfterDropPostingIndexedColumnBeforeBitmapIndexedColumn() throws Exception {
+        testReloadAfterDropIndexedColumnBeforeIndexedColumn("POSTING", "BITMAP");
+    }
+
+    @Test
     public void testReloadTruncateByDay() {
         testReloadAfterTruncate(PartitionBy.DAY, 3000000000L, false);
     }
@@ -105,6 +115,25 @@ public class TableReaderReloadTest extends AbstractCairoTest {
         testTruncateInsertReload(PartitionBy.YEAR, 365 * 50000000000L, false);
     }
 
+    private void assertIndexScans(String column) throws Exception {
+        final String expected = "ts\t" + column + "\n"
+                + "2024-01-01T00:00:00.000000Z\tx\n"
+                + "2024-01-02T00:00:00.000000Z\tx\n";
+        assertQuery("SELECT ts, " + column + " FROM t WHERE " + column + " = 'x'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .withPlanContaining("Index forward scan on: " + column)
+                .returns(expected);
+        final String expectedDesc = "ts\t" + column + "\n"
+                + "2024-01-02T00:00:00.000000Z\tx\n"
+                + "2024-01-01T00:00:00.000000Z\tx\n";
+        assertQuery("SELECT ts, " + column + " FROM t WHERE " + column + " = 'x' ORDER BY ts DESC")
+                .noLeakCheck()
+                .timestampDesc("ts")
+                .withPlanContaining("Index backward scan on: " + column)
+                .returns(expectedDesc);
+    }
+
     private void assertTable(Rnd rnd, long buffer, RecordCursor cursor, Record record) {
         while (cursor.hasNext()) {
             Assert.assertEquals(rnd.nextInt(), record.getInt(0));
@@ -141,6 +170,19 @@ public class TableReaderReloadTest extends AbstractCairoTest {
             timestamp += increment;
         }
         writer.commit();
+    }
+
+    private void testReloadAfterDropIndexedColumnBeforeIndexedColumn(String droppedIndexType, String keptIndexType) throws Exception {
+        // Dropping the first column moves the second one into its slot of the pooled reader.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, a SYMBOL INDEX TYPE " + droppedIndexType
+                    + ", b SYMBOL INDEX TYPE " + keptIndexType + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 'x', 'x'), ('2024-01-02T00:00:00', 'x', 'x')");
+            assertIndexScans("a");
+            assertIndexScans("b");
+            execute("ALTER TABLE t DROP COLUMN a");
+            assertIndexScans("b");
+        });
     }
 
     private void testReloadAfterTruncate(int partitionBy, long increment, boolean keepSymbolTables) {

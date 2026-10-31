@@ -2323,8 +2323,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return true; // Partition is already in Parquet format.
         }
 
-        lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-        boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
+        boolean lastPartitionConverted = false;
         long partitionNameTxn;
         int newPartitionDirLen = 0;
         boolean isTxnWriteStarted = false;
@@ -2334,6 +2333,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // a failed data sync must stop the engine under a durable commit mode.
             compactPartitionToPlain(partitionIndex, "parquet conversion");
             squashPartitionForce(partitionIndex);
+            // Only known after the squash: before it, the last partition can be a split sibling of this one,
+            // whose timestamp is not the logical partition timestamp. Missing that leaves columns[] open on
+            // the replaced native directory once the partition becomes parquet.
+            lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+            lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
             partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             if (!ff.exists(path.$())) {
@@ -2904,6 +2908,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 indexers.setQuick(columnIndex, null);
                 populateDenseIndexerList();
             }
+            configureCoveringIndexesOf(columnIndex);
 
             // purge old column versions
             finishColumnPurge();
@@ -2930,6 +2935,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .put(", table=").put(tableToken.getTableName())
                     .put(", column=").put(columnName)
                     .put("]: ").put(e.getMessage());
+        } catch (CairoError e) {
+            // A failed directory barrier has poisoned the engine; the error carries the stop
+            throw e;
         } catch (Throwable e) {
             // LOG original exception detail
             LOG.critical().$("exception on index drop [txn=").$(txWriter.getTxn())
@@ -3103,6 +3111,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // Call O3 methods to remove check TxnScoreboard and remove partition directly
             processPartitionRemoveCandidates(true);
+        }
+    }
+
+    /**
+     * Under SYNC, makes the names an operation has just added to an existing partition directory survive a power
+     * loss before the commit that names them: the column files DROP INDEX and UPDATE hard-link under a new name
+     * txn, the covering sidecars linked with them and the index files UPDATE rebuilds. Runs after the last link or
+     * write into the directory, whose own entry in the table directory is durable already. A failed barrier is a
+     * data-sync failure.
+     */
+    public void fsyncPartitionDirUnderSync(long partitionTimestamp, long partitionNameTxn) {
+        if (effectiveCommitMode != CommitMode.SYNC) {
+            return;
+        }
+        try {
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            fsyncPartitionDirUnderSync(other, other.size());
+        } finally {
+            other.trimTo(pathSize);
         }
     }
 
@@ -3563,6 +3590,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean isSymbolMapWriterCached(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex).isCached();
+    }
+
+    /**
+     * Keeps the covered values of the posting indexes that INCLUDE a column readable after the column moved to a new
+     * name txn in a partition without its data changing, as DROP INDEX moves it, and UPDATE moves the column of an
+     * index it rebuilds. See {@link #linkCoveringSidecars(int, int, long, long, long)}.
+     */
+    public void linkCoveringSidecars(
+            int coveredColumnIndex,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long coveredColumnNameTxn,
+            long newCoveredColumnNameTxn
+    ) {
+        try {
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            linkCoveringSidecars(path.size(), coveredColumnIndex, partitionTimestamp, coveredColumnNameTxn, newCoveredColumnNameTxn);
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
     }
 
     /**
@@ -4371,6 +4420,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                     }
                 }
+                configureCoveringIndexesOf(index);
 
                 // commit to _txn file
                 bumpMetadataAndColumnStructureVersion();
@@ -8069,6 +8119,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Points the live posting indexes that INCLUDE the column at its current name and name txn in the last open
+     * partition, after RENAME or DROP INDEX moved it to a new one. A seal names the covered values it writes after
+     * the name txn the index was configured with, while readers look them up under the column's current one. See
+     * {@link #linkCoveringSidecars(int, int, long, long, long)} for the values sealed before the move.
+     */
+    private void configureCoveringIndexesOf(int coveredColumnIndex) {
+        if (lastOpenPartitionTs == Long.MIN_VALUE) {
+            return;
+        }
+        for (int i = 0, n = Math.min(columnCount, indexers.size()); i < n; i++) {
+            if (i == coveredColumnIndex || metadata.getColumnType(i) <= 0 || !metadata.isColumnIndexed(i)
+                    || !IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                continue;
+            }
+            final IntList coveredColumns = metadata.getColumnMetadata(i).getCoveringColumnIndices();
+            if (coveredColumns == null || coveredColumns.indexOf(coveredColumnIndex, 0, coveredColumns.size()) < 0) {
+                continue;
+            }
+            final ColumnIndexer indexer = indexers.getQuick(i);
+            if (indexer != null && indexer.getWriter().isOpen()) {
+                configureCoveringIfNeeded(indexer, i, lastOpenPartitionTs);
+            }
+        }
+    }
+
+    /**
      * A composite (or parquet) active partition leaves {@code columns[]} closed, so {@link #openPartition(long, long)}
      * - the only thing that reconfigures a BITMAP indexer's live follower - never runs for it, and the indexer keeps
      * whatever closed, unmapped {@code IndexWriter} an earlier {@link #closeActivePartition(boolean)} left behind.
@@ -10344,6 +10420,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         TableUtils.fsyncDirDurable(ff, dirFsyncPath.trimTo(pathSize).$());
     }
 
+    /**
+     * Under SYNC, flushes the file names of an existing partition directory, see
+     * {@link #fsyncPartitionDirUnderSync(long, long)}. A failed barrier is a data-sync failure.
+     */
+    private void fsyncPartitionDirUnderSync(Path partitionPath, int partitionDirLen) {
+        if (effectiveCommitMode != CommitMode.SYNC) {
+            return;
+        }
+        if (dirFsyncPath == null) {
+            dirFsyncPath = new Path();
+        }
+        // A copy, as fsyncPartitionDirEntries: $() writes a NUL at the end of the sequence.
+        dirFsyncPath.of(partitionPath).trimTo(partitionDirLen);
+        try {
+            TableUtils.fsyncDirDurable(ff, dirFsyncPath.$());
+        } catch (CairoException e) {
+            if (engine.isDataSyncFailureFatal(e)) {
+                distressed = true;
+                engine.handleDataSyncFailure(e);
+            }
+            throw e;
+        }
+    }
+
     private CharSequence getColumnNameSafe(int columnIndex) {
         try {
             return metadata.getColumnName(columnIndex);
@@ -10646,6 +10746,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         valueFileName(indexType, other.trimTo(plen), newName, newColumnNameTxn, newColumnNameTxn));
             }
         }
+        linkCoveringSidecars(plen, columnIndex, partitionTimestamp, columnNameTxn, newColumnNameTxn);
+        // The links are the last names this rename adds to the partition directory.
+        fsyncPartitionDirUnderSync(path, plen);
         path.trimTo(pathSize);
         other.trimTo(pathSize);
         purgingOperator.add(columnIndex, columnName, columnType, indexType, columnNameTxn, partitionTimestamp, partitionNameTxn);
@@ -11455,6 +11558,64 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * A covering sidecar file name carries the name txn of the column it covers, and readers resolve it from the
+     * column's current name txn. RENAME, DROP INDEX and UPDATE move a column to a new name txn without changing its
+     * data, UPDATE the column of an index it rebuilds, so this links every sidecar of every posting index that covers
+     * the column in the partition under the new txn.
+     * The old names stay for readers of earlier txns; a seal purge removes both once the generation is superseded.
+     * Expects {@code path} and {@code other} to point at the partition directory.
+     */
+    private void linkCoveringSidecars(
+            int plen,
+            int coveredColumnIndex,
+            long partitionTimestamp,
+            long coveredColumnNameTxn,
+            long newCoveredColumnNameTxn
+    ) {
+        for (int i = 0; i < columnCount; i++) {
+            if (i == coveredColumnIndex || metadata.getColumnType(i) <= 0 || !metadata.isColumnIndexed(i)
+                    || !IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                continue;
+            }
+            final IntList coveredColumns = metadata.getColumnMetadata(i).getCoveringColumnIndices();
+            if (coveredColumns == null || coveredColumns.indexOf(coveredColumnIndex, 0, coveredColumns.size()) < 0) {
+                continue;
+            }
+            final CharSequence indexColumnName = metadata.getColumnName(i);
+            // A sidecar name writes name txn 0 of the index column as no name txn, and the scan reads it back so.
+            final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, i);
+            final long indexColumnNameTxn = columnNameTxn == 0 ? COLUMN_NAME_TXN_NONE : columnNameTxn;
+            PostingIndexUtils.scanSealedFiles(ff, path, plen, indexColumnName, new PostingIndexUtils.SealedFileVisitor() {
+                @Override
+                public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long fileCoveredColumnNameTxn, long sealTxn) {
+                    if (postingColumnNameTxn != indexColumnNameTxn
+                            || fileCoveredColumnNameTxn != coveredColumnNameTxn
+                            || includeIdx >= coveredColumns.size()
+                            || coveredColumns.getQuick(includeIdx) != coveredColumnIndex) {
+                        return;
+                    }
+                    final LPSZ src = PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexColumnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
+                    final LPSZ dst = PostingIndexUtils.coverDataFileName(other.trimTo(plen), indexColumnName, includeIdx, postingColumnNameTxn, newCoveredColumnNameTxn, sealTxn);
+                    try {
+                        linkFile(ff, src, dst);
+                    } catch (CairoException e) {
+                        // A seal purge may remove a superseded generation concurrently; nobody reads it then.
+                        if (ff.exists(src)) {
+                            throw e;
+                        }
+                    }
+                }
+
+                @Override
+                public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+                }
+            });
+        }
+        path.trimTo(plen);
+        other.trimTo(plen);
+    }
+
+    /**
      * Hard-links auxiliary posting index files (sealed .pv.{txns}, sidecar .pci/.pc*)
      * from the source partition directory to the destination. The .pk is already
      * linked by the caller.
@@ -11508,14 +11669,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // than reading the (includeIdx, coveredColumnNameTxn) tuples from .pci:
         // ALTER on covered columns can leave .pci's per-column count out of
         // sync with the on-disk reality, so the directory listing is the
-        // source of truth.
+        // source of truth. A sidecar name writes name txn 0 as no name txn, and the scan reads it back so.
+        final long srcSidecarColumnNameTxn = srcColumnNameTxn == 0 ? COLUMN_NAME_TXN_NONE : srcColumnNameTxn;
         PostingIndexUtils.scanSealedFiles(ff, path, srcDirLen, srcColumnName, new PostingIndexUtils.SealedFileVisitor() {
             @Override
             public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
                 // Match the live generation. pvSealTxn folds the empty
                 // chain into sealTxn=0 so pre-seal .pc<N>.<col>.0.* files
                 // are linked alongside the live .pv.<col>.0.
-                if (postingColumnNameTxn != srcColumnNameTxn || sealTxn != pvSealTxn) {
+                if (postingColumnNameTxn != srcSidecarColumnNameTxn || sealTxn != pvSealTxn) {
                     return;
                 }
                 linkFile(ff,
@@ -12947,6 +13109,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Now it's safe to remove the empty split partition
                         partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
                         removeAttachedPartitionsTracked(partitionTimestamp);
+
+                        // FrameAlgebra.append indexed the copied rows without their covered values, and the
+                        // new split has no block in the partition update sink, so the O3 seal sweep never
+                        // reaches it. Reseal it here, as compaction and squash do after their frame copies.
+                        path.trimTo(pathSize);
+                        try {
+                            if (sealPostingIndexForPartition(newSplitPartitionTimestamp, false)) {
+                                restorePostingIndexersToLastPartition();
+                            }
+                        } catch (Throwable th) {
+                            LOG.critical().$("split partition removal succeeded but posting-index reseal failed `").$(th).$('`').$();
+                            distressed = true;
+                            throw th;
+                        }
                     } finally {
                         path.trimTo(pathSize);
                         other.trimTo(pathSize);

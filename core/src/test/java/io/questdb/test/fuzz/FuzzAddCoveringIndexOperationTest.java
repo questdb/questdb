@@ -25,68 +25,79 @@
 package io.questdb.test.fuzz;
 
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.IntList;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
-/**
- * Regression test for the {@link FuzzAddCoveringIndexOperation} flake observed in
- * ReplicationFuzzTest.testPrimaryMigration (Azure build 241911):
- * <pre>
- *   io.questdb.griffin.SqlException: [48] indexes are only supported for symbol type
- *       [column=new_col_12, type=BYTE]
- *       at io.questdb.test.fuzz.FuzzAddCoveringIndexOperation.executePostDrain(...)
- * </pre>
- *
- * <p>Root cause: {@code executePostDrain} validates that its target column is a SYMBOL by
- * reading {@link io.questdb.cairo.CairoEngine#getTableMetadata}, which for WAL tables is the
- * <b>lagging</b> applied metadata. It then issues an {@code ALTER TABLE ... ADD INDEX} which is
- * validated against {@code getMetadataForWrite} → {@code getSequencerMetadata}, the <b>fresh</b>
- * write-side metadata. When the table metadata lags behind a drop/re-add (column-name reuse) that
- * changed the column from SYMBOL to a non-symbol type, the operation emits an ALTER on a name that
- * now resolves to a non-symbol column, and the resulting {@code SqlException} is not in its
- * swallowed-error set — so it propagates and fails the fuzz test.
- *
- * <p>This test reproduces the metadata skew deterministically (no fuzz seed, no concurrency) by
- * issuing the structural change through the sequencer but not draining it to the table. It is RED
- * against the current operation and should go GREEN once {@code executePostDrain} tolerates the
- * column no longer being a symbol when resolved at execution time.
- */
 public class FuzzAddCoveringIndexOperationTest extends AbstractCairoTest {
 
     @Test
-    public void testExecutePostDrainToleratesStaleSymbolColumnTypeChange() throws Exception {
+    public void testApplyAddsCoveringIndexThroughTableWriter() throws Exception {
         assertMemoryLeak(() -> {
-            final String tableName = "covering_idx_skew";
-
-            // WAL table with a SYMBOL column 's' at index 1 (index 0 is the designated timestamp).
-            execute("create table " + tableName + " (ts timestamp, s symbol) timestamp(ts) partition by day wal");
-            drainWalQueue();
-
-            final TableToken tableToken = engine.verifyTableName(tableName);
-            final int symbolColumnIndex;
-            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
-                symbolColumnIndex = metadata.getColumnIndex("s");
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 'A', 1.0)");
+            try (TableWriter writer = getWriter("t")) {
+                newOperation("t", "v").apply(new Rnd(), engine, writer, -1, null);
             }
-
-            // Drop 's' (SYMBOL) and re-add 's' as a non-symbol (BYTE) via the sequencer, reusing the name.
-            // Deliberately DO NOT drain the WAL queue: the applied table metadata read by
-            // executePostDrain still reports 's' as SYMBOL at symbolColumnIndex, while the
-            // sequencer metadata that ALTER ... ADD INDEX validates against already sees 's' as BYTE.
-            execute("alter table " + tableName + " drop column s");
-            execute("alter table " + tableName + " add column s byte");
-
-            // INCLUDE the designated timestamp column (index 0) so the covering index SQL is emitted.
-            final IntList includeColumnIndices = new IntList();
-            includeColumnIndices.add(0);
-
-            final FuzzAddCoveringIndexOperation op =
-                    new FuzzAddCoveringIndexOperation(symbolColumnIndex, includeColumnIndices, "POSTING");
-
-            // Must not surface "indexes are only supported for symbol type": the operation has to
-            // be resilient to the target column no longer being a symbol when the ALTER executes.
-            op.executePostDrain(engine, tableName);
+            assertCoveringIndex("t");
         });
+    }
+
+    @Test
+    public void testApplyAddsCoveringIndexThroughWalWriter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 'A', 1.0)");
+            drainWalQueue();
+            try (WalWriter writer = getWalWriter("t")) {
+                newOperation("t", "v").apply(new Rnd(), engine, writer, -1, null);
+            }
+            drainWalQueue();
+            assertCoveringIndex("t");
+        });
+    }
+
+    @Test
+    public void testApplySkipsSymbolColumnReplacedByNonSymbol() throws Exception {
+        // The operation keeps the column index it was generated with. A drop and re-add under the same name, not yet
+        // applied to the table, must leave it with nothing to index rather than an ALTER on a non-symbol column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            final FuzzAddCoveringIndexOperation op = newOperation("t", "ts");
+            execute("ALTER TABLE t DROP COLUMN s");
+            execute("ALTER TABLE t ADD COLUMN s BYTE");
+            try (WalWriter writer = getWalWriter("t")) {
+                op.apply(new Rnd(), engine, writer, -1, null);
+            }
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("t");
+            try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+                Assert.assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("s")));
+            }
+        });
+    }
+
+    private static void assertCoveringIndex(String tableName) {
+        try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(tableName))) {
+            final int symbolColumnIndex = metadata.getColumnIndex("s");
+            Assert.assertTrue(metadata.isColumnIndexed(symbolColumnIndex));
+            final IntList covered = metadata.getColumnMetadata(symbolColumnIndex).getCoveringColumnIndices();
+            Assert.assertNotNull(covered);
+            Assert.assertTrue(covered.contains(metadata.getWriterIndex(metadata.getColumnIndex("v"))));
+        }
+    }
+
+    private static FuzzAddCoveringIndexOperation newOperation(String tableName, String includeColumnName) {
+        try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(tableName))) {
+            final IntList includeColumnIndices = new IntList();
+            includeColumnIndices.add(metadata.getColumnIndex(includeColumnName));
+            return new FuzzAddCoveringIndexOperation(metadata.getColumnIndex("s"), includeColumnIndices, "POSTING");
+        }
     }
 }

@@ -246,7 +246,9 @@ public class FuzzTransactionGenerator {
             } else if (wantToConvertPartitionToNative) {
                 generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
             } else if (wantToAddCoveringIndex) {
-                generateAddCoveringIndex(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
+                if (generateAddCoveringIndex(transactionList, metaVersion, waitBarrierVersion, rnd, meta)) {
+                    waitBarrierVersion++;
+                }
             } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else if (wantToChangeColumnType && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
@@ -377,7 +379,7 @@ public class FuzzTransactionGenerator {
         return null;
     }
 
-    private static void generateAddCoveringIndex(
+    private static boolean generateAddCoveringIndex(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
             Rnd rnd, RecordMetadata meta
     ) {
@@ -389,7 +391,7 @@ public class FuzzTransactionGenerator {
             }
         }
         if (symbolCols.size() == 0) {
-            return;
+            return false;
         }
         int symCol = symbolCols.getQuick(rnd.nextInt(symbolCols.size()));
 
@@ -402,7 +404,7 @@ public class FuzzTransactionGenerator {
             }
         }
         if (candidates.size() == 0) {
-            return;
+            return false;
         }
         int includeCount = Math.min(1 + rnd.nextInt(3), candidates.size());
         IntList includeIndices = new IntList();
@@ -424,8 +426,9 @@ public class FuzzTransactionGenerator {
         transaction.operationList.add(new FuzzAddCoveringIndexOperation(symCol, includeIndices, indexTypeName));
         transaction.structureVersion = metadataVersion;
         transaction.waitBarrierVersion = waitBarrierVersion;
-        transaction.rollback = true;
+        transaction.waitAllDone = true;
         transactionList.add(transaction);
+        return true;
     }
 
     private static void generateConvertPartitionToNative(
