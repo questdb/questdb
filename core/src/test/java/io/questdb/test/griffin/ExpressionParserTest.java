@@ -459,6 +459,30 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseLikeSwitchBracketedOperand() throws SqlException {
+        x("b true 'a' 'b' case", "case (b) when true then 'a' else 'b' end");
+    }
+
+    @Test
+    public void testCaseLikeSwitchCaseOperand() throws SqlException {
+        x(" b true false case true 'a' 'b' case", "case case when b then true else false end when true then 'a' else 'b' end");
+    }
+
+    @Test
+    public void testCaseLikeSwitchFunctionOperand() throws SqlException {
+        x("x abs 1 'a' 2 'b' case", "case abs(x) when 1 then 'a' when 2 then 'b' end");
+    }
+
+    @Test
+    public void testCaseLikeSwitchListOperand() {
+        assertFail(
+                "case (1, 2) when 1 then 'a' end",
+                12,
+                "'case' operand must be a single value"
+        );
+    }
+
+    @Test
     public void testCaseLowercase() throws SqlException {
         x("10  w1 1 + 5 * 10 = 'th1' 1 - w2 3 * 1 > 'th2' 0 case 1 + *",
                 "10*(CASE" +
@@ -647,7 +671,7 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCaseWithCast() throws SqlException {
-        x("1 int cast  1 'th1' 2 'th2' 0 case 5 * 1 +",
+        x("1 int cast 1 'th1' 2 'th2' 0 case 5 * 1 +",
                 "case (cast(1 as int))" +
                         " when 1" +
                         " then 'th1'" +
