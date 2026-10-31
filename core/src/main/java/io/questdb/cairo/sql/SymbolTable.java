@@ -79,4 +79,15 @@ public interface SymbolTable {
      * @return mutable CharSequence value of the symbol
      */
     CharSequence valueOf(int key);
+
+    /**
+     * Looks up a key like {@link #valueOf(int)} for a caller that resolves each key once, so a
+     * cache shared with other readers gains nothing by keeping the value.
+     *
+     * @param key numeric key of the symbol
+     * @return mutable CharSequence value of the symbol
+     */
+    default CharSequence valueOfOnce(int key) {
+        return valueOf(key);
+    }
 }

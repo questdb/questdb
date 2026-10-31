@@ -44,6 +44,15 @@ public class DirectString extends AbstractCharSequence implements DirectCharSequ
         this.stableSource = stableSource;
     }
 
+    /**
+     * Returns true when the chars of {@code cs} are the UTF-16 units in [{@link #lo()},
+     * {@link #hi()}), so a caller may read that memory instead of calling {@link #charAt(int)},
+     * and {@link #hashCode()} returns the hash of those chars.
+     */
+    public static boolean isRawView(CharSequence cs) {
+        return cs instanceof DirectString ds && ds.isRaw();
+    }
+
     @Override
     public char charAt(int index) {
         return Unsafe.getChar(lo + ((long) index << 1));
@@ -115,6 +124,14 @@ public class DirectString extends AbstractCharSequence implements DirectCharSequ
     @Override
     public int size() {
         return (int) (hi - lo);
+    }
+
+    /**
+     * See {@link #isRawView(CharSequence)}. A subclass that keeps that contract while overriding
+     * an accessor returns true.
+     */
+    protected boolean isRaw() {
+        return getClass() == DirectString.class;
     }
 
     @Override

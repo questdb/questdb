@@ -25,13 +25,65 @@
 package io.questdb.test.std;
 
 import io.questdb.std.CharSequenceHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.HashSet;
 
 public class CharSequenceHashSetTest {
+
+    @Test
+    public void testNullBeforeRehash() {
+        for (int nullPosition : new int[]{0, 15, 16}) {
+            for (int mode = 0; mode < 2; mode++) {
+                CharSequenceHashSet set = new CharSequenceHashSet();
+                ObjList<CharSequence> expected = new ObjList<>();
+                for (int i = 0; i < 80; i++) {
+                    if (i == nullPosition) {
+                        Assert.assertTrue(set.addNull());
+                        Assert.assertFalse(set.addNull());
+                        expected.add(null);
+                    }
+                    StringSink key = new StringSink();
+                    key.put("key_").put(i);
+                    if (mode == 0) {
+                        Assert.assertTrue(set.add(key));
+                        expected.add(key.toString());
+                    } else {
+                        set.addAtWithBorrowed(set.keyIndex(key), key);
+                        Assert.assertSame(key, set.keyAt(set.keyIndex(key)));
+                        expected.add(key);
+                    }
+                }
+                assertContents(set, expected);
+                Assert.assertEquals(nullPosition, set.getList().indexOf(null));
+                CharSequenceHashSet copy = new CharSequenceHashSet(set);
+                CharSequenceHashSet added = new CharSequenceHashSet();
+                added.addAll(set);
+                assertContents(copy, expected);
+                assertContents(added, expected);
+                Assert.assertTrue(set.remove("key_7") >= 0);
+                expected.remove(expected.getQuick(7 < nullPosition ? 7 : 8));
+                Assert.assertEquals(nullPosition > 7 ? nullPosition - 1 : nullPosition, set.removeNull());
+                expected.remove(null);
+                Assert.assertFalse(set.contains(null));
+                Assert.assertFalse(set.contains("key_7"));
+                assertContents(set, expected);
+                set.clear();
+                Assert.assertEquals(0, set.size());
+                Assert.assertFalse(set.contains(null));
+                set.addAll(copy);
+                assertContents(set, copy.getList());
+                Assert.assertEquals(81, set.size());
+                Assert.assertTrue(set.contains(null));
+                Assert.assertTrue(set.contains("key_7"));
+                Assert.assertEquals(nullPosition, set.getList().indexOf(null));
+            }
+        }
+    }
 
     @Test
     public void testNullHandling() {
@@ -98,6 +150,15 @@ public class CharSequenceHashSetTest {
         }
 
         Assert.assertEquals(0, set.size());
+    }
+
+    private static void assertContents(CharSequenceHashSet set, ObjList<CharSequence> expected) {
+        Assert.assertEquals(expected.size(), set.size());
+        for (int i = 0; i < expected.size(); i++) {
+            CharSequence key = expected.getQuick(i);
+            Assert.assertTrue(set.contains(key));
+            Assert.assertEquals(key == null ? null : key.toString(), set.get(i) == null ? null : set.get(i).toString());
+        }
     }
 
     private static CharSequence next(Rnd rnd) {

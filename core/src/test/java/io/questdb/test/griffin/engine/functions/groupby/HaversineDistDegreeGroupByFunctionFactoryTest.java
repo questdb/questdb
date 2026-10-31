@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Ignore;
 import org.junit.Test;
@@ -240,10 +241,10 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                     Record record = cursor.getRecord();
                     Assert.assertTrue(cursor.hasNext());
-                    Assert.assertEquals("AAA", record.getSymA(0));
+                    TestUtils.assertEquals("AAA", record.getSymA(0));
                     Assert.assertEquals(1414.545985354098, record.getDouble(1), DELTA);
                     Assert.assertTrue(cursor.hasNext());
-                    Assert.assertEquals("BBB", record.getSymA(0));
+                    TestUtils.assertEquals("BBB", record.getSymA(0));
                     Assert.assertEquals(137.51028123371657, record.getDouble(1), DELTA);
                 }
             }

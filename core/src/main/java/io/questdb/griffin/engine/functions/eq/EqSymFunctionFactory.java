@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
@@ -77,6 +78,7 @@ public class EqSymFunctionFactory implements FunctionFactory {
         // Lookup hash table for lazy matching key caching
         private final DirectIntIntHashMap lookupCache;
         private StaticSymbolTable leftTable;
+        private SymbolTable leftView;
         private StaticSymbolTable rightTable;
 
         public Func(Function left, Function right) {
@@ -89,6 +91,7 @@ public class EqSymFunctionFactory implements FunctionFactory {
         public void close() {
             super.close();
             Misc.free(lookupCache);
+            leftView = Misc.freeIfCloseable(leftView);
         }
 
         @Override
@@ -118,7 +121,7 @@ public class EqSymFunctionFactory implements FunctionFactory {
             if (index < 0) {
                 matchingRightKey = lookupCache.valueAt(index);
             } else {
-                final CharSequence leftSym = leftTable.valueOf(leftKey);
+                final CharSequence leftSym = leftView != null ? leftView.valueOf(leftKey) : leftTable.valueOf(leftKey);
                 matchingRightKey = rightTable.keyOf(leftSym);
                 lookupCache.putAt(index, leftKey + 1, matchingRightKey);
             }
@@ -130,6 +133,8 @@ public class EqSymFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             this.leftTable = ((SymbolFunction) left).getStaticSymbolTable();
+            leftView = Misc.freeIfCloseable(leftView);
+            leftView = ((SymbolFunction) left).newSymbolTable();
             this.rightTable = ((SymbolFunction) right).getStaticSymbolTable();
             lookupCache.restoreInitialCapacity();
         }

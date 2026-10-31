@@ -1070,6 +1070,25 @@ public class Utf8sTest {
     }
 
     @Test
+    public void testIsAsciiJsonUtf16() {
+        for (int lane = 0; lane < 4; lane++) {
+            int shift = lane * 16;
+            long otherLanes = 0x0061006100610061L & ~(0xffffL << shift);
+            for (int c = 0; c <= Character.MAX_VALUE; c++) {
+                boolean isUnescapedAscii = c >= 32 && c < 128 && c != '"' && c != '\\';
+                Assert.assertEquals(isUnescapedAscii, Utf8s.isAsciiJsonUtf16(otherLanes | ((long) c << shift)));
+            }
+        }
+        for (int first = 0; first < 128; first++) {
+            for (int second = 0; second < 128; second++) {
+                boolean isUnescapedAscii = first >= 32 && first != '"' && first != '\\'
+                        && second >= 32 && second != '"' && second != '\\';
+                Assert.assertEquals(isUnescapedAscii, Utf8s.isAsciiJsonUtf16(((long) first << 48) | ((long) second << 32) | 0x00610061L));
+            }
+        }
+    }
+
+    @Test
     public void testIsAsciiTrailingNonAscii() {
         // Non-ASCII byte in the trailing bytes after the 8-byte loop
         // 9 bytes: 8 ASCII + 1 non-ASCII in the tail

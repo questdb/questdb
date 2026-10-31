@@ -31,9 +31,13 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -41,9 +45,18 @@ import org.jetbrains.annotations.Nullable;
 public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupByFunction, UnaryFunction {
     protected final SymbolFunction arg;
     protected int valueIndex;
+    // A view of its own: first(s) and last(s) would otherwise resolve through the one reader of
+    // column s and rebind each other's values inside nullif(first(s), last(s)) and alike.
+    private SymbolTable symbolTable;
 
     public FirstSymbolGroupByFunction(@NotNull SymbolFunction arg) {
         this.arg = arg;
+    }
+
+    @Override
+    public void close() {
+        UnaryFunction.super.close();
+        symbolTable = Misc.freeIfCloseable(symbolTable);
     }
 
     @Override
@@ -81,17 +94,26 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
 
     @Override
     public CharSequence getSymbol(Record rec) {
-        return arg.valueOf(getInt(rec));
+        return valueOf(getInt(rec));
     }
 
     @Override
     public CharSequence getSymbolB(Record rec) {
-        return arg.valueBOf(getInt(rec));
+        return valueBOf(getInt(rec));
     }
 
     @Override
     public int getValueIndex() {
         return valueIndex;
+    }
+
+    @Override
+    public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        UnaryFunction.super.init(symbolTableSource, executionContext);
+        symbolTable = Misc.freeIfCloseable(symbolTable);
+        if (arg.isSymbolTableStatic()) {
+            symbolTable = arg.newSymbolTable();
+        }
     }
 
     @Override
@@ -159,11 +181,11 @@ public class FirstSymbolGroupByFunction extends SymbolFunction implements GroupB
 
     @Override
     public CharSequence valueBOf(int key) {
-        return arg.valueBOf(key);
+        return symbolTable != null ? symbolTable.valueBOf(key) : arg.valueBOf(key);
     }
 
     @Override
     public CharSequence valueOf(int key) {
-        return arg.valueOf(key);
+        return symbolTable != null ? symbolTable.valueOf(key) : arg.valueOf(key);
     }
 }

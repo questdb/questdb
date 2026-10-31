@@ -46,6 +46,7 @@ import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.griffin.model.RuntimeIntervalModel;
+import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -715,15 +716,15 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
 
             int keyCount = indexReader.getKeyCount();
             for (int i = 0; i < keyCount; i++) {
-                RowCursor ic = indexReader.getCursor(i, low, limit - 1);
-                CharSequence expected = symbolTable.valueOf((int) (i - low - 1));
-                while (ic.hasNext()) {
-                    long row = ic.next();
-                    record.setRecordIndex(row);
-                    TestUtils.assertEquals(expected, record.getSymA(columnIndex));
-                    rowCount++;
+                try (RowCursor ic = indexReader.getCursor(i, low, limit - 1)) {
+                    CharSequence expected = Chars.toString(symbolTable.valueOf(i - 1));
+                    while (ic.hasNext()) {
+                        long row = ic.next() + low;
+                        record.setRecordIndex(row);
+                        TestUtils.assertEquals(expected, record.getSymA(columnIndex));
+                        rowCount++;
+                    }
                 }
-                Misc.free(ic);
             }
         }
         if (allNative) {
