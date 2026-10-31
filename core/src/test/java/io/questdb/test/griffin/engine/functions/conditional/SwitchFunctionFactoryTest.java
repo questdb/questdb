@@ -1085,6 +1085,44 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntMinusOneKey() throws Exception {
+        // IntObjHashMap marks a free slot with -1, so the WHEN branch for -1 used to never match
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT
+                            CASE WHEN x = 4 THEN NULL ELSE x - 2 END::INT i,
+                            (x - 2)::SHORT s,
+                            (x - 2)::BYTE b,
+                            CASE WHEN x = 1 THEN '255.255.255.255' ELSE '10.0.0.1' END::IPv4 ip
+                        FROM long_sequence(4)
+                    )""");
+            assertQuery("""
+                    SELECT
+                        i,
+                        CASE i WHEN -1 THEN 'minus one' WHEN 1 THEN 'one' ELSE 'other' END ci,
+                        CASE s WHEN -1 THEN 'minus one' WHEN 1 THEN 'one' ELSE 'other' END cs,
+                        CASE b WHEN -1 THEN 'minus one' WHEN 1 THEN 'one' ELSE 'other' END cb,
+                        CASE ip WHEN '255.255.255.255' THEN 'broadcast' ELSE 'other' END cip
+                    FROM t""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tci\tcs\tcb\tcip
+                            -1\tminus one\tminus one\tminus one\tbroadcast
+                            0\tother\tother\tother\tother
+                            1\tone\tone\tone\tother
+                            null\tother\tother\tother\tother
+                            """);
+            assertExceptionNoLeakCheck(
+                    "SELECT CASE i WHEN -1 THEN 'a' WHEN -1 THEN 'b' END FROM t",
+                    36,
+                    "duplicate branch"
+            );
+        });
+    }
+
+    @Test
     public void testIntOrElse() throws Exception {
         assertQuery("""
                 select\s
@@ -1354,6 +1392,35 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ")")
                 .fails(136, "duplicate branch");
+    }
+
+    @Test
+    public void testLongMinusOneKey() throws Exception {
+        // LongObjHashMap marks a free slot with -1, so the WHEN branch for -1 used to never match
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT CASE WHEN x = 4 THEN NULL ELSE x - 2 END l, (x - 2)::DATE d FROM long_sequence(4))");
+            assertQuery("""
+                    SELECT
+                        l,
+                        CASE l WHEN -1 THEN 'minus one' WHEN 1 THEN 'one' ELSE 'other' END cl,
+                        d,
+                        CASE d WHEN '1969-12-31T23:59:59.999Z' THEN 'minus one' WHEN '1970-01-01T00:00:00.001Z' THEN 'one' ELSE 'other' END cd
+                    FROM t""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            l\tcl\td\tcd
+                            -1\tminus one\t1969-12-31T23:59:59.999Z\tminus one
+                            0\tother\t1970-01-01T00:00:00.000Z\tother
+                            1\tone\t1970-01-01T00:00:00.001Z\tone
+                            null\tother\t1970-01-01T00:00:00.002Z\tother
+                            """);
+            assertExceptionNoLeakCheck(
+                    "SELECT CASE l WHEN -1 THEN 'a' WHEN -1 THEN 'b' END FROM t",
+                    36,
+                    "duplicate branch"
+            );
+        });
     }
 
     @Test
@@ -2277,6 +2344,35 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampMinusOneKey() throws Exception {
+        // LongObjHashMap marks a free slot with -1, so the WHEN branch for the timestamp one
+        // unit before the epoch used to never match
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT (x - 2)::TIMESTAMP ts, (x - 2)::TIMESTAMP_NS ns FROM long_sequence(3))");
+            assertQuery("""
+                    SELECT
+                        ts,
+                        CASE ts WHEN '1969-12-31T23:59:59.999999Z' THEN 'minus one' ELSE 'other' END cts,
+                        ns,
+                        CASE ns WHEN '1969-12-31T23:59:59.999999999Z' THEN 'minus one' ELSE 'other' END cns
+                    FROM t""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tcts\tns\tcns
+                            1969-12-31T23:59:59.999999Z\tminus one\t1969-12-31T23:59:59.999999999Z\tminus one
+                            1970-01-01T00:00:00.000000Z\tother\t1970-01-01T00:00:00.000000000Z\tother
+                            1970-01-01T00:00:00.000001Z\tother\t1970-01-01T00:00:00.000000001Z\tother
+                            """);
+            assertExceptionNoLeakCheck(
+                    "SELECT CASE ts WHEN '1969-12-31T23:59:59.999999Z' THEN 'a' WHEN '1969-12-31T23:59:59.999999Z' THEN 'b' END FROM t",
+                    64,
+                    "duplicate branch"
+            );
+        });
+    }
+
+    @Test
     public void testTimestampOrElse() throws Exception {
         assertQuery("""
                 select\s
@@ -2322,5 +2418,37 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         1970-01-01T00:00:01.800000Z\tB\tE\tO\tE
                         1970-01-01T00:00:01.900000Z\tU\tO\tJ\tZ
                         """);
+    }
+
+    @Test
+    public void testUnaryOperand() throws Exception {
+        // a minus or a complement right after CASE used to be taken for a binary operator,
+        // which failed with "too few arguments"
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT CASE WHEN x = 4 THEN NULL ELSE x END::INT i FROM long_sequence(4))");
+            assertQuery("""
+                    SELECT
+                        i,
+                        CASE -i WHEN -2 THEN 'minus two' WHEN -3 THEN 'minus three' ELSE 'other' END c1,
+                        CASE ~i WHEN -2 THEN 'minus two' ELSE 'other' END c2,
+                        CASE -i + 3 WHEN 0 THEN 'zero' ELSE 'other' END c3,
+                        CASE -abs(i) WHEN -2 THEN 'minus two' ELSE 'other' END c4
+                    FROM t""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            i\tc1\tc2\tc3\tc4
+                            1\tother\tminus two\tother\tother
+                            2\tminus two\tother\tother\tminus two
+                            3\tminus three\tother\tzero\tother
+                            null\tother\tother\tother\tother
+                            """);
+            assertQuery("SELECT i FROM t WHERE CASE -i WHEN -2 THEN true ELSE false END")
+                    .noLeakCheck()
+                    .returns("""
+                            i
+                            2
+                            """);
+        });
     }
 }

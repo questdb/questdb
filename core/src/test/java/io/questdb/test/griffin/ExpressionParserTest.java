@@ -427,6 +427,15 @@ public class ExpressionParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCaseDanglingUnaryOperatorAfterCase() {
+        assertFail(
+                "1 + case - when 1 then 'a' end",
+                9,
+                "too few arguments for '-' [found=0,expected=1]"
+        );
+    }
+
+    @Test
     public void testCaseDanglingWildcard() {
         // the wildcard replaces the 'case', so the error points at the keyword left without one
         assertFail("case.* when 1 then 2 end", 7, "unbalanced 'case'");
@@ -603,6 +612,13 @@ public class ExpressionParserTest extends AbstractCairoTest {
     public void testCaseNested() throws SqlException {
         x(" x 0 >  y 1 = 'a' 'b' case x 0 < 'c' case",
                 "case when x > 0 then case when y = 1 then 'a' else 'b' end when x < 0 then 'c' end");
+    }
+
+    @Test
+    public void testCaseUnaryOperand() throws SqlException {
+        x("x - 1 - 'a' 'b' case", "case -x when -1 then 'a' else 'b' end");
+        x("x ~ 1 'a' case", "case ~x when 1 then 'a' end");
+        x("1 x - 1 + 0 'a' case +", "1 + case -x + 1 when 0 then 'a' end");
     }
 
     @Test
