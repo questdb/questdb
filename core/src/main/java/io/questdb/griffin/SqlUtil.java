@@ -380,12 +380,13 @@ public class SqlUtil {
      * This also adds {@code *} for the tables in {@code wildcardSources} whose wildcard the optimised
      * model keeps whole: the optimiser keeps every column of the sub-query the wildcard sits in, so the
      * view reads every column of the table, including one the table gains after the view is created.
-     * For that, the scan the wildcard selects has to read every column the optimiser enumerated for it,
-     * not every column the table has by the time this runs: a column an ALTER TABLE adds while the view
-     * compiles is not in the plan built before it, and the {@code *} covers it once the plan is built
-     * again. Another scan of the table, elsewhere in the plan or under the same sub-query, such as the
-     * other side of a self-join, can have enumerated the columns after the ALTER TABLE, so the check
-     * leaves it out.
+     * The scan the wildcard selects then reads every column the optimiser enumerated for it, which this
+     * asserts. A column an ALTER TABLE adds while the view compiles is not in the plan built before it,
+     * and the {@code *} covers it once the plan is built again.
+     * <p>
+     * A table whose columns include {@code *} lists no other column: the {@code *} lends every column of
+     * the table, and the names next to it would only make the view definition larger, on disk and in
+     * memory, in proportion to the width of the table.
      * <p>
      * The optimiser shares a model between several places of the SELECT, as it does the left side of a
      * LATERAL join, so the number of paths to a model can double with each LATERAL join nested in the
@@ -408,6 +409,7 @@ public class SqlUtil {
         wildcardSources.clearReads();
         collectTableColumnReads(engine, model, depMap, wildcardSources, false);
         collectKeptWildcardReferences(engine, model, depMap, wildcardSources);
+        dropColumnsCoveredByWildcard(depMap);
     }
 
     /**
@@ -2244,15 +2246,16 @@ public class SqlUtil {
             if (columns == null || columns.contains("*")) {
                 continue;
             }
-            // The scan the wildcard selects reads every column of the table when the plan keeps the wildcard
-            // whole. One that does not has met a rewrite this does not recognise, and the map keeps only its
-            // columns. Every column is every one the optimiser enumerated for that scan: one that an ALTER
-            // TABLE adds while the view compiles is in the metadata of the table, but not in the plan built
-            // before it, and another scan of the table may already list it, whether it is elsewhere in the
+            // The plan keeps the wildcard whole, so the optimiser requires every column the wildcard selects,
+            // and the scan the wildcard selects reads every column the optimiser enumerated for it. A plan that
+            // does not would come out of a rewrite this does not know, and the "*" would lend columns the view
+            // does not read. The columns are the ones the optimiser enumerated for that scan, not the ones the
+            // table has by now: a column an ALTER TABLE adds while the view compiles is not in the plan built
+            // before it, while another scan of the table may already list it, whether it is elsewhere in the
             // plan or under the same holder, such as the other side of a self-join.
-            if (wildcardSources.isEveryScannedColumnRead(sourceModel, wildcardSources.sources.getQuick(i), columns)) {
-                columns.add("*");
-            }
+            assert wildcardSources.isEveryScannedColumnRead(sourceModel, wildcardSources.sources.getQuick(i), columns)
+                    : "the plan keeps a wildcard whole but does not scan every column it selects [table=" + tableToken.getTableName() + ']';
+            columns.add("*");
         }
     }
 
@@ -2560,6 +2563,22 @@ public class SqlUtil {
         }
     }
 
+    // Leaves only "*" in the columns of each table whose columns include it: "*" lends every column of the
+    // table, and AbstractPartitionFrameCursorFactory.authorizeSelect() consults none of the names next to it.
+    private static void dropColumnsCoveredByWildcard(@NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap) {
+        final ObjList<CharSequence> tableNames = depMap.keys();
+        for (int i = 0, n = tableNames.size(); i < n; i++) {
+            final CharSequence tableName = tableNames.getQuick(i);
+            final LowerCaseCharSequenceHashSet columns = depMap.get(tableName);
+            if (columns.size() > 1 && columns.contains("*")) {
+                // a set of its own: the cleared one would keep the capacity of every column it held
+                final LowerCaseCharSequenceHashSet wildcard = new LowerCaseCharSequenceHashSet();
+                wildcard.add("*");
+                depMap.put(tableName, wildcard);
+            }
+        }
+    }
+
     private static ExpressionNode getEqualsKey(ExpressionNode node) {
         if (node.paramCount != 2 || !Chars.equals(node.token, "=") || node.lhs == null || node.rhs == null) {
             return null;
@@ -2809,8 +2828,8 @@ public class SqlUtil {
         // expands to. The optimiser enumerates the columns of each scan of the table separately, so another
         // scan of it can list a column that an ALTER TABLE added after the optimiser enumerated the source,
         // and that the plan built on the source does not read: a scan elsewhere in the plan, or one under
-        // the same holder that the wildcard does not select, such as the other side of a self-join. A source
-        // the optimised SELECT no longer scans, as when a rewrite replaced its model, records no "*".
+        // the same holder that the wildcard does not select, such as the other side of a self-join. A plan
+        // that keeps the wildcard whole passes, see collectKeptWildcardReferences(), which asserts it.
         private boolean isEveryScannedColumnRead(
                 IQueryModel sourceModel,
                 IQueryModel source,

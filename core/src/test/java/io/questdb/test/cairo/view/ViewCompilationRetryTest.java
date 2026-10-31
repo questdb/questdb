@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
@@ -112,7 +111,7 @@ public class ViewCompilationRetryTest extends AbstractViewTest {
             }
             drainWalAndViewQueues();
             assertCurrentDependencies(getViewDefinition("v"));
-            try (SqlExecutionContext reader = viewOnlyContext()) {
+            try (SqlExecutionContext reader = denyBaseTableSelectContext()) {
                 assertRead(reader, false);
             }
         });
@@ -200,14 +199,8 @@ public class ViewCompilationRetryTest extends AbstractViewTest {
         Assert.assertEquals(0, engine.getBusyWriterCount());
     }
 
-    private static SqlExecutionContext viewOnlyContext() {
-        return new SqlExecutionContextImpl(engine, 1).with(new AllowAllSecurityContext() {
-            @Override
-            public void authorizeSelect(TableToken token, @NotNull ObjList<CharSequence> columns) {
-                throw CairoException.nonCritical().put("base table SELECT denied [table=")
-                        .put(token.getTableName()).put(", columns=").put(columns).put(']');
-            }
-        }, null, null, -1, null);
+    private static long queryErrorCount() {
+        return engine.getMetrics().healthMetrics().queryErrorCounter();
     }
 
     private void assertRead(SqlExecutionContext context, boolean isEmpty) throws Exception {
@@ -227,19 +220,22 @@ public class ViewCompilationRetryTest extends AbstractViewTest {
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, null, null, -1, null)) {
                 // A nested metadata probe must survive both the failed open and its retry.
                 context.setMetadataProbe(isCursorOpen);
+                final long queryErrors = queryErrorCount();
                 execute(statement + " v AS (" + VIEW_SQL + ")", context);
+                // the statement succeeds, and the attempt it compiles again is no query error
+                Assert.assertEquals(queryErrors, queryErrorCount());
                 Assert.assertEquals(isCursorOpen, context.isMetadataProbe());
                 Assert.assertEquals(1, securityContext.changeCount);
                 Assert.assertEquals(2, securityContext.yVisits);
             }
             drainWalAndViewQueues();
             assertViewState("v");
-            try (SqlExecutionContext reader = viewOnlyContext()) {
+            try (SqlExecutionContext reader = denyBaseTableSelectContext()) {
                 assertRead(reader, isEmpty);
                 assertQuery("SELECT ts FROM x").withContext(reader).noLeakCheck()
-                        .failsWith("base table SELECT denied [table=x, columns=[ts]]");
+                        .failsWith("permission denied [table=x, columns=ts]");
                 assertQuery("DECLARE @c := ts SELECT * FROM v").withContext(reader).noLeakCheck()
-                        .failsWith("base table SELECT denied [table=x, columns=[ts]]");
+                        .failsWith("permission denied [table=x, columns=ts]");
                 assertCurrentDependencies(getViewDefinition("v"));
                 try (BlockFileReader file = new BlockFileReader(configuration); Path path = new Path()) {
                     path.of(configuration.getDbRoot());
@@ -251,7 +247,7 @@ public class ViewCompilationRetryTest extends AbstractViewTest {
                 assertCurrentDependencies(getViewDefinition("v"));
                 assertRead(reader, isEmpty);
                 assertQuery("DECLARE @c := ts SELECT * FROM v").withContext(reader).noLeakCheck()
-                        .failsWith("base table SELECT denied [table=x, columns=[ts]]");
+                        .failsWith("permission denied [table=x, columns=ts]");
             }
             assertNothingBusy();
         });
@@ -269,6 +265,7 @@ public class ViewCompilationRetryTest extends AbstractViewTest {
             final int tableId = engine.verifyTableName("x").getTableId();
             final RacingSecurityContext securityContext = new RacingSecurityContext(false, false, allowedRetries + 1);
             final String sql = statement + " v AS (" + VIEW_SQL + ")";
+            final long queryErrors = queryErrorCount();
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, null, null, -1, null)) {
                 try {
                     execute(sql, context);
@@ -282,6 +279,8 @@ public class ViewCompilationRetryTest extends AbstractViewTest {
                             e.getFlyweightMessage().toString()
                     );
                 }
+                // the failed statement is one query error, whatever the number of attempts it made
+                Assert.assertEquals(queryErrors + 1, queryErrorCount());
                 Assert.assertEquals(allowedRetries + 1, securityContext.changeCount);
                 Assert.assertEquals(allowedRetries + 1, securityContext.yVisits);
                 Assert.assertFalse(context.isMetadataProbe());
@@ -296,10 +295,11 @@ public class ViewCompilationRetryTest extends AbstractViewTest {
                 }
                 // The same context and compiler pool remain usable once the schema settles.
                 execute(sql, context);
+                Assert.assertEquals(queryErrors + 1, queryErrorCount());
             }
             drainWalAndViewQueues();
             assertViewState("v");
-            try (SqlExecutionContext reader = viewOnlyContext()) {
+            try (SqlExecutionContext reader = denyBaseTableSelectContext()) {
                 assertRead(reader, false);
             }
             Assert.assertEquals(allowedRetries + 1, securityContext.changeCount);

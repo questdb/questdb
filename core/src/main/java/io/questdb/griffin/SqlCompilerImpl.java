@@ -4709,6 +4709,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
             }
+        } catch (TableReferenceOutOfDateException e) {
+            // Not a query error: executeCreateView() compiles the SELECT again, and logs the statement's
+            // failure once if it runs out of attempts.
+            throw e;
         } catch (Throwable th) {
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
             throw th;

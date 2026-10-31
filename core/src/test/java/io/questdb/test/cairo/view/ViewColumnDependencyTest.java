@@ -24,9 +24,9 @@
 
 package io.questdb.test.cairo.view;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -37,6 +37,7 @@ import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -173,7 +174,7 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             assertDependencies("DECLARE @q := (SELECT * FROM x) SELECT a FROM @q", "{x=[a]}");
             assertDependencies("SELECT k FROM (SELECT * FROM x UNION ALL SELECT * FROM y)", "{x=[k], y=[k]}");
             // a qualified wildcard selects every column of the source it names only
-            assertDependencies("SELECT u.* FROM (SELECT * FROM x) s JOIN y u ON (k)", "{x=[k], y=[*, c, d, k, ts]}");
+            assertDependencies("SELECT u.* FROM (SELECT * FROM x) s JOIN y u ON (k)", "{x=[k], y=[*]}");
             // PIVOT selects the columns it groups and aggregates, not the ones of its source
             assertDependencies("SELECT * FROM (SELECT * FROM x) PIVOT (sum(a) FOR k IN ('k1'))", "{x=[a, k]}");
             // A sub-query in an expression selects no column into the view, and its scan of y authorizes
@@ -225,14 +226,14 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                 // select, so the plan reads no column of y.
                 assertLateralJoinDependencies(compiler, count -> lateralJoins("SELECT k, a FROM x", count), "{x=[a, k], y=[]}");
                 // the optimiser keeps every column of the left side of a LATERAL join
-                assertLateralJoinDependencies(compiler, count -> lateralJoins("SELECT * FROM x", count), "{x=[*, a, b, k, ts], y=[]}");
+                assertLateralJoinDependencies(compiler, count -> lateralJoins("SELECT * FROM x", count), "{x=[*], y=[]}");
                 // It also keeps every column of a sub-query whose columns the query above it names none of. The
                 // search for the scan of x under the sub-query of the wildcard goes through the LATERAL joins
                 // before it reaches the scan.
                 assertLateralJoinDependencies(
                         compiler,
                         count -> "SELECT count() FROM (SELECT * FROM (SELECT * FROM x) w CROSS JOIN (" + lateralJoins("SELECT k, a FROM x", count) + ") c)",
-                        "{x=[*, a, b, k, ts], y=[]}"
+                        "{x=[*], y=[]}"
                 );
             }
         });
@@ -259,8 +260,8 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             drainWalAndViewQueues();
             // A read of the outer view reads the tables of the inner one on the authority of the outer one,
             // which selects every column of them only through a wildcard of its own.
-            assertDependencies("SELECT * FROM v_join", "{v_join=[], x=[*, a, b, k, ts], y=[*, c, d, k, ts]}");
-            assertDependencies("SELECT w.* FROM v_join w", "{v_join=[], x=[*, a, b, k, ts], y=[*, c, d, k, ts]}");
+            assertDependencies("SELECT * FROM v_join", "{v_join=[], x=[*], y=[*]}");
+            assertDependencies("SELECT w.* FROM v_join w", "{v_join=[], x=[*], y=[*]}");
             assertDependencies("SELECT a FROM v_join", "{v_join=[], x=[a, k], y=[k]}");
             assertDependencies("SELECT * FROM (SELECT k, c FROM v_join)", "{v_join=[], x=[k], y=[c, k]}");
         });
@@ -272,19 +273,19 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             createTables();
             // a wildcard over a sub-query, a CTE or a view that selects every column of a table selects
             // every column of it too
-            assertDependencies("SELECT * FROM (SELECT * FROM x)", "{x=[*, a, b, k, ts]}");
-            assertDependencies("SELECT * FROM (x WHERE a > 1)", "{x=[*, a, b, k, ts]}");
-            assertDependencies("WITH c AS (SELECT * FROM x) SELECT * FROM c WHERE a > 1", "{x=[*, a, b, k, ts]}");
-            assertDependencies("DECLARE @q := (SELECT * FROM x) SELECT * FROM @q", "{x=[*, a, b, k, ts]}");
-            assertDependencies("SELECT * FROM x JOIN (SELECT * FROM y) s ON (k)", "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}");
-            assertDependencies("SELECT s.* FROM (SELECT * FROM x) s JOIN y u ON (k)", "{x=[*, a, b, k, ts], y=[k]}");
+            assertDependencies("SELECT * FROM (SELECT * FROM x)", "{x=[*]}");
+            assertDependencies("SELECT * FROM (x WHERE a > 1)", "{x=[*]}");
+            assertDependencies("WITH c AS (SELECT * FROM x) SELECT * FROM c WHERE a > 1", "{x=[*]}");
+            assertDependencies("DECLARE @q := (SELECT * FROM x) SELECT * FROM @q", "{x=[*]}");
+            assertDependencies("SELECT * FROM x JOIN (SELECT * FROM y) s ON (k)", "{x=[*], y=[*]}");
+            assertDependencies("SELECT s.* FROM (SELECT * FROM x) s JOIN y u ON (k)", "{x=[*], y=[k]}");
             assertDependencies(
                     "SELECT * FROM (SELECT * FROM x UNION ALL SELECT * FROM y)",
-                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+                    "{x=[*], y=[*]}"
             );
             assertDependencies(
                     "SELECT t.* FROM x t CROSS JOIN LATERAL (SELECT * FROM y u WHERE u.k = t.k) l",
-                    "{x=[*, a, b, k, ts], y=[k]}"
+                    "{x=[*], y=[k]}"
             );
         });
     }
@@ -583,29 +584,29 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             // The optimiser keeps every column of a sub-query whose columns the query above it names none of,
             // and of the left side of a LATERAL join, so the view reads every column the wildcard in such a
             // sub-query selects, including one the table gains later.
-            assertDependencies("SELECT count() FROM (SELECT * FROM x)", "{x=[*, a, b, k, ts]}");
-            assertDependencies("SELECT count() FROM (SELECT * FROM (SELECT * FROM x))", "{x=[*, a, b, k, ts]}");
-            assertDependencies("SELECT count() FROM (SELECT * FROM x) WHERE a > 0", "{x=[*, a, b, k, ts]}");
-            assertDependencies("SELECT 1 AS one FROM (SELECT * FROM x)", "{x=[*, a, b, k, ts]}");
-            assertDependencies("SELECT count() FROM (SELECT *, a + 1 AS a1 FROM x)", "{x=[*, a, b, k, ts]}");
-            assertDependencies("SELECT count() FROM (SELECT x.* FROM x JOIN y ON (k))", "{x=[*, a, b, k, ts], y=[k]}");
-            assertDependencies("WITH c AS (SELECT * FROM x) SELECT count() FROM c", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT count() FROM (SELECT * FROM x)", "{x=[*]}");
+            assertDependencies("SELECT count() FROM (SELECT * FROM (SELECT * FROM x))", "{x=[*]}");
+            assertDependencies("SELECT count() FROM (SELECT * FROM x) WHERE a > 0", "{x=[*]}");
+            assertDependencies("SELECT 1 AS one FROM (SELECT * FROM x)", "{x=[*]}");
+            assertDependencies("SELECT count() FROM (SELECT *, a + 1 AS a1 FROM x)", "{x=[*]}");
+            assertDependencies("SELECT count() FROM (SELECT x.* FROM x JOIN y ON (k))", "{x=[*], y=[k]}");
+            assertDependencies("WITH c AS (SELECT * FROM x) SELECT count() FROM c", "{x=[*]}");
             assertDependencies(
                     "SELECT count() FROM (SELECT * FROM x UNION ALL SELECT * FROM y)",
-                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+                    "{x=[*], y=[*]}"
             );
-            assertDependencies("SELECT y.c FROM y CROSS JOIN (SELECT * FROM x)", "{x=[*, a, b, k, ts], y=[c]}");
+            assertDependencies("SELECT y.c FROM y CROSS JOIN (SELECT * FROM x)", "{x=[*], y=[c]}");
             assertDependencies(
                     "SELECT * FROM (SELECT count() FROM (SELECT * FROM x)) PIVOT (sum(count) FOR count IN (1))",
-                    "{x=[*, a, b, k, ts]}"
+                    "{x=[*]}"
             );
             assertDependencies(
                     "SELECT t.a, l.c FROM (SELECT * FROM x) t CROSS JOIN LATERAL (SELECT c, k FROM y u WHERE u.k = t.k LIMIT 1) l",
-                    "{x=[*, a, b, k, ts], y=[c, k]}"
+                    "{x=[*], y=[c, k]}"
             );
             execute("CREATE VIEW v_star AS (SELECT * FROM x)");
             drainWalAndViewQueues();
-            assertDependencies("SELECT count() FROM v_star", "{v_star=[], x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT count() FROM v_star", "{v_star=[], x=[*]}");
 
             // a SELECT list that names its columns, every one of them included, reads no column added later
             assertDependencies("SELECT count() FROM (SELECT ts, k, a, b FROM (SELECT * FROM x))", "{x=[a, b, k, ts]}");
@@ -618,9 +619,10 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             createTables();
             // The sub-query scans x twice, and its wildcard selects the first scan only. x gains a column after
-            // the optimiser has read the columns of that scan and before it reads those of x2, which then lists
-            // the column the plan built before the ALTER TABLE does not read. Only the scan the wildcard
-            // selects decides its "*".
+            // the optimiser has read the columns of that scan and before it reads those of x2. The attempt checks
+            // its "*" against the columns of the scan the wildcard selects, which the plan reads, and not against
+            // the columns x has by then; code generation then finds the plan out of date, and the statement
+            // compiles the SELECT again on the new metadata.
             assertWildcardKeptWhileTableAltered(
                     "SELECT count() FROM (SELECT x.* FROM x CROSS JOIN y CROSS JOIN x x2)",
                     """
@@ -636,8 +638,10 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             createTables();
             // The view scans x twice. x gains a column after the optimiser has read the columns of the scan
-            // under the wildcard and before it reads those of the other scan, which then lists the column the
-            // plan built before the ALTER TABLE does not read. Only the scan under the wildcard decides its "*".
+            // under the wildcard and before it reads those of the other scan, which reads none of the added
+            // column. The attempt checks its "*" against the columns of the scan under the wildcard, which the
+            // plan reads, and not against the columns x has by then; code generation then finds the plan out of
+            // date, and the statement compiles the SELECT again on the new metadata.
             assertWildcardKeptWhileTableAltered(
                     "SELECT count() FROM (SELECT * FROM x) CROSS JOIN y CROSS JOIN (SELECT a FROM x)",
                     """
@@ -781,10 +785,10 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             createTables();
             // a wildcard selects every column of its tables, including one they gain later
-            assertDependencies("SELECT * FROM x", "{x=[*, a, b, k, ts]}");
-            assertDependencies("x WHERE a > 1", "{x=[*, a, b, k, ts]}");
-            assertDependencies("SELECT * FROM x JOIN y ON (k)", "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}");
-            assertDependencies("SELECT t.* FROM x t JOIN y u ON (k)", "{x=[*, a, b, k, ts], y=[k]}");
+            assertDependencies("SELECT * FROM x", "{x=[*]}");
+            assertDependencies("x WHERE a > 1", "{x=[*]}");
+            assertDependencies("SELECT * FROM x JOIN y ON (k)", "{x=[*], y=[*]}");
+            assertDependencies("SELECT t.* FROM x t JOIN y u ON (k)", "{x=[*], y=[k]}");
             // the columns of a sub-query are the ones it selects
             assertDependencies("SELECT * FROM (SELECT a FROM x)", "{x=[a]}");
             assertDependencies("SELECT s.* FROM (SELECT t.a, t.k FROM x t) s JOIN y u ON (k)", "{x=[a, k], y=[k]}");
@@ -797,31 +801,31 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             createTables();
             // A SELECT DISTINCT, a SELECT that groups and the branches of a set operation other than UNION ALL
             // read every column their wildcards select, whichever columns the query above them keeps.
-            assertDependencies("SELECT a FROM (SELECT DISTINCT * FROM x)", "{x=[*, a, b, k, ts]}");
-            assertDependencies("SELECT count() FROM (SELECT DISTINCT * FROM x)", "{x=[*, a, b, k, ts]}");
-            assertDependencies("SELECT a FROM (SELECT DISTINCT * FROM (SELECT * FROM x))", "{x=[*, a, b, k, ts]}");
-            assertDependencies("SELECT a FROM (SELECT DISTINCT t.* FROM x t JOIN y u ON (k))", "{x=[*, a, b, k, ts], y=[k]}");
-            assertDependencies("SELECT a FROM (SELECT *, count() AS n FROM x)", "{x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT a FROM (SELECT DISTINCT * FROM x)", "{x=[*]}");
+            assertDependencies("SELECT count() FROM (SELECT DISTINCT * FROM x)", "{x=[*]}");
+            assertDependencies("SELECT a FROM (SELECT DISTINCT * FROM (SELECT * FROM x))", "{x=[*]}");
+            assertDependencies("SELECT a FROM (SELECT DISTINCT t.* FROM x t JOIN y u ON (k))", "{x=[*], y=[k]}");
+            assertDependencies("SELECT a FROM (SELECT *, count() AS n FROM x)", "{x=[*]}");
             assertDependencies(
                     "SELECT a FROM (SELECT * FROM x UNION SELECT * FROM y)",
-                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+                    "{x=[*], y=[*]}"
             );
             assertDependencies(
                     "SELECT a FROM (SELECT * FROM x EXCEPT SELECT * FROM y)",
-                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+                    "{x=[*], y=[*]}"
             );
             assertDependencies(
                     "SELECT a FROM (SELECT * FROM x INTERSECT ALL SELECT * FROM y)",
-                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+                    "{x=[*], y=[*]}"
             );
             // an operation other than UNION ALL compares the rows of every branch
             assertDependencies(
                     "SELECT a FROM (SELECT * FROM x UNION ALL SELECT * FROM y UNION SELECT * FROM x)",
-                    "{x=[*, a, b, k, ts], y=[*, c, d, k, ts]}"
+                    "{x=[*], y=[*]}"
             );
             execute("CREATE VIEW v_rows AS (SELECT DISTINCT * FROM x)");
             drainWalAndViewQueues();
-            assertDependencies("SELECT a FROM v_rows", "{v_rows=[], x=[*, a, b, k, ts]}");
+            assertDependencies("SELECT a FROM v_rows", "{v_rows=[], x=[*]}");
 
             // such a SELECT reads only the columns a SELECT list names, its own or one under it
             assertDependencies("SELECT a FROM (SELECT DISTINCT * FROM (SELECT a, b FROM x))", "{x=[a, b]}");
@@ -864,8 +868,8 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     "permission denied [table=x, columns=b]"
             );
             // the SELECT list of the view, and one that names none of the columns under it, keep them all
-            assertDependencies("SELECT t.*, sum(w.c) s" + windowJoin, "{x=[*, a, b, k, ts], y=[c, k, ts]}");
-            assertDependencies("SELECT count() FROM (SELECT t.*, sum(w.c) s" + windowJoin + ')', "{x=[*, a, b, k, ts], y=[c, k, ts]}");
+            assertDependencies("SELECT t.*, sum(w.c) s" + windowJoin, "{x=[*], y=[c, k, ts]}");
+            assertDependencies("SELECT count() FROM (SELECT t.*, sum(w.c) s" + windowJoin + ')', "{x=[*], y=[c, k, ts]}");
         });
     }
 
@@ -889,16 +893,6 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         execute("INSERT INTO x VALUES (0, 'k1', 1, 2), (3_600_000_000, 'k1', 3, 4)");
         execute("INSERT INTO y VALUES (0, 'k1', 5, 6), (3_600_000_000, 'k1', 7, 8)");
         drainWalQueue();
-    }
-
-    private static SqlExecutionContext denyBaseTableSelectContext() {
-        return new SqlExecutionContextImpl(engine, 1).with(
-                new DenyBaseTableSelectSecurityContext(),
-                bindVariableService,
-                null,
-                -1,
-                null
-        );
     }
 
     private static String dependenciesOf(String viewName) {
@@ -982,6 +976,16 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         return compiler.getViewDependencyVisitCountForTesting() - visitCount;
     }
 
+    // the dependencies in the definition file of the view, which a restart reads back
+    private static String storedDependenciesOf(String viewName) {
+        try (BlockFileReader reader = new BlockFileReader(configuration); Path path = new Path()) {
+            path.of(configuration.getDbRoot());
+            final ViewDefinition viewDefinition = new ViewDefinition();
+            ViewDefinition.readFrom(viewDefinition, reader, path, path.size(), engine.verifyTableName(viewName));
+            return dependenciesOf(viewDefinition.getDependencies());
+        }
+    }
+
     private void assertDependencies(String viewSql, String expectedDependencies) throws Exception {
         assertDependencies(viewSql, expectedDependencies, null);
     }
@@ -1010,6 +1014,7 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
 
     private void assertViewDependencies(String viewSql, String expectedDependencies, @Nullable String expectedReadFailure, String statement) throws Exception {
         Assert.assertEquals(statement + ": " + viewSql, expectedDependencies, dependenciesOf("v"));
+        Assert.assertEquals(statement + ": " + viewSql, expectedDependencies, storedDependenciesOf("v"));
         try (SqlExecutionContext context = denyBaseTableSelectContext()) {
             if (expectedReadFailure == null) {
                 // The views differ in timestamp, size and random access, which the read infers. It returns the
@@ -1042,17 +1047,13 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             final ObjList<String> statements = new ObjList<>();
             statements.add("CREATE VIEW");
             statements.add("ALTER VIEW");
-            // Each complete retry reads the column this iteration adds: e1, then e2.
-            final ObjList<String> expectedDependencies = new ObjList<>();
-            expectedDependencies.add("{x=[*, a, b, e1, k, ts], y=[]}");
-            expectedDependencies.add("{x=[*, a, b, e1, e2, k, ts], y=[]}");
             for (int i = 0; i < statements.size(); i++) {
                 final String statement = statements.getQuick(i);
                 securityContext.addColumnOnce("e" + (i + 1));
                 execute(statement + " v AS (" + viewSql + ")", context);
                 drainWalAndViewQueues();
                 Assert.assertFalse(statement, securityContext.isColumnPending());
-                Assert.assertEquals(statement, expectedDependencies.getQuick(i), dependenciesOf("v"));
+                Assert.assertEquals(statement, "{x=[*], y=[]}", dependenciesOf("v"));
                 assertQuery("SELECT * FROM v")
                         .withContext(denyContext)
                         .noLeakCheck()
@@ -1097,26 +1098,6 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
 
         private boolean isColumnPending() {
             return pendingColumnName != null;
-        }
-    }
-
-    /**
-     * Grants everything but SELECT on the columns of a table, so that a principal reads a view, and a
-     * base table through it, only on the authority of the view.
-     */
-    private static final class DenyBaseTableSelectSecurityContext extends AllowAllSecurityContext {
-        @Override
-        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-            final CairoException e = CairoException.nonCritical()
-                    .put("permission denied [table=").put(tableToken.getTableName())
-                    .put(", columns=");
-            for (int i = 0, n = columnNames.size(); i < n; i++) {
-                if (i > 0) {
-                    e.put(',');
-                }
-                e.put(columnNames.getQuick(i));
-            }
-            throw e.put(']');
         }
     }
 
