@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.view.ViewDefinition;
@@ -536,6 +537,46 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testUnionWithLimitReadsColumnAddedLater() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, a LONG, b LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE y (ts TIMESTAMP, a LONG, b LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (0, 7, 11)");
+            execute("INSERT INTO y VALUES (0, 7, 13)");
+            drainWalQueue();
+            execute("CREATE VIEW v_named AS (SELECT a FROM (SELECT ts, a, b FROM x UNION SELECT ts, a, b FROM y LIMIT 1))");
+            drainWalAndViewQueues();
+            // Every input has a=7, so the single result does not depend on UNION's iteration order.
+            final String expected = "a\n7\n";
+            forEachViewStatement("SELECT a FROM (SELECT * FROM x UNION SELECT * FROM y LIMIT 1)", statement -> {
+                try (SqlExecutionContext context = denyBaseTableSelectContext()) {
+                    assertQuery("SELECT a FROM x").withContext(context).noLeakCheck()
+                            .failsWith("permission denied [table=x, columns=a]");
+                    assertQuery("SELECT * FROM v").withContext(context).noLeakCheck().noRandomAccess().returns(expected);
+                    final int columnCount;
+                    try (TableReader reader = engine.getReader("x")) {
+                        columnCount = reader.getMetadata().getColumnCount();
+                    }
+                    final String column = "extra" + columnCount;
+                    // Both UNION branches must grow compatibly. Existing rows get NULL in the new column.
+                    execute("ALTER TABLE x ADD COLUMN " + column + " INT");
+                    execute("ALTER TABLE y ADD COLUMN " + column + " INT");
+                    execute("INSERT INTO x (ts, a, b, " + column + ") VALUES (" + columnCount + ", 7, 17, 19)");
+                    execute("INSERT INTO y (ts, a, b, " + column + ") VALUES (" + columnCount + ", 7, 23, 29)");
+                    drainWalAndViewQueues();
+                    assertQuery("SELECT * FROM v").noLeakCheck().noRandomAccess().returns(expected);
+                    assertQuery("SELECT * FROM v_named").withContext(context).noLeakCheck().noRandomAccess().returns(expected);
+                    assertQuery("SELECT * FROM v").withContext(context).noLeakCheck().noRandomAccess().returns(expected);
+                    Assert.assertTrue(statement, getViewDefinition("v").getDependencies().get("x").contains("*"));
+                    Assert.assertTrue(statement, getViewDefinition("v").getDependencies().get("y").contains("*"));
+                    Assert.assertFalse(getViewDefinition("v_named").getDependencies().get("x").contains("*"));
+                    Assert.assertFalse(getViewDefinition("v_named").getDependencies().get("y").contains("*"));
+                }
+            });
+        });
+    }
+
+    @Test
     public void testUnnarrowedNestedWildcard() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -998,14 +1039,20 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                 SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null);
                 SqlExecutionContext denyContext = denyBaseTableSelectContext()
         ) {
-            final String[] statements = {"CREATE VIEW", "ALTER VIEW"};
-            final String[] expectedDependencies = {"{x=[*, a, b, k, ts], y=[]}", "{x=[*, a, b, e1, k, ts], y=[]}"};
-            for (int i = 0; i < statements.length; i++) {
+            final ObjList<String> statements = new ObjList<>();
+            statements.add("CREATE VIEW");
+            statements.add("ALTER VIEW");
+            // Each complete retry reads the column this iteration adds: e1, then e2.
+            final ObjList<String> expectedDependencies = new ObjList<>();
+            expectedDependencies.add("{x=[*, a, b, e1, k, ts], y=[]}");
+            expectedDependencies.add("{x=[*, a, b, e1, e2, k, ts], y=[]}");
+            for (int i = 0; i < statements.size(); i++) {
+                final String statement = statements.getQuick(i);
                 securityContext.addColumnOnce("e" + (i + 1));
-                execute(statements[i] + " v AS (" + viewSql + ")", context);
+                execute(statement + " v AS (" + viewSql + ")", context);
                 drainWalAndViewQueues();
-                Assert.assertFalse(statements[i], securityContext.isColumnPending());
-                Assert.assertEquals(statements[i], expectedDependencies[i], dependenciesOf("v"));
+                Assert.assertFalse(statement, securityContext.isColumnPending());
+                Assert.assertEquals(statement, expectedDependencies.getQuick(i), dependenciesOf("v"));
                 assertQuery("SELECT * FROM v")
                         .withContext(denyContext)
                         .noLeakCheck()

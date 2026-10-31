@@ -2188,36 +2188,48 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final ExecutionModel executionModel = compiler.generateViewExecutionModel(viewSql, executionContext, dependencies);
-            final IQueryModel queryModel = executionModel.getQueryModel();
-            engine.getViewGraph().validateNoCycle(viewToken, queryModel);
-
-            try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, executionContext)) {
-                final RecordMetadata metadata = factory.getMetadata();
-                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    final CharSequence columnName = metadata.getColumnName(i);
-                    if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
-                        throw SqlException.position(0)
-                                .put("invalid column name [name=")
-                                .put(columnName)
-                                .put(", position=")
-                                .put(i)
-                                .put(']');
-                    }
-                }
-                // test the cursor, if no exception thrown viewSql is working
-                // Nobody is handed the row this reads, so the open is flagged like the probe in
-                // executeCreateView: an audited view in the new body must not record a read.
-                final boolean wasMetadataProbe = executionContext.isMetadataProbe();
-                executionContext.setMetadataProbe(true);
-                final RecordCursor cursor;
+            for (int retryCount = 0; ; retryCount++) {
                 try {
-                    cursor = factory.getCursor(executionContext);
-                } finally {
-                    executionContext.setMetadataProbe(wasMetadataProbe);
-                }
-                try (cursor) {
-                    cursor.hasNext();
+                    // A retry must replace both the plan and the permissions collected for it.
+                    dependencies.clear();
+                    final ExecutionModel executionModel = compiler.generateViewExecutionModel(viewSql, executionContext, dependencies);
+                    final IQueryModel queryModel = executionModel.getQueryModel();
+                    engine.getViewGraph().validateNoCycle(viewToken, queryModel);
+
+                    try (RecordCursorFactory factory = compiler.generateSelectWithoutRetries(queryModel, executionContext, false)) {
+                        final RecordMetadata metadata = factory.getMetadata();
+                        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                            final CharSequence columnName = metadata.getColumnName(i);
+                            if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
+                                throw SqlException.position(0)
+                                        .put("invalid column name [name=")
+                                        .put(columnName)
+                                        .put(", position=")
+                                        .put(i)
+                                        .put(']');
+                            }
+                        }
+                        // test the cursor, if no exception thrown viewSql is working
+                        // Nobody is handed the row this reads, so the open is flagged like the probe in
+                        // executeCreateView: an audited view in the new body must not record a read.
+                        final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                        executionContext.setMetadataProbe(true);
+                        final RecordCursor cursor;
+                        try {
+                            cursor = factory.getCursor(executionContext);
+                        } finally {
+                            executionContext.setMetadataProbe(wasMetadataProbe);
+                        }
+                        try (cursor) {
+                            cursor.hasNext();
+                        }
+                    }
+                    break;
+                } catch (TableReferenceOutOfDateException e) {
+                    if (retryCount >= maxRecompileAttempts) {
+                        throw SqlException.$(0, e.getFlyweightMessage());
+                    }
+                    LOG.info().$("retrying view plan [q=`").$(viewSql).$("`]").$();
                 }
             }
         } catch (SqlException e) {
@@ -4691,7 +4703,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), cacheable);
+                // Let executeCreateView() retry the whole compilation, including its dependency map.
+                compiledQuery.ofSelect(generateSelectWithoutRetries(queryModel, executionContext, false), cacheable);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
@@ -5267,7 +5280,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
-                            if (retryCount == maxRecompileAttempts) {
+                            if (retryCount >= maxRecompileAttempts) {
                                 Misc.free(newFactory);
                                 throw SqlException.$(0, e.getFlyweightMessage());
                             }
