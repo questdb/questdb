@@ -477,13 +477,6 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 // This is metadata change
                                 // to be taken from Sequencer directly
                                 final long newStructureVersion = transactionLogCursor.getStructureVersion();
-                                if (writer.getColumnStructureVersion() != newStructureVersion - 1) {
-                                    throw CairoException.critical(0)
-                                            .put("unexpected new WAL structure version [walStructure=").put(newStructureVersion)
-                                            .put(", tableStructureVersion=").put(writer.getColumnStructureVersion())
-                                            .put(']');
-                                }
-
                                 boolean hasNext;
                                 if (structuralChangeCursor == null || !(hasNext = structuralChangeCursor.hasNext())) {
                                     Misc.free(structuralChangeCursor);
@@ -504,30 +497,23 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                                 if (hasNext) {
                                     final long start = microClock.getTicks();
                                     walTelemetryFacade.store(WAL_TXN_APPLY_START, tableToken, walId, seqTxn, -1L, -1L, start - commitTimestamp, Numbers.LONG_NULL, Numbers.LONG_NULL);
-                                    writer.setSeqTxn(seqTxn);
-                                    try {
-                                        final TableMetadataChange metadataChangeOp = structuralChangeCursor.next();
-                                        metadataChangeOp.apply(writer, true);
-                                        final String matViewInvalidationReason = metadataChangeOp.matViewInvalidationReason();
-                                        if (matViewInvalidationReason != null) {
-                                            mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
-                                            mvRefreshTask.invalidationReason = matViewInvalidationReason;
-                                            // Narrow live-view invalidation: only views that read a
-                                            // column missing from the post-change writer metadata
-                                            // need to be invalidated.
-                                            engine.invalidateLiveViewsForBaseSchemaChange(
-                                                    tableToken,
-                                                    writer.getMetadata(),
-                                                    matViewInvalidationReason
-                                            );
-                                        }
-                                        if (metadataChangeOp.shouldCompileDependentViews()) {
-                                            engine.enqueueCompileView(tableToken);
-                                        }
-                                    } catch (Throwable th) {
-                                        // Don't mark transaction as applied if exception occurred
-                                        writer.setSeqTxn(seqTxn - 1);
-                                        throw th;
+                                    final TableMetadataChange metadataChangeOp = structuralChangeCursor.next();
+                                    writer.applySequencedMetadataChange(seqTxn, newStructureVersion, metadataChangeOp);
+                                    final String matViewInvalidationReason = metadataChangeOp.matViewInvalidationReason();
+                                    if (matViewInvalidationReason != null) {
+                                        mvRefreshTask.operation = MatViewRefreshTask.INVALIDATE;
+                                        mvRefreshTask.invalidationReason = matViewInvalidationReason;
+                                        // Narrow live-view invalidation: only views that read a
+                                        // column missing from the post-change writer metadata
+                                        // need to be invalidated.
+                                        engine.invalidateLiveViewsForBaseSchemaChange(
+                                                tableToken,
+                                                writer.getMetadata(),
+                                                matViewInvalidationReason
+                                        );
+                                    }
+                                    if (metadataChangeOp.shouldCompileDependentViews()) {
+                                        engine.enqueueCompileView(tableToken);
                                     }
                                     walTelemetryFacade.store(WAL_TXN_STRUCTURE_CHANGE_APPLIED, tableToken, walId, seqTxn, -1L, -1L, microClock.getTicks() - start, Numbers.LONG_NULL, Numbers.LONG_NULL);
                                 } else {

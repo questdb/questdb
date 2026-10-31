@@ -517,14 +517,26 @@ public class TableSequencerAPI implements QuietCloseable {
         }
     }
 
+    public long nextDeltaStructureTxn(final TableToken tableToken, long structureVersion, AlterOperation alterOp) {
+        return nextStructureTxn(tableToken, structureVersion, alterOp, true);
+    }
+
     public long nextStructureTxn(final TableToken tableToken, long structureVersion, AlterOperation alterOp) {
+        return nextStructureTxn(tableToken, structureVersion, alterOp, false);
+    }
+
+    private long nextStructureTxn(final TableToken tableToken, long structureVersion, AlterOperation alterOp, boolean delta) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             long txn;
             try {
                 if (!tableSequencer.getTableToken().equals(tableToken)) {
                     throw TableReferenceOutOfDateException.of(tableToken);
                 }
-                if (isDeltaTable(tableToken)) {
+                final boolean deltaTable = isDeltaTable(tableToken);
+                if (delta != deltaTable) {
+                    if (delta) {
+                        throw CairoException.nonCritical().put("Delta schema changes require a Delta table");
+                    }
                     throw CairoException.nonCritical().put("WAL schema changes are not supported for Delta tables");
                 }
                 txn = tableSequencer.nextStructureTxn(structureVersion, alterOp);
