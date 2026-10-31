@@ -49,9 +49,11 @@ import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.StreamGroupByMap;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -62,6 +64,9 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
     private final StreamGroupByMap collectorMap;
     private final CairoConfiguration configuration;
     private final AsyncFilterContext filterContext;
+    // A frame's segments, by frame index modulo the reduce queue capacity, from its reduce to its collection.
+    private final ObjList<RecordChain> frameRecords;
+    private final ObjList<DirectLongList> frameValues;
     private final ObjList<GroupByFunction> groupByFunctions;
     private final boolean isDescending;
     private final Function keyFunction;
@@ -103,6 +108,11 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
             boolean isDescending
     ) {
         this.configuration = configuration;
+        final int frameSlots = configuration.getPageFrameReduceQueueCapacity();
+        this.frameRecords = new ObjList<>(frameSlots);
+        this.frameRecords.setPos(frameSlots);
+        this.frameValues = new ObjList<>(frameSlots);
+        this.frameValues.setPos(frameSlots);
         this.keyFunction = keyFunction;
         this.isDescending = isDescending;
         this.keyFunctionIndex = streamKeyIndex - columnFilter.getColumnCount();
@@ -184,6 +194,8 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
         Throwable th = Misc.freeObjListBestEffort(null, keyFunctions);
         th = Misc.freeBestEffort(th, filterContext);
         th = closeMaps(th);
+        th = Misc.freeObjListBestEffort(th, frameRecords);
+        th = Misc.freeObjListBestEffort(th, frameValues);
         th = AsyncGroupByAtom.closePerWorkerFunctions(th, perWorkerKeys);
         th = AsyncGroupByAtom.closePerWorkerFunctions(th, perWorkerFunctions);
         CairoException.rethrowCleanupFailure(th);
@@ -237,7 +249,25 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
     }
 
     public RecordChain getResultRecords(PageFrameReduceTask task) {
-        return task.getGroupByRecords(ownerMap.getStateTypes(), configuration.getSqlSmallMapPageSize());
+        final int slot = task.getFrameIndex() % frameRecords.size();
+        RecordChain records = frameRecords.getQuick(slot);
+        if (records == null) {
+            records = new RecordChain(ownerMap.getStateTypes(), null, configuration.getSqlSmallMapPageSize(), Integer.MAX_VALUE);
+            frameRecords.setQuick(slot, records);
+        }
+        records.setMemoryTracker(task.getMemoryTracker());
+        return records;
+    }
+
+    public DirectLongList getResultValues(PageFrameReduceTask task) {
+        final int slot = task.getFrameIndex() % frameValues.size();
+        DirectLongList values = frameValues.getQuick(slot);
+        if (values == null) {
+            values = new DirectLongList(64, MemoryTag.NATIVE_FAST_MAP, true);
+            frameValues.setQuick(slot, values);
+        }
+        values.setMemoryTracker(task.getMemoryTracker());
+        return values;
     }
 
     public ArrayColumnTypes getStateTypes() {
@@ -302,6 +332,26 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
         locks.releaseSlot(slot);
     }
 
+    public void releaseAllResults() {
+        for (int i = 0, n = frameRecords.size(); i < n; i++) {
+            releaseResults(i);
+        }
+    }
+
+    public void releaseResults(int frameIndex) {
+        final int slot = frameIndex % frameRecords.size();
+        final RecordChain records = frameRecords.getQuick(slot);
+        if (records != null) {
+            records.close();
+            records.setMemoryTracker(null);
+        }
+        final DirectLongList values = frameValues.getQuick(slot);
+        if (values != null) {
+            values.close();
+            values.setMemoryTracker(null);
+        }
+    }
+
     public void releaseSpanMap(int slot, StreamGroupByMap map) {
         spanMaps.getQuick(slot + 1).release(map);
     }
@@ -317,6 +367,7 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
     }
 
     public void toTop() {
+        releaseAllResults();
         if (filterContext != null) {
             filterContext.toTop();
         }

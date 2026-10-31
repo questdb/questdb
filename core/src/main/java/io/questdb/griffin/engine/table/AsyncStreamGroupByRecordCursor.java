@@ -109,6 +109,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
                     frameSequence.await();
                 }
                 frameSequence.reset();
+                frameSequence.getAtom().releaseAllResults();
             }
         } finally {
             frameSequence = null;
@@ -250,6 +251,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
 
     private void collect(boolean force) {
         if (cursor >= 0) {
+            frameSequence.getAtom().releaseResults(frameSequence.getTask(cursor).getFrameIndex());
             frameSequence.collect(cursor, force);
             cursor = -1;
         }
@@ -306,7 +308,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         }
         PageFrameReduceTask task;
         while ((task = nextTask()) != null) {
-            results = task.getGroupByValues();
+            results = frameSequence.getAtom().getResultValues(task);
             resultOffset = 0;
             if (results.size() > 0) {
                 return true;
@@ -335,7 +337,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
             hasOpenSpans = true;
             return true;
         }
-        resultRecords = task.getGroupByRecords();
+        resultRecords = frameSequence.getAtom().getResultRecords(task);
         chainLastKey = task.getGroupByLastKey();
         isChainPending = true;
         if (hasOpenKey) {

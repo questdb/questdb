@@ -297,7 +297,11 @@ public class TemporalStreamJoinTest extends AbstractCairoTest {
             engine.execute("INSERT INTO r VALUES (3_000_000::TIMESTAMP, 1, 'beta')", context);
             engine.execute("INSERT INTO r_hash VALUES (3_000_000::TIMESTAMP, 1, 'beta')", context);
             assertAgainstHash(engine, context, query(RHS, true));
-            engine.execute("ALTER TABLE r CONVERT PARTITION TO PARQUET WHERE ts >= 0", context);
+            engine.execute("INSERT INTO r VALUES ('1970-01-02'::TIMESTAMP, 1, 'beta')", context);
+            engine.execute("INSERT INTO r_hash VALUES ('1970-01-02'::TIMESTAMP, 1, 'beta')", context);
+            engine.execute("ALTER TABLE r CONVERT PARTITION TO PARQUET LIST '1970-01-01'", context);
+            Assert.assertEquals("isParquet\ntrue\n", TestUtils.printSqlToString(engine, context,
+                    "SELECT isParquet FROM table_partitions('r') WHERE name = '1970-01-01'", new StringSink()).toString());
             assertAgainstHash(engine, context, query(RHS, true));
         });
     }

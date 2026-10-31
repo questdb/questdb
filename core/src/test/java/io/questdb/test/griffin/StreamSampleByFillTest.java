@@ -24,6 +24,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -246,21 +247,21 @@ public class StreamSampleByFillTest extends AbstractCairoTest {
     public void testKeyedFilteredParquet() throws Exception {
         run((engine, compiler, context) -> {
             createPrices(context);
-            insertPrices(context);
+            insertPricesAcrossMidnight(context);
             for (boolean parquet : new boolean[]{false, true}) {
                 if (parquet) {
-                    engine.execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= 0", context);
+                    convertFirstDayToParquet(engine, context);
                 }
                 keyedQuery(context, "SELECT ts, sym, max(price) max FROM prices WHERE price >= 1 "
                         + "SAMPLE BY 1h FILL(PREV) ORDER BY ts, sym")
                         .returns(precision("""
                                 ts\tsym\tmax
-                                2024-01-01T00:00:00.000000Z\tA\t1.0
-                                2024-01-01T00:00:00.000000Z\tB\t3.0
-                                2024-01-01T01:00:00.000000Z\tA\t1.0
-                                2024-01-01T01:00:00.000000Z\tB\t3.0
-                                2024-01-01T02:00:00.000000Z\tA\t1.0
-                                2024-01-01T02:00:00.000000Z\tB\t5.0
+                                2024-01-01T21:00:00.000000Z\tA\t1.0
+                                2024-01-01T21:00:00.000000Z\tB\t3.0
+                                2024-01-01T22:00:00.000000Z\tA\t1.0
+                                2024-01-01T22:00:00.000000Z\tB\t3.0
+                                2024-01-01T23:00:00.000000Z\tA\t1.0
+                                2024-01-01T23:00:00.000000Z\tB\t5.0
                                 """));
             }
         });
@@ -425,14 +426,14 @@ public class StreamSampleByFillTest extends AbstractCairoTest {
     public void testPrevParquetAndLimit() throws Exception {
         run((engine, compiler, context) -> {
             createPrices(context);
-            insertPrices(context);
-            engine.execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= 0", context);
+            insertPricesAcrossMidnight(context);
+            convertFirstDayToParquet(engine, context);
             query(context, "SELECT ts, max(price) max FROM prices SAMPLE BY 1h FILL(PREV) LIMIT 2")
                     .withPlanNotContaining("sort", "Sort")
                     .returns(precision("""
                             ts\tmax
-                            2024-01-01T00:00:00.000000Z\t3.0
-                            2024-01-01T01:00:00.000000Z\t3.0
+                            2024-01-01T21:00:00.000000Z\t3.0
+                            2024-01-01T22:00:00.000000Z\t3.0
                             """));
         });
     }
@@ -460,10 +461,22 @@ public class StreamSampleByFillTest extends AbstractCairoTest {
                 + ", sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", context);
     }
 
+    private static void convertFirstDayToParquet(CairoEngine engine, SqlExecutionContext context) throws Exception {
+        engine.execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET LIST '2024-01-01'", context);
+        Assert.assertEquals("isParquet\ntrue\n", TestUtils.printSqlToString(engine, context,
+                "SELECT isParquet FROM table_partitions('prices') WHERE name = '2024-01-01'", new StringSink()).toString());
+    }
+
     private static void insertPrices(SqlExecutionContext context) throws Exception {
         context.getCairoEngine().execute("INSERT INTO prices VALUES ('2024-01-01', 'A', 1), "
                 + "('2024-01-01T00:10', 'B', 3), ('2024-01-01T02:00', 'A', null), "
                 + "('2024-01-01T02:10', 'B', 5), ('2024-01-01T04:00', 'A', null)", context);
+    }
+
+    private static void insertPricesAcrossMidnight(SqlExecutionContext context) throws Exception {
+        context.getCairoEngine().execute("INSERT INTO prices VALUES ('2024-01-01T21:00', 'A', 1), "
+                + "('2024-01-01T21:10', 'B', 3), ('2024-01-01T23:00', 'A', null), "
+                + "('2024-01-01T23:10', 'B', 5), ('2024-01-02T01:00', 'A', null)", context);
     }
 
     private String precision(String expected) {

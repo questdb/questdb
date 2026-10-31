@@ -26,9 +26,7 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.ImplicitCastException;
-import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -71,10 +69,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private long frameSequenceId = -1;
     private long groupByFirstKey;
     private long groupByLastKey;
-    private ColumnTypes groupByRecordTypes;
-    private RecordChain groupByRecords;
     private long groupBySegmentCount;
-    private DirectLongList groupByValues;
     private int interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
     // Valid for TYPE_FILTER and TYPE_HORIZON_JOIN only. When set, the reducer sets filteredRowCount
     // and the collecting cursor must not read filteredRows: a filtered TYPE_HORIZON_JOIN reducer
@@ -151,7 +146,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         dataAddresses.resetCapacity();
         auxAddresses.resetCapacity();
         frameMemoryPool.clear();
-        closeGroupByValues();
     }
 
     @Override
@@ -162,7 +156,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         Misc.free(dataAddresses);
         Misc.free(auxAddresses);
         Misc.free(frameMemoryPool);
-        closeGroupByValues();
     }
 
     /**
@@ -220,30 +213,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         return groupByLastKey;
     }
 
-    public RecordChain getGroupByRecords() {
-        return groupByRecords;
-    }
-
-    public RecordChain getGroupByRecords(ColumnTypes types, long pageSize) {
-        if (groupByRecordTypes != types) {
-            groupByRecords = Misc.free(groupByRecords);
-            groupByRecords = new RecordChain(types, null, pageSize, Integer.MAX_VALUE);
-            groupByRecordTypes = types;
-        }
-        groupByRecords.setMemoryTracker(getMemoryTracker());
-        return groupByRecords;
-    }
-
     public long getGroupBySegmentCount() {
         return groupBySegmentCount;
-    }
-
-    public DirectLongList getGroupByValues() {
-        if (groupByValues == null) {
-            groupByValues = new DirectLongList(64, MemoryTag.NATIVE_FAST_MAP, true);
-        }
-        groupByValues.setMemoryTracker(getMemoryTracker());
-        return groupByValues;
     }
 
     /**
@@ -401,7 +372,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
         frameSequence = null;
         frameMemory = null;
-        closeGroupByValues();
 
         // We have to reset capacity only on max all queue items
         // What we are avoiding here is resetting capacity on 1000 frames given our queue size
@@ -412,17 +382,6 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         } else {
             // Never keep parquet buffers around to avoid OOM even if there is an ongoing query.
             releaseFrameMemory();
-        }
-    }
-
-    private void closeGroupByValues() {
-        if (groupByRecords != null) {
-            groupByRecords.close();
-            groupByRecords.setMemoryTracker(null);
-        }
-        if (groupByValues != null) {
-            groupByValues.close();
-            groupByValues.setMemoryTracker(null);
         }
     }
 }

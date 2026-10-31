@@ -328,8 +328,10 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
             engine.execute("CREATE TABLE prices (ts " + timestampType + ", sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY", context);
             engine.execute("INSERT INTO prices VALUES ('2024-01-01', 'a'), ('2024-01-01T00:10', 'a')", context);
             engine.execute("ALTER TABLE prices ADD COLUMN price DOUBLE", context);
-            engine.execute("INSERT INTO prices VALUES ('2024-01-01T02:00', 'a', 2), ('2024-01-01T02:10', 'a', 4)", context);
-            engine.execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'", context);
+            engine.execute("INSERT INTO prices VALUES ('2024-01-01T23:00', 'a', 2), ('2024-01-02T00:10', 'a', 4)", context);
+            engine.execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET LIST '2024-01-01'", context);
+            Assert.assertEquals("isParquet\ntrue\n", TestUtils.printSqlToString(engine, context,
+                    "SELECT isParquet FROM table_partitions('prices') WHERE name = '2024-01-01'", new StringSink()).toString());
             assertMatchesLegacy(context, "SELECT ts, avg(price), sum(price), count(price) FROM prices SAMPLE BY 1h FILL(LINEAR)", "");
         });
     }

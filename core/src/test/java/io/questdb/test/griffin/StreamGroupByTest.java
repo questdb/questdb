@@ -23,7 +23,9 @@
  ******************************************************************************/
 package io.questdb.test.griffin;
 
+import com.sun.management.ThreadMXBean;
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.SqlJitMode;
@@ -50,6 +52,7 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -119,6 +122,33 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlternatingQueriesDoNotAllocate() throws Exception {
+        Assume.assumeTrue(parallel && workers == 0);
+        run((engine, compiler, context) -> {
+            createTable(compiler, context);
+            try (
+                    RecordCursorFactory sums = compiler.compile("SELECT timestamp_floor('1m', ts) bucket, sym, sum(v) FROM trades ORDER BY bucket, sym", context).getRecordCursorFactory();
+                    RecordCursorFactory firsts = compiler.compile("SELECT timestamp_floor('1m', ts) bucket, sym, count(*), first(d) FROM trades ORDER BY bucket, sym", context).getRecordCursorFactory();
+                    TestUtils.ThreadMetricsScope<ThreadMXBean> scope = TestUtils.threadAllocationScope()
+            ) {
+                Assert.assertTrue(getGroupBy(sums) instanceof AsyncStreamGroupByRecordCursorFactory);
+                Assert.assertTrue(getGroupBy(firsts) instanceof AsyncStreamGroupByRecordCursorFactory);
+                drain(sums, context);
+                drain(firsts, context);
+                final ThreadMXBean bean = scope.getBean();
+                final long threadId = Thread.currentThread().threadId();
+                final long before = bean.getThreadAllocatedBytes(threadId);
+                for (int i = 0; i < 100; i++) {
+                    drain(sums, context);
+                    drain(firsts, context);
+                }
+                final long allocated = bean.getThreadAllocatedBytes(threadId) - before;
+                Assert.assertTrue("200 runs allocated " + allocated + " bytes", allocated < 200 * 4 * 1024);
+            }
+        });
+    }
+
+    @Test
     public void testFilteredInput() throws Exception {
         run((engine, compiler, context) -> {
             createTable(compiler, context);
@@ -165,7 +195,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
             createTable(compiler, context);
             for (int format = 0; format < 3; format++) {
                 if (format == 1) {
-                    engine.execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0", context);
+                    convertFirstDayToParquet(engine, context);
                 } else if (format == 2) {
                     engine.execute("ALTER TABLE trades ALTER COLUMN v TYPE STRING", context);
                 }
@@ -185,8 +215,8 @@ public class StreamGroupByTest extends AbstractCairoTest {
     public void testRepeatedGroupBySubquery() throws Exception {
         run((engine, compiler, context) -> {
             createTable(compiler, context);
-            final String sql = "with g as (select timestamp_floor('1m', ts) bucket, sum(v) s from $table) "
-                    + "select a.bucket, a.s, b.s from g a join g b on a.bucket = b.bucket order by a.bucket";
+            final String sql = "WITH g AS (SELECT timestamp_floor('1m', ts) bucket, sum(v) s FROM $table) "
+                    + "SELECT a.bucket, a.s, b.s FROM g a JOIN g b ON a.bucket = b.bucket ORDER BY a.bucket";
             try (RecordCursorFactory expected = compiler.compile(sql.replace("$table", "hash_input"), context).getRecordCursorFactory();
                  RecordCursorFactory actual = compiler.compile(sql.replace("$table", "trades"), context).getRecordCursorFactory()) {
                 final String expectedText = read(expected, context);
@@ -194,7 +224,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
                     Assert.assertEquals(expectedText, read(actual, context));
                 }
                 final String plan = TestUtils.printSqlToString(engine, context,
-                        "explain " + sql.replace("$table", "trades"), new StringSink());
+                        "EXPLAIN " + sql.replace("$table", "trades"), new StringSink());
                 Assert.assertTrue(plan, plan.contains("Stream Group By"));
             }
         });
@@ -216,7 +246,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
     @Test
     public void testByteAndBooleanDistinct() throws Exception {
         run((engine, compiler, context) -> {
-            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence(0, 1000L) ts, "
+            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence(86_398_976_000, 1000L) ts, "
                     + "(x - 129)::byte b, x % 2 = 0 flag, (x % 3)::symbol sym "
                     + "FROM long_sequence(2048)) TIMESTAMP(ts) PARTITION BY DAY", context);
             engine.execute("CREATE TABLE hash_input (ts timestamp, b byte, flag boolean, sym symbol)", context);
@@ -227,7 +257,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
             final String sql = "SELECT timestamp_floor('512T', ts) bucket, " + values + " FROM $table ORDER BY bucket";
             for (int iteration = 0; iteration < 2; iteration++) {
                 if (iteration == 1) {
-                    engine.execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0", context);
+                    convertToParquet(engine, context, "1970-01-01");
                 }
                 assertMatchesHash(compiler, context, sql);
                 assertMatchesHash(compiler, context, "SELECT timestamp_floor('512T', ts) bucket, sym, "
@@ -237,10 +267,10 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 assertQuery(sql.replace("$table", "trades")).withEngine(engine).withContext(context)
                         .noLeakCheck().timestamp("bucket").noRandomAccess().returns("""
                                 bucket\tn\tbytes\tflags\tapprox\tlow\thigh\ttotal
-                                1970-01-01T00:00:00.000000Z\t512\t256\t2\t256\t256\t256\t-256
-                                1970-01-01T00:00:00.512000Z\t512\t256\t2\t256\t256\t256\t-256
-                                1970-01-01T00:00:01.024000Z\t512\t256\t2\t256\t256\t256\t-256
-                                1970-01-01T00:00:01.536000Z\t512\t256\t2\t256\t256\t256\t-256
+                                1970-01-01T23:59:58.976000Z\t512\t256\t2\t256\t256\t256\t-256
+                                1970-01-01T23:59:59.488000Z\t512\t256\t2\t256\t256\t256\t-256
+                                1970-01-02T00:00:00.000000Z\t512\t256\t2\t256\t256\t256\t-256
+                                1970-01-02T00:00:00.512000Z\t512\t256\t2\t256\t256\t256\t-256
                                 """);
             }
         });
@@ -249,17 +279,17 @@ public class StreamGroupByTest extends AbstractCairoTest {
     @Test
     public void testByteAndBooleanDistinctColumnTop() throws Exception {
         run((engine, compiler, context) -> {
-            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence(0, 1_000_000L) ts "
+            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence(86_397_000_000, 1_000_000L) ts "
                     + "FROM long_sequence(2)) TIMESTAMP(ts) PARTITION BY DAY", context);
             engine.execute("ALTER TABLE trades ADD COLUMN b BYTE, flag BOOLEAN", context);
-            engine.execute("INSERT INTO trades VALUES (3_000_000, -128, false), (3_000_000, 0, true), "
-                    + "(3_000_000, 127, false), (4_000_000, null, null)", context);
+            engine.execute("INSERT INTO trades VALUES (86_400_000_000, -128, false), (86_400_000_000, 0, true), "
+                    + "(86_400_000_000, 127, false), (86_401_000_000, null, null)", context);
             engine.execute("CREATE TABLE hash_input (ts timestamp, b byte, flag boolean)", context);
             engine.execute("INSERT INTO hash_input SELECT * FROM trades", context);
             final String values = "count(*) n, count_distinct(b) bytes, count_distinct(flag) flags, approx_count_distinct(b) approx";
             for (int iteration = 0; iteration < 2; iteration++) {
                 if (iteration == 1) {
-                    engine.execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0", context);
+                    convertToParquet(engine, context, "1970-01-01");
                 }
                 assertMatchesHash(compiler, context, "SELECT timestamp_floor('1s', ts) bucket, "
                         + values + " FROM $table ORDER BY bucket");
@@ -272,11 +302,11 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 assertQuery(sql).withEngine(engine).withContext(context)
                         .noLeakCheck().timestamp("ts").noRandomAccess().returns("""
                                 ts\tn\tbytes\tflags\tapprox
-                                1970-01-01T00:00:00.000000Z\t1\t1\t1\t1
-                                1970-01-01T00:00:01.000000Z\t1\t1\t1\t1
-                                1970-01-01T00:00:02.000000Z\t1\t1\t1\t1
-                                1970-01-01T00:00:03.000000Z\t3\t3\t2\t3
-                                1970-01-01T00:00:04.000000Z\t1\t1\t1\t1
+                                1970-01-01T23:59:57.000000Z\t1\t1\t1\t1
+                                1970-01-01T23:59:58.000000Z\t1\t1\t1\t1
+                                1970-01-01T23:59:59.000000Z\t1\t1\t1\t1
+                                1970-01-02T00:00:00.000000Z\t3\t3\t2\t3
+                                1970-01-02T00:00:01.000000Z\t1\t1\t1\t1
                                 """);
             }
         });
@@ -878,7 +908,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
             createTable(compiler, context);
             for (int iteration = 0; iteration < 2; iteration++) {
                 if (iteration == 1) {
-                    engine.execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0", context);
+                    convertFirstDayToParquet(engine, context);
                 }
                 final String expectedSql = "SELECT timestamp_floor('1m', ts) ts, sym, count(*), sum(v), avg(d) "
                         + "FROM hash_input ORDER BY ts, sym";
@@ -1038,7 +1068,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
     public void testParquet() throws Exception {
         run((engine, compiler, context) -> {
             createTable(compiler, context);
-            engine.execute("alter table trades convert partition to parquet where ts >= 0", context);
+            convertFirstDayToParquet(engine, context);
             assertMatchesHash(compiler, context,
                     "select timestamp_floor('1m', ts) bucket, count(*), sum(v), avg(d), first(v), last(v) from $table order by bucket");
         });
@@ -1494,15 +1524,39 @@ public class StreamGroupByTest extends AbstractCairoTest {
         Assert.assertEquals(expected, found);
     }
 
+    private static void convertFirstDayToParquet(CairoEngine engine, SqlExecutionContext context) throws Exception {
+        for (String table : new String[]{"trades", "hash_input"}) {
+            engine.execute("INSERT INTO " + table + " VALUES ('2024-01-02', 1, 1.0, 'A')", context);
+        }
+        TestUtils.drainWalQueue(engine);
+        convertToParquet(engine, context, "2024-01-01");
+    }
+
+    private static void convertToParquet(CairoEngine engine, SqlExecutionContext context, String partition) throws Exception {
+        engine.execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET LIST '" + partition + "'", context);
+        TestUtils.drainWalQueue(engine);
+        Assert.assertEquals(
+                "isParquet\ntrue\n",
+                TestUtils.printSqlToString(engine, context, "SELECT isParquet FROM table_partitions('trades') WHERE name = '" + partition + "'", new StringSink())
+        );
+    }
+
     private static void createTable(SqlCompiler compiler, SqlExecutionContext context) throws Exception {
-        context.getCairoEngine().execute("create table trades as (select "
-                + "timestamp_sequence('2024-01-01T00:00:00'::timestamp, 1_000_000L) ts, "
-                + "case when x % 11 = 0 then null else x end v, "
-                + "case when x % 13 = 0 then null else (x % 29)::double end d, "
-                + "case when x % 2 = 0 then 'A' else 'B' end::symbol sym "
-                + "from long_sequence(1001)) timestamp(ts) partition by day", context);
-        context.getCairoEngine().execute("create table hash_input (ts timestamp, v long, d double, sym symbol)", context);
-        context.getCairoEngine().execute("insert into hash_input select * from trades", context);
+        context.getCairoEngine().execute("CREATE TABLE trades AS (SELECT "
+                + "timestamp_sequence('2024-01-01T00:00:00'::TIMESTAMP, 1_000_000L) ts, "
+                + "CASE WHEN x % 11 = 0 THEN NULL ELSE x END v, "
+                + "CASE WHEN x % 13 = 0 THEN NULL ELSE (x % 29)::DOUBLE END d, "
+                + "CASE WHEN x % 2 = 0 THEN 'A' ELSE 'B' END::SYMBOL sym "
+                + "FROM long_sequence(1001)) TIMESTAMP(ts) PARTITION BY DAY", context);
+        context.getCairoEngine().execute("CREATE TABLE hash_input (ts TIMESTAMP, v LONG, d DOUBLE, sym SYMBOL)", context);
+        context.getCairoEngine().execute("INSERT INTO hash_input SELECT * FROM trades", context);
+    }
+
+    private static void drain(RecordCursorFactory factory, SqlExecutionContext context) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(context)) {
+            while (cursor.hasNext()) {
+            }
+        }
     }
 
     private static RecordCursorFactory getGroupBy(RecordCursorFactory factory) {

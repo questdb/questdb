@@ -267,7 +267,7 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
             final int[] batchColumns = atom.getBatchColumnIndexes();
             final int keyIndex = atom.getStateTypes().getColumnCount() - 1;
             final long stride = (value.getSizeInBytes() + 7) / 8;
-            final DirectLongList results = task.getGroupByValues();
+            final DirectLongList results = atom.getResultValues(task);
             for (long lo = 0, hi = rowCount, groups = 0; lo < hi; groups++) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 final long key = getKey(record, rows, keyFunction, isDescending ? hi - 1 : lo);
