@@ -57,14 +57,20 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.TestOnly;
 
+import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS;
+import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS_SHR;
+
 public final class StreamGroupByMap implements QuietCloseable {
     // clear() shrinks the map once its capacity exceeds this many slots per key the finished segment needed.
     private static final int SHRINK_RATIO = 8;
     private final DirectLongList batchRows;
     private final int batchSize;
     private final IntList columnCrossIndex;
+    private final CairoConfiguration configuration;
     private final ObjList<GroupByFunction> functions;
     private final RecordSink inputSink;
+    // Span maps shard once they pass the sharding threshold, so that their owner merges them in parallel.
+    private final boolean isShardable;
     private final Map map;
     private final ArrayColumnTypes mapKeyTypes;
     private final ArrayColumnTypes mapValueTypes;
@@ -75,12 +81,16 @@ public final class StreamGroupByMap implements QuietCloseable {
     private final SelectedRecord record;
     private final int segmentIndex;
     private final int segmentType;
+    private final ObjList<Map> shards = new ObjList<>();
+    private final int shardingThreshold;
     private final RecordSink stateSink;
     private final ArrayColumnTypes stateTypes;
     private final GroupByFunctionsUpdater updater;
     private final FlyweightPackedMapValue value;
     private final RecordValueSink valueSink;
     private int initialKeyCapacity;
+    private boolean isSharded;
+    private MemoryTracker memoryTracker;
     // The most keys a segment held since the map opened.
     private long peakKeys;
     // The keys the first segment after a reopen presizes the map for.
@@ -88,6 +98,8 @@ public final class StreamGroupByMap implements QuietCloseable {
     // The most keys a batch of the current segment reserved map capacity for.
     private long reservedKeys;
     private long segmentKey;
+    // The most keys a shard held, so that the next shard() presizes the shards the merge freed.
+    private int shardKeyCapacity;
 
     public StreamGroupByMap(
             CairoConfiguration configuration,
@@ -101,8 +113,11 @@ public final class StreamGroupByMap implements QuietCloseable {
             ObjList<GroupByFunction> functions,
             GroupByFunctionsUpdater updater
     ) {
+        this.configuration = configuration;
         this.functions = functions;
         this.updater = updater;
+        isShardable = false;
+        shardingThreshold = 0;
         segmentIndex = valueTypes.getColumnCount();
         segmentType = keyTypes.getColumnType(streamKeyIndex);
         batchSize = configuration.getGroupByBatchSize();
@@ -158,6 +173,9 @@ public final class StreamGroupByMap implements QuietCloseable {
     }
 
     private StreamGroupByMap(CairoConfiguration configuration, StreamGroupByMap prototype) {
+        this.configuration = configuration;
+        isShardable = true;
+        shardingThreshold = configuration.getGroupByShardingThreshold();
         functions = prototype.functions;
         updater = prototype.updater;
         segmentIndex = prototype.segmentIndex;
@@ -185,26 +203,14 @@ public final class StreamGroupByMap implements QuietCloseable {
     }
 
     public void aggregate(PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, boolean isBatch, SqlExecutionCircuitBreaker circuitBreaker) {
-        if (!isBatch) {
-            for (long row = lo; row < hi; row++) {
-                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-                final long rowIndex = rows == null ? row : rows.get(row);
-                record.setFilteredRowIndex(rowIndex, row);
-                update(record, baseRowId + rowIndex);
-            }
-            return;
+        long row = lo;
+        if (!isSharded) {
+            row = isBatch
+                    ? aggregateBatch(record, rows, lo, hi, baseRowId, circuitBreaker)
+                    : aggregateRows(record, rows, lo, hi, baseRowId, circuitBreaker);
         }
-        batchRows.ensureCapacity(batchSize);
-        final long batchAddress = batchRows.getAddress();
-        reservedKeys = Math.max(reservedKeys, Math.min(hi - lo, batchSize));
-        for (long start = lo; start < hi; start += batchSize) {
-            if (start > lo) {
-                // The caller checks the breaker once per segment, so only the later batches check it here.
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-            }
-            final long end = Math.min(start + batchSize, hi);
-            GroupByUtils.aggregateKeyedBatch(record, map, inputSink, functions, value, batchAddress,
-                    rows == null ? 0 : rows.getAddress(), start, end, baseRowId);
+        if (row < hi) {
+            aggregateSharded(record, rows, row, hi, baseRowId, circuitBreaker);
         }
     }
 
@@ -221,6 +227,9 @@ public final class StreamGroupByMap implements QuietCloseable {
     }
 
     public void clear(long key) {
+        if (isSharded) {
+            unshard();
+        }
         final long size = map.size();
         peakKeys = Math.max(peakKeys, size);
         if (presizeKeys > 0 && size == 0) {
@@ -248,6 +257,10 @@ public final class StreamGroupByMap implements QuietCloseable {
             peakKeys = Math.max(peakKeys, map.size());
         }
         Throwable th = Misc.freeBestEffort(null, map);
+        for (int i = 0, n = shards.size(); i < n; i++) {
+            th = Misc.freeBestEffort(th, shards.getQuick(i));
+        }
+        isSharded = false;
         th = Misc.freeBestEffort(th, mergeMemory);
         th = Misc.freeBestEffort(th, batchRows);
         if (map != null) {
@@ -281,12 +294,20 @@ public final class StreamGroupByMap implements QuietCloseable {
         return segmentType == ColumnType.INT ? record.getInt(segmentIndex) : record.getLong(segmentIndex);
     }
 
+    public ObjList<Map> getShards() {
+        return shards;
+    }
+
     public ArrayColumnTypes getStateTypes() {
         return stateTypes;
     }
 
     public boolean isOpen() {
         return map.isOpen();
+    }
+
+    public boolean isSharded() {
+        return isSharded;
     }
 
     public void merge(Record source, GroupByFunctionsUpdater updater) {
@@ -307,15 +328,44 @@ public final class StreamGroupByMap implements QuietCloseable {
         map.merge(source.map, updater);
     }
 
+    // Routes the entries into the shards by the top bits of the key hash.
+    public void mergeInto(ObjList<Map> shards, GroupByFunctionsUpdater updater) {
+        final MapRecordCursor cursor = map.getCursor();
+        final MapRecord record = cursor.getRecord();
+        while (cursor.hasNext()) {
+            final long hashCode = record.keyHashCode();
+            final MapKey key = shards.getQuick((int) (hashCode >>> NUM_SHARDS_SHR)).withKey();
+            record.copyToKey(key);
+            final MapValue value = key.createValue(hashCode);
+            if (value.isNew()) {
+                record.copyValue(value);
+            } else {
+                updater.merge(value, record.getValue());
+            }
+        }
+    }
+
     public StreamGroupByMap newInstance(CairoConfiguration configuration) {
         return new StreamGroupByMap(configuration, this);
+    }
+
+    public Map newMergeShard() {
+        return MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false);
     }
 
     public void putSegmentKey(MapRecord record) {
         GroupByUtils.setStreamGroupByKey(record.getValue(), segmentIndex, segmentType, segmentKey);
     }
 
+    // Called before a merge frees the shards.
+    public void rememberShardSizes() {
+        for (int i = 0; i < NUM_SHARDS; i++) {
+            shardKeyCapacity = (int) Math.max(shardKeyCapacity, shards.getQuick(i).size());
+        }
+    }
+
     public void reopen(MemoryTracker tracker) {
+        memoryTracker = tracker;
         map.setMemoryTracker(tracker);
         mergeMemory.setMemoryTracker(tracker);
         batchRows.setMemoryTracker(tracker);
@@ -324,6 +374,29 @@ public final class StreamGroupByMap implements QuietCloseable {
         map.setBatchEmptyValue(updater);
         presizeKeys = peakKeys > initialKeyCapacity && peakKeys <= presizeMaxKeys ? peakKeys : 0;
         peakKeys = 0;
+    }
+
+    public void shard() {
+        if (isSharded) {
+            return;
+        }
+        if (shards.size() == 0) {
+            for (int i = 0; i < NUM_SHARDS; i++) {
+                shards.add(MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, true, false));
+            }
+        }
+        // A merge or unshard() closed the shards.
+        for (int i = 0; i < NUM_SHARDS; i++) {
+            final Map shard = shards.getQuick(i);
+            shard.setMemoryTracker(memoryTracker);
+            shard.reopen();
+            if (shardKeyCapacity > shard.getKeyCapacity()) {
+                shard.setKeyCapacity(shardKeyCapacity);
+            }
+        }
+        isSharded = true;
+        mergeInto(shards, updater);
+        map.close();
     }
 
     public long size() {
@@ -340,5 +413,76 @@ public final class StreamGroupByMap implements QuietCloseable {
         } else {
             updater.updateExisting(value, record, rowId);
         }
+    }
+
+    // Returns the first row left once the map shards, so that at most a batch moves into the shards.
+    private long aggregateBatch(PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, SqlExecutionCircuitBreaker circuitBreaker) {
+        batchRows.ensureCapacity(batchSize);
+        final long batchAddress = batchRows.getAddress();
+        reservedKeys = Math.max(reservedKeys, Math.min(hi - lo, batchSize));
+        for (long start = lo; start < hi; start += batchSize) {
+            if (start > lo) {
+                // The caller checks the breaker once per segment, so only the later batches check it here.
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            }
+            final long end = Math.min(start + batchSize, hi);
+            GroupByUtils.aggregateKeyedBatch(record, map, inputSink, functions, value, batchAddress,
+                    rows == null ? 0 : rows.getAddress(), start, end, baseRowId);
+            if (isShardable && map.size() > shardingThreshold) {
+                shard();
+                return end;
+            }
+        }
+        return hi;
+    }
+
+    private long aggregateRows(PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, SqlExecutionCircuitBreaker circuitBreaker) {
+        for (long row = lo; row < hi; row++) {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            final long rowIndex = rows == null ? row : rows.get(row);
+            record.setFilteredRowIndex(rowIndex, row);
+            update(record, baseRowId + rowIndex);
+            if (isShardable && map.size() > shardingThreshold) {
+                shard();
+                return row + 1;
+            }
+        }
+        return hi;
+    }
+
+    private void aggregateSharded(PageFrameMemoryRecord record, DirectLongList rows, long lo, long hi, long baseRowId, SqlExecutionCircuitBreaker circuitBreaker) {
+        // The first shard stages the key to hash it.
+        final Map lookupShard = shards.getQuick(0);
+        for (long row = lo; row < hi; row++) {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            final long rowIndex = rows == null ? row : rows.get(row);
+            record.setFilteredRowIndex(rowIndex, row);
+            final MapKey lookupKey = lookupShard.withKey();
+            inputSink.copy(record, lookupKey);
+            lookupKey.commit();
+            final long hashCode = lookupKey.hash();
+            final Map shard = shards.getQuick((int) (hashCode >>> NUM_SHARDS_SHR));
+            final MapKey key;
+            if (shard != lookupShard) {
+                key = shard.withKey();
+                key.copyFrom(lookupKey);
+            } else {
+                key = lookupKey;
+            }
+            final MapValue value = key.createValue(hashCode);
+            if (value.isNew()) {
+                updater.updateNew(value, record, baseRowId + rowIndex);
+                GroupByUtils.setStreamGroupByKey(value, segmentIndex, segmentType, segmentKey);
+            } else {
+                updater.updateExisting(value, record, baseRowId + rowIndex);
+            }
+        }
+    }
+
+    private void unshard() {
+        for (int i = 0; i < NUM_SHARDS; i++) {
+            shards.getQuick(i).close();
+        }
+        isSharded = false;
     }
 }

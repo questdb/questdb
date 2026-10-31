@@ -121,8 +121,9 @@ public class AsyncStreamGroupByRecordCursorFactory extends AbstractRecordCursorF
                     workerCount,
                     PageFrameReduceTask.TYPE_GROUP_BY
             );
-            cursor = new AsyncStreamGroupByRecordCursor(configuration, frameSequence.getAtom().getStateTypes(), recordFunctions,
-                    frameSequence.getAtom().getCollectorMap());
+            cursor = new AsyncStreamGroupByRecordCursor(engine, messageBus, frameSequence.getAtom().getStateTypes(), recordFunctions,
+                    frameSequence.getAtom().getCollectorMap(),
+                    configuration.getFactoryProvider().getWorkStealingStrategy(configuration, workerCount, frameSequence.getAtom()));
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;

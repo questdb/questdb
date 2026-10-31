@@ -25,7 +25,7 @@
 package io.questdb.tasks;
 
 import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
-import io.questdb.griffin.engine.table.GroupByShardingContext;
+import io.questdb.griffin.engine.groupby.GroupByShardMerger;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberDispatchContext;
@@ -34,7 +34,7 @@ import io.questdb.std.Mutable;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class GroupByMergeShardTask implements Mutable {
-    private GroupByShardingContext shardingCtx;
+    private GroupByShardMerger merger;
     private PostAggregationCircuitBreaker circuitBreaker;
     private FiberDispatchContext dispatchContext;
     private CountDownLatchSPI doneLatch;
@@ -44,15 +44,15 @@ public class GroupByMergeShardTask implements Mutable {
     @Override
     public void clear() {
         shardIndex = -1;
-        shardingCtx = null;
+        merger = null;
         circuitBreaker = null;
         dispatchContext = null;
         doneLatch = null;
         startedCounter = null;
     }
 
-    public GroupByShardingContext getShardingContext() {
-        return shardingCtx;
+    public GroupByShardMerger getMerger() {
+        return merger;
     }
 
     public PostAggregationCircuitBreaker getCircuitBreaker() {
@@ -79,14 +79,14 @@ public class GroupByMergeShardTask implements Mutable {
             PostAggregationCircuitBreaker circuitBreaker,
             AtomicInteger startedCounter,
             CountDownLatchSPI doneLatch,
-            GroupByShardingContext shardingCtx,
+            GroupByShardMerger merger,
             int shardIndex
     ) {
         this.circuitBreaker = circuitBreaker;
         this.dispatchContext = Fiber.captureParallelDispatchContext();
         this.startedCounter = startedCounter;
         this.doneLatch = doneLatch;
-        this.shardingCtx = shardingCtx;
+        this.merger = merger;
         this.shardIndex = shardIndex;
     }
 }

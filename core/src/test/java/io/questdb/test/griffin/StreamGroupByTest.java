@@ -149,6 +149,160 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHighCardinalityBucketsMergeShards() throws Exception {
+        // Every frame of a bucket brings more keys than the threshold, so a span map shards in any schedule.
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 100);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        run((engine, compiler, context) -> {
+            createHighCardinalityTables(engine, context);
+            for (String filter : new String[]{"", " WHERE v % 7 <> 0"}) {
+                for (String keys : new String[]{"k", "s", "k, sym"}) {
+                    for (String order : new String[]{"bucket", "bucket DESC"}) {
+                        final String sql = "SELECT timestamp_floor('10s', ts) bucket, " + keys + ", count(*), sum(v), max(v) FROM $table"
+                                + filter + " ORDER BY " + order + ", " + keys;
+                        assertMatchesHash(compiler, context, sql);
+                        assertShardMerge(compiler, context, sql);
+                    }
+                }
+            }
+            // A selective filter on a parquet partition reads the rows through late materialization.
+            for (String table : new String[]{"trades", "hash_input"}) {
+                engine.execute("INSERT INTO " + table + " VALUES ('2024-01-02', 1, '1', 1, 'A')", context);
+            }
+            TestUtils.drainWalQueue(engine);
+            convertToParquet(engine, context, "2024-01-01");
+            for (String keys : new String[]{"k", "s"}) {
+                final String sql = "SELECT timestamp_floor('10s', ts) bucket, " + keys + ", count(*), sum(v) FROM $table WHERE v % 3 = 0 ORDER BY bucket, " + keys;
+                assertMatchesHash(compiler, context, sql);
+                assertShardMerge(compiler, context, sql);
+            }
+        });
+    }
+
+    @Test
+    public void testHighCardinalityBucketsPresizeShards() throws Exception {
+        // Small maps start below the keys of a shard, so the merge and the next execution presize the shards.
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 4);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 100);
+        run((engine, compiler, context) -> {
+            createHighCardinalityTables(engine, context);
+            final String sql = "SELECT timestamp_floor('10s', ts) bucket, k, count(*), sum(v) FROM $table ORDER BY bucket, k";
+            assertMatchesHash(compiler, context, sql);
+            assertShardMerge(compiler, context, sql);
+        });
+    }
+
+    @Test
+    public void testHighCardinalityBucketFailuresAndReuse() throws Exception {
+        // Small shards grow while they merge, so a memory limit can fail a merge task on a worker.
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 4);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 100);
+        run((engine, compiler, context) -> {
+            createHighCardinalityTables(engine, context);
+            final String sql = "SELECT timestamp_floor('10s', ts) bucket, s, count(*), sum(v) FROM $table ORDER BY bucket, s";
+            final String expected;
+            try (RecordCursorFactory factory = compiler.compile(sql.replace("$table", "hash_input"), context).getRecordCursorFactory()) {
+                expected = read(factory, context);
+            }
+            try (RecordCursorFactory factory = compiler.compile(sql.replace("$table", "trades"), context).getRecordCursorFactory();
+                 MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH)) {
+                assertStream(getGroupBy(factory), true);
+                context.setMemoryTracker(tracker);
+                try {
+                    for (long limit = 1L << 26; limit >= 1L << 12; limit -= limit >> 3) {
+                        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
+                        try {
+                            Assert.assertEquals(expected, read(factory, context));
+                        } catch (CairoException e) {
+                            Assert.assertTrue(e.getFlyweightMessage().toString(), e.isOutOfMemory());
+                        } finally {
+                            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                        }
+                        Assert.assertEquals(0, tracker.getUsed());
+                        Assert.assertEquals(expected, read(factory, context));
+                        Assert.assertEquals(0, tracker.getUsed());
+                    }
+                } finally {
+                    context.setMemoryTracker(null);
+                }
+            }
+            // Cancels the query while the owner waits for the shard merges.
+            final StackWalker stackWalker = StackWalker.getInstance();
+            for (int iteration = 0; iteration < 3; iteration++) {
+                try (NetworkSqlExecutionCircuitBreaker network = new NetworkSqlExecutionCircuitBreaker(engine,
+                        new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                            @Override
+                            public int getCircuitBreakerThrottle() {
+                                return 0;
+                            }
+                        })) {
+                    final CountingSqlExecutionCircuitBreaker breaker = new CountingSqlExecutionCircuitBreaker(network) {
+                        @Override
+                        public boolean checkIfTripped() {
+                            if (stackWalker.walk(frames -> frames.anyMatch(frame -> frame.getMethodName().equals("mergeShards")))) {
+                                network.cancel();
+                            }
+                            return super.checkIfTripped();
+                        }
+                    };
+                    try (SqlExecutionContextImpl cancellable = new SqlExecutionContextImpl(engine, Math.max(1, workers))
+                            .with(context.getSecurityContext(), null, null, -1, breaker);
+                         RecordCursorFactory factory = compiler.compile(sql.replace("$table", "trades"), cancellable).getRecordCursorFactory()) {
+                        try {
+                            Assert.assertEquals(expected, read(factory, cancellable));
+                            Assert.assertFalse(parallel);
+                        } catch (CairoException e) {
+                            Assert.assertTrue(e.getFlyweightMessage().toString(), e.isInterruption());
+                        }
+                        Assert.assertEquals(expected, read(factory, context));
+                    }
+                }
+            }
+            for (int trip = 1; trip < 4_096; trip <<= 1) {
+                final int checks = trip;
+                final AtomicLong count = new AtomicLong();
+                try (NetworkSqlExecutionCircuitBreaker network = new NetworkSqlExecutionCircuitBreaker(engine,
+                        new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                            @Override
+                            public int getCircuitBreakerThrottle() {
+                                return 0;
+                            }
+                        })) {
+                    final CountingSqlExecutionCircuitBreaker breaker = new CountingSqlExecutionCircuitBreaker(network) {
+                        @Override
+                        public boolean checkIfTripped() {
+                            trip();
+                            return super.checkIfTripped();
+                        }
+
+                        @Override
+                        public void statefulThrowExceptionIfTripped() {
+                            trip();
+                            super.statefulThrowExceptionIfTripped();
+                        }
+
+                        private void trip() {
+                            if (count.incrementAndGet() == checks) {
+                                network.cancel();
+                            }
+                        }
+                    };
+                    try (SqlExecutionContextImpl cancellable = new SqlExecutionContextImpl(engine, Math.max(1, workers))
+                            .with(context.getSecurityContext(), null, null, -1, breaker);
+                         RecordCursorFactory factory = compiler.compile(sql.replace("$table", "trades"), cancellable).getRecordCursorFactory()) {
+                        try {
+                            Assert.assertEquals(expected, read(factory, cancellable));
+                        } catch (CairoException e) {
+                            Assert.assertTrue(e.getFlyweightMessage().toString(), e.isInterruption());
+                        }
+                        Assert.assertEquals(expected, read(factory, context));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFilteredInput() throws Exception {
         run((engine, compiler, context) -> {
             createTable(compiler, context);
@@ -840,6 +994,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
 
     @Test
     public void testSegmentedMapShrinksAfterHighCardinalitySegment() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, 10_000);
         run((engine, compiler, context) -> {
             for (int[] segment : new int[][]{{5_000, 5_000}, {600, 100}}) {
                 // The first second holds segment[0] rows of segment[1] keys, each of the 1_000 seconds after it one key.
@@ -1557,6 +1712,23 @@ public class StreamGroupByTest extends AbstractCairoTest {
             while (cursor.hasNext()) {
             }
         }
+    }
+
+    private void assertShardMerge(SqlCompiler compiler, SqlExecutionContext context, String sql) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(sql.replace("$table", "trades"), context).getRecordCursorFactory()) {
+            read(factory, context);
+            if (parallel) {
+                Assert.assertTrue(sql, ((AsyncStreamGroupByRecordCursorFactory) getGroupBy(factory)).getAtom().getShardMergeCount() > 0);
+            }
+        }
+    }
+
+    // Each 10s bucket holds 10_000 rows of 5_000 keys, past the test sharding threshold, and spans frames.
+    private static void createHighCardinalityTables(CairoEngine engine, SqlExecutionContext context) throws Exception {
+        engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2024-01-01', 1_000L) ts, x % 5_000 k, "
+                + "(x % 5_000)::VARCHAR s, x v, (x % 3)::SYMBOL sym FROM long_sequence(30_000)) TIMESTAMP(ts) PARTITION BY DAY", context);
+        engine.execute("CREATE TABLE hash_input (ts TIMESTAMP, k LONG, s VARCHAR, v LONG, sym SYMBOL)", context);
+        engine.execute("INSERT INTO hash_input SELECT * FROM trades", context);
     }
 
     private static RecordCursorFactory getGroupBy(RecordCursorFactory factory) {

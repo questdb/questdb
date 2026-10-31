@@ -29,11 +29,14 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordChain;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
@@ -45,6 +48,7 @@ import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
+import io.questdb.griffin.engine.groupby.GroupByShardMerger;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.StreamGroupByMap;
 import io.questdb.jit.CompiledFilter;
@@ -59,10 +63,14 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.TestOnly;
 
-public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner {
+import static io.questdb.griffin.engine.table.GroupByMapFragment.NUM_SHARDS;
+
+public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner, GroupByShardMerger {
     private final int[] batchColumnIndexes;
     private final StreamGroupByMap collectorMap;
     private final CairoConfiguration configuration;
+    // The merged shards of the span maps of a bucket, from its close to its emission.
+    private final ObjList<Map> destShards = new ObjList<>();
     private final AsyncFilterContext filterContext;
     // A frame's segments, by frame index modulo the reduce queue capacity, from its reduce to its collection.
     private final ObjList<RecordChain> frameRecords;
@@ -73,17 +81,20 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
     private final int keyFunctionIndex;
     private final ObjList<Function> keyFunctions;
     private final PerWorkerLocks locks;
+    private final ObjList<StreamGroupByMap> mergeSources = new ObjList<>();
     private final StreamGroupByMap ownerMap;
     private final ObjList<ObjList<GroupByFunction>> perWorkerFunctions;
     private final ObjList<ObjList<Function>> perWorkerKeys;
     private final ObjList<StreamGroupByMap> perWorkerMaps;
     private final ObjList<GroupByFunctionsUpdater> perWorkerUpdaters;
     private final ObjList<FlyweightPackedMapValue> perWorkerValues;
+    private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
     private final ObjList<SpanMaps> spanMaps;
     private final ArrayColumnTypes stateTypes;
     private final GroupByFunctionsUpdater updater;
     private final FlyweightPackedMapValue value;
     private MemoryTracker memoryTracker;
+    private int shardMergeCount;
 
     public AsyncStreamGroupByAtom(
             CairoConfiguration configuration,
@@ -205,6 +216,10 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
         return spanMaps.getQuick(slot + 1).acquire(configuration, memoryTracker, key);
     }
 
+    public void closeShardMerge() {
+        mergeSources.clear();
+    }
+
     public int[] getBatchColumnIndexes() {
         return batchColumnIndexes;
     }
@@ -270,6 +285,16 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
         return values;
     }
 
+    @TestOnly
+    public int getShardMergeCount() {
+        return shardMergeCount;
+    }
+
+    @Override
+    public AsyncQueryProgressState getProgressState() {
+        return progressState;
+    }
+
     public ArrayColumnTypes getStateTypes() {
         return stateTypes;
     }
@@ -328,6 +353,51 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
         return workerId == -1 && owner ? -1 : locks.acquireSlot(workerId, circuitBreaker);
     }
 
+    @Override
+    public int maybeAcquire(int carrierId, boolean owner, ExecutionCircuitBreaker circuitBreaker) {
+        return carrierId == -1 && owner ? -1 : locks.acquireSlot(carrierId, circuitBreaker);
+    }
+
+    @Override
+    public void mergeShard(int slotId, int shardIndex) {
+        final Map dest = destShards.getQuick(shardIndex);
+        dest.clear();
+        long size = 0;
+        for (int i = 0, n = mergeSources.size(); i < n; i++) {
+            size += mergeSources.getQuick(i).getShards().getQuick(shardIndex).size();
+        }
+        if (size > dest.getKeyCapacity()) {
+            dest.setKeyCapacity((int) Math.min(size, Integer.MAX_VALUE));
+        }
+        final GroupByFunctionsUpdater updater = getUpdater(slotId);
+        for (int i = 0, n = mergeSources.size(); i < n; i++) {
+            final Map source = mergeSources.getQuick(i).getShards().getQuick(shardIndex);
+            dest.merge(source, updater);
+            source.close();
+        }
+    }
+
+    // The span maps must be sharded. The merged shards keep their capacity until the cursor closes.
+    public ObjList<Map> openShardMerge(ObjList<StreamGroupByMap> sources) {
+        shardMergeCount++;
+        mergeSources.clear();
+        mergeSources.addAll(sources);
+        if (destShards.size() == 0) {
+            for (int i = 0; i < NUM_SHARDS; i++) {
+                destShards.add(ownerMap.newMergeShard());
+            }
+        }
+        for (int i = 0; i < NUM_SHARDS; i++) {
+            final Map shard = destShards.getQuick(i);
+            if (!shard.isOpen()) {
+                shard.setMemoryTracker(memoryTracker);
+                shard.reopen();
+            }
+        }
+        return destShards;
+    }
+
+    @Override
     public void release(int slot) {
         locks.releaseSlot(slot);
     }
@@ -391,6 +461,10 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner 
     }
 
     private Throwable closeMaps(Throwable th) {
+        mergeSources.clear();
+        for (int i = 0, n = destShards.size(); i < n; i++) {
+            th = Misc.freeBestEffort(th, destShards.getQuick(i));
+        }
         th = Misc.freeBestEffort(th, ownerMap);
         th = Misc.freeBestEffort(th, collectorMap);
         if (perWorkerMaps != null) {

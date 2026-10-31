@@ -24,10 +24,13 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordChain;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
@@ -37,25 +40,38 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.cairo.sql.async.QueryParallelOwnerLoop;
+import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
+import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
 import io.questdb.griffin.engine.groupby.StreamGroupByMap;
+import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     private final int dispatchLimit;
     private final boolean isIntKey;
     private final int keyIndex;
     private final DirectLongList memory;
+    private final MessageBus messageBus;
     private final ObjList<Function> nonGroupByFunctions;
+    private final QueryParallelOwnerLoop ownerLoop = new QueryParallelOwnerLoop();
+    // Cancels the merge workers.
+    private final PostAggregationCircuitBreaker postAggregationCircuitBreaker;
+    private final SOUnboundedCountDownLatch postAggregationDoneLatch = new SOUnboundedCountDownLatch();
+    private final AtomicInteger postAggregationStartedCounter = new AtomicInteger();
     private final VirtualRecord record;
     private final StreamGroupByMap segmentMap;
     private final FlyweightPackedMapValue source;
@@ -63,12 +79,16 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     private final IntList spanSlots = new IntList();
     private final long stride;
     private final FlyweightPackedMapValue value;
+    // The merge has a strategy of its own: the frame sequence keeps stealing reduce work while a bucket merges.
+    private final WorkStealingStrategy workStealingStrategy;
     private long chainLastKey;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private long cursor = -1;
     private boolean done;
     private MapRecordCursor emitCursor;
     private StreamGroupByMap emitMap;
+    private int emitShardIndex;
+    private ObjList<Map> emitShards;
     private int frameIndex = -1;
     private int frameLimit = -1;
     private PageFrameSequence<AsyncStreamGroupByAtom> frameSequence;
@@ -77,14 +97,26 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     private boolean isChainPending;
     private boolean isChainRowPending;
     private boolean isOpenCollected;
+    private boolean isShardMerged;
     private long openKey;
     private boolean prepared;
     private long resultOffset;
     private RecordChain resultRecords;
     private DirectLongList results;
 
-    AsyncStreamGroupByRecordCursor(CairoConfiguration configuration, ColumnTypes stateTypes, ObjList<Function> functions, StreamGroupByMap segmentMap) {
+    AsyncStreamGroupByRecordCursor(
+            CairoEngine engine,
+            MessageBus messageBus,
+            ColumnTypes stateTypes,
+            ObjList<Function> functions,
+            StreamGroupByMap segmentMap,
+            WorkStealingStrategy workStealingStrategy
+    ) {
+        final CairoConfiguration configuration = engine.getConfiguration();
+        this.messageBus = messageBus;
+        this.workStealingStrategy = workStealingStrategy;
         this.segmentMap = segmentMap;
+        postAggregationCircuitBreaker = new PostAggregationCircuitBreaker(engine);
         dispatchLimit = Math.max(1, configuration.getSqlParallelFilterDispatchLimit());
         keyIndex = stateTypes.getColumnCount() - 1;
         isIntKey = stateTypes.getColumnType(keyIndex) == ColumnType.INT;
@@ -117,6 +149,8 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
             resultRecords = null;
             emitCursor = null;
             emitMap = null;
+            emitShards = null;
+            isShardMerged = false;
             spanMaps.clear();
             spanSlots.clear();
             memory.close();
@@ -197,6 +231,8 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         resultRecords = null;
         emitCursor = null;
         emitMap = null;
+        emitShards = null;
+        isShardMerged = false;
         spanMaps.clear();
         spanSlots.clear();
         resetSegments();
@@ -211,12 +247,19 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     private void closeOpenSegment() {
         hasOpenKey = false;
         emitMap = segmentMap;
+        emitCursor = null;
         if (hasOpenSpans) {
             final AsyncStreamGroupByAtom atom = frameSequence.getAtom();
             final GroupByFunctionsUpdater updater = atom.getUpdater(-1);
             atom.takeSpanMaps(openKey, spanMaps, spanSlots);
             final int n = spanMaps.size();
             assert n > 0;
+            if (isSharded()) {
+                mergeShards(atom);
+                hasOpenSpans = false;
+                isOpenCollected = false;
+                return;
+            }
             int largest = 0;
             for (int i = 1; i < n; i++) {
                 if (spanMaps.getQuick(i).size() > spanMaps.getQuick(largest).size()) {
@@ -249,6 +292,58 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         segmentMap.getRecord().of(emitCursor.getRecord());
     }
 
+    private boolean isSharded() {
+        for (int i = 0, n = spanMaps.size(); i < n; i++) {
+            if (spanMaps.getQuick(i).isSharded()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // The span maps of a high-cardinality bucket merge shard by shard in parallel.
+    private void mergeShards(AsyncStreamGroupByAtom atom) {
+        for (int i = 0, n = spanMaps.size(); i < n; i++) {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            final StreamGroupByMap map = spanMaps.getQuick(i);
+            map.shard();
+            map.rememberShardSizes();
+        }
+        isShardMerged = true;
+        final ObjList<Map> shards = atom.openShardMerge(spanMaps);
+        GroupByMergeShardJob.mergeShards(
+                atom,
+                ownerLoop,
+                messageBus,
+                workStealingStrategy,
+                circuitBreaker,
+                postAggregationCircuitBreaker,
+                postAggregationDoneLatch,
+                postAggregationStartedCounter
+        );
+        if (postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
+            throwPostAggregationException();
+        }
+        if (isOpenCollected) {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            segmentMap.mergeInto(shards, atom.getUpdater(-1));
+        }
+        emitMap = spanMaps.getQuick(0);
+        emitShards = shards;
+        emitShardIndex = -1;
+        nextEmitShard();
+    }
+
+    // Emits the shards one after another through their own cursors, the cursor type an unsharded bucket emits.
+    private boolean nextEmitShard() {
+        if (emitShards == null || ++emitShardIndex == emitShards.size()) {
+            return false;
+        }
+        emitCursor = emitShards.getQuick(emitShardIndex).getCursor();
+        segmentMap.getRecord().of(emitCursor.getRecord());
+        return true;
+    }
+
     private void collect(boolean force) {
         if (cursor >= 0) {
             frameSequence.getAtom().releaseResults(frameSequence.getTask(cursor).getFrameIndex());
@@ -266,6 +361,9 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
                 if (emitCursor.hasNext()) {
                     emitMap.putSegmentKey(emitCursor.getRecord());
                     return true;
+                }
+                if (nextEmitShard()) {
+                    continue;
                 }
                 releaseSpanMaps();
             }
@@ -403,12 +501,25 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     private void releaseSpanMaps() {
         emitCursor = null;
         emitMap = null;
+        emitShards = null;
         final AsyncStreamGroupByAtom atom = frameSequence.getAtom();
+        if (isShardMerged) {
+            isShardMerged = false;
+            atom.closeShardMerge();
+        }
         for (int i = 0, n = spanMaps.size(); i < n; i++) {
             atom.releaseSpanMap(spanSlots.getQuick(i), spanMaps.getQuick(i));
         }
         spanMaps.clear();
         spanSlots.clear();
+    }
+
+    private void throwPostAggregationException() {
+        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        if (postAggregationCircuitBreaker.hasError()) {
+            throw postAggregationCircuitBreaker.buildError();
+        }
+        throw frameSequence.buildInterruptionException();
     }
 
     private void resetSegments() {
