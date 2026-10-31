@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.AbstractGeoHashFunction;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
 import io.questdb.griffin.engine.functions.ScalarSubQueryTimestampFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.functions.date.TimestampAddUtils;
 import io.questdb.griffin.model.AliasTranslator;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
@@ -757,6 +758,15 @@ public final class WhereClauseParser implements Mutable {
             // and_offset" instead of the dateadd error the non-indexed path reports. No temp model
             // exists yet at this point, so there is nothing to free. The rebuilt dateadd carries the
             // bad unit to the function compiler, which reports "invalid time period".
+            rebuildAndOffsetResidual(node, predicate, unitToken, -offsetValue);
+            return false;
+        }
+
+        // dateadd() returns NULL for a stride whose span does not fit the timestamp type, so no
+        // interval describes the rows that satisfy the predicate. The shift arithmetic below also
+        // detects only a single wrap of the range, and a span this large can wrap several times. Keep
+        // the predicate as the dateadd residual, which applies the NULL rule to each row.
+        if (offsetValue != 0 && TimestampAddUtils.addOrNull(timestampDriver, addMethod, unit, 0, -offsetValue) == Numbers.LONG_NULL) {
             rebuildAndOffsetResidual(node, predicate, unitToken, -offsetValue);
             return false;
         }
