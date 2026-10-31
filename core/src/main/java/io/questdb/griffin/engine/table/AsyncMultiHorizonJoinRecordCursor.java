@@ -250,7 +250,6 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                         cursor,
                         slaveFactories.getQuick(s).getMetadata(),
                         cursor.getColumnMapping(),
-                        cursor.isExternal(),
                         executionContext.getPageFrameMinRows(),
                         executionContext.getPageFrameMaxRows(),
                         executionContext.getSharedQueryWorkerCount(),

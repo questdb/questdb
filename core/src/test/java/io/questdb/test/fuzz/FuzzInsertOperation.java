@@ -31,6 +31,7 @@ import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.Decimal256;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
@@ -74,6 +75,7 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
         return array;
     });
     private static final CarrierLocal<TestRecord.ArrayBinarySequence> tlBinSeq = new CarrierLocal<>(TestRecord.ArrayBinarySequence::new);
+    private static final CarrierLocal<Decimal256> tlDecimal = new CarrierLocal<>(Decimal256::new);
     private static final CarrierLocal<IntList> tlIntList = new CarrierLocal<>(IntList::new);
     private static final CarrierLocal<Utf8StringSink> tlUtf8 = new CarrierLocal<>(Utf8StringSink::new);
     private final double cancelRows;
@@ -248,11 +250,36 @@ public class FuzzInsertOperation implements FuzzTransactionOperation, QuietClose
                 break;
 
             case ColumnType.LONG256:
-                if (!isNull) {
+                if (isNull) {
                     row.putLong256(columnIndex, Long256Impl.NULL_LONG256);
                 } else {
                     row.putLong256(columnIndex, rnd.nextLong(), rnd.nextLong(), rnd.nextLong(), rnd.nextLong());
                 }
+                break;
+
+            case ColumnType.DECIMAL8:
+            case ColumnType.DECIMAL16:
+            case ColumnType.DECIMAL32:
+            case ColumnType.DECIMAL64:
+            case ColumnType.DECIMAL128:
+            case ColumnType.DECIMAL256:
+                Decimal256 decimal = tlDecimal.get();
+                if (isNull) {
+                    decimal.ofNull();
+                } else {
+                    decimal.of(0, 0, 0, 0, ColumnType.getDecimalScale(type));
+                    // Include zero and the declared precision's boundary alongside random values.
+                    int shape = rnd.nextInt(8);
+                    if (shape != 0) {
+                        for (int digit = 0, precision = ColumnType.getDecimalPrecision(type); digit < precision; digit++) {
+                            decimal.addPowerOfTenMultiple(digit, shape == 1 ? 9 : rnd.nextInt(10));
+                        }
+                    }
+                    if (rnd.nextBoolean()) {
+                        decimal.negate();
+                    }
+                }
+                row.putDecimal(columnIndex, decimal);
                 break;
 
             case ColumnType.DOUBLE:

@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
+import io.questdb.cairo.sql.PartitionFrameState;
 import io.questdb.cairo.sql.RecordCursor;
 
 public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCursor {
@@ -37,11 +38,10 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
             // do. A size-0 partition (e.g. one a backup left out of the restore) has no directory on
             // disk, so openPartition() would throw "partition does not exist" instead of contributing
             // 0 rows.
-            if (reader.getPartitionRowCountFromMetadata(partitionIndex) > 0) {
+            if (reader.getPartitionRowCountFromMetadata(partitionIndex) > 0
+                    || reader.getTxFile().getPartitionHasDelta(partitionIndex)) {
                 final long hi = reader.openPartition(partitionIndex);
-                if (hi > 0) {
-                    counter.add(hi);
-                }
+                counter.add(getLogicalPartitionRowCount(partitionIndex, hi));
             }
             partitionIndex--;
         }
@@ -51,18 +51,18 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
     public PartitionFrame next(long skipTarget) {
         while (partitionIndex > -1) {
             final long hi = reader.getPartitionRowCountFromMetadata(partitionIndex);
-            if (hi < 1) {
+            if (hi < 1 && !reader.getTxFile().getPartitionHasDelta(partitionIndex)) {
                 // this partition is missing, skip
                 partitionIndex--;
             } else {
                 frame.partitionIndex = partitionIndex;
                 frame.rowLo = 0;
                 frame.rowHi = hi;
-                if (hi <= skipTarget) {
-                    // Skip-only skeleton: drop any prior nextSlow()'s decoder ref
-                    // so it can't reach PageFrameAddressCache as a stale pointer.
+                if (hi <= skipTarget && !reader.getTxFile().getPartitionHasDelta(partitionIndex)) {
+                    // Skip-only skeleton: drop any prior nextSlow()'s state view.
                     frame.format = PartitionFormat.NATIVE;
                     frame.parquetMetaDecoder = null;
+                    frame.partitionFrameState = 0;
                     partitionIndex--;
                     return frame;
                 }
@@ -95,6 +95,15 @@ public class FullBwdPartitionFrameCursor extends AbstractFullPartitionFrameCurso
         partitionIndex--;
 
         final byte format = reader.getPartitionFormat(frame.partitionIndex);
+        final boolean hasDelta = reader.getTxFile().getPartitionHasDelta(frame.partitionIndex);
+        frame.partitionFrameState = 0;
+        if (hasDelta) {
+            final long state = reader.getOrOpenPartitionFrameState(frame.partitionIndex);
+            if (state != 0 && PartitionFrameState.hasCustomFrames(state)) {
+                frame.partitionFrameState = state;
+                frame.rowHi = PartitionFrameState.getLogicalPartitionRowCount(state);
+            }
+        }
         if (format == PartitionFormat.PARQUET) {
             frame.parquetMetaDecoder = reader.getAndInitParquetPartitionDecoder(frame.partitionIndex);
             frame.format = PartitionFormat.PARQUET;

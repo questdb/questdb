@@ -35,6 +35,7 @@ import org.jetbrains.annotations.TestOnly;
  * to be checked. On the other hand, single-reader operations are inexpensive.
  */
 public class TxnScoreboardV2 implements TxnScoreboard {
+    private static final long RELEASING = -2;
     private static final long UNLOCKED = -1;
     // Number of virtual pin ids that sit ahead of the reader slots in the entries array. Each virtual id
     // (CHECKPOINT_ID=-1, EPOCH_ID_A=-2, EPOCH_ID_B=-3) has its own slot, so the checkpoint and the two save
@@ -43,14 +44,11 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     //   EPOCH_ID_A(-2)    -> internal slot 1
     //   CHECKPOINT_ID(-1) -> internal slot 2
     //   reader id k>=0    -> internal slot k + VIRTUAL_ID_COUNT
-    // The +3 in RESERVED_ID_COUNT covers the two header longs (active reader count, max) plus one slot of
-    // slack after the scanned region.
     private static final int VIRTUAL_ID_COUNT = 3;
     // Derived from the map above, so adding or reordering a virtual id moves them too, and scanRangeHolders
     // still classifies the right two slots as save point pins.
     private static final int EPOCH_A_INTERNAL_ID = TxnScoreboard.EPOCH_ID_A + VIRTUAL_ID_COUNT;
     private static final int EPOCH_B_INTERNAL_ID = TxnScoreboard.EPOCH_ID_B + VIRTUAL_ID_COUNT;
-    private static final int RESERVED_ID_COUNT = VIRTUAL_ID_COUNT + 3;
     private final int bitmapCount;
     private final int entryScanCount;
     private final int memSize;
@@ -65,8 +63,10 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     // 8 bytes - slot for EPOCH_B txn     (internal id 0, EPOCH_ID_B=-3)
     // 8 bytes - slot for EPOCH_A txn     (internal id 1, EPOCH_ID_A=-2)
     // 8 bytes - slot for CHECKPOINT txn  (internal id 2, CHECKPOINT_ID=-1)
-    // N * 8 bytes - slots for every TableReader txn (internal ids VIRTUAL_ID_COUNT..)
+    // N * 8 bytes - slots for every TableReader table txn (internal ids VIRTUAL_ID_COUNT..)
+    // (N + VIRTUAL_ID_COUNT) * 8 bytes - seqTxn slots, one per internal id
     private long mem;
+    private long seqTxnEntriesMem;
 
     private TableToken tableToken;
 
@@ -74,35 +74,40 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         entryScanCount = entryCount + VIRTUAL_ID_COUNT;
         long bitMapSize = (entryScanCount + Long.SIZE - 1) & -Long.SIZE;
         bitmapCount = (int) (bitMapSize / Long.SIZE);
-        memSize = (entryCount + RESERVED_ID_COUNT + bitmapCount) * Long.BYTES;
+        memSize = (2 * entryScanCount + 2 + bitmapCount) * Long.BYTES;
         mem = Unsafe.malloc(memSize, MemoryTag.NATIVE_TABLE_READER);
 
         activeReaderCountMem = mem;
         maxMem = mem + Long.BYTES;
         bitmapMem = maxMem + Long.BYTES;
         entriesMem = bitmapMem + bitmapCount * Long.BYTES;
+        seqTxnEntriesMem = entriesMem + (long) entryScanCount * Long.BYTES;
 
         Vect.memset(entriesMem, (long) entryScanCount * Long.BYTES, -1);
+        Vect.memset(seqTxnEntriesMem, (long) entryScanCount * Long.BYTES, -1);
         // Set max, reader count and bitmap index to 0.
         Vect.memset(mem, (2 + bitmapCount) * Long.BYTES, 0);
     }
 
     @Override
-    public boolean acquireTxn(int id, long txn) {
+    public boolean acquireTxn(int id, long tableTxn, long seqTxn) {
         long internalId = toInternalId(id);
         assert internalId < entryScanCount;
-        if (!updateMax(txn)) {
+        if (!updateMax(tableTxn)) {
             return false;
         }
 
-        if (Unsafe.cas(null, entriesMem + internalId * Long.BYTES, UNLOCKED, txn)) {
+        final long entryAddress = entriesMem + internalId * Long.BYTES;
+        if (Unsafe.cas(null, entryAddress, UNLOCKED, tableTxn)) {
+            Unsafe.putLongVolatile(seqTxnEntriesMem + internalId * Long.BYTES, seqTxn);
             incrementActiveReaderCount();
             setBitmapBit(internalId);
-            if (getMax() > txn) {
+            if (getMax() > tableTxn) {
                 // Max moved, cannot acquire the txn.
-                Unsafe.putLongVolatile(entriesMem + internalId * Long.BYTES, UNLOCKED);
-                Unsafe.getAndAddLong(null, activeReaderCountMem, -1);
                 clearBitmapBit(internalId);
+                Unsafe.putLongVolatile(seqTxnEntriesMem + internalId * Long.BYTES, UNKNOWN_SEQ_TXN);
+                Unsafe.putLongVolatile(entryAddress, UNLOCKED);
+                Unsafe.getAndAddLong(null, activeReaderCountMem, -1);
                 return false;
             }
             return true;
@@ -118,6 +123,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         maxMem = 0;
         activeReaderCountMem = 0;
         bitmapMem = 0;
+        seqTxnEntriesMem = 0;
     }
 
     @TestOnly
@@ -182,6 +188,40 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     }
 
     @Override
+    public long getMinSeqTxn(long currentTableTxn, long currentSeqTxn) {
+        if (!updateMax(currentTableTxn) || currentSeqTxn < 0) {
+            return UNKNOWN_SEQ_TXN;
+        }
+
+        // _txn publishes tableTxn and seqTxn in one stable view, and seqTxn does not decrease
+        // as tableTxn advances. A reader admitted after updateMax() therefore cannot lower this
+        // floor. Reader-pool copies keep their source reader at the copied snapshot until they close.
+        // Callers must defer reclamation during a checkpoint, which may close its source reader.
+        long min = currentSeqTxn;
+        for (int i = 0; i < bitmapCount; i++) {
+            long bitmap = Unsafe.getLongVolatile(bitmapMem + (long) i * Long.BYTES);
+            if (bitmap == 0) {
+                continue;
+            }
+
+            int base = i * Long.SIZE;
+            while (bitmap != 0) {
+                final long lowestBit = Long.lowestOneBit(bitmap);
+                final int bit = Long.numberOfTrailingZeros(lowestBit);
+                final long seqTxn = readSeqTxn(base + bit);
+                if (seqTxn == UNKNOWN_SEQ_TXN) {
+                    return UNKNOWN_SEQ_TXN;
+                }
+                if (seqTxn != NO_SEQ_TXN_FLOOR) {
+                    min = Math.min(min, seqTxn);
+                }
+                bitmap ^= lowestBit;
+            }
+        }
+        return min;
+    }
+
+    @Override
     public TableToken getTableToken() {
         return tableToken;
     }
@@ -218,10 +258,11 @@ public class TxnScoreboardV2 implements TxnScoreboard {
     }
 
     @Override
-    public boolean incrementTxn(int id, long txn) {
+    public boolean incrementTxn(int id, long tableTxn, long seqTxn) {
         long internalId = toInternalId(id);
         assert internalId < entryScanCount;
-        if (Unsafe.cas(null, entriesMem + internalId * Long.BYTES, UNLOCKED, txn)) {
+        if (Unsafe.cas(null, entriesMem + internalId * Long.BYTES, UNLOCKED, tableTxn)) {
+            Unsafe.putLongVolatile(seqTxnEntriesMem + internalId * Long.BYTES, seqTxn);
             // It's ok to increment readers after CAS
             // there must be another reader already that holds the same transaction lock.
             incrementActiveReaderCount();
@@ -282,8 +323,11 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         long internalId = toInternalId(id);
         assert internalId < entryScanCount;
 
-        if (Unsafe.cas(null, entriesMem + internalId * Long.BYTES, txn, UNLOCKED)) {
+        final long entryAddress = entriesMem + internalId * Long.BYTES;
+        if (Unsafe.cas(null, entryAddress, txn, RELEASING)) {
             clearBitmapBit(internalId);
+            Unsafe.putLongVolatile(seqTxnEntriesMem + internalId * Long.BYTES, UNKNOWN_SEQ_TXN);
+            Unsafe.putLongVolatile(entryAddress, UNLOCKED);
             Unsafe.getAndAddLong(null, activeReaderCountMem, -1);
         } else {
             long lockedTxn;
@@ -330,6 +374,15 @@ public class TxnScoreboardV2 implements TxnScoreboard {
 
     private void incrementActiveReaderCount() {
         Unsafe.getAndAddLong(null, activeReaderCountMem, 1);
+    }
+
+    private long readSeqTxn(long internalId) {
+        final long bitmapAddress = bitmapMem + (internalId >>> 6) * Long.BYTES;
+        final long mask = 1L << (internalId & 0x3F);
+        if ((Unsafe.getLongVolatile(bitmapAddress) & mask) == 0) {
+            return NO_SEQ_TXN_FLOOR;
+        }
+        return Unsafe.getLongVolatile(seqTxnEntriesMem + internalId * Long.BYTES);
     }
 
     private int scanRangeHolders(long fromTxn, long toTxn, boolean stopAfterFirstHolder) {

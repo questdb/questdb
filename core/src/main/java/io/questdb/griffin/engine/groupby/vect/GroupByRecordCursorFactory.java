@@ -528,7 +528,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.frameCursor = frameCursor;
             this.bus = bus;
             this.circuitBreaker = circuitBreaker;
-            frameAddressCache.of(metadata, frameCursor.getColumnMapping(), frameCursor.isExternal());
+            frameAddressCache.of(metadata, frameCursor);
             for (int i = 0; i < workerCount; i++) {
                 final PageFrameMemoryPool pool = frameMemoryPools.getQuick(i);
                 pool.setMemoryTracker(memoryTracker);

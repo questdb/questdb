@@ -1278,7 +1278,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                 final int generationBefore = readMarkerGeneration(token);
                 ff.reset();
                 if (isBusyPin) {
-                    Assert.assertTrue(scoreboard.incrementTxn(slot, occupiedTxn));
+                    Assert.assertTrue(scoreboard.incrementTxn(slot, occupiedTxn, TxnScoreboard.NO_SEQ_TXN_FLOOR));
                     try {
                         writer.advanceDurableEpoch(200L);
                     } finally {

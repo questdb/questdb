@@ -324,6 +324,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     @Override
     public long apply(AlterOperation alterOp, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
         alterOp.authorize();
+        if (alterOp.getCommand() == AlterOperation.ADD_INDEX || alterOp.isIndexedColumnAdded()) {
+            validateIndexCreation(alterOp);
+        }
         // Flush the pending batch first. A structural change's endMetadataChangeEntry() syncs the sequencer log
         // with MS_SYNC, which would put this record on the device ahead of earlier data commits whose files are
         // still only in the page cache.
@@ -2571,6 +2574,34 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 events.barrierFsync();
             } else {
                 events.sync(commitMode);
+            }
+        }
+    }
+
+    private void validateIndexCreation(AlterOperation alterOp) {
+        // This soft check reads only this instance's applied state. It cannot guarantee
+        // successful apply after a switch or on replicas. TableWriter.addColumn and
+        // checkIndexCreation record the accepted trade-offs. A new column needs no index
+        // build, so remotely served partitions block only ADD INDEX.
+        final boolean isAddIndex = alterOp.getCommand() == AlterOperation.ADD_INDEX;
+        final MillisecondClock milliClock = configuration.getMillisecondClock();
+        final long spinLockTimeout = configuration.getSpinLockTimeout();
+        final Path txPath = Path.PATH2.get();
+        txPath.of(configuration.getDbRoot()).concat(tableToken).concat(TXN_FILE_NAME);
+        try (TxReader tableTxReader = new TxReader(ff)) {
+            // The partition unit does not affect a full attached-partition scan.
+            tableTxReader.ofRO(txPath.$(), metadata.getTimestampType(), PartitionBy.DAY);
+            TableUtils.safeReadTxn(tableTxReader, milliClock, spinLockTimeout);
+            for (int i = 0, n = tableTxReader.getPartitionCount(); i < n; i++) {
+                if (tableTxReader.isPartitionDeltaActive(i) || (isAddIndex && tableTxReader.isPartitionRemotelyServed(i))) {
+                    throw CairoException.critical(CairoException.METADATA_VALIDATION_RECOVERABLE)
+                            .position(alterOp.getTableNamePosition())
+                            .put(isAddIndex
+                                    ? "cannot create index, table has a delta-active or remotely served partition [table="
+                                    : "cannot create index, table has a delta-active partition [table=")
+                            .put(tableToken.getTableName())
+                            .put(']');
+                }
             }
         }
     }

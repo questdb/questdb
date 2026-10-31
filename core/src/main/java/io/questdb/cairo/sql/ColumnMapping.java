@@ -29,6 +29,8 @@ import io.questdb.std.Mutable;
 
 /**
  * Bundles column indexes, writer indexes, and original writer indexes for parquet column mapping.
+ * The designated timestamp is retained separately because a custom materializer needs it even
+ * when SQL does not project it.
  * <p>
  * Backed by a single {@link IntList} with interleaved triples:
  * {@code [colIdx0, writerIdx0, origWriterIdx0, colIdx1, writerIdx1, origWriterIdx1, ...]}
@@ -40,6 +42,9 @@ import io.questdb.std.Mutable;
  */
 public class ColumnMapping implements Mutable {
     private final IntList data = new IntList();
+    private int timestampColumnIndex = -1;
+    private int timestampType;
+    private int timestampWriterIndex = -1;
 
     public void addColumn(int columnIndex, int writerIndex, int originalWriterIndex) {
         data.add(columnIndex);
@@ -50,11 +55,17 @@ public class ColumnMapping implements Mutable {
     @Override
     public void clear() {
         data.clear();
+        timestampColumnIndex = -1;
+        timestampType = 0;
+        timestampWriterIndex = -1;
     }
 
     public void copyFrom(ColumnMapping other) {
         data.clear();
         data.addAll(other.data);
+        timestampColumnIndex = other.timestampColumnIndex;
+        timestampType = other.timestampType;
+        timestampWriterIndex = other.timestampWriterIndex;
     }
 
     public int getColumnCount() {
@@ -69,7 +80,25 @@ public class ColumnMapping implements Mutable {
         return data.getQuick(3 * i + 2);
     }
 
+    public int getTimestampColumnIndex() {
+        return timestampColumnIndex;
+    }
+
+    public int getTimestampType() {
+        return timestampType;
+    }
+
+    public int getTimestampWriterIndex() {
+        return timestampWriterIndex;
+    }
+
     public int getWriterIndex(int i) {
         return data.getQuick(3 * i + 1);
+    }
+
+    public void setTimestamp(int columnIndex, int writerIndex, int type) {
+        timestampColumnIndex = columnIndex;
+        timestampWriterIndex = writerIndex;
+        timestampType = type;
     }
 }

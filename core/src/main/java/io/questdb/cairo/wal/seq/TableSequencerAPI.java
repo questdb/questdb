@@ -589,7 +589,7 @@ public class TableSequencerAPI implements QuietCloseable {
                             tracker.setDurableEpochCompletionRequired(true);
                         }
                         // This _txn-only commit is serialized with other RESUMEs; it does not publish an epoch.
-                        writer.commitSeqTxn(resumeFromTxn - 1);
+                        writer.skipWalTransactions(resumeFromTxn - 1);
                     }
                 } finally {
                     sequencer.unlockWrite();

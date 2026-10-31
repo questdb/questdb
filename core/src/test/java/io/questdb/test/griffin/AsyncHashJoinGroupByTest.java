@@ -1690,9 +1690,9 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                  Reducers reducers = new Reducers()) {
                 MemoryTracker previous = sqlExecutionContext.getMemoryTracker();
                 sqlExecutionContext.setMemoryTracker(tracker);
-                // All nine frames belong to workers, leaving the owner destination unopened.
-                // The frame cursor folds the short tail into the preceding frames.
-                CountDownLatch acquired = new CountDownLatch(9);
+                // All ten frames belong to workers, leaving the owner destination unopened.
+                // The row cap keeps the short tail in a separate frame.
+                CountDownLatch acquired = new CountDownLatch(10);
                 f.factory.getAtom().getPerWorkerLocks().setTestAcquireLatch(acquired);
                 hook.reduceTracker = tracker;
                 hook.reduceLimitAt = 20006; // 10003 readings, two matching build payloads each

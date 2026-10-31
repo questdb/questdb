@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -33,6 +34,7 @@ import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.idx.SourceRowCursor;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrame;
@@ -248,6 +250,7 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     // The one partition-frame factory every delegate opens against, so the cursor the estimate ran on
     // can be handed to the delegate instead of the delegate acquiring a second reader.
     private final NonOwningPartitionFrameCursorFactory sharedFrameFactory;
+    private final SourceRowCountCursor sourceRowCountCursor = new SourceRowCountCursor();
     private final SymbolTableSourceMapper symbolTableSourceMapper;
     // Set by halfClose(). Marks that a parent took the scan delegate's base and the prepared filter,
     // so _close() must free neither them nor anything halfClose() already freed.
@@ -724,11 +727,16 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                         return false;
                     }
                     if (count == Numbers.LONG_NULL) {
+                        // A Delta reader hides its POSTING base from the guard above.
+                        if (coveringDelegate == null && IndexType.isPosting(
+                                tableReader.getMetadata().getColumnIndexType(indexReaderColumnIndex))) {
+                            return false;
+                        }
                         // A mixed/unsealed generation cannot supply an exact metadata count. One traversal
                         // budget spans the whole estimate, so neither row share nor table size can make the
                         // fallback read more than maxEstimateProbes index entries before selecting the scan.
                         count = 0;
-                        try (RowCursor rowCursor = reader.getCursor(indexKey, rangeLo, rangeHiInclusive)) {
+                        try (RowCursor rowCursor = openCountCursor(reader, indexKey, frame, rangeLo, rangeHiInclusive)) {
                             while (rowCursor.hasNext()) {
                                 if (traversedIndexEntries >= maxEstimateProbes) {
                                     return false;
@@ -754,6 +762,21 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
             }
         }
         return true;
+    }
+
+    // Without page-frame memory, a Delta reader cannot return data-row ids. The estimate counts its
+    // source rows over the frame's timestamp range instead, as the covering delegate reads them.
+    private RowCursor openCountCursor(IndexReader reader, int indexKey, PartitionFrame frame, long rangeLo, long rangeHi) {
+        final SourceRowCursor sourceCursor = reader.getSourceRowCursor(
+                indexKey,
+                null,
+                frame.getTimestampLo(),
+                frame.getTimestampHi()
+        );
+        if (sourceCursor != null) {
+            return sourceRowCountCursor.of(sourceCursor);
+        }
+        return reader.getCursor(indexKey, rangeLo, rangeHi);
     }
 
     /**
@@ -1122,6 +1145,31 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
             }
         }
 
+    }
+
+    // Feeds a source-row cursor to the estimate's row-counting loop.
+    private static final class SourceRowCountCursor implements RowCursor {
+        private SourceRowCursor cursor;
+
+        @Override
+        public void close() {
+            cursor = Misc.free(cursor);
+        }
+
+        @Override
+        public boolean hasNext() {
+            return cursor.hasNext();
+        }
+
+        @Override
+        public long next() {
+            return cursor.nextOrdinal();
+        }
+
+        private SourceRowCountCursor of(SourceRowCursor cursor) {
+            this.cursor = cursor;
+            return this;
+        }
     }
 
     private static final class SymbolTableSourceMapper implements SymbolTableSource {

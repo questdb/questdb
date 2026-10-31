@@ -34,6 +34,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.std.MemoryTag;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.std.Files;
@@ -64,6 +65,60 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
 
     public AlterTableConvertPartitionTest() {
         this.timestampType = TestUtils.getTimestampType();
+    }
+
+    @Test
+    public void testConvertActiveSplitPartitionToParquetClosesNativeColumns() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1);
+
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE x (value LONG, marker INT, ts " + timestampType.getTypeName()
+                    + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, 10, '2020-01-01T00:00:00.000000Z'),
+                    (2, 20, '2020-01-01T02:00:00.000000Z'),
+                    (3, 30, '2020-01-01T04:00:00.000000Z'),
+                    (4, 40, '2020-01-01T06:00:00.000000Z'),
+                    (5, 50, '2020-01-01T08:00:00.000000Z'),
+                    (6, 60, '2020-01-01T10:00:00.000000Z'),
+                    (7, 70, '2020-01-01T12:00:00.000000Z'),
+                    (8, 80, '2020-01-01T14:00:00.000000Z'),
+                    (9, 90, '2020-01-01T16:00:00.000000Z'),
+                    (10, 100, '2020-01-01T18:00:00.000000Z')
+                    """);
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("x");
+            try (TableReader pinReader = engine.getReader(token)) {
+                execute("INSERT INTO x VALUES (11, 110, '2020-01-01T17:00:00.000000Z')");
+                drainWalQueue();
+
+                pinReader.reload();
+                Assert.assertEquals("test setup must create a split partition", 2, pinReader.getPartitionCount());
+            }
+
+            try (TableWriter writer = getWriter(token)) {
+                final long partitionTimestamp = writer.getPartitionTimestamp(0);
+                Assert.assertEquals(
+                        "test setup must leave the active logical partition split",
+                        partitionTimestamp,
+                        writer.getTxWriter().getLogicalPartitionTimestamp(writer.getPartitionTimestamp(1))
+                );
+
+                writer.convertPartitionNativeToParquet(partitionTimestamp, null, Double.NaN);
+
+                for (int i = 0, n = writer.getColumnCount(); i < n; i++) {
+                    final MemoryMA column = writer.getStorageColumn(i);
+                    Assert.assertTrue(
+                            "native storage column must be closed [index=" + i + ']',
+                            column == null || !column.isOpen()
+                    );
+                }
+            }
+        });
     }
 
     @Test
@@ -808,6 +863,88 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConvertDeltaActiveToNativeRefused() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final TableToken token = createDeltaActiveTable(true);
+            final long sequenced = engine.getTableSequencerAPI().lastTxn(token);
+
+            final String listSql = "ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2024-06-10'";
+            assertExceptionNoLeakCheck(
+                    listSql,
+                    listSql.indexOf('\''),
+                    "cannot convert parquet partition to native, partition is delta-active [table=x, partition=2024-06-10]"
+            );
+            final String whereSql = "ALTER TABLE x CONVERT PARTITION TO NATIVE WHERE ts < '2024-06-11'";
+            assertExceptionNoLeakCheck(
+                    whereSql,
+                    whereSql.indexOf("ts <"),
+                    "cannot convert parquet partition to native, partition is delta-active [table=x, partition=2024-06-10]"
+            );
+            Assert.assertEquals(sequenced, engine.getTableSequencerAPI().lastTxn(token));
+            assertNextAlterApplies(token);
+            assertPartitionFormat(token, true);
+        });
+    }
+
+    @Test
+    public void testConvertDeltaActiveToParquetRefused() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final TableToken token = createDeltaActiveTable(false);
+            final long sequenced = engine.getTableSequencerAPI().lastTxn(token);
+
+            final String listSql = "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10'";
+            assertExceptionNoLeakCheck(
+                    listSql,
+                    listSql.indexOf('\''),
+                    "cannot convert partition to parquet, partition is delta-active [table=x, partition=2024-06-10]"
+            );
+            final String whereSql = "ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2024-06-11'";
+            assertExceptionNoLeakCheck(
+                    whereSql,
+                    whereSql.indexOf("ts <"),
+                    "cannot convert partition to parquet, partition is delta-active [table=x, partition=2024-06-10]"
+            );
+            Assert.assertEquals(sequenced, engine.getTableSequencerAPI().lastTxn(token));
+            assertNextAlterApplies(token);
+            assertPartitionFormat(token, false);
+        });
+    }
+
+    @Test
+    public void testConvertDeltaParquetBaseToParquetIgnored() throws Exception {
+        // Like any parquet partition, a delta-active parquet base is already in the target format.
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final TableToken token = createDeltaActiveTable(true);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
+            assertNextAlterApplies(token);
+            assertPartitionFormat(token, true);
+        });
+    }
+
+    @Test
+    public void testConvertToNativeSkippedWhenPartitionTurnsDelta() throws Exception {
+        // The partition turns delta-active after the ALTER entered WAL: apply skips it.
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final TableToken token = createConvertTable(true);
+            execute("ALTER TABLE x CONVERT PARTITION TO NATIVE LIST '2024-06-10'");
+            markFirstPartitionDeltaActive(token);
+            assertNextAlterApplies(token);
+            assertPartitionFormat(token, true);
+        });
+    }
+
+    @Test
+    public void testConvertToParquetSkippedWhenPartitionTurnsDelta() throws Exception {
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final TableToken token = createConvertTable(false);
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
+            markFirstPartitionDeltaActive(token);
+            assertNextAlterApplies(token);
+            assertPartitionFormat(token, false);
+        });
+    }
+
+    @Test
     public void testConvertLastPartition() throws Exception {
         final long rows = 10;
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
@@ -1386,6 +1523,15 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         });
     }
 
+    private void assertNextAlterApplies(TableToken token) throws Exception {
+        execute("ALTER TABLE x ADD COLUMN v INT");
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+        try (TableReader reader = engine.getReader(token)) {
+            Assert.assertTrue(reader.getMetadata().getColumnIndexQuiet("v") > -1);
+        }
+    }
+
     private void assertPartitionDoesNotExist(String tableName, String partition) {
         assertPartitionOnDisk0(tableName, false, partition);
     }
@@ -1444,6 +1590,13 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         assertPartitionOnDisk0(tableName, true, partition);
     }
 
+    private void assertPartitionFormat(TableToken token, boolean isParquet) {
+        try (TableReader reader = engine.getReader(token)) {
+            Assert.assertTrue(reader.getTxFile().isPartitionDeltaActive(0));
+            Assert.assertEquals(isParquet, reader.getTxFile().isPartitionParquet(0));
+        }
+    }
+
     private void assertPartitionOnDisk0(String tableName, boolean exists, String partition) {
         Path path = Path.getThreadLocal(configuration.getDbRoot());
         path.concat(engine.verifyTableName(tableName));
@@ -1454,6 +1607,28 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         } else {
             Assert.assertFalse(ff.exists(path.$()));
         }
+    }
+
+    private TableToken createConvertTable(boolean isParquet) throws Exception {
+        execute("CREATE TABLE x (id LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("""
+                INSERT INTO x VALUES
+                (1, '2024-06-10T00:00:00.000000Z'),
+                (2, '2024-06-11T00:00:00.000000Z'),
+                (3, '2024-06-12T00:00:00.000000Z')
+                """);
+        drainWalQueue();
+        if (isParquet) {
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-06-10'");
+            drainWalQueue();
+        }
+        return engine.verifyTableName("x");
+    }
+
+    private TableToken createDeltaActiveTable(boolean isParquet) throws Exception {
+        final TableToken token = createConvertTable(isParquet);
+        markFirstPartitionDeltaActive(token);
+        return token;
     }
 
     private void createTable(String tableName, String... inserts) throws Exception {
@@ -1474,6 +1649,14 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
         AbstractCairoTest.create(model);
         for (int i = 0, n = inserts.length; i < n; i++) {
             execute(inserts[i]);
+        }
+    }
+
+    private void markFirstPartitionDeltaActive(TableToken token) {
+        try (TableWriter writer = getWriter(token)) {
+            writer.getTxWriter().setPartitionDeltaActiveByTimestamp(writer.getPartitionTimestamp(0));
+            writer.bumpPartitionTableVersion();
+            writer.commit();
         }
     }
 }

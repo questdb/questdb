@@ -769,6 +769,16 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testHongKongWithDurationLongerThanLunchBreak() throws SqlException {
+        // 2025-01-24#XHKG;2h - the duration stretches the morning session (01:30-04:00 UTC)
+        // past the afternoon open (05:00 UTC), so both sessions merge into one interval
+        assertTickInterval(
+                "[{lo=2025-01-24T01:30:00.000000Z, hi=2025-01-24T09:59:59.999999Z}]",
+                "2025-01-24#XHKG;2h"
+        );
+    }
+
+    @Test
     public void testLargeTimezoneOffsetWithExchangeFilter() throws SqlException {
         // Large positive timezone offset (+14:00)
         // [2025-01-24@+14:00]#XNYS

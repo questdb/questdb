@@ -84,25 +84,33 @@ public class HeapRowCursorFactory implements RowCursorFactory {
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
-        Misc.freeObjListAndClear(cursors);
-        // Bound by the live key count rather than by cursorFactories.size(): owners grow that list
-        // monotonically across executions and re-arm only its first cursorFactoriesIdx[0] entries, so
-        // a factory past that bound still carries a symbol key from an earlier execution. cursor.of()
-        // seeds the heap up to the same bound, so opening the rest only spends an index seek per page
-        // frame on rows nothing reads. SequentialRowCursorFactory.getCursor() already bounds itself
-        // this way.
-        final int activeCursors = cursorFactoriesIdx[0];
-        for (int i = 0; i < activeCursors; i++) {
-            cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
-            // Count each open individually, not activeCursors once: the counter has to observe the
-            // loop bound, not restate it, or a regression that opened cursorFactories.size() cursors
-            // (the stale-key seeks this bound exists to avoid) would still report activeCursors.
-            if (isRowCursorCounterEnabled) {
-                testRowCursorsOpened.incrementAndGet();
+        try {
+            Misc.freeObjListAndClear(cursors);
+            // Bound by the live key count rather than by cursorFactories.size(): owners grow that list
+            // monotonically across executions and re-arm only its first cursorFactoriesIdx[0] entries, so
+            // a factory past that bound still carries a symbol key from an earlier execution. cursor.of()
+            // seeds the heap up to the same bound, so opening the rest only spends an index seek per page
+            // frame on rows nothing reads. SequentialRowCursorFactory.getCursor() already bounds itself
+            // this way.
+            final int activeCursors = cursorFactoriesIdx[0];
+            cursors.setPos(activeCursors);
+            for (int i = 0; i < activeCursors; i++) {
+                cursors.setQuick(i, cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
+                // Count each open individually, not activeCursors once: the counter has to observe the
+                // loop bound, not restate it, or a regression that opened cursorFactories.size() cursors
+                // (the stale-key seeks this bound exists to avoid) would still report activeCursors.
+                if (isRowCursorCounterEnabled) {
+                    testRowCursorsOpened.incrementAndGet();
+                }
             }
+            cursor.of(cursors, activeCursors);
+            return cursor;
+        } catch (Throwable th) {
+            // The factory owns each child before the aggregate cursor reaches its caller.
+            Misc.freeObjList(cursors, th);
+            cursors.clear();
+            throw th;
         }
-        cursor.of(cursors, activeCursors);
-        return cursor;
     }
 
     @Override

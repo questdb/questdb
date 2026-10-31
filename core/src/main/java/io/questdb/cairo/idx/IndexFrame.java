@@ -37,7 +37,7 @@ public class IndexFrame {
         return size;
     }
 
-    IndexFrame of(long address, long size) {
+    public IndexFrame of(long address, long size) {
         this.address = address;
         this.size = size;
         return this;

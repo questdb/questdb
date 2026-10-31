@@ -365,7 +365,10 @@ public class CompiledTickExpression extends UntypedFunction {
         boolean hasBothTimeComponents = (start != startDay) && (end != endDay);
 
         if (hasBothTimeComponents) {
-            out.add(start, end);
+            // Runtime offsets can reverse the bounds; such a range is empty.
+            if (start <= end) {
+                out.add(start, end);
+            }
         } else {
             long currentDay = startDay;
             while (currentDay <= endDay) {

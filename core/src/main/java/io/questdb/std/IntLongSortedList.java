@@ -71,6 +71,11 @@ public class IntLongSortedList implements Mutable {
         return indices[0];
     }
 
+    public long peekValue() {
+        assert size > 0 : "peekValue on empty heap";
+        return values[0];
+    }
+
     public long pollAndReplace(int index, long value) {
         assert size > 0 : "pollAndReplace on empty heap";
         final long old = values[0];

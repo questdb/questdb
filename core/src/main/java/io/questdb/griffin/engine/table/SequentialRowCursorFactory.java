@@ -61,12 +61,21 @@ public class SequentialRowCursorFactory implements RowCursorFactory {
 
     @Override
     public RowCursor getCursor(PageFrame pageFrame, PageFrameMemory pageFrameMemory) {
-        Misc.freeObjListAndClear(cursors);
-        for (int i = 0, n = cursorFactoriesIdx[0]; i < n; i++) {
-            cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
+        try {
+            Misc.freeObjListAndClear(cursors);
+            final int activeCursors = cursorFactoriesIdx[0];
+            cursors.setPos(activeCursors);
+            for (int i = 0; i < activeCursors; i++) {
+                cursors.setQuick(i, cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
+            }
+            cursor.init();
+            return cursor;
+        } catch (Throwable th) {
+            // The factory owns each child before the aggregate cursor reaches its caller.
+            Misc.freeObjList(cursors, th);
+            cursors.clear();
+            throw th;
         }
-        cursor.init();
-        return cursor;
     }
 
     @Override

@@ -247,13 +247,19 @@ public class PostingIndexDistinctRecordCursorFactory implements RecordCursorFact
                 );
                 long rowLo = frame.getRowLo();
                 long rowHi = frame.getRowHi();
-                // collectDistinctKeys() (no range) scans the WHOLE persisted index chain, including any dead-space
-                // bytes a composite partition's pieces do not cover -- so a full-looking frame (rowLo == 0, rowHi ==
-                boolean fullPartition = rowLo == 0 && rowHi == tableReader.getPartitionRowCount(partitionIndex)
-                        && !tableReader.getTxFile().isPartitionComposite(partitionIndex);
-                foundCount += fullPartition
+                // Only a flat base frame spans the complete persisted index.
+                boolean isFullPartition = frame.getPartitionFrameState() == 0
+                        && !tableReader.getTxFile().isPartitionComposite(partitionIndex)
+                        && rowLo == 0 && rowHi == tableReader.getPartitionRowCount(partitionIndex);
+                foundCount += isFullPartition
                         ? indexReader.collectDistinctKeys(foundKeys)
-                        : indexReader.collectDistinctKeysInRange(foundKeys, rowLo, rowHi - 1);
+                        : indexReader.collectDistinctKeysInRange(
+                        foundKeys,
+                        rowLo,
+                        rowHi - 1,
+                        frame.getTimestampLo(),
+                        frame.getTimestampHi()
+                );
             }
         }
 

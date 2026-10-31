@@ -872,13 +872,13 @@ public class SeqTxnTracker {
         final long epochTxn = pinnedEpochTxn;
         if (epochTxn > -1) {
             final int slotId = pinnedEpochSlotIsA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B;
-            final boolean pinned = scoreboard.incrementTxn(slotId, epochTxn);
+            final boolean pinned = scoreboard.incrementTxn(slotId, epochTxn, TxnScoreboard.NO_SEQ_TXN_FLOOR);
             assert pinned : "epoch pin slot busy on a new scoreboard";
         }
         final long otherEpochTxn = otherPinnedEpochTxn;
         if (otherEpochTxn > -1) {
             final int slotId = pinnedEpochSlotIsA ? TxnScoreboard.EPOCH_ID_B : TxnScoreboard.EPOCH_ID_A;
-            final boolean pinned = scoreboard.incrementTxn(slotId, otherEpochTxn);
+            final boolean pinned = scoreboard.incrementTxn(slotId, otherEpochTxn, TxnScoreboard.NO_SEQ_TXN_FLOOR);
             assert pinned : "other epoch pin slot busy on a new scoreboard";
         }
     }

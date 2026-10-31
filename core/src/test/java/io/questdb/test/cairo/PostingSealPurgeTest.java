@@ -94,7 +94,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 long sealTxn = writeAndSeal(partitionPath, col);
                 LPSZ pv = PostingIndexUtils.valueFileName(partitionPath, col, COLUMN_NAME_TXN_NONE, sealTxn);
 
-                assertTrue(scoreboard.acquireTxn(0, 3L));
+                assertTrue(scoreboard.acquireTxn(0, 3L, 3L));
                 try {
                     publishPurgeTask(tok, col, sealTxn, 10L);
                     for (int i = 0; i < 5; i++) {
@@ -257,7 +257,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 LPSZ pv = PostingIndexUtils.valueFileName(partitionPath, col, COLUMN_NAME_TXN_NONE, sealTxn);
 
                 // Reader acquires txn 5 which sits strictly inside [0, 10).
-                assertTrue(scoreboard.acquireTxn(0, 5L));
+                assertTrue(scoreboard.acquireTxn(0, 5L, 5L));
                 try {
                     publishPurgeTask(tok, col, sealTxn, 10L);
                     runPurgeJob(job, 3);
@@ -717,7 +717,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
 
             try (PostingSealPurgeJob seed = new PostingSealPurgeJob(engine);
                  TxnScoreboard scoreboard = engine.getTxnScoreboard(tok)) {
-                assertTrue(scoreboard.acquireTxn(0, 5L));
+                assertTrue(scoreboard.acquireTxn(0, 5L, 5L));
                 try {
                     publishPurgeTask(tok, col, sealTxn, 10L);
                     runPurgeJob(seed, 3);
@@ -819,7 +819,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 int partitionPathLen = path.size();
                 long firstSeal = writeAndSeal(path, "first");
                 long secondSeal = writeAndSeal(path, "second");
-                assertTrue(scoreboard.acquireTxn(0, 3L));
+                assertTrue(scoreboard.acquireTxn(0, 3L, 3L));
                 try {
                     publishPurgeTask(token, "first", firstSeal, 10L);
                     publishPurgeTask(token, "second", secondSeal, 10L);

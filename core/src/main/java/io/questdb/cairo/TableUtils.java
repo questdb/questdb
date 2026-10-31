@@ -116,6 +116,9 @@ public final class TableUtils {
      */
     public static final String COMPACTING_DIR_MARKER = ".compacting";
     public static final String DEFAULT_PARTITION_NAME = "default";
+    // Delta state of one partition version: <partition>/_delta/_catalog.
+    public static final String DELTA_CATALOG_FILE_NAME = "_catalog";
+    public static final String DELTA_DIR_NAME = "_delta";
     public static final String DETACHED_DIR_MARKER = ".detached";
     // A DETACH's temporary name, <partition>.<txn of its commit>.detaching, until the commit is final.
     public static final String DETACHING_DIR_MARKER = ".detaching";

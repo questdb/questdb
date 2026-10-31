@@ -344,6 +344,11 @@ public class LiveViewPageFrameCursor implements TablePageFrameCursor {
     }
 
     @Override
+    public boolean hasCustomFrames() {
+        return base.hasCustomFrames();
+    }
+
+    @Override
     public boolean hasIntervalFilter() {
         // The interval this reports is applied to BOTH tiers: the base applies it to its
         // own frames, and of() cut the slot's band by the same list. So the answer is the
