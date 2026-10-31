@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.functions.conditional;
 
+import io.questdb.cairo.TableWriter;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -716,8 +717,6 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         when -431.0d then c
                         when -616.0d then 350
                         when null then 1
-                        when 'Infinity' then 2
-                        when '-Infinity' then 3
                         when 0.0 then 4
                         when -0.0 then 5
                     end k
@@ -791,6 +790,82 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDoubleInfinityIsDuplicateOfNullBranch() throws Exception {
+        // Infinity is NULL for DOUBLE, so a branch keyed by it is the same branch as WHEN NULL
+        assertQuery("select case x when null then 1 when 'Infinity' then 2 end k from tanc")
+                .ddl("create table tanc (x double)")
+                .fails(36, "duplicate branch");
+    }
+
+    @Test
+    public void testDoubleIsNullTreatsInfinityAsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            // SQL turns every non-finite DOUBLE into NaN; the table writer keeps an infinity as it is
+            execute("CREATE TABLE t (k INT, v DOUBLE)");
+            try (TableWriter w = getWriter("t")) {
+                TableWriter.Row r = w.newRow();
+                r.putInt(0, 1);
+                r.putDouble(1, Double.POSITIVE_INFINITY);
+                r.append();
+                r = w.newRow();
+                r.putInt(0, 2);
+                r.putDouble(1, Double.NEGATIVE_INFINITY);
+                r.append();
+                r = w.newRow();
+                r.putInt(0, 3);
+                r.putDouble(1, 1.5);
+                r.append();
+                r = w.newRow();
+                r.putInt(0, 4);
+                r.putDouble(1, Double.NaN);
+                r.append();
+                w.commit();
+            }
+            // WHERE v IS NULL selects the infinities; the CASE, which the parser rewrites into a
+            // switch, must agree with it
+            assertQuery("SELECT k, CASE WHEN v IS NULL THEN 'is_null' ELSE 'not_null' END c FROM t WHERE v IS NULL")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\tis_null
+                            2\tis_null
+                            4\tis_null
+                            """);
+            assertQuery("SELECT k, CASE v WHEN NULL THEN 'is_null' ELSE 'not_null' END c FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tc
+                            1\tis_null
+                            2\tis_null
+                            3\tnot_null
+                            4\tis_null
+                            """);
+            assertQuery("SELECT k, CASE WHEN v = NULL THEN 'is_null' WHEN v = 1.5 THEN 'one_and_half' ELSE 'not_null' END c FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tc
+                            1\tis_null
+                            2\tis_null
+                            3\tone_and_half
+                            4\tis_null
+                            """);
+            // without a NULL branch an infinity must fall through to ELSE, like NaN does
+            assertQuery("SELECT k, CASE v WHEN 1.5 THEN 'one_and_half' ELSE 'other' END c FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tc
+                            1\tother
+                            2\tother
+                            3\tone_and_half
+                            4\tother
+                            """);
+        });
+    }
+
+    @Test
     public void testDoubleOrElse() throws Exception {
         assertQuery("""
                 select\s
@@ -803,8 +878,6 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         when -431.0 then c
                         when -616.0 then 350
                         when null then 1
-                        when 'Infinity' then 2
-                        when '-Infinity' then 3
                         when 0.0 then 4
                         when -0.0 then 5
                         else b
@@ -949,6 +1022,50 @@ public class SwitchFunctionFactoryTest extends AbstractCairoTest {
                         " FROM long_sequence(5)" +
                         ")")
                 .fails(51, "duplicate branch");
+    }
+
+    @Test
+    public void testFloatIsNullTreatsInfinityAsNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k INT, v FLOAT)");
+            try (TableWriter w = getWriter("t")) {
+                TableWriter.Row r = w.newRow();
+                r.putInt(0, 1);
+                r.putFloat(1, Float.POSITIVE_INFINITY);
+                r.append();
+                r = w.newRow();
+                r.putInt(0, 2);
+                r.putFloat(1, Float.NEGATIVE_INFINITY);
+                r.append();
+                r = w.newRow();
+                r.putInt(0, 3);
+                r.putFloat(1, 1.5f);
+                r.append();
+                r = w.newRow();
+                r.putInt(0, 4);
+                r.putFloat(1, Float.NaN);
+                r.append();
+                w.commit();
+            }
+            assertQuery("SELECT k, CASE WHEN v IS NULL THEN 'is_null' ELSE 'not_null' END c FROM t WHERE v IS NULL")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\tis_null
+                            2\tis_null
+                            4\tis_null
+                            """);
+            assertQuery("SELECT k, CASE v WHEN NULL THEN 'is_null' WHEN 1.5f THEN 'one_and_half' ELSE 'not_null' END c FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tc
+                            1\tis_null
+                            2\tis_null
+                            3\tone_and_half
+                            4\tis_null
+                            """);
+        });
     }
 
     @Test
