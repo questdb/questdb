@@ -718,6 +718,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     QWP_MAX_ROWS_PER_TABLE("qwp.max.rows.per.table"),
     QWP_MAX_TABLES_PER_CONNECTION("qwp.max.tables.per.connection"),
     QWP_MAX_UNCOMMITTED_ROWS("qwp.max.uncommitted.rows"),
+    QWP_MIN_IDLE_MS_BEFORE_WRITER_RELEASE("qwp.min.idle.ms.before.writer.release"),
     QWP_UDP_BIND_TO("qwp.udp.bind.to"),
     QWP_UDP_COMMIT_INTERVAL("qwp.udp.commit.interval"),
     QWP_UDP_ENABLED("qwp.udp.enabled"),

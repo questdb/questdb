@@ -27,6 +27,7 @@ package io.questdb.test.cutlass.websocket;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.pool.WalWriterPool;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
@@ -36,10 +37,12 @@ import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
+import io.questdb.cutlass.qwp.server.QwpTudCache;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cutlass.qwp.QwpWireTestFixtures;
@@ -47,6 +50,7 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -291,6 +295,184 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             try (TableReader reader = engine.getReader("tab")) {
                 // A + B + C, C exactly once (never committed on connection 1).
                 Assert.assertEquals("replayed tail must land exactly once, no duplicate", 3, reader.size());
+            }
+        });
+    }
+
+    /**
+     * A PING that arrives at least qwp.min.idle.ms.before.writer.release after
+     * the last data frame returns the idle WAL writer to the pool. The next data
+     * frame acquires a fresh writer, commits, and is acked as usual.
+     */
+    @Test
+    public void testIdleWriterReleaseOnPingAfterIdleThreshold() throws Exception {
+        assertMemoryLeak(() -> {
+            final long[] nowMicros = {1_000_000};
+            final HttpFullFatServerConfiguration httpConfig = idleWriterReleaseHttpConfig(nowMicros, 30_000);
+            execute("CREATE TABLE tab (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            byte[] first = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L));
+            byte[] ping = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
+            byte[] second = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L));
+
+            PhasedNetworkFacade nf = new PhasedNetworkFacade(concat(first, ping, second));
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = openIdleWriterReleaseState(httpConfig, context);
+
+                drive(processor, context, nf, first.length);
+                Assert.assertEquals(1, tudCacheSize(state));
+                Assert.assertEquals(1, busyWalWriterCount());
+
+                nowMicros[0] += 30_000_000;
+                drive(processor, context, nf, ping.length);
+                Assert.assertEquals("idle writer must leave the connection cache", 0, tudCacheSize(state));
+                Assert.assertEquals("idle writer must return to the pool", 0, busyWalWriterCount());
+
+                drive(processor, context, nf, second.length);
+                Assert.assertEquals(1, tudCacheSize(state));
+                Assert.assertEquals(1, maxCumulativeOkAck(rawSocket.sentFrames));
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT v, ts FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            v\tts
+                            100\t1970-01-01T00:00:01.000000Z
+                            200\t1970-01-01T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    /**
+     * The release must not touch a table holding rows of an open
+     * FLAG_DEFER_COMMIT group: freeing its writer would roll the rows back.
+     * The group-closing frame then commits them.
+     */
+    @Test
+    public void testIdleWriterReleaseRetainsUncommittedDeferredRows() throws Exception {
+        assertMemoryLeak(() -> {
+            final long[] nowMicros = {1_000_000};
+            final HttpFullFatServerConfiguration httpConfig = idleWriterReleaseHttpConfig(nowMicros, 30_000);
+            execute("CREATE TABLE tab (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            byte[] data = createMaskedFrame(WebSocketOpcode.BINARY, deferred(oneRowMessage(100L, 1_000_000L)));
+            byte[] ping = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
+            byte[] commit = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L));
+
+            PhasedNetworkFacade nf = new PhasedNetworkFacade(concat(data, ping, commit));
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = openIdleWriterReleaseState(httpConfig, context);
+
+                drive(processor, context, nf, data.length);
+                Assert.assertEquals(1, tudCacheSize(state));
+                Assert.assertEquals(-1, maxCumulativeOkAck(rawSocket.sentFrames));
+
+                nowMicros[0] += 60_000_000;
+                drive(processor, context, nf, ping.length);
+                Assert.assertEquals("writer with uncommitted deferred rows must stay cached", 1, tudCacheSize(state));
+                Assert.assertEquals(1, busyWalWriterCount());
+
+                drive(processor, context, nf, commit.length);
+                Assert.assertEquals(1, maxCumulativeOkAck(rawSocket.sentFrames));
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            drainWalQueue();
+            assertQuery("SELECT v, ts FROM tab")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            v\tts
+                            100\t1970-01-01T00:00:01.000000Z
+                            200\t1970-01-01T00:00:02.000000Z
+                            """);
+        });
+    }
+
+    /**
+     * A PING before the idle threshold releases nothing, and every data frame
+     * restarts the idle clock. A PING exactly at the threshold releases.
+     */
+    @Test
+    public void testIdleWriterReleaseSkippedBeforeIdleThreshold() throws Exception {
+        assertMemoryLeak(() -> {
+            final long[] nowMicros = {1_000_000};
+            final HttpFullFatServerConfiguration httpConfig = idleWriterReleaseHttpConfig(nowMicros, 30_000);
+            execute("CREATE TABLE tab (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            byte[] first = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L));
+            byte[] second = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(200L, 2_000_000L));
+            byte[] ping = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
+
+            PhasedNetworkFacade nf = new PhasedNetworkFacade(concat(first, second, ping, ping));
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = openIdleWriterReleaseState(httpConfig, context);
+
+                drive(processor, context, nf, first.length);
+                nowMicros[0] += 20_000_000;
+                drive(processor, context, nf, second.length);
+                // 40s since the first frame, but only 20s since the second one
+                nowMicros[0] += 20_000_000;
+                drive(processor, context, nf, ping.length);
+                Assert.assertEquals("PING before the idle threshold must not release", 1, tudCacheSize(state));
+                Assert.assertEquals(1, busyWalWriterCount());
+
+                nowMicros[0] += 10_000_000;
+                drive(processor, context, nf, ping.length);
+                Assert.assertEquals(0, tudCacheSize(state));
+                Assert.assertEquals(0, busyWalWriterCount());
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testIdleWriterReleaseDisabledByZero() throws Exception {
+        assertMemoryLeak(() -> {
+            final long[] nowMicros = {1_000_000};
+            final HttpFullFatServerConfiguration httpConfig = idleWriterReleaseHttpConfig(nowMicros, 0);
+            execute("CREATE TABLE tab (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            byte[] data = createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L));
+            byte[] ping = createMaskedFrame(WebSocketOpcode.PING, new byte[0]);
+
+            PhasedNetworkFacade nf = new PhasedNetworkFacade(concat(data, ping));
+            long recvBuf = Unsafe.malloc(RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            RecordingRawSocket rawSocket = new RecordingRawSocket(sendBuf, SEND_BUFFER_SIZE);
+            try (TestableContext context = new TestableContext(httpConfig, nf, rawSocket, recvBuf, RECV_BUFFER_SIZE)) {
+                QwpIngressProcessorState state = openIdleWriterReleaseState(httpConfig, context);
+
+                drive(processor, context, nf, data.length);
+                nowMicros[0] += 3_600_000_000L;
+                drive(processor, context, nf, ping.length);
+                Assert.assertEquals("release disabled: writer must stay cached", 1, tudCacheSize(state));
+                Assert.assertEquals(1, busyWalWriterCount());
+            } finally {
+                Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }
@@ -752,6 +934,12 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         });
     }
 
+    private static int busyWalWriterCount() throws Exception {
+        Field f = CairoEngine.class.getDeclaredField("walWriterPool");
+        f.setAccessible(true);
+        return ((WalWriterPool) f.get(engine)).getBusyCount();
+    }
+
     /**
      * True if any server-to-client BINARY frame is a STATUS_DURABLE_ACK frame.
      * Durable acks carry per-table watermarks rather than a sequence, so there
@@ -765,6 +953,48 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
             }
         }
         return false;
+    }
+
+    private static HttpFullFatServerConfiguration idleWriterReleaseHttpConfig(long[] nowMicros, long minIdleMs) {
+        final LineHttpProcessorConfiguration lineConfig =
+                new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
+                    @Override
+                    public MicrosecondClock getMicrosecondClock() {
+                        return () -> nowMicros[0];
+                    }
+
+                    @Override
+                    public long getQwpMinIdleMsBeforeWriterRelease() {
+                        return minIdleMs;
+                    }
+                };
+        return new DefaultHttpServerConfiguration(configuration) {
+            @Override
+            public LineHttpProcessorConfiguration getLineHttpProcessorConfiguration() {
+                return lineConfig;
+            }
+        };
+    }
+
+    private static QwpIngressProcessorState openIdleWriterReleaseState(
+            HttpFullFatServerConfiguration httpConfig,
+            TestableContext context
+    ) throws Exception {
+        QwpIngressProcessorState state = new QwpIngressProcessorState(
+                RECV_BUFFER_SIZE,
+                httpConfig.getSendBufferSize(),
+                engine,
+                httpConfig.getLineHttpProcessorConfiguration()
+        );
+        state.of(-1, AllowAllSecurityContext.INSTANCE);
+        getLV().set(context, state);
+        return state;
+    }
+
+    private static int tudCacheSize(QwpIngressProcessorState state) throws Exception {
+        Field f = QwpIngressProcessorState.class.getDeclaredField("tudCache");
+        f.setAccessible(true);
+        return ((QwpTudCache) f.get(state)).size();
     }
 
     private ObjList<byte[]> ingestOnFreshConnection(
