@@ -194,6 +194,10 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                     columnNames.add(metadata.getColumnName(i));
                 }
                 sqlExecutionContext.getSecurityContext().authorizeSelect(tableToken, columnNames);
+                // A security context can look the table up by name when the check runs, and pass a name that no table
+                // holds. After a RENAME or DROP that commits once getReader() returns, the check judges another table or
+                // none, so verifyTableToken() stops the export unless the name still leads to the table this reader reads.
+                cairoEngine.verifyTableToken(tableToken);
                 if (sourceReader.getTxFile().hasCompositePartitions()) {
                     final int sourcePartitionBy = sourceReader.getPartitionedBy();
                     sourceReader = Misc.free(sourceReader);

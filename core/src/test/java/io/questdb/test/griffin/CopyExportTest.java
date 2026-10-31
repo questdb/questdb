@@ -4479,6 +4479,7 @@ public class CopyExportTest extends AbstractCairoTest {
                                         """));
                 testCopyExport(stmt, test);
                 Assert.assertEquals("[ts,x,y]", securityContext.selectColumns.toString());
+                Assert.assertFalse("a denied export must not write its file", exportFileExists("t"));
             }
         });
     }
@@ -4655,6 +4656,11 @@ public class CopyExportTest extends AbstractCairoTest {
         }, 5, exceptionTypesToCatch);
     }
 
+    @FunctionalInterface
+    public interface CopyExportRunnable {
+        void run() throws Exception;
+    }
+
     private static final class ColumnRecordingSecurityContext extends AllowAllSecurityContext {
         final ObjList<CharSequence> selectColumns = new ObjList<>();
         volatile boolean isSelectDenied;
@@ -4668,11 +4674,6 @@ public class CopyExportTest extends AbstractCairoTest {
                 throw CairoException.nonCritical().put("permission denied [table=").put(tableToken.getTableName()).put(']');
             }
         }
-    }
-
-    @FunctionalInterface
-    public interface CopyExportRunnable {
-        void run() throws Exception;
     }
 
     static {
