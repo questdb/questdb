@@ -117,7 +117,7 @@ public class TemporalStreamJoinTest extends AbstractCairoTest {
             columns.of(base.getMetadata().getColumnCount());
             try (
                     RecordCursorFactory copy = new MaterializedRecordCursorFactory(configuration, base,
-                            RecordSinkFactory.getInstance(configuration, new BytecodeAssembler(), base.getMetadata(), columns), true);
+                            RecordSinkFactory.getInstance(configuration, new BytecodeAssembler(), base.getMetadata(), columns), true, true);
                     MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(context.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH)
             ) {
                 Assert.assertTrue(copy.recordCursorSupportsRandomAccess());
@@ -368,10 +368,20 @@ public class TemporalStreamJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testStrictTemporalCopyPageBudgetAndReuse() throws Exception {
+    public void testStrictTemporalCopyPageBudget() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 256);
         setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, 1);
-        assertCopyLimitAndReuse("materialized rows exceed the memory limit [maxBytes=256]", false);
+        run((engine, compiler, context) -> {
+            createLargeTables(engine, context, false);
+            final String union = "SELECT * FROM (SELECT ts, k, v, 1L AS n FROM r UNION ALL SELECT ts, k, v, 1L AS n FROM r WHERE ts < 0) TIMESTAMP(ts)";
+            assertQuery(query(union, false))
+                    .withEngine(engine)
+                    .withContext(context)
+                    .noLeakCheck()
+                    .failsWith("materialized rows exceed the memory limit [maxBytes=256]");
+            final String expected = TestUtils.printSqlToString(engine, context, query("SELECT ts, k, v, 1L AS n FROM r", false), new StringSink());
+            Assert.assertEquals(expected, TestUtils.printSqlToString(engine, context, query(RHS, false), new StringSink()));
+        });
     }
 
     @Test

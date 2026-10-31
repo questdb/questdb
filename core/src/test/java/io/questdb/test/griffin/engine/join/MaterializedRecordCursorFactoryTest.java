@@ -158,7 +158,7 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
                 };
                 // RecordArray reads column types during construction, after the wrapper adopts base.
                 // No rows reach the sink: this tests consume-on-entry, including constructor failure.
-                try (RecordCursorFactory ignored = new MaterializedRecordCursorFactory(configuration, base, null, true)) {
+                try (RecordCursorFactory ignored = new MaterializedRecordCursorFactory(configuration, base, null, true, true)) {
                     Assert.fail("expected metadata failure");
                 } catch (RuntimeException e) {
                     Assert.assertSame(failure, e);
@@ -262,6 +262,25 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
             final String sql = CROSS_JOIN.replace("$sub", hashed).replace("$keys", SUBQUERIES[1][2]);
             assertQuery(sql).withEngine(engine).withContext(context).noLeakCheck().assertsPlanNotContaining("Materialize");
             Assert.assertEquals(countRewinds(compiler, context, hashed), countRewinds(compiler, context, sql));
+        });
+    }
+
+    @Test
+    public void testJoinBudgetBoundsOnlyJoinCopies() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 256);
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, 1);
+        run((engine, compiler, context) -> {
+            createTables(engine, context);
+            for (String query : new String[]{CROSS_JOIN, LEFT_JOIN, RIGHT_JOIN, FULL_JOIN}) {
+                for (String[] subquery : SUBQUERIES) {
+                    Assert.assertEquals(query, 0, assertMaterialized(engine, context, query, subquery, null, true, false));
+                }
+            }
+            assertQuery("SELECT m.x, s.* FROM m FULL JOIN (SELECT * FROM t_hash UNION ALL SELECT * FROM t_hash) s ON s.v < m.x")
+                    .withEngine(engine)
+                    .withContext(context)
+                    .noLeakCheck()
+                    .failsWith("materialized rows exceed the memory limit [maxBytes=256] (raise cairo.sql.hash.join.value.max.pages)");
         });
     }
 
@@ -378,34 +397,36 @@ public class MaterializedRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOverBudget() throws Exception {
-        // The copy holds at most 10 rows, fewer than every subquery returns.
-        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 256);
-        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, 1);
-        run((engine, compiler, context) -> {
-            createTables(engine, context);
-            for (String query : new String[]{CROSS_JOIN, LEFT_JOIN, RIGHT_JOIN}) {
-                for (String[] subquery : SUBQUERIES) {
-                    // The copy fell back to streaming, so the join rewinds the stream GROUP BY.
-                    Assert.assertTrue(query, assertMaterialized(engine, context, query, subquery, null, true, false) > 0);
-                }
-            }
-            for (String[] subquery : SUBQUERIES) {
-                // The full join tracks matched rows by the row ids of the copy, so it cannot stream.
-                assertQuery(FULL_JOIN.replace("$sub", subquery[0]).replace("$keys", subquery[2]))
-                        .withEngine(engine)
-                        .withContext(context)
-                        .noLeakCheck()
-                        .failsWith("materialized rows exceed the memory limit [maxBytes=256] (raise cairo.sql.hash.join.value.max.pages)");
-            }
-        });
-    }
-
-    @Test
     public void testRightJoin() throws Exception {
         run((engine, compiler, context) -> {
             createTables(engine, context);
             assertMaterialized(engine, context, RIGHT_JOIN, null, true, false);
+        });
+    }
+
+    @Test
+    public void testRowsAndOffsetsShareTheBudget() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_PAGE_SIZE, 4096);
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_VALUE_MAX_PAGES, 16);
+        run((engine, compiler, context) -> {
+            createTables(engine, context);
+            engine.execute(
+                    "CREATE TABLE v AS (SELECT timestamp_sequence('2024-01-01', 1_000_000L) ts, ('k' || x)::VARCHAR k FROM long_sequence(3_000)) TIMESTAMP(ts) PARTITION BY DAY",
+                    context
+            );
+            final String join = "SELECT count() FROM m FULL JOIN (SELECT * FROM v WHERE ts < '%s' UNION ALL SELECT * FROM v WHERE ts < '2024') s ON s.k < 'a'";
+            assertQuery(join.formatted("2024-01-01T00:16:40"))
+                    .withEngine(engine)
+                    .withContext(context)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n1005\n");
+            assertQuery(join.formatted("2024-01-01T01:00"))
+                    .withEngine(engine)
+                    .withContext(context)
+                    .noLeakCheck()
+                    .failsWith("materialized rows exceed the memory limit [maxBytes=65536] (raise cairo.sql.hash.join.value.max.pages)");
         });
     }
 

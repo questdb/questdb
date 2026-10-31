@@ -8321,6 +8321,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.$(model.getModelPosition(), "latest by query does not provide dedicated TIMESTAMP column");
             }
 
+            if (isRandomAccessLostToStream(factory)) {
+                final RecordCursorFactory factoryToMaterialize = factory;
+                factory = null;
+                factory = materialize(factoryToMaterialize, true);
+            }
+
             final RecordMetadata metadata = factory.getMetadata();
             prepareLatestByColumnIndexes(latestBy, metadata);
 
@@ -15299,7 +15305,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(base, th);
             throw th;
         }
-        return new MaterializedRecordCursorFactory(configuration, base, recordSink, isStrict);
+        return new MaterializedRecordCursorFactory(configuration, base, recordSink, isStrict, !isRandomAccessLostToStream(base));
     }
 
     /**

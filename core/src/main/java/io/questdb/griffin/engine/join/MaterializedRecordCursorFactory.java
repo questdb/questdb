@@ -46,6 +46,7 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Copies the rows of its base into a record array as a cursor first reads them and replays the copy after every
@@ -59,23 +60,25 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
     private MaterializedRecordCursor cursor;
 
     /**
-     * Consumes the base on entry, including on failure.
+     * Consumes the base on entry, including on failure. A copy with the join budget holds what a full-fat join's
+     * value pages may hold; one without it stands in for the storage of a stream GROUP BY and, like the map of a
+     * hash GROUP BY, only the query memory limit bounds it.
      */
     public MaterializedRecordCursorFactory(
             CairoConfiguration configuration,
             RecordCursorFactory base,
             RecordSink recordSink,
-            boolean isStrict
+            boolean isStrict,
+            boolean hasJoinBudget
     ) {
         super(base.getMetadata());
         this.base = base;
         this.isStrict = isStrict;
         RecordArray rows = null;
         try {
-            // The copy holds what a full-fat join's value pages may hold and grows from the light join's
-            // value page, so a small base costs little memory.
+            // The copy grows from the light join's value page, so a small base costs little memory.
             final long pageSize = configuration.getSqlHashJoinValuePageSize();
-            final long maxBytes = Numbers.ceilPow2(pageSize) * configuration.getSqlHashJoinValueMaxPages();
+            final long maxBytes = hasJoinBudget ? Numbers.ceilPow2(pageSize) * configuration.getSqlHashJoinValueMaxPages() : Long.MAX_VALUE;
             rows = new CachedRecordArray(
                     base.getMetadata(),
                     recordSink,
@@ -162,23 +165,28 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
     }
 
     /**
-     * Memory that grows as {@link MemoryCARWImpl} does and fails with a {@link CacheLimitException} when it would
-     * exceed {@code maxBytes}, or, unless strict, when memory runs out.
+     * Memory that grows as {@link MemoryCARWImpl} does and fails with a {@link CacheLimitException} when it and its
+     * sibling would together exceed {@code maxBytes}, or, unless strict, when memory runs out.
      */
     private static class CacheMemory extends MemoryCARWImpl {
         private final boolean isStrict;
         private final CacheLimitException limitExceeded = new CacheLimitException();
         private final long maxBytes;
+        private CacheMemory sibling;
 
-        private CacheMemory(long pageSize, long maxBytes, boolean isStrict) {
+        private CacheMemory(long pageSize, long maxBytes, boolean isStrict, @Nullable CacheMemory sibling) {
             super(pageSize, Integer.MAX_VALUE, MemoryTag.NATIVE_RECORD_CHAIN);
             this.maxBytes = maxBytes;
             this.isStrict = isStrict;
+            if (sibling != null) {
+                this.sibling = sibling;
+                sibling.sibling = this;
+            }
         }
 
         @Override
         protected long reallocateMemory(long currentBaseAddress, long currentSize, long newSize) {
-            if (newSize > maxBytes) {
+            if (newSize + sibling.size() > maxBytes) {
                 // The allocator retries an exact page count before giving up its speculative doubling.
                 throw limitExceeded;
             }
@@ -195,12 +203,11 @@ public class MaterializedRecordCursorFactory extends AbstractRecordCursorFactory
 
     private static class CachedRecordArray extends RecordArray {
         private CachedRecordArray(ColumnTypes columnTypes, RecordSink recordSink, long pageSize, long maxBytes, boolean isStrict) {
-            super(
-                    columnTypes,
-                    recordSink,
-                    new CacheMemory(pageSize, maxBytes, isStrict),
-                    new CacheMemory(pageSize >> 4, maxBytes >> 4, isStrict)
-            );
+            this(columnTypes, recordSink, new CacheMemory(pageSize >> 4, maxBytes, isStrict, null), pageSize, maxBytes, isStrict);
+        }
+
+        private CachedRecordArray(ColumnTypes columnTypes, RecordSink recordSink, CacheMemory offsets, long pageSize, long maxBytes, boolean isStrict) {
+            super(columnTypes, recordSink, new CacheMemory(pageSize, maxBytes, isStrict, offsets), offsets);
         }
     }
 

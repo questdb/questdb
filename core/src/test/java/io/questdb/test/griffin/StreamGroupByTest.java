@@ -408,6 +408,36 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestOnOverKeyedSampleBy() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("""
+                    CREATE TABLE t AS (
+                        SELECT (CASE WHEN x <= 8 THEN '2024-01-01T00:00' ELSE '2024-01-01T01:00' END)::TIMESTAMP + x ts,
+                               ('k' || CASE WHEN x <= 8 THEN x ELSE x - 4 END)::SYMBOL k
+                        FROM long_sequence(112)
+                    ) TIMESTAMP(ts) PARTITION BY DAY""", context);
+            engine.execute("CREATE TABLE hash_t (ts TIMESTAMP, k SYMBOL)", context);
+            engine.execute("INSERT INTO hash_t SELECT * FROM t", context);
+            final String latest = """
+                    SELECT a.ts, a.k, a.c FROM (SELECT timestamp_floor('1h', ts) ts, k, count() c FROM hash_t) a
+                    JOIN (SELECT k, max(timestamp_floor('1h', ts)) m FROM hash_t) b ON a.k = b.k AND a.ts = b.m""";
+            final String byKey = readOrError(compiler, context, latest + " ORDER BY a.k");
+            final String byTs = readOrError(compiler, context, latest + " ORDER BY a.ts, a.k LIMIT 6");
+            for (String[] sql : new String[][]{
+                    {"SELECT * FROM ((SELECT ts, k, count() c FROM t SAMPLE BY 1h) LATEST ON ts PARTITION BY k) ORDER BY k", byKey},
+                    {"SELECT * FROM ((SELECT timestamp_floor('1h', ts) ts, k, count() c FROM t ORDER BY ts) LATEST ON ts PARTITION BY k) ORDER BY k", byKey},
+                    {"SELECT * FROM ((SELECT ts, k, count() c FROM t SAMPLE BY 1h ORDER BY ts DESC) LATEST ON ts PARTITION BY k) ORDER BY ts, k LIMIT 6", byTs}
+            }) {
+                try (RecordCursorFactory factory = compiler.compile(sql[0], context).getRecordCursorFactory()) {
+                    for (int i = 0; i < 3; i++) {
+                        Assert.assertEquals(sql[0], sql[1], read(factory, context));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLimitAndAggregateFilter() throws Exception {
         run((engine, compiler, context) -> {
             createTable(compiler, context);
@@ -484,6 +514,7 @@ public class StreamGroupByTest extends AbstractCairoTest {
             for (String sql : new String[]{
                     "SELECT * FROM " + sampleBy + " a ASOF JOIN trades b ORDER BY a.ts DESC",
                     "SELECT * FROM " + sampleBy + " a LT JOIN trades b ORDER BY a.ts DESC LIMIT 4",
+                    "SELECT * FROM " + sampleBy + " a SPLICE JOIN " + sampleBy + " b ORDER BY a.ts DESC LIMIT 4",
                     "SELECT * FROM (" + sampleBy + " UNION ALL (SELECT ts, sum(v) s, first(v) l FROM trades SAMPLE BY 7m)) ORDER BY ts DESC, s",
                     "SELECT ts, s, sum(s) OVER (ORDER BY ts) FROM " + sampleBy + " ORDER BY ts DESC",
                     "SELECT * FROM (SELECT ts, sum(v) s FROM trades SAMPLE BY 1m ORDER BY ts DESC) LIMIT 3",
@@ -494,6 +525,28 @@ public class StreamGroupByTest extends AbstractCairoTest {
                 context.setParallelGroupByEnabled(false);
                 final String expected = readOrError(compiler, context, sql);
                 context.setParallelGroupByEnabled(parallel);
+                Assert.assertEquals(sql, expected, readOrError(compiler, context, sql));
+            }
+        });
+    }
+
+    @Test
+    public void testDescendingKeyKeepsFirstAndLastInStorageOrder() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE dup (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", context);
+            engine.execute("""
+                    INSERT INTO dup VALUES
+                        ('2024-01-01T00:00', NULL), ('2024-01-01T00:00', 1), ('2024-01-01T00:00', 2), ('2024-01-01T00:00', NULL),
+                        ('2024-01-01T01:00', 3), ('2024-01-01T01:00', 4)""", context);
+            final String expected = """
+                    k\tfirst\tlast\tfirst_not_null\tlast_not_null
+                    2024-01-01T01:00:00.000000Z\t3\t4\t3\t4
+                    2024-01-01T00:00:00.000000Z\tnull\tnull\t1\t2
+                    """;
+            for (String sql : new String[]{
+                    "SELECT ts k, first(v), last(v), first_not_null(v), last_not_null(v) FROM dup ORDER BY k DESC",
+                    "SELECT ts k, first(v), last(v), first_not_null(v), last_not_null(v) FROM dup GROUP BY ts ORDER BY k DESC"
+            }) {
                 Assert.assertEquals(sql, expected, readOrError(compiler, context, sql));
             }
         });

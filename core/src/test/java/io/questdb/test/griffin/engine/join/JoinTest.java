@@ -10555,6 +10555,34 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimeSeriesJoinsUnderDescendingOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 AS (SELECT timestamp_sequence('2024-01-01', 600_000_000L) ts, x v FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 AS (SELECT timestamp_sequence('2024-01-01T00:05', 600_000_000L) ts, x v FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT a.ts, a.v, b.ts bts, b.v bv FROM t1 a SPLICE JOIN t2 b ORDER BY a.ts DESC LIMIT 1")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestampDesc("ts")
+                    .returns("""
+                            ts\tv\tbts\tbv
+                            2024-01-01T00:30:00.000000Z\t4\t2024-01-01T00:25:00.000000Z\t3
+                            """);
+            final String expected = """
+                    ts\tcts
+                    2024-01-01T00:20:00.000000Z\t2024-01-01T00:15:00.000000Z
+                    2024-01-01T00:10:00.000000Z\t2024-01-01T00:05:00.000000Z
+                    2024-01-01T00:00:00.000000Z\t
+                    """;
+            for (String join : new String[]{"ASOF", "LT"}) {
+                assertQuery("SELECT a.ts, c.ts cts FROM t1 a JOIN t2 b ON a.v = b.v " + join + " JOIN t2 c ORDER BY a.ts DESC")
+                        .noLeakCheck()
+                        .timestampDesc("ts")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
     public void testTypeMismatch() throws Exception {
         testTypeMismatch0(false);
     }

@@ -148,7 +148,7 @@ public final class StreamGroupByMap implements QuietCloseable {
             valueSink = RecordValueSinkFactory.getInstance(asm, stateTypes, valueColumns);
             value = new FlyweightPackedMapValue(mapValueTypes);
             record = new SelectedRecord(columnCrossIndex);
-            map = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, true, false);
+            map = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, 1, configuration.getSqlSmallMapPageSize(), true, false);
             mergeMemory = new DirectLongList((value.getSizeInBytes() + 7) / 8, MemoryTag.NATIVE_FAST_MAP, true);
             batchRows = new DirectLongList(batchSize, MemoryTag.NATIVE_FAST_MAP, true);
         } catch (Throwable th) {
@@ -175,7 +175,7 @@ public final class StreamGroupByMap implements QuietCloseable {
         try {
             value = new FlyweightPackedMapValue(mapValueTypes);
             record = new SelectedRecord(columnCrossIndex);
-            map = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, true, false);
+            map = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, 1, configuration.getSqlSmallMapPageSize(), true, false);
             mergeMemory = new DirectLongList((value.getSizeInBytes() + 7) / 8, MemoryTag.NATIVE_FAST_MAP, true);
             batchRows = new DirectLongList(batchSize, MemoryTag.NATIVE_FAST_MAP, true);
         } catch (Throwable th) {

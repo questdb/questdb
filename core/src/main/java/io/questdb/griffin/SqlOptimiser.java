@@ -772,6 +772,21 @@ public class SqlOptimiser implements Mutable {
      * prevails. An inner-join ON conjunct gates the inner join, which runs first, so it still pushes
      * down. {@link #precomputeNullingJoinAnchors} turns this into the per-level anchor lookups.
      */
+    private static boolean hasTimeSeriesJoin(IQueryModel model) {
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            switch (joinModels.getQuick(i).getJoinType()) {
+                case IQueryModel.JOIN_ASOF:
+                case IQueryModel.JOIN_LT:
+                case IQueryModel.JOIN_SPLICE:
+                case IQueryModel.JOIN_WINDOW:
+                case IQueryModel.JOIN_HORIZON:
+                    return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isMasterNullingJoinType(int joinType) {
         return joinType == IQueryModel.JOIN_SPLICE
                 || joinType == IQueryModel.JOIN_FULL_OUTER
@@ -8497,6 +8512,24 @@ public class SqlOptimiser implements Mutable {
                 jm2.setAllowPropagationOfOrderByAdvice(false);
             }
         }
+        // time series joins require ascending timestamp order, external advice must not
+        // influence them, especially passing INVARIANT mnemonic is dangerous,
+        // because existing ordering might be omitted
+        if (hasTimeSeriesJoin(jm1)) {
+            optimiseOrderBy(jm1, OrderByMnemonic.ORDER_BY_UNKNOWN);
+            return;
+        }
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_GROUP_BY) {
+            if (jm1.getAllowPropagationOfOrderByAdvice()) {
+                jm1.setOrderByAdviceMnemonic(orderByMnemonic);
+                jm1.getOrderByAdvice().clear();
+                jm1.getOrderByDirectionAdvice().clear();
+            } else {
+                orderByMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
+            }
+            optimiseOrderBy(jm1, orderByMnemonic);
+            return;
+        }
         // placeholder for prefix-stripped advice
         ObjList<ExpressionNode> advice;
         // Check if the orderByAdvice has names qualified by table names i.e 't1.ts' versus 'ts'
@@ -8523,24 +8556,7 @@ public class SqlOptimiser implements Mutable {
         }
         // order by advice is pushable, so now we copy it and strip the table prefix
         advice = duplicateAdviceAndTakeSuffix();
-        // if there's a join, we need to handle it differently.
-        if (jm2 != null) {
-            final int joinType = jm2.getJoinType();
-            switch (joinType) {
-                case IQueryModel.JOIN_ASOF:
-                case IQueryModel.JOIN_LT:
-                    // asof joins required ascending timestamp order, external advice must not
-                    // influence them, especially passing INVARIANT mnemonic is dangerous,
-                    // because existing ordering might be omitted
-                    orderByMnemonic = OrderByMnemonic.ORDER_BY_UNKNOWN;
-                    break;
-                default:
-                    orderByMnemonic = setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
-            }
-        } else {
-            // fallback to copy the advice to primary
-            orderByMnemonic = setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
-        }
+        orderByMnemonic = setAndCopyAdvice(jm1, advice, orderByMnemonic, orderByDirectionAdvice);
         // recursive call
         optimiseOrderBy(jm1, orderByMnemonic);
     }
