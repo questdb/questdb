@@ -24,11 +24,14 @@
 
 package io.questdb.test.griffin.engine.table;
 
+import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -108,6 +111,63 @@ public class PageFrameSkipRescanTest extends AbstractCairoTest {
                         assertCursorText("skip=" + skip, expectedTails[skip], cursor, factory);
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testSkipRowsAfterFullScanBackward() throws Exception {
+        // Backward: the 20-row last partition is skipped wholesale, then the 48-row
+        // partition (three fine frames on a plain scan) is read from its end.
+        testSkipRowsAfterFullScan("SELECT x FROM t ORDER BY ts DESC", 68, -1, 50);
+    }
+
+    @Test
+    public void testSkipRowsAfterFullScanForward() throws Exception {
+        // Forward: the 48-row first partition is skipped wholesale, then the 20-row
+        // partition is read.
+        testSkipRowsAfterFullScan("SELECT x FROM t", 1, 1, 50);
+    }
+
+    private void testSkipRowsAfterFullScan(String sql, long first, long step, long skip) throws Exception {
+        // 16-row frames: a 48-row partition is three fine frames on a plain scan, but one
+        // coarse frame once the skip target covers the whole partition.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 16);
+        assertMemoryLeak(() -> {
+            // The execution context caches the frame sizes it was created with.
+            sqlExecutionContext.changePageFrameSizes(1, 16);
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT x, dateadd('s', x::int, '2024-01-01T00:00:00'::timestamp) FROM long_sequence(48)");
+            execute("INSERT INTO t SELECT 48 + x, dateadd('s', x::int, '2024-01-02T00:00:00'::timestamp) FROM long_sequence(20)");
+
+            try (RecordCursorFactory factory = select(sql);
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                final Record record = cursor.getRecord();
+                // Pass 1: a plain scan files every fine frame in the address cache.
+                long expected = first;
+                long rows = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(expected, record.getLong(0));
+                    expected += step;
+                    rows++;
+                }
+                Assert.assertEquals(68, rows);
+
+                // Pass 2: skip a whole partition plus a few rows of the next one.
+                cursor.toTop();
+                final RecordCursor.Counter counter = new RecordCursor.Counter();
+                counter.set(skip);
+                cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
+                Assert.assertEquals(0, counter.get());
+                expected = first + skip * step;
+                rows = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals("row after skipRows", expected, record.getLong(0));
+                    expected += step;
+                    rows++;
+                }
+                Assert.assertEquals(68 - skip, rows);
             }
         });
     }
