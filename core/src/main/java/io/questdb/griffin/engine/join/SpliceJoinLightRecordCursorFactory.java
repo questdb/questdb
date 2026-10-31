@@ -234,8 +234,11 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         public boolean hasNext() {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (dualRecord) {
+                // The slave-led row of a timestamp tie is complete: emit it before
+                // fetching either cursor, or the fetch below would overwrite it.
                 slaveRecordLeads();
                 dualRecord = false;
+                return true;
             }
 
             if (fetchMaster) {
@@ -333,8 +336,13 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         }
 
         private void masterRecordLeads() {
-            // lookup previous slave
-            final long rowid = joinKeyMap.valueAt(masterKeyValueAddress).getLong(hasSlave ? VAL_SLAVE_PREV : VAL_SLAVE_NEXT);
+            // Look up the prevailing slave row: the latest fetched slave row with this
+            // key whose timestamp is <= the master row's. When the pending slave row
+            // has this same key, it is that later row, so the prevailing one is PREV;
+            // otherwise everything fetched for this key is <= and NEXT prevails.
+            final long rowid = joinKeyMap.valueAt(masterKeyValueAddress).getLong(
+                    hasSlave && slaveKeyValueAddress == masterKeyValueAddress ? VAL_SLAVE_PREV : VAL_SLAVE_NEXT
+            );
             if (rowid == NULL_ROWID) {
                 record.of(masterRecord, nullSlaveRecord);
             } else {
@@ -358,8 +366,10 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
         }
 
         private void slaveRecordLeads() {
-            // lookup previous master
-            final long rowid = joinKeyMap.valueAt(slaveKeyValueAddress).getLong(hasMaster ? VAL_MASTER_PREV : VAL_MASTER_NEXT);
+            // Look up the prevailing master row, symmetric to masterRecordLeads().
+            final long rowid = joinKeyMap.valueAt(slaveKeyValueAddress).getLong(
+                    hasMaster && masterKeyValueAddress == slaveKeyValueAddress ? VAL_MASTER_PREV : VAL_MASTER_NEXT
+            );
             if (rowid == NULL_ROWID) {
                 record.of(nullMasterRecord, slaveRecord);
             } else {
