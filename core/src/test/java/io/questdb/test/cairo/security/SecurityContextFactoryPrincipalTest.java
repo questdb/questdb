@@ -163,8 +163,8 @@ public class SecurityContextFactoryPrincipalTest {
         // uncached principal re-derives here -- and on the HTTP path the principal is a flyweight over the
         // reused request buffer, which is exactly why the parameter is @Transient (HttpConnectionContext
         // re-derives the security context per request). Retaining it aliases that buffer into a long-lived
-        // SecurityContext, and current_user() / session_user() / SHOW CREATE ... OWNED BY would then read
-        // whatever the next request left in it.
+        // SecurityContext, and current_user() / session_user() would then read whatever the next request
+        // left in it.
         final AllowAllSecurityContext root = freshAllowAll();
         for (int i = 0; i < CACHE_CAP; i++) {
             root.forPrincipal("p" + i);

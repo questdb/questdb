@@ -41,6 +41,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.table.ShowCreateDatabaseRecordCursorFactory;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.QueryModelWrapper;
@@ -48,6 +49,7 @@ import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
+import io.questdb.test.tools.TableFunctionTestUtils;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -737,6 +739,64 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testViewPivotOverDumpKeepsDependencyOrder() throws Exception {
+        // A view's PIVOT IN subquery runs while CREATE VIEW, ALTER VIEW, COMPILE VIEW and the view compiler
+        // job derive the view's columns, and there it may not use an administrative function. The dump it
+        // reads compiles a_mv's SQL to order a_mv after z_src, which a_mv reads and which calls one. That
+        // compile only walks a_mv's plan, so the restriction must not fail it: the dump would order a_mv by
+        // its base table only, and the view would store its columns in an order that its reads do not return.
+        assertMemoryLeak(() -> {
+            final String functionName = "admin_cursor";
+            final ObjList<TableFunctionTestUtils.CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            TableFunctionTestUtils.register(
+                    engine,
+                    functionName,
+                    SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
+                    factories
+            );
+            try {
+                execute("CREATE TABLE trades (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE VIEW z_src AS (SELECT ts, k, v FROM trades)");
+                execute("CREATE MATERIALIZED VIEW a_mv AS (SELECT ts, count() c FROM z_src SAMPLE BY 1h) PARTITION BY DAY");
+                drainWalAndMatViewQueues();
+                execute("ALTER VIEW z_src AS (SELECT trades.ts, trades.k, trades.v FROM trades CROSS JOIN " + functionName + "())");
+                execute("CREATE TABLE data (cat VARCHAR, val INT)");
+                execute("INSERT INTO data VALUES ('tb', 1), ('vw', 2), ('mv', 3)");
+                drainWalAndViewQueues();
+
+                // the dump emits trades, then z_src, then a_mv, whatever its view compile restricts
+                final String viewSql = """
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                            SELECT CASE
+                                WHEN ddl LIKE 'CREATE MATERIALIZED VIEW%' THEN 'mv'
+                                WHEN ddl LIKE 'CREATE VIEW%' THEN 'vw'
+                                ELSE 'tb'
+                            END
+                            FROM (SHOW CREATE DATABASE INCLUDE (SCHEMA))
+                        ))""";
+                execute("CREATE VIEW pv AS (" + viewSql + ")");
+                assertPivotViewColumnOrder();
+
+                execute("ALTER VIEW pv AS (" + viewSql + ")");
+                assertPivotViewColumnOrder();
+
+                execute("COMPILE VIEW pv");
+                drainViewQueue();
+                assertQuery("SELECT view_status, invalidation_reason FROM views() WHERE view_name = 'pv'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                view_status\tinvalidation_reason
+                                valid\t
+                                """);
+                assertPivotViewColumnOrder();
+            } finally {
+                TableFunctionTestUtils.unregister(engine, functionName);
+            }
+        });
+    }
+
+    @Test
     public void testCancellationPropagates() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t1 (ts timestamp, v double) timestamp(ts) partition by day bypass wal");
@@ -1100,6 +1160,27 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata("ddl", ColumnType.VARCHAR));
         return metadata;
+    }
+
+    // the columns pv stores, in the order a read of pv returns them
+    private void assertPivotViewColumnOrder() throws Exception {
+        assertQuery("SELECT \"column\", type FROM (SHOW COLUMNS FROM pv)")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        column\ttype
+                        tb\tLONG
+                        vw\tLONG
+                        mv\tLONG
+                        """);
+        assertQuery("SELECT * FROM pv")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        tb\tvw\tmv
+                        1\t2\t3
+                        """);
     }
 
     @FunctionalInterface
