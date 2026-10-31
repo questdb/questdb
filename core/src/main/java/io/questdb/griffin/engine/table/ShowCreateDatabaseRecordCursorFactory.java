@@ -364,6 +364,14 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         if (definition == null) {
             return;
         }
+        // The compile below builds the plan of the mat view's SQL only to walk it, and opens none of its
+        // cursors. When a view's PIVOT IN subquery reads this dump, the context rejects administrative
+        // functions, see SqlExecutionContext.isViewMetadataSubquery(): one that a view the mat view reads
+        // calls would fail the compile, and the fallback would order the mat view by its base table only.
+        // A PIVOT IN subquery of the mat view's own SQL does run here, so the view compile flag stays set
+        // and that subquery raises the flag again for itself.
+        final boolean wasViewMetadataSubquery = executionContext.isViewMetadataSubquery();
+        executionContext.setViewMetadataSubquery(false);
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             // Compile the mat view SQL once: build the execution model, then derive the factory
             // from that same model. The two walks below need different artifacts but share one
@@ -409,6 +417,8 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
             fallBackToBaseTable(matView, definition, engine, out, e.getFlyweightMessage());
         } catch (SqlException e) {
             fallBackToBaseTable(matView, definition, engine, out, e.getFlyweightMessage());
+        } finally {
+            executionContext.setViewMetadataSubquery(wasViewMetadataSubquery);
         }
     }
 
