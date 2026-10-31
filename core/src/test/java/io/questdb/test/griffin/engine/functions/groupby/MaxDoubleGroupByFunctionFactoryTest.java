@@ -287,9 +287,9 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testSampleInterpolateRandomAccessConsistency() throws Exception {
-        assertQuery("select b, max(a), k from " +
-                " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
-                "sample by 3h fill(linear) align to first observation order by 3, 2, 1")
+        final String sorted = "select b, max(a), k from (x where b in ('PEHN', 'VTJW') and k < '1970-01-03T05' "
+                + "union all x where b in ('PEHN', 'VTJW') and k >= '1970-01-03T05') timestamp(k) sample by 3h fill(linear) ";
+        assertQuery(sorted + "align to first observation order by 3, 2, 1")
                 .ddl("create table x as " +
                         "(" +
                         "select" +
@@ -303,31 +303,38 @@ public class MaxDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
                 .expectSize()
                 .returns("""
                         b\tmax\tk
-                        PEHN\t0.8445258177211064\t1970-01-03T00:18:00.000000Z
-                        VTJW\t0.9125204540487346\t1970-01-03T00:18:00.000000Z
-                        PEHN\t0.7365115215570027\t1970-01-03T03:18:00.000000Z
-                        VTJW\t0.8660879643164553\t1970-01-03T03:18:00.000000Z
-                        PEHN\t0.4346135812930124\t1970-01-03T06:18:00.000000Z
-                        VTJW\t0.8196554745841765\t1970-01-03T06:18:00.000000Z
-                        PEHN\t0.13271564102902209\t1970-01-03T09:18:00.000000Z
-                        VTJW\t0.7732229848518976\t1970-01-03T09:18:00.000000Z
+                        PEHN\t0.8445258177211064\t1970-01-03T00:06:00.000000Z
+                        VTJW\t0.8685154305419587\t1970-01-03T00:06:00.000000Z
+                        PEHN\t0.7365115215570027\t1970-01-03T03:06:00.000000Z
+                        VTJW\t0.9441658975532605\t1970-01-03T03:06:00.000000Z
+                        PEHN\t0.4346135812930124\t1970-01-03T06:06:00.000000Z
+                        VTJW\t0.8196554745841765\t1970-01-03T06:06:00.000000Z
+                        PEHN\t0.13271564102902209\t1970-01-03T09:06:00.000000Z
+                        VTJW\t0.7732229848518976\t1970-01-03T09:06:00.000000Z
                         """);
 
-        assertQuery("select b, max(a), k from " +
-                " (x where b = 'PEHN' union all x where b = 'VTJW' ) timestamp(k)" +
-                "sample by 3h fill(linear) align to calendar order by 3, 2, 1")
+        assertQuery(sorted + "align to calendar order by 3, 2, 1")
                 .timestamp("k")
                 .expectSize()
                 .returns("""
                         b\tmax\tk
                         PEHN\t0.8445258177211064\t1970-01-03T00:00:00.000000Z
-                        VTJW\t0.9125204540487346\t1970-01-03T00:00:00.000000Z
+                        VTJW\t0.8685154305419587\t1970-01-03T00:00:00.000000Z
                         PEHN\t0.7365115215570027\t1970-01-03T03:00:00.000000Z
-                        VTJW\t0.8660879643164553\t1970-01-03T03:00:00.000000Z
+                        VTJW\t0.9441658975532605\t1970-01-03T03:00:00.000000Z
                         PEHN\t0.4346135812930124\t1970-01-03T06:00:00.000000Z
                         VTJW\t0.8196554745841765\t1970-01-03T06:00:00.000000Z
                         PEHN\t0.13271564102902209\t1970-01-03T09:00:00.000000Z
                         VTJW\t0.7732229848518976\t1970-01-03T09:00:00.000000Z
                         """);
+
+        for (String align : new String[]{"first observation", "calendar"}) {
+            assertException(
+                    "select b, max(a), k from (x where b = 'PEHN' union all x where b = 'VTJW') timestamp(k) "
+                            + "sample by 3h fill(linear) align to " + align + " order by 3, 2, 1",
+                    -1,
+                    "SAMPLE BY FILL(LINEAR) requires ascending designated timestamp order"
+            );
+        }
     }
 }

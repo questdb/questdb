@@ -25,11 +25,15 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
+import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
@@ -91,6 +95,23 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
                             2024-01-01T03:00:00.000000Z\tnull\tnull\t1\t1
                             2024-01-01T04:00:00.000000Z\tnull\tnull\t1\t0
                             """));
+        });
+    }
+
+    @Test
+    public void testDescendingTimestampsFail() throws Exception {
+        run((engine, compiler, context) -> {
+            final String sql = "SELECT ts, k, sum(v) s FROM (SELECT (7_200_000_000 - x * 3_600_000_000)::" + timestampType
+                    + " ts, 'k' || (x % 2) k, x v FROM long_sequence(3)) TIMESTAMP(ts) SAMPLE BY 1h FILL(LINEAR)";
+            for (String align : new String[]{" ALIGN TO CALENDAR", " ALIGN TO FIRST OBSERVATION"}) {
+                try (RecordCursorFactory factory = compiler.compile(sql + align, context).getRecordCursorFactory();
+                     RecordCursor cursor = factory.getCursor(context)) {
+                    cursor.hasNext();
+                    Assert.fail("expected descending timestamps to fail");
+                } catch (CairoException e) {
+                    TestUtils.assertEquals("SAMPLE BY FILL(LINEAR) requires ascending designated timestamp order", e.getFlyweightMessage());
+                }
+            }
         });
     }
 
@@ -191,10 +212,10 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
                                 2024-01-01T00:00:00.000000Z\tb\t2.0
                                 2024-01-01T01:00:00.000000Z\ta\t3.0
                                 2024-01-01T01:00:00.000000Z\tb\t6.0
-                                2024-01-01T02:00:00.000000Z\tb\t10.0
                                 2024-01-01T02:00:00.000000Z\ta\t5.0
-                                2024-01-01T03:00:00.000000Z\tb\t14.0
+                                2024-01-01T02:00:00.000000Z\tb\t10.0
                                 2024-01-01T03:00:00.000000Z\ta\t7.0
+                                2024-01-01T03:00:00.000000Z\tb\t14.0
                                 2024-01-01T04:00:00.000000Z\ta\t9.0
                                 2024-01-01T04:00:00.000000Z\tb\t18.0
                                 """));
@@ -205,12 +226,13 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedMapLimitAndReuse() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 1024);
         setProperty(PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, 0);
         run((engine, compiler, context) -> {
             createPrices(context);
             engine.execute("INSERT INTO prices SELECT "
                     + "timestamp_sequence('2024-01-01'::timestamp, 120_000_000L)::" + timestampType
-                    + ", 'A', x::double FROM long_sequence(2049)", context);
+                    + ", 'k' || x, x::double FROM long_sequence(2049)", context);
             context.getBindVariableService().setDouble("max_price", 2049);
             final String sql = "SELECT ts, sym, avg(price) mean FROM prices WHERE price <= :max_price "
                     + "SAMPLE BY 1m FILL(LINEAR) ALIGN TO CALENDAR";
@@ -233,10 +255,13 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
                             for (int pass = 0; pass < 2; pass++) {
                                 int count = 0;
                                 while (cursor.hasNext()) {
-                                    Assert.assertEquals(1.0 + 0.5 * count, cursor.getRecord().getDouble(2), 0.0);
+                                    final int bucket = count / 3;
+                                    final int key = count % 3;
+                                    TestUtils.assertEquals("k" + (key + 1), cursor.getRecord().getSymA(1));
+                                    Assert.assertEquals(bucket == 2 * key ? key + 1 : Double.NaN, cursor.getRecord().getDouble(2), 0.0);
                                     count++;
                                 }
-                                Assert.assertEquals(5, count);
+                                Assert.assertEquals(15, count);
                                 cursor.toTop();
                             }
                         }
@@ -258,6 +283,119 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
                     + "('2024-01-01T03:00', 'a', 2, 7)", context);
             assertMatchesLegacy(context, "SELECT ts, sym, venue, avg(price) mean FROM prices "
                     + "SAMPLE BY 1h FILL(LINEAR)", " ORDER BY ts, sym, venue");
+        });
+    }
+
+    @Test
+    public void testKeyedMatchesModel() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int keyCount = 1 + rnd.nextInt(40);
+        final int bucketLimit = 1 + rnd.nextInt(60);
+        final long hour = timestampType.equals("timestamp_ns") ? 3_600_000_000_000L : 3_600_000_000L;
+        final long start = 1_704_067_200L * (hour / 3_600L);
+        final boolean[][] hasData = new boolean[bucketLimit][keyCount];
+        final long[][] sums = new long[bucketLimit][keyCount];
+        final double[][] means = new double[bucketLimit][keyCount];
+        final int[][] mins = new int[bucketLimit][keyCount];
+        final float[][] maxes = new float[bucketLimit][keyCount];
+        final StringBuilder insert = new StringBuilder("INSERT INTO t VALUES ");
+        int bucketCount = 1;
+        int rowCount = 0;
+        for (int key = 0; key < keyCount; key++) {
+            final int firstBucket = key == 0 ? 0 : rnd.nextInt(bucketLimit);
+            final int density = rnd.nextInt(4);
+            for (int bucket = firstBucket; bucket < bucketLimit; bucket++) {
+                if (bucket != firstBucket && (density == 0 || rnd.nextInt(3) >= density)) {
+                    continue;
+                }
+                long count = 0;
+                double sum = 0;
+                for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
+                    final long minute = key == 0 && bucket == 0 && i == 0 ? 0 : rnd.nextInt(60);
+                    final long v = rnd.nextInt(101) - 50;
+                    final double d = rnd.nextInt(21);
+                    final int value = rnd.nextInt(2_001) - 1_000;
+                    final float f = rnd.nextInt(201) - 100;
+                    insert.append(rowCount++ == 0 ? "(" : ",(").append(start + bucket * hour + minute * (hour / 60)).append("::").append(timestampType)
+                            .append(", 'k").append(key).append("', ").append(v).append(", ").append(d)
+                            .append(", ").append(value).append(", ").append(f).append(')');
+                    sums[bucket][key] = count == 0 ? v : sums[bucket][key] + v;
+                    mins[bucket][key] = count == 0 ? value : Math.min(mins[bucket][key], value);
+                    maxes[bucket][key] = count == 0 ? f : Math.max(maxes[bucket][key], f);
+                    sum += d;
+                    count++;
+                }
+                means[bucket][key] = sum / count;
+                hasData[bucket][key] = true;
+                bucketCount = Math.max(bucketCount, bucket + 1);
+            }
+        }
+        for (int key = 0; key < keyCount; key++) {
+            final IntList buckets = new IntList();
+            for (int bucket = 0; bucket < bucketCount; bucket++) {
+                if (hasData[bucket][key]) {
+                    buckets.add(bucket);
+                }
+            }
+            if (buckets.size() == 1) {
+                for (int bucket = 0; bucket < bucketCount; bucket++) {
+                    if (bucket != buckets.getQuick(0)) {
+                        sums[bucket][key] = Numbers.LONG_NULL;
+                        means[bucket][key] = Double.NaN;
+                        mins[bucket][key] = Numbers.INT_NULL;
+                        maxes[bucket][key] = Float.NaN;
+                    }
+                }
+                continue;
+            }
+            for (int i = 1, n = buckets.size(); i < n; i++) {
+                for (int bucket = buckets.getQuick(i - 1) + 1; bucket < buckets.getQuick(i); bucket++) {
+                    interpolate(sums, means, mins, maxes, key, bucket, buckets.getQuick(i - 1), buckets.getQuick(i), start, hour);
+                }
+            }
+            for (int bucket = 0; bucket < buckets.getQuick(0); bucket++) {
+                interpolate(sums, means, mins, maxes, key, bucket, buckets.getQuick(0), buckets.getQuick(1), start, hour);
+            }
+            final int last = buckets.getLast();
+            for (int bucket = last + 1; bucket < bucketCount; bucket++) {
+                interpolate(sums, means, mins, maxes, key, bucket, last - 1, last, start, hour);
+            }
+        }
+
+        final int rows = bucketCount;
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t (ts " + timestampType + ", k SYMBOL, v LONG, d DOUBLE, i INT, f FLOAT) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute(insert.toString(), context);
+            final String sql = "SELECT ts, k, sum(v) s, avg(d) a, min(i) mi, max(f) mf FROM t SAMPLE BY 1h FILL(LINEAR)";
+            for (String align : new String[]{" ALIGN TO CALENDAR", " ALIGN TO FIRST OBSERVATION"}) {
+                try (RecordCursorFactory factory = compiler.compile(sql + align, context).getRecordCursorFactory();
+                     RecordCursor cursor = factory.getCursor(context)) {
+                    final Record record = cursor.getRecord();
+                    final int[] keyOrder = new int[keyCount];
+                    final boolean[] isSeen = new boolean[keyCount];
+                    int row = 0;
+                    while (cursor.hasNext()) {
+                        final int bucket = row / keyCount;
+                        final int key = Numbers.parseInt(record.getSymA(1), 1, record.getSymA(1).length());
+                        if (bucket == 0) {
+                            Assert.assertFalse(isSeen[key]);
+                            isSeen[key] = true;
+                            keyOrder[row] = key;
+                        } else {
+                            Assert.assertEquals(keyOrder[row % keyCount], key);
+                        }
+                        final String at = align + ", bucket " + bucket + ", key " + key;
+                        Assert.assertEquals(at, start + bucket * hour, record.getTimestamp(0));
+                        Assert.assertEquals(at, sums[bucket][key], record.getLong(2));
+                        Assert.assertEquals(at, means[bucket][key], record.getDouble(3), 0.0);
+                        Assert.assertEquals(at, mins[bucket][key], record.getInt(4));
+                        Assert.assertEquals(at, maxes[bucket][key], record.getFloat(5), 0.0f);
+                        row++;
+                    }
+                    Assert.assertEquals(rows * keyCount, row);
+                }
+            }
         });
     }
 
@@ -443,6 +581,20 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
                     .withEngine(engine).withContext(context).noLeakCheck().timestamp("ts").expectSize()
                     .withPlanContaining("Sample By").withPlanNotContaining("Stream Group By").returns(expected);
         });
+    }
+
+    private static void interpolate(long[][] sums, double[][] means, int[][] mins, float[][] maxes, int key, int bucket, int x1, int x2, long start, long hour) {
+        final long x = start + bucket * hour;
+        final long x1Timestamp = start + x1 * hour;
+        final long x2Timestamp = start + x2 * hour;
+        sums[bucket][key] = (long) line(x, x1Timestamp, sums[x1][key], x2Timestamp, sums[x2][key]);
+        means[bucket][key] = line(x, x1Timestamp, means[x1][key], x2Timestamp, means[x2][key]);
+        mins[bucket][key] = (int) line(x, x1Timestamp, mins[x1][key], x2Timestamp, mins[x2][key]);
+        maxes[bucket][key] = (float) line(x, x1Timestamp, maxes[x1][key], x2Timestamp, maxes[x2][key]);
+    }
+
+    private static double line(long x, long x1, double y1, long x2, double y2) {
+        return (y1 * (x2 - x) + y2 * (x - x1)) / (x2 - x1);
     }
 
     private void assertLegacy(SqlExecutionContext context, String sql, String expected) throws Exception {

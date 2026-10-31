@@ -27,7 +27,6 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.TableReader;
-import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -43,7 +42,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
 
 public class SampleByInterpolateRewindTest extends AbstractCairoTest {
     private static final String EXPECTED = """
@@ -52,10 +50,10 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
             2024-01-01T00:00:00.000000Z\tlate-key\t2
             2024-01-01T01:00:00.000000Z\ta\t3
             2024-01-01T01:00:00.000000Z\tlate-key\t6
-            2024-01-01T02:00:00.000000Z\tlate-key\t10
             2024-01-01T02:00:00.000000Z\ta\t5
-            2024-01-01T03:00:00.000000Z\tlate-key\t14
+            2024-01-01T02:00:00.000000Z\tlate-key\t10
             2024-01-01T03:00:00.000000Z\ta\t7
+            2024-01-01T03:00:00.000000Z\tlate-key\t14
             """;
     private static final String SQL = "SELECT ts, k, sum(v) v FROM prices "
             + "SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'UTC'";
@@ -115,7 +113,7 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
                             } catch (CairoException e) {
                                 Assert.assertTrue(e.getFlyweightMessage().toString(), e.isCancellation());
                                 Assert.assertTrue(e.isInterruption());
-                                Assert.assertEquals(false, cursorField(factory, "isMapBuilt"));
+                                Assert.assertFalse(interpolation(factory).isBuilt());
                             }
                         } finally {
                             breaker.clear();
@@ -126,8 +124,8 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
                                 final StringSink result = new StringSink();
                                 CursorPrinter.println(cursor, factory.getMetadata(), result);
                                 TestUtils.assertEquals(EXPECTED, result);
-                                Assert.assertTrue((long) cursorField(factory, "inOrderEntryCount") > 0);
-                                Assert.assertEquals(true, cursorField(factory, "isMapBuilt"));
+                                Assert.assertEquals(2, interpolation(factory).getKeyCapacity());
+                                Assert.assertTrue(interpolation(factory).isBuilt());
                                 cursor.toTop();
                             }
                         }
@@ -138,57 +136,6 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
                 }
             }
             assertQuery(SQL).noLeakCheck().timestamp("ts").expectSize().returns(EXPECTED);
-        });
-    }
-
-    @Test
-    public void testLateGapErrorThenReuse() throws Exception {
-        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 1024);
-        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 128);
-        setProperty(PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, 0);
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE prices (ts TIMESTAMP, k SYMBOL, v LONG) TIMESTAMP(ts)");
-            execute("""
-                    INSERT INTO prices VALUES
-                    (0, 'a', 1), (28_000, 'a', 2), (28_000, 'late-key', 3), (29_000, 'late-key', 4)
-                    """);
-            bindVariableService.setLong("max", 4);
-            final String sql = "SELECT ts, k, sum(v) v FROM prices WHERE v <= :max "
-                    + "SAMPLE BY 1T FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'UTC'";
-            assertQuery(sql).noLeakCheck().assertsPlanContaining("Stream Group By");
-            try (RecordCursorFactory factory = select(sql);
-                 MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(
-                         sqlExecutionContext.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH)) {
-                sqlExecutionContext.setMemoryTracker(tracker);
-                try {
-                    for (int iteration = 0; iteration < 2; iteration++) {
-                        bindVariableService.setLong("max", 4);
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            try {
-                                cursor.hasNext();
-                                Assert.fail("expected suffix-fill resize limit");
-                            } catch (CairoException e) {
-                                TestUtils.assertContains(e.getFlyweightMessage(), "limit of 0 resizes exceeded in FastMap");
-                                Assert.assertTrue((long) cursorField(factory, "inOrderEntryCount") > 0);
-                                Assert.assertEquals(false, cursorField(factory, "isMapFilled"));
-                                Assert.assertEquals(false, cursorField(factory, "isMapBuilt"));
-                            }
-                        }
-                        Assert.assertEquals(0, tracker.getUsed());
-                        bindVariableService.setLong("max", 1);
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            Assert.assertTrue(cursor.hasNext());
-                            Assert.assertEquals(1, cursor.getRecord().getLong(2));
-                            Assert.assertFalse(cursor.hasNext());
-                        }
-                        Assert.assertEquals(0, tracker.getUsed());
-                    }
-                } finally {
-                    sqlExecutionContext.setMemoryTracker(null);
-                }
-            }
-            assertQuery(sql).noLeakCheck().timestamp("ts").expectSize()
-                    .returns("ts\tk\tv\n1970-01-01T00:00:00.000000Z\ta\t1\n");
         });
     }
 
@@ -238,7 +185,7 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
                             Assert.assertEquals(expectedCount, count);
                             Assert.assertEquals(expectedCount, cursor.size());
                             if (max == 2) {
-                                Assert.assertTrue(((Map) cursorField(factory, "dataMap")).getHeapSize() > 256);
+                                Assert.assertEquals(2, interpolation(factory).getKeyCapacity());
                             }
                             cursor.toTop();
                         }
@@ -309,6 +256,52 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLateKeyErrorThenReuse() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 1024);
+        setProperty(PropertyKey.CAIRO_SQL_MAP_MAX_RESIZES, 0);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prices (ts TIMESTAMP, k SYMBOL, v LONG) TIMESTAMP(ts)");
+            execute("INSERT INTO prices SELECT (x * 1_000)::TIMESTAMP, 'k' || x, x FROM long_sequence(1_000)");
+            bindVariableService.setLong("max", 1_000);
+            final String sql = "SELECT ts, k, sum(v) v FROM prices WHERE v <= :max "
+                    + "SAMPLE BY 1T FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'UTC'";
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("Stream Group By");
+            try (RecordCursorFactory factory = select(sql);
+                 MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(
+                         sqlExecutionContext.getSecurityContext(), 42, MemoryTrackerWorkload.MAT_VIEW_REFRESH)) {
+                sqlExecutionContext.setMemoryTracker(tracker);
+                try {
+                    for (int iteration = 0; iteration < 2; iteration++) {
+                        bindVariableService.setLong("max", 1_000);
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            try {
+                                cursor.hasNext();
+                                Assert.fail("expected key map resize limit");
+                            } catch (CairoException e) {
+                                TestUtils.assertContains(e.getFlyweightMessage(), "limit of 0 resizes exceeded in FastMap");
+                                Assert.assertTrue(interpolation(factory).getKeyCapacity() > 1);
+                                Assert.assertFalse(interpolation(factory).isBuilt());
+                            }
+                        }
+                        Assert.assertEquals(0, tracker.getUsed());
+                        bindVariableService.setLong("max", 1);
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            Assert.assertTrue(cursor.hasNext());
+                            Assert.assertEquals(1, cursor.getRecord().getLong(2));
+                            Assert.assertFalse(cursor.hasNext());
+                        }
+                        Assert.assertEquals(0, tracker.getUsed());
+                    }
+                } finally {
+                    sqlExecutionContext.setMemoryTracker(null);
+                }
+            }
+            assertQuery(sql).noLeakCheck().timestamp("ts").expectSize()
+                    .returns("ts\tk\tv\n1970-01-01T00:00:00.001000Z\tk1\t1\n");
+        });
+    }
+
+    @Test
     public void testTemporalJoinsKeepInterpolatedRhsRandomAccess() throws Exception {
         assertMemoryLeak(() -> {
             createPrices("VARCHAR", "'late-key'");
@@ -354,17 +347,11 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
                 """.formatted(lateKey, lateKey));
     }
 
-    // Read-only diagnostics prove growth and failure phase; never replace cursor/map fields.
-    private static Object cursorField(RecordCursorFactory factory, String name) throws Exception {
+    private static SampleByInterpolateRecordCursorFactory interpolation(RecordCursorFactory factory) {
         while (!(factory instanceof SampleByInterpolateRecordCursorFactory)) {
             factory = factory.getBaseFactory();
             Assert.assertNotNull("missing interpolation factory", factory);
         }
-        final Field cursorField = factory.getClass().getDeclaredField("cursor");
-        cursorField.setAccessible(true);
-        final Object cursor = cursorField.get(factory);
-        final Field field = cursor.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(cursor);
+        return (SampleByInterpolateRecordCursorFactory) factory;
     }
 }

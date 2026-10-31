@@ -406,10 +406,10 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                             RXGZ\t267.5343540067626\t1970-01-03T12:31:40.000000Z
                             VTJW\t297.90493337981263\t1970-01-03T13:31:40.000000Z
                             RXGZ\t267.5343540067626\t1970-01-03T13:31:40.000000Z
-                            RXGZ\t0.0\t1970-01-03T14:31:40.000000Z
                             VTJW\t297.90493337981263\t1970-01-03T14:31:40.000000Z
-                            RXGZ\t141.93824030889962\t1970-01-03T15:31:40.000000Z
+                            RXGZ\t0.0\t1970-01-03T14:31:40.000000Z
                             VTJW\t297.90493337981263\t1970-01-03T15:31:40.000000Z
+                            RXGZ\t141.93824030889962\t1970-01-03T15:31:40.000000Z
                             """);
 
             assertQuery("select s, haversine_dist_deg(lat, lon, k), k from tab sample by 1h fill(linear) align to calendar")
@@ -449,10 +449,10 @@ public class HaversineDistDegreeGroupByFunctionFactoryTest extends AbstractCairo
                             RXGZ\t268.93561321686246\t1970-01-03T13:00:00.000000Z
                             VTJW\t297.950311502349\t1970-01-03T14:00:00.000000Z
                             RXGZ\t268.93561321686246\t1970-01-03T14:00:00.000000Z
-                            RXGZ\t141.19868683690248\t1970-01-03T15:00:00.000000Z
                             VTJW\t297.950311502349\t1970-01-03T15:00:00.000000Z
-                            RXGZ\t0.0\t1970-01-03T16:00:00.000000Z
+                            RXGZ\t141.19868683690248\t1970-01-03T15:00:00.000000Z
                             VTJW\t297.950311502349\t1970-01-03T16:00:00.000000Z
+                            RXGZ\t0.0\t1970-01-03T16:00:00.000000Z
                             """);
         });
     }
