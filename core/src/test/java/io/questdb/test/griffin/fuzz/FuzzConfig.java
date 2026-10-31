@@ -37,6 +37,7 @@ public final class FuzzConfig {
     public static final String DIFF_FUSED_PROP = "questdb.fuzz.diff.fused";
     public static final String DIFF_JIT_PROP = "questdb.fuzz.diff.jit";
     public static final String DIFF_SHADOW_PROP = "questdb.fuzz.diff.shadow";
+    public static final String DIFF_STREAM_PROP = "questdb.fuzz.diff.stream";
     public static final String DUMP_PROP = "questdb.fuzz.dump";
     public static final String FAULTS_PROP = "questdb.fuzz.faults";
     public static final String FAULT_PARALLEL_PROP = "questdb.fuzz.fault.parallel";
@@ -76,6 +77,7 @@ public final class FuzzConfig {
     private final boolean isDiffFusedEnabled;
     private final boolean isDiffJitEnabled;
     private final boolean isDiffShadowEnabled;
+    private final boolean isDiffStreamEnabled;
     private final boolean isFaultInjectionEnabled;
     private final boolean isHashJoinEnabled;
     private final boolean isHorizonJoinEnabled;
@@ -121,6 +123,8 @@ public final class FuzzConfig {
         // compares the results (see QueryRunner). Pass -Dquestdb.fuzz.diff.fused=false to drop
         // the comparison and keep the shape.
         this.isDiffFusedEnabled = Boolean.parseBoolean(System.getProperty(DIFF_FUSED_PROP, "true"));
+        // Runs every query whose plan uses the stream GROUP BY again with it off and compares the results.
+        this.isDiffStreamEnabled = Boolean.parseBoolean(System.getProperty(DIFF_STREAM_PROP, "true"));
         this.isVerifyCursorEnabled = Boolean.parseBoolean(System.getProperty(VERIFY_CURSOR_PROP, "true"));
         this.isFaultInjectionEnabled = Boolean.parseBoolean(System.getProperty(FAULTS_PROP, "true"));
         this.faultProbabilityPct = Integer.getInteger(FAULT_PCT_PROP, 15);
@@ -225,6 +229,10 @@ public final class FuzzConfig {
 
     public boolean isDiffShadowEnabled() {
         return isDiffShadowEnabled;
+    }
+
+    public boolean isDiffStreamEnabled() {
+        return isDiffStreamEnabled;
     }
 
     public boolean isFaultInjectionEnabled() {

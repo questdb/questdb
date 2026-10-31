@@ -10269,7 +10269,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 boolean isPreAggregated = false;
                 final long linearOffset = offsetFunc.isConstant() && offsetFunc.getStrA(null) != null
                         ? Dates.parseOffset(offsetFunc.getStrA(null)) : Numbers.LONG_NULL;
-                if (timestampSampler instanceof SimpleTimestampSampler
+                if (executionContext.isStreamGroupByEnabled()
+                        && timestampSampler instanceof SimpleTimestampSampler
                         && sampleByUnits == null
                         && model.getSampleByOffset() != null
                         && model.getSampleByFrom() == null
@@ -11660,7 +11661,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(innerProjectionFunctions, projectionFunctionFlags);
-            final int streamKeyIndex = sharedOuterProjectionFunctions == null
+            final int streamKeyIndex = executionContext.isStreamGroupByEnabled()
+                    && sharedOuterProjectionFunctions == null
                     && isStreamGroupByFillSupported(model, keyTypes.getColumnCount(), outerProjectionMetadata)
                     ? GroupByUtils.getStreamGroupByKeyIndex(factory, keyTypes, listColumnFilterA, keyFunctions, groupByFunctions)
                     : -1;

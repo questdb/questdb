@@ -1698,6 +1698,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isStreamGroupByEnabled() {
+            return sqlExecutionContext.isStreamGroupByEnabled();
+        }
+
+        @Override
         public boolean isTimestampRequired() {
             return sqlExecutionContext.isTimestampRequired();
         }
@@ -1846,6 +1851,11 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void setRandom(Rnd rnd) {
             sqlExecutionContext.setRandom(rnd);
+        }
+
+        @Override
+        public void setStreamGroupByEnabled(boolean isEnabled) {
+            sqlExecutionContext.setStreamGroupByEnabled(isEnabled);
         }
 
         @Override

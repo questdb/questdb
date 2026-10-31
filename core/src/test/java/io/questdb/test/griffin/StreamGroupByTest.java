@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.StreamGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
@@ -297,6 +298,32 @@ public class StreamGroupByTest extends AbstractCairoTest {
                         }
                         Assert.assertEquals(expected, read(factory, context));
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStreamGroupByDisabled() throws Exception {
+        run((engine, compiler, context) -> {
+            createTable(compiler, context);
+            for (String sql : new String[]{
+                    "SELECT timestamp_floor('1m', ts) bucket, sym, count(*), sum(v) FROM trades ORDER BY bucket, sym",
+                    "SELECT ts, sym, count(*), sum(v) FROM trades SAMPLE BY 1m ORDER BY ts, sym",
+                    "SELECT ts, sym, sum(v) FROM trades SAMPLE BY 1m FILL(PREV) ORDER BY ts, sym",
+                    "SELECT ts, sym, avg(d) FROM trades SAMPLE BY 1m FILL(LINEAR) ORDER BY ts, sym"
+            }) {
+                final String expected;
+                try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    Assert.assertTrue(sql, plan(factory, context).contains("Stream Group By"));
+                    expected = read(factory, context);
+                }
+                context.setStreamGroupByEnabled(false);
+                try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    Assert.assertFalse(sql, plan(factory, context).contains("Stream Group By"));
+                    Assert.assertEquals(sql, expected, read(factory, context));
+                } finally {
+                    context.setStreamGroupByEnabled(true);
                 }
             }
         });
@@ -1712,6 +1739,12 @@ public class StreamGroupByTest extends AbstractCairoTest {
             while (cursor.hasNext()) {
             }
         }
+    }
+
+    private static String plan(RecordCursorFactory factory, SqlExecutionContext context) {
+        final TextPlanSink sink = new TextPlanSink();
+        sink.of(factory, context);
+        return sink.getSink().toString();
     }
 
     private void assertShardMerge(SqlCompiler compiler, SqlExecutionContext context, String sql) throws Exception {

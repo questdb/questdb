@@ -140,6 +140,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS("cairo.sql.parallel.hash.join.groupby.build.parallel.min.rows"),
     CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION("cairo.sql.parallel.hash.join.groupby.build.rows.per.partition"),
     CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED("cairo.sql.parallel.hash.join.groupby.enabled"),
+    CAIRO_SQL_STREAM_GROUPBY_ENABLED("cairo.sql.stream.groupby.enabled"),
     CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE("cairo.sql.parallel.hash.join.groupby.payload.copy.max.size"),
     CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO("cairo.sql.parallel.hash.join.groupby.payload.copy.min.probe.ratio"),
     CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO("cairo.sql.parallel.hash.join.groupby.payload.copy.parallel.min.probe.ratio"),
