@@ -166,6 +166,25 @@ public class AsyncWindowJoinAtomCleanupTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testMasterFilterHoldsNoFrameMemory() throws Exception {
+        assertMemoryLeak(() -> {
+            try (FaultySlaveFactory slaveFactory = new FaultySlaveFactory(new boolean[1])) {
+                final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD);
+                final AsyncWindowJoinFastAtom atom = newAtom(slaveFactory);
+                try {
+                    Assert.assertEquals(
+                            "the reducers filter master frames in the memory of their tasks",
+                            baseline,
+                            Unsafe.getMemUsedByTag(MemoryTag.NATIVE_OFFLOAD)
+                    );
+                } finally {
+                    atom.close();
+                }
+            }
+        });
+    }
+
     private static AsyncWindowJoinFastAtom newAtom(FaultySlaveFactory slaveFactory) {
         final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
         valueTypes.add(ColumnType.LONG);

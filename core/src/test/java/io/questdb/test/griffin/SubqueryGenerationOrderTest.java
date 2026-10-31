@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
@@ -33,11 +34,14 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.test.TestCloseCounterFunctionFactory;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -48,7 +52,8 @@ import org.junit.Test;
  * Binding builds sub-query consumers over the plan's metadata, every query of the statement is optimised and
  * authorized before any factory is generated, and a sub-query generates where its consumer reads it: binding errors,
  * including a sub-query's static errors and a call that fails to resolve over a sub-query argument, precede
- * generation errors, which surface in generation order, and a sub-query the optimiser drops is never generated.
+ * generation errors, which surface in generation order, and a sub-query the optimiser drops is never generated. The
+ * per-worker clones of a parallel consumer take the sub-query's value from their owner and never generate it again.
  * PIVOT IN and table-function arguments generate their sub-query while the statement binds.
  */
 public class SubqueryGenerationOrderTest extends AbstractCairoTest {
@@ -212,6 +217,68 @@ public class SubqueryGenerationOrderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelWorkerClonesDoNotGenerateSubquery() throws Exception {
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tb2 (rts TIMESTAMP, v INT, c1 INT) TIMESTAMP(rts) PARTITION BY DAY");
+            execute("CREATE TABLE tc2 (cts TIMESTAMP, v INT) TIMESTAMP(cts) PARTITION BY DAY");
+            execute("CREATE TABLE tsym (s SYMBOL, ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tb2 VALUES ('2020-01-01T00:20', 5, 10), ('2020-01-01T01:20', 0, 20), ('2020-01-01T03:20', 100, 30)");
+            execute("INSERT INTO tc2 VALUES ('2020-01-01T00:20', 5), ('2020-01-01T01:20', 0), ('2020-01-01T03:20', 100)");
+            execute("INSERT INTO tsym VALUES ('10g', '2020-01-01T00:00', 10), ('20g', '2020-01-01T01:00', 20), ('30g', '2020-01-01T02:00', 30)");
+            final String subquery = """
+                    SELECT concat(m, test_close_counter('g'))::SYMBOL FROM (
+                        SELECT v, max(c1) m FROM tb2
+                        WHERE rts > (SELECT m FROM (SELECT v, min(cts) m FROM tc2 GROUP BY v) ORDER BY m LIMIT 1)
+                        GROUP BY v
+                    )""";
+            final String keyQuery = "SELECT s IN (" + subquery + ") k, count() c, sum(v) sv FROM tsym GROUP BY k ORDER BY k";
+            final String aggregateQuery = "SELECT count() c, sum(CASE WHEN s IN (" + subquery + ") THEN v ELSE 0 END) sv FROM tsym";
+            final String filterQuery = "SELECT count() c, sum(v) sv FROM tsym WHERE v > 0 AND s IN (" + subquery + ")";
+            for (int workerCount : new int[]{1, 4, 16}) {
+                try (SqlExecutionContextImpl executionContext = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
+                    TestCloseCounterFunctionFactory.reset();
+                    final long rosti = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
+                    final int subqueryCreated;
+                    final long subqueryRosti;
+                    try (RecordCursorFactory ignore = engine.select(subquery, executionContext)) {
+                        subqueryCreated = TestCloseCounterFunctionFactory.created("g");
+                        subqueryRosti = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI) - rosti;
+                    }
+                    Assert.assertTrue(subqueryRosti > 0);
+                    assertSubqueryGeneratedOnce(keyQuery, executionContext, subqueryCreated, subqueryRosti);
+                    assertQuery(keyQuery)
+                            .withContext(executionContext)
+                            .expectSize()
+                            .returns("""
+                                    k\tc\tsv
+                                    false\t1\t10
+                                    true\t2\t50
+                                    """);
+                    assertSubqueryGeneratedOnce(aggregateQuery, executionContext, subqueryCreated, subqueryRosti);
+                    assertQuery(aggregateQuery)
+                            .withContext(executionContext)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    c\tsv
+                                    3\t50
+                                    """);
+                    assertSubqueryGeneratedOnce(filterQuery, executionContext, subqueryCreated, subqueryRosti);
+                    assertQuery(filterQuery)
+                            .withContext(executionContext)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    c\tsv
+                                    2\t50
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTableFunctionArgumentSubqueryGeneratesWithNestedSubquery() throws Exception {
         assertQuery("SELECT x FROM long_sequence((SELECT x FROM long_sequence(3) WHERE x = (SELECT 2)))")
                 .fails(29, "constant expected");
@@ -228,6 +295,19 @@ public class SubqueryGenerationOrderTest extends AbstractCairoTest {
             assertQuery("SELECT price FROM (SELECT " + UNFRAMED_TOUCH + " x, price FROM trades)")
                     .returns("price\n");
         });
+    }
+
+    /**
+     * Compiling the query creates the sub-query's counter and allocates its vectorized GROUP BY maps as often as
+     * compiling the sub-query alone does.
+     */
+    private static void assertSubqueryGeneratedOnce(String query, SqlExecutionContext executionContext, int subqueryCreated, long subqueryRosti) throws SqlException {
+        TestCloseCounterFunctionFactory.reset();
+        final long rosti = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI);
+        try (RecordCursorFactory ignore = engine.select(query, executionContext)) {
+            Assert.assertEquals(subqueryCreated, TestCloseCounterFunctionFactory.created("g"));
+            Assert.assertEquals(subqueryRosti, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_ROSTI) - rosti);
+        }
     }
 
     private void createTables() throws Exception {

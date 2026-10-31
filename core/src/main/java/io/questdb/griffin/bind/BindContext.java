@@ -318,21 +318,14 @@ final class BindContext implements Mutable {
     }
 
     /**
-     * An aggregate over the rows of {@code input}, see {@link #aggregate(AggregatePlan, LogicalPlan, int)}.
+     * An aggregate over the rows of {@code input}. Over a HORIZON JOIN it is the join's consumer, which the generator
+     * fuses with the join.
      */
     AggregatePlan aggregate(LogicalPlan input, int position) {
-        return aggregate(planNodes.aggregates.next(), input, position);
-    }
-
-    /**
-     * Makes {@code aggregate} an aggregate over the rows of {@code input}. Over a HORIZON JOIN it is the join's
-     * consumer, which the generator fuses with the join.
-     */
-    AggregatePlan aggregate(AggregatePlan aggregate, LogicalPlan input, int position) {
         if (input instanceof HorizonJoinPlan horizon) {
             horizon.setConsumer(HorizonJoinPlan.Consumer.AGGREGATE);
         }
-        return aggregate.of(input, position);
+        return planNodes.aggregates.next().of(input, position);
     }
 
     /**

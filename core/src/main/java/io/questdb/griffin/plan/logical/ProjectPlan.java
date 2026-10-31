@@ -39,7 +39,6 @@ public final class ProjectPlan extends UnaryPlan {
     private boolean hasPrunedComputedColumns;
     private boolean hasTimestampDeclaration;
     private boolean isImplied;
-    private boolean isTimestampDropped;
     private int requestedOrderColumnId = -1;
 
     @Override
@@ -53,7 +52,6 @@ public final class ProjectPlan extends UnaryPlan {
         hasPrunedComputedColumns = false;
         hasTimestampDeclaration = false;
         isImplied = false;
-        isTimestampDropped = false;
         requestedOrderColumnId = -1;
     }
 
@@ -134,24 +132,12 @@ public final class ProjectPlan extends UnaryPlan {
         return isImplied;
     }
 
-    /**
-     * True when the generator drops the designated timestamp of a computing projection over a window join: in the
-     * order the SELECT list reads them, the master's columns do not keep the master timestamp at its position.
-     */
-    public boolean isTimestampDropped() {
-        return isTimestampDropped;
-    }
-
     public void markImplied() {
         isImplied = true;
     }
 
     public void markTimestampDeclaration() {
         hasTimestampDeclaration = true;
-    }
-
-    public void markTimestampDropped() {
-        isTimestampDropped = true;
     }
 
     public ProjectPlan of(LogicalPlan input, int position) {

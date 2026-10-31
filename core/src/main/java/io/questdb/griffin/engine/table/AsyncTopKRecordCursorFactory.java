@@ -210,7 +210,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         final PageFrameMemoryRecord recordB = atom.getRecordB(slotId);
         final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
         final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
-        final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
+        final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame, false);
         final DirectLongList rows = filterCtx.getFilteredRows(slotId);
         rows.clear();
         final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();

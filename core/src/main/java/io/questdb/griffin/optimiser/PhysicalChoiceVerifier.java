@@ -219,12 +219,12 @@ final class PhysicalChoiceVerifier {
     }
 
     /**
-     * Whether the window join step at {@code index} reads the page frames of the master: every step before it
-     * null-extends the master, which keeps its page frames.
+     * Whether the window join step at {@code index} reads the page frames of the master: every step before it pads the
+     * master with NULL, which keeps its page frames.
      */
     private static boolean isMasterPageFrameRead(WindowJoinPlan windowJoin, int index, boolean isPlanned) {
         for (int i = 0; i < index; i++) {
-            if (!windowJoin.getSteps().getQuick(i).isNullExtending()) {
+            if (!windowJoin.getSteps().getQuick(i).isNullPadding()) {
                 return false;
             }
         }

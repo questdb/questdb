@@ -26,6 +26,7 @@ package io.questdb.griffin.plan.logical;
 
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
@@ -202,6 +203,24 @@ public final class WindowJoinStep implements Mutable {
      */
     public boolean isNullExtending() {
         return LogicalPlans.constantTruth(filter) == 0;
+    }
+
+    /**
+     * True when the step null-extends and every aggregate reads NULL over no rows, see
+     * {@link SqlUtil#isZeroOnEmptyAggregate(CharSequence)}: the step then pads its aggregate columns with NULL and passes
+     * the master's page and time frames through. A step that null-extends a count pads each column with the value its
+     * aggregate takes over an empty window and serves neither.
+     */
+    public boolean isNullPadding() {
+        if (!isNullExtending()) {
+            return false;
+        }
+        for (int i = 0, n = aggregates.size(); i < n; i++) {
+            if (SqlUtil.isZeroOnEmptyAggregate(aggregates.getQuick(i).getName())) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public boolean isTableSource() {

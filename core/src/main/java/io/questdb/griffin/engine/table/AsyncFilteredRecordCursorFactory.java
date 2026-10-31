@@ -46,14 +46,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -68,11 +66,9 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     private RecordCursorFactory base;
     private final SCSequence collectSubSeq = new SCSequence();
     private AsyncFilteredRecordCursor cursor;
-    private Function filter;
     private PageFrameSequence<AsyncFilterAtom> frameSequence;
     private LimitRecordCursorFactory.LimitRecordCursor lastRowsCursor;
-    private Function limitLoFunction;
-    private final int limitLoPos;
+    private LimitBounds limitBounds;
     private final int maxNegativeLimit;
     private AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
     private final int workerCount;
@@ -95,23 +91,21 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         super(base.getMetadata());
         assert !(base instanceof AsyncFilteredRecordCursorFactory);
         this.base = base;
-        this.filter = filter;
         // A throw part-way through this constructor never returns the factory, so _close() never runs
         // and everything allocated up to that point is unreachable: the cursors hold native records
         // and page frame memory, and a per-worker filter can hold native memory of its own. Build the
         // rest into locals and release them here, together with the inputs this constructor consumes.
         //
-        // Once the atom takes the per-worker filters, its failure paths close them and null the list
-        // slots. The atom belongs to the frame sequence from the moment the PageFrameSequence
-        // constructor is entered: that constructor closes the atom on its own failure path, and
-        // close() closes it afterwards. Nothing that can throw sits between the two
-        // calls, so isPerWorkerFiltersOwned covers the whole gap and every object below is closed
-        // exactly once on every path.
+        // The atom owns the filter and its per-worker clones once its constructor returns. The atom
+        // belongs to the frame sequence from the moment the PageFrameSequence constructor is entered:
+        // that constructor closes the atom on its own failure path, and close() closes it afterwards.
+        // Nothing that can throw sits between the two calls, so isFilterOwned covers the whole gap
+        // and every object below is closed exactly once on every path.
         AsyncFilteredRecordCursor cursor = null;
         AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor = null;
         PageFrameSequence<AsyncFilterAtom> frameSequence = null;
         final int maxNegativeLimit;
-        boolean isPerWorkerFiltersOwned = true;
+        boolean isFilterOwned = true;
         try {
             cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
             negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(configuration, base.getScanDirection());
@@ -123,13 +117,16 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             }
             final AsyncFilterAtom atom = new AsyncFilterAtom(
                     configuration,
+                    null,
+                    null,
+                    null,
                     filter,
                     filterUsedColumnIndexes,
                     perWorkerFilters,
                     columnTypes,
                     enablePreTouch
             );
-            isPerWorkerFiltersOwned = false;
+            isFilterOwned = false;
             frameSequence = new PageFrameSequence<>(
                     engine,
                     configuration,
@@ -142,13 +139,13 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             );
             maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
         } catch (Throwable th) {
-            if (isPerWorkerFiltersOwned) {
+            if (isFilterOwned) {
                 Misc.freeObjList(perWorkerFilters, th);
+                Misc.free(filter, th);
             }
             // The cursors are not open yet, and close() frees their records only once they are, so
             // release the records directly.
             freeExecutionStateBestEffort(th, frameSequence, cursor, negativeLimitCursor);
-            Misc.free(filter, th);
             Misc.free(limitLoFunction, th);
             Misc.free(base, th);
             throw th;
@@ -156,9 +153,8 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         this.cursor = cursor;
         this.negativeLimitCursor = negativeLimitCursor;
         this.frameSequence = frameSequence;
-        this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = maxNegativeLimit;
-        this.limitLoFunction = limitLoFunction;
+        this.limitBounds = limitLoFunction != null ? new LimitBounds(limitLoFunction, null, limitLoPos) : null;
         this.workerCount = workerCount;
         if (limitLoFunction instanceof MasterSuffixLimitFunction masterSuffixLimit) {
             masterSuffixLimit.of(negativeLimitCursor);
@@ -202,31 +198,20 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         // Consult the breaker at open, so a scan over an empty table still observes cancellation.
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-        long rowsRemaining;
-        int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-        final int order;
-        if (limitLoFunction != null) {
-            limitLoFunction.init(frameSequence.getSymbolTableSource(), executionContext);
-            rowsRemaining = limitLoFunction.getLong(null);
-            // A NULL limit means "no limit", matching the unfiltered path (an unset LIMIT :lim
-            // bind variable reaches here as NULL). Numbers.LONG_NULL is Long.MIN_VALUE, so it has
-            // to be recognised before the sign flip below: negating it overflows back to a
-            // negative value that then trips the max-negative-limit guard, turning a working
-            // query into an error as soon as a WHERE clause is added.
-            if (rowsRemaining == Numbers.LONG_NULL) {
-                rowsRemaining = Long.MAX_VALUE;
-                order = baseOrder;
-            } else if (rowsRemaining > -1) {
-                // on negative limit we will be looking for positive number of rows
-                // while scanning table from the highest timestamp to the lowest
-                order = baseOrder;
-            } else {
-                order = reverse(baseOrder);
-                rowsRemaining = -rowsRemaining;
+        long rowsRemaining = Long.MAX_VALUE;
+        final int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
+        int order = baseOrder;
+        if (limitBounds != null) {
+            limitBounds.init(frameSequence.getSymbolTableSource(), executionContext);
+            final long limit = limitBounds.getValues().getLimit();
+            if (limit > -1) {
+                rowsRemaining = limit;
+                if (!limitBounds.getValues().isFirstN()) {
+                    // on negative limit we will be looking for positive number of rows
+                    // while scanning table from the highest timestamp to the lowest
+                    order = reverse(baseOrder);
+                }
             }
-        } else {
-            rowsRemaining = Long.MAX_VALUE;
-            order = baseOrder;
         }
 
         if (order != baseOrder && rowsRemaining != Long.MAX_VALUE) {
@@ -234,10 +219,10 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 // The buffer cannot hold the last rows the limit selects, so read all rows and skip to the last ones.
                 cursor.of(execute(executionContext, collectSubSeq, baseOrder), Long.MAX_VALUE);
                 if (lastRowsCursor == null) {
-                    lastRowsCursor = new LimitRecordCursorFactory.LimitRecordCursor(new LimitBounds(limitLoFunction, null, limitLoPos), null);
+                    lastRowsCursor = new LimitRecordCursorFactory.LimitRecordCursor(limitBounds, null);
                 }
                 try {
-                    lastRowsCursor.of(cursor, executionContext);
+                    lastRowsCursor.ofResolvedBounds(cursor, executionContext);
                 } catch (Throwable th) {
                     cursor.close();
                     throw th;
@@ -257,13 +242,13 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public @NotNull Function getFilter() {
-        return filter;
+        return frameSequence.getAtom().getFilter(-1);
     }
 
     // Stable iff the retained filter and the base are stable.
     @Override
     public boolean isNonDeterministic() {
-        return filter.isNonDeterministic() || base.isNonDeterministic();
+        return getFilter().isNonDeterministic() || base.isNonDeterministic();
     }
 
     @Override
@@ -278,7 +263,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
 
     @Override
     public boolean implementsLimit() {
-        return limitLoFunction != null;
+        return limitBounds != null;
     }
 
     @Override
@@ -304,33 +289,27 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         sink.type("Async Filter");
         sink.meta("workers").val(workerCount);
         // calc order and limit if possible
-        long rowsRemaining;
-        int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-        int order;
-        if (limitLoFunction != null) {
+        long rowsRemaining = Long.MAX_VALUE;
+        final int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
+        int order = baseOrder;
+        if (limitBounds != null) {
+            long limit;
             try {
-                limitLoFunction.init(frameSequence.getSymbolTableSource(), sink.getExecutionContext());
-                rowsRemaining = limitLoFunction.getLong(null);
+                limitBounds.init(frameSequence.getSymbolTableSource(), sink.getExecutionContext());
+                limit = limitBounds.getValues().getLimit();
             } catch (Exception e) {
-                rowsRemaining = Long.MAX_VALUE;
+                limit = -1;
             }
-            // A NULL limit means "no limit", exactly as getCursor() treats it. Recognise it before the
-            // sign flip: negating Numbers.LONG_NULL (Long.MIN_VALUE) overflows back to itself, which
-            // would print a bogus "limit: null" line and reverse the scan direction the plan shows.
-            if (rowsRemaining == Numbers.LONG_NULL) {
-                rowsRemaining = Long.MAX_VALUE;
-                order = baseOrder;
-            } else if (rowsRemaining > -1) {
-                order = baseOrder;
-            } else if (rowsRemaining >= -maxNegativeLimit) {
-                order = reverse(baseOrder);
-                rowsRemaining = -rowsRemaining;
-            } else {
-                order = baseOrder;
+            if (limit > -1) {
+                if (limitBounds.getValues().isFirstN()) {
+                    rowsRemaining = limit;
+                } else if (limit <= maxNegativeLimit) {
+                    order = reverse(baseOrder);
+                    rowsRemaining = limit;
+                } else {
+                    rowsRemaining = limitBounds.getValues().getLo();
+                }
             }
-        } else {
-            rowsRemaining = Long.MAX_VALUE;
-            order = baseOrder;
         }
         if (rowsRemaining != Long.MAX_VALUE) {
             sink.attr("limit").val(rowsRemaining);
@@ -460,8 +439,6 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         this.base = null;
         final AsyncFilteredRecordCursor cursor = this.cursor;
         this.cursor = null;
-        final Function filter = this.filter;
-        this.filter = null;
         final PageFrameSequence<AsyncFilterAtom> frameSequence = this.frameSequence;
         this.frameSequence = null;
         final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor = this.negativeLimitCursor;
@@ -469,16 +446,14 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         final DirectLongList negativeLimitRows = this.negativeLimitRows;
         this.negativeLimitRows = null;
         // The generator hands the LIMIT advice function over on construction and keeps no
-        // reference, so this factory is its only owner. Nothing freed it before, which leaked
-        // any LIMIT bound holding native memory on every successful compile.
-        final Function limitLoFunction = this.limitLoFunction;
-        this.limitLoFunction = null;
+        // reference, so the bounds of this factory are its only owner.
+        final LimitBounds limitBounds = this.limitBounds;
+        this.limitBounds = null;
 
         Throwable cleanupFailure = Misc.freeBestEffort(null, base);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, negativeLimitRows);
         cleanupFailure = freeExecutionStateBestEffort(cleanupFailure, frameSequence, cursor, negativeLimitCursor);
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, filter);
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, limitLoFunction);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, limitBounds);
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 }

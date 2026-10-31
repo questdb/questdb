@@ -485,9 +485,10 @@ public final class ScanPlan extends LogicalPlan {
 
     /**
      * True when the scan belongs to the client-side compilation of an UPDATE of a WAL table, see
-     * {@link io.questdb.griffin.bind.UpdateTarget#isSequenced()}: the client only validates the statement, so the scan
-     * reads no rows and takes no reader, and only the WAL apply job reads the rows. The target binds the sequencer
-     * metadata; a sub-query's scan binds the table it reads as any scan does.
+     * {@link io.questdb.griffin.bind.UpdateTarget#isSequenced()}, and is not the scan of a sub-query whose rows
+     * binding consumes, which the client runs: the client only validates the statement, so the scan reads no rows and
+     * takes no reader, and only the WAL apply job reads the rows. The target binds the sequencer metadata; a
+     * sub-query's scan binds the table it reads as any scan does.
      */
     public boolean isSequencedUpdate() {
         return isSequencedUpdate;

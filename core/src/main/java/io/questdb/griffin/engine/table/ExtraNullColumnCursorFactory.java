@@ -148,13 +148,13 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         return true;
     }
 
+    /**
+     * The base's cursor: a parallel join reads the time frames from this factory's page frames, which already carry
+     * the null columns, at the timestamp index of the layout it reads them in.
+     */
     @Override
     public ConcurrentTimeFrameCursor newTimeFrameCursor() {
-        ConcurrentTimeFrameCursor baseCursor = base.newTimeFrameCursor();
-        if (baseCursor == null) {
-            return null;
-        }
-        return new ExtraNullColumnConcurrentTimeFrameCursor(baseCursor, columnSplit, getMetadata().getTimestampIndex());
+        return base.newTimeFrameCursor();
     }
 
     @Override
@@ -201,115 +201,6 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     @Override
     protected void _close() {
         base.close();
-    }
-
-    static final class ExtraNullColumnConcurrentTimeFrameCursor implements ConcurrentTimeFrameCursor {
-        private final int columnSplit;
-        private final ConcurrentTimeFrameCursor delegate;
-        private final ExtraNullColumnRecord extraNullColumnRecord;
-        private final int selectedTimestampIndex;
-
-        ExtraNullColumnConcurrentTimeFrameCursor(
-                ConcurrentTimeFrameCursor delegate,
-                int columnSplit,
-                int selectedTimestampIndex
-        ) {
-            this.delegate = delegate;
-            this.columnSplit = columnSplit;
-            this.selectedTimestampIndex = selectedTimestampIndex;
-            this.extraNullColumnRecord = new ExtraNullColumnRecord(columnSplit);
-        }
-
-        @Override
-        public void close() {
-            delegate.close();
-        }
-
-        @Override
-        public Record getRecord() {
-            return extraNullColumnRecord;
-        }
-
-        @Override
-        public StaticSymbolTable getSymbolTable(int columnIndex) {
-            return columnIndex < columnSplit ? delegate.getSymbolTable(columnIndex) : EmptySymbolMapReader.INSTANCE;
-        }
-
-        @Override
-        public TimeFrame getTimeFrame() {
-            return delegate.getTimeFrame();
-        }
-
-        @Override
-        public int getTimestampIndex() {
-            return selectedTimestampIndex;
-        }
-
-        @Override
-        public void jumpTo(int frameIndex) {
-            delegate.jumpTo(frameIndex);
-        }
-
-        @Override
-        public SymbolTable newSymbolTable(int columnIndex) {
-            return columnIndex < columnSplit ? delegate.newSymbolTable(columnIndex) : EmptySymbolMapReader.INSTANCE;
-        }
-
-        @Override
-        public boolean next() {
-            return delegate.next();
-        }
-
-        @Override
-        public ConcurrentTimeFrameCursor of(
-                ConcurrentTimeFrameState sharedState,
-                TablePageFrameCursor frameCursor,
-                int timestampIndex
-        ) {
-            delegate.of(sharedState, frameCursor, selectedTimestampIndex);
-            extraNullColumnRecord.of(delegate.getRecord());
-            return this;
-        }
-
-        @Override
-        public long open() {
-            return delegate.open();
-        }
-
-        @Override
-        public boolean prev() {
-            return delegate.prev();
-        }
-
-        @Override
-        public void recordAt(Record record, long rowId) {
-            delegate.recordAt(((ExtraNullColumnRecord) record).getBaseRecord(), rowId);
-        }
-
-        @Override
-        public void recordAt(Record record, int frameIndex, long rowIndex) {
-            delegate.recordAt(((ExtraNullColumnRecord) record).getBaseRecord(), frameIndex, rowIndex);
-        }
-
-        @Override
-        public void recordAtRowIndex(Record record, long rowIndex) {
-            delegate.recordAtRowIndex(((ExtraNullColumnRecord) record).getBaseRecord(), rowIndex);
-        }
-
-        @Override
-        public void seekEstimate(long timestamp) {
-            delegate.seekEstimate(timestamp);
-        }
-
-        @Override
-        public void setParquetDecodeHint(ParquetDecodeHint hint) {
-            delegate.setParquetDecodeHint(hint);
-        }
-
-        @Override
-        public void toTop() {
-            delegate.toTop();
-        }
     }
 
     private static class ExtraNullColumnPageFrame implements PageFrame {

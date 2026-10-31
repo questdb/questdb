@@ -771,8 +771,7 @@ public final class PhysicalProperties {
         if (windowJoin != null) {
             final int masterIndex = timestamp(windowJoin.getMaster(), null, false);
             return forwarded(masterIndex == UNKNOWN_TIMESTAMP ? UNKNOWN_TIMESTAMP
-                    : PlanToFactoryRules.windowJoinProjectionTimestampIndex(project, windowJoin.getOutput(), masterIndex, windowJoin.getOutput().getColumnCount()
-                                                                                                                          - windowJoin.getSteps().getQuick(windowJoin.getSteps().size() - 1).getAggregates().size()), isSource);
+                    : PlanToFactoryRules.windowJoinProjectionTimestampIndex(project, windowJoin.getOutput(), masterIndex), isSource);
         }
         if (isSource && project.hasTimestampDeclaration()) {
             final OutputSchema inputOutput = input.getOutput();
@@ -1193,8 +1192,9 @@ public final class PhysicalProperties {
 
     /**
      * Folds the steps of the window join: a step whose filter is constant false null-extends its master, keeping the
-     * master's properties, and any other step is a serial or parallel window join, of which only the serial one
-     * follows the master's advice and exposes its base chain.
+     * master's properties but its page frames when it pads a count, see {@link WindowJoinStep#isNullPadding}, and any
+     * other step is a serial or parallel window join, of which only the serial one follows the master's advice and
+     * exposes its base chain.
      */
     private static int windowJoin(WindowJoinPlan windowJoin) {
         if (windowJoin.isEmpty()) {
@@ -1212,6 +1212,8 @@ public final class PhysicalProperties {
                         ? stolenFilterDirection(windowJoin.getMaster(), master) : direction(properties);
                 properties = properties(Capability.NO, Capability.NO, Capability.NO, and(isSerial, capability(properties, ORDER_ADVICE)),
                         direction, and(isSerial, capability(properties, LONG_SEQUENCE)));
+            } else if (!step.isNullPadding()) {
+                properties = with(properties, PAGE_FRAMES, Capability.NO);
             }
         }
         return properties;
@@ -1250,10 +1252,10 @@ public final class PhysicalProperties {
     }
 
     /**
-     * Whether the window join null-extends its master through every step, passing the master's time frames through.
+     * Whether the window join pads its master with NULL through every step, passing the master's time frames through.
      */
     private static Capability windowJoinTimeFrame(WindowJoinPlan windowJoin) {
-        return windowJoin.isMasterPassedThrough() ? supportsTimeFrameCursor(windowJoin.getMaster(), null) : Capability.NO;
+        return windowJoin.isMasterFramePassedThrough() ? supportsTimeFrameCursor(windowJoin.getMaster(), null) : Capability.NO;
     }
 
     /**

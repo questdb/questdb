@@ -1466,18 +1466,21 @@ final class AggregateBinder implements Mutable {
         return ctx.functionBinder.bindValue(expression, aggregate.getOutput(), null, scope.substitutionNodes, scope.aggregateSubstitutions, context);
     }
 
+    /**
+     * Binds the aggregation of the query level over {@code input}. A SAMPLE BY lowers to {@code sampleBy}, the
+     * grouping that records its grid, null without one: the {@link SampleByPlan} the SAMPLE BY cursor executes, or an
+     * aggregate grouped by the bucket {@code sampleByBucket}, which is null otherwise.
+     */
     LogicalPlan bindAggregation(
             QueryModel model, QueryModel source, LogicalPlan input, ObjList<ExpressionNode> selectExpressions,
-            ObjList<ExpressionNode> orders, BoundExpression sampleByBucket, SampleByPlan sampleBy, SqlExecutionContext executionContext
+            ObjList<ExpressionNode> orders, BoundExpression sampleByBucket, GroupingPlan sampleBy, SqlExecutionContext executionContext
     ) throws SqlException {
         final BindScope scope = ctx.scope();
         final boolean isOrderBound = !ctx.hasDeferredOrder(source);
-        final GroupingPlan aggregate = sampleBy != null ? sampleBy.of(input, model.getModelPosition())
-                : sampleByBucket != null ? ctx.aggregate(scope.sampleByAggregate, input, model.getModelPosition())
-                  : ctx.aggregate(input, model.getModelPosition());
+        final GroupingPlan aggregate = sampleBy != null ? sampleBy.of(input, model.getModelPosition()) : ctx.aggregate(input, model.getModelPosition());
         final ObjList<ExpressionNode> sampleFill = source.getSampleByFill();
         final boolean hasSampleByFill = source.getSampleBy() != null && sampleFill.size() > 0
-                && (sampleBy != null || sampleFill.size() > 1 || !SqlKeywords.isNoneKeyword(sampleFill.getQuick(0).token));
+                && (aggregate instanceof SampleByPlan || sampleFill.size() > 1 || !SqlKeywords.isNoneKeyword(sampleFill.getQuick(0).token));
         scope.clearAggregateNodes();
         scope.aggregateProjectionExpressions.clear();
         scope.groupingNodes.clear();
@@ -1493,14 +1496,14 @@ final class AggregateBinder implements Mutable {
             scope.aggregateOrderExpressions.add(orders.getQuick(i));
         }
         final ObjList<ExpressionNode> groupBy = blockGroupBy(model, source);
-        scope.isImplicitAggregation = groupBy.size() == 0 && sampleBy == null && sampleByBucket == null
+        scope.isImplicitAggregation = groupBy.size() == 0 && sampleBy == null
                 && !(input instanceof HorizonJoinPlan) && ctx.hasAggregation(model, source);
         aggregate.setExplicitGrouping(groupBy.size() > 0);
         aggregate.setDirectTableInput(hasDirectTableInput(source));
         aggregate.setKeySpellingKept(input instanceof HorizonJoinPlan ? hasHorizonOuterProjection(model) : groupBy.size() > 0);
         scope.referenceScope.clear();
-        if (sampleBy != null) {
-            collectSampleByCursorGrouping(model, source, sampleBy, executionContext);
+        if (aggregate instanceof SampleByPlan cursor) {
+            collectSampleByCursorGrouping(model, source, cursor, executionContext);
         } else if (sampleByBucket != null) {
             collectSampleByGrouping(model, source, aggregate, sampleByBucket, executionContext);
         } else if (groupBy.size() > 0) {
@@ -1568,7 +1571,7 @@ final class AggregateBinder implements Mutable {
                     if (order.type == ExpressionNode.LITERAL && !isReadBySelectExpression(order, input.getOutput())) {
                         throw orderNotSelected(order);
                     }
-                    if ((sampleByBucket != null || sampleBy != null) && sampleByBinder.referencesSampleByTimestamp(order, input.getOutput(), source)) {
+                    if (sampleBy != null && sampleByBinder.referencesSampleByTimestamp(order, input.getOutput(), source)) {
                         collectSampleByDependencies(order, model, source, aggregate, executionContext);
                     } else {
                         collectGroupingExpressions(order, model, source, aggregate, executionContext);
@@ -1616,14 +1619,14 @@ final class AggregateBinder implements Mutable {
             aggregate.getOutput().add(ctx.planNodes.nextColumnId(), ctx.createOutputName(aggregateOutputName(expression, model)), bound.getDataType(), false);
         }
 
-        if (sampleBy != null) {
-            sampleByBinder.validateSampleByTimezone(sampleBy, executionContext);
-            sampleByBinder.bindSampleByFill(source, sampleBy, scope.aggregateNodes, executionContext);
+        if (aggregate instanceof SampleByPlan cursor) {
+            sampleByBinder.validateSampleByTimezone(cursor, executionContext);
+            sampleByBinder.bindSampleByFill(source, cursor, scope.aggregateNodes, executionContext);
         }
 
         scope.resetAliases();
         LogicalPlan aggregation = aggregate;
-        if ((sampleByBucket != null || sampleBy != null) && SampleByBinder.isFillPlanned(source)) {
+        if (sampleBy != null && SampleByBinder.isFillPlanned(source)) {
             aggregation = sampleByBinder.bindFill(source, aggregate, scope.aggregateNodes, executionContext);
         }
         if (sampleByBucket != null && source.getOrderBy().size() == 0) {
@@ -1665,7 +1668,7 @@ final class AggregateBinder implements Mutable {
             } else {
                 BoundExpression bound = bindAggregateOutput(expression, source, aggregate, executionContext);
                 final int index = bound instanceof ColumnExpression ref ? aggregate.getOutput().getColumnIndexById(ref.getColumnId()) : -1;
-                if (index >= 0 && i < groupBy.size() && nonAggregateCount == groupBy.size() && sampleBy == null && sampleByBucket == null && !((ColumnExpression) bound).isDirectReference()
+                if (index >= 0 && i < groupBy.size() && nonAggregateCount == groupBy.size() && sampleBy == null && !((ColumnExpression) bound).isDirectReference()
                         && Chars.equalsIgnoreCase(expression.token, column.getName())
                         && findGroupingExpression(resolveGroupBy(groupBy.getQuick(i), model), source, aggregate) == index) {
                     bound = ctx.planNodes.columns.next().of(((ColumnExpression) bound).getColumnId(), bound.getDataType(), bound.getPosition());
@@ -1675,7 +1678,7 @@ final class AggregateBinder implements Mutable {
         }
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             if (project.getExpressions().getQuick(i) instanceof ColumnExpression column
-                    && (sampleBy == null || column.isDirectReference())
+                    && (!(aggregate instanceof SampleByPlan) || column.isDirectReference())
                     && column.getColumnId() == aggregation.getOutput().getTimestampColumnId()) {
                 project.getOutput().setTimestampIndex(i);
             }
@@ -1685,8 +1688,8 @@ final class AggregateBinder implements Mutable {
         final LogicalPlan result = isDistinctBound
                 ? bindDistinctAggregation(model, source, aggregate, project, executionContext)
                 : bindAggregateOrder(model, source, aggregate, project, orders, executionContext);
-        if (sampleBy != null) {
-            projectSampleByKeys(sampleBy, model, source.getJoinModels().size() > 1);
+        if (aggregate instanceof SampleByPlan cursor) {
+            projectSampleByKeys(cursor, model, source.getJoinModels().size() > 1);
         }
         return result;
     }

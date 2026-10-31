@@ -37,7 +37,6 @@ import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
-import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.sql.async.PageFrameReducer;
@@ -57,7 +56,6 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -69,19 +67,13 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     private static final PageFrameReducer REDUCER = AsyncJitFilteredRecordCursorFactory::filter;
 
     private final SCSequence collectSubSeq = new SCSequence();
-    private Function limitLoFunction;
-    private final int limitLoPos;
     private final int maxNegativeLimit;
     private final int sharedQueryWorkerCount;
     private RecordCursorFactory base;
-    private ObjList<Function> bindVarFunctions;
-    private MemoryCARW bindVarMemory;
-    private CompiledCountOnlyFilter compiledCountOnlyFilter;
-    private CompiledFilter compiledFilter;
     private AsyncFilteredRecordCursor cursor;
-    private Function filter;
     private PageFrameSequence<AsyncJitFilterAtom> frameSequence;
     private LimitRecordCursorFactory.LimitRecordCursor lastRowsCursor;
+    private LimitBounds limitBounds;
     private AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor;
     private DirectLongList negativeLimitRows;
 
@@ -101,10 +93,10 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         assert !(base instanceof FilteredRecordCursorFactory);
         assert !(base instanceof AsyncJitFilteredRecordCursorFactory);
         this.base = base;
-        this.compiledFilter = filterResources.takeCompiledFilter();
-        this.compiledCountOnlyFilter = filterResources.takeCompiledCountOnlyFilter();
-        this.filter = filterResources.takeFilter();
-        this.bindVarFunctions = filterResources.takeBindVarFunctions();
+        final CompiledFilter compiledFilter = filterResources.takeCompiledFilter();
+        final CompiledCountOnlyFilter compiledCountOnlyFilter = filterResources.takeCompiledCountOnlyFilter();
+        final Function filter = filterResources.takeFilter();
+        final ObjList<Function> bindVarFunctions = filterResources.takeBindVarFunctions();
         final IntHashSet filterUsedColumnIndexes = filterResources.getFilterUsedColumnIndexes();
         final ObjList<Function> perWorkerFilters = filterResources.takePerWorkerFilters();
         // A throw part-way through this constructor never returns the factory, so _close() never runs
@@ -112,18 +104,18 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         // native, and a per-worker filter can hold native memory of its own. Build the rest into
         // locals and release them here, together with the inputs this constructor consumes.
         //
-        // Once the atom takes the per-worker filters, its failure paths close them and null the list
-        // slots. The atom belongs to the frame sequence from the moment the PageFrameSequence
-        // constructor is entered: that constructor closes the atom on its own failure path, and
-        // close() closes it afterwards. Nothing that can throw sits between the two
-        // calls, so isPerWorkerFiltersOwned covers the whole gap and every object below is closed
-        // exactly once on every path.
+        // The atom owns the compiled filters, the bind variables, the filter and its per-worker clones
+        // once its constructor returns. The atom belongs to the frame sequence from the moment the
+        // PageFrameSequence constructor is entered: that constructor closes the atom on its own
+        // failure path, and close() closes it afterwards. Nothing that can throw sits between the two
+        // calls, so isFilterOwned covers the whole gap and every object below is closed exactly once
+        // on every path.
         MemoryCARW bindVarMemory = null;
         AsyncFilteredRecordCursor cursor = null;
         AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor = null;
         PageFrameSequence<AsyncJitFilterAtom> frameSequence = null;
         final int maxNegativeLimit;
-        boolean isPerWorkerFiltersOwned = true;
+        boolean isFilterOwned = true;
         try {
             cursor = new AsyncFilteredRecordCursor(configuration, filter, base.getScanDirection());
             negativeLimitCursor = new AsyncFilteredNegativeLimitRecordCursor(configuration, base.getScanDirection());
@@ -150,7 +142,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                     columnTypes,
                     enablePreTouch
             );
-            isPerWorkerFiltersOwned = false;
+            isFilterOwned = false;
             frameSequence = new PageFrameSequence<>(
                     engine,
                     configuration,
@@ -164,18 +156,18 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             maxNegativeLimit = configuration.getSqlMaxNegativeLimit();
         } catch (Throwable th) {
             Misc.free(frameSequence, th);
-            if (isPerWorkerFiltersOwned) {
+            if (isFilterOwned) {
                 Misc.freeObjList(perWorkerFilters, th);
+                Misc.free(bindVarMemory, th);
+                Misc.free(compiledCountOnlyFilter, th);
+                Misc.free(compiledFilter, th);
+                Misc.free(filter, th);
+                Misc.freeObjList(bindVarFunctions, th);
             }
-            Misc.free(bindVarMemory, th);
             // The cursors are not open yet, and close() frees their records only once they are, so
             // release the records directly.
             freeRecordsBestEffort(th, cursor);
             freeRecordsBestEffort(th, negativeLimitCursor);
-            Misc.free(compiledCountOnlyFilter, th);
-            Misc.free(compiledFilter, th);
-            Misc.free(filter, th);
-            Misc.freeObjList(bindVarFunctions, th);
             Misc.free(limitLoFunction, th);
             Misc.free(filterResources, th);
             Misc.free(base, th);
@@ -183,10 +175,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         }
         this.cursor = cursor;
         this.negativeLimitCursor = negativeLimitCursor;
-        this.bindVarMemory = bindVarMemory;
         this.frameSequence = frameSequence;
-        this.limitLoFunction = limitLoFunction;
-        this.limitLoPos = limitLoPos;
+        this.limitBounds = limitLoFunction != null ? new LimitBounds(limitLoFunction, null, limitLoPos) : null;
         this.maxNegativeLimit = maxNegativeLimit;
         this.sharedQueryWorkerCount = workerCount;
         if (limitLoFunction instanceof MasterSuffixLimitFunction masterSuffixLimit) {
@@ -219,31 +209,20 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         // Consult the breaker at open, so a scan over an empty table still observes cancellation.
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-        long rowsRemaining;
-        int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-        final int order;
-        if (limitLoFunction != null) {
-            limitLoFunction.init(frameSequence.getSymbolTableSource(), executionContext);
-            rowsRemaining = limitLoFunction.getLong(null);
-            // A NULL limit means "no limit", matching the unfiltered path (an unset LIMIT :lim
-            // bind variable reaches here as NULL). Numbers.LONG_NULL is Long.MIN_VALUE, so it has
-            // to be recognised before the sign flip below: negating it overflows back to a
-            // negative value that then trips the max-negative-limit guard, turning a working
-            // query into an error as soon as a WHERE clause is added.
-            if (rowsRemaining == Numbers.LONG_NULL) {
-                rowsRemaining = Long.MAX_VALUE;
-                order = baseOrder;
-            } else if (rowsRemaining > -1) {
-                // on negative limit we will be looking for positive number of rows
-                // while scanning table from the highest timestamp to the lowest
-                order = baseOrder;
-            } else {
-                order = reverse(baseOrder);
-                rowsRemaining = -rowsRemaining;
+        long rowsRemaining = Long.MAX_VALUE;
+        final int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
+        int order = baseOrder;
+        if (limitBounds != null) {
+            limitBounds.init(frameSequence.getSymbolTableSource(), executionContext);
+            final long limit = limitBounds.getValues().getLimit();
+            if (limit > -1) {
+                rowsRemaining = limit;
+                if (!limitBounds.getValues().isFirstN()) {
+                    // on negative limit we will be looking for positive number of rows
+                    // while scanning table from the highest timestamp to the lowest
+                    order = reverse(baseOrder);
+                }
             }
-        } else {
-            rowsRemaining = Long.MAX_VALUE;
-            order = baseOrder;
         }
 
         if (order != baseOrder && rowsRemaining != Long.MAX_VALUE) {
@@ -251,10 +230,10 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 // The buffer cannot hold the last rows the limit selects, so read all rows and skip to the last ones.
                 cursor.of(execute(executionContext, collectSubSeq, baseOrder), Long.MAX_VALUE);
                 if (lastRowsCursor == null) {
-                    lastRowsCursor = new LimitRecordCursorFactory.LimitRecordCursor(new LimitBounds(limitLoFunction, null, limitLoPos), null);
+                    lastRowsCursor = new LimitRecordCursorFactory.LimitRecordCursor(limitBounds, null);
                 }
                 try {
-                    lastRowsCursor.of(cursor, executionContext);
+                    lastRowsCursor.ofResolvedBounds(cursor, executionContext);
                 } catch (Throwable th) {
                     cursor.close();
                     throw th;
@@ -274,13 +253,13 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public @NotNull Function getFilter() {
-        return filter;
+        return frameSequence.getAtom().getFilter(-1);
     }
 
     // Stable iff the retained filter and the base are stable.
     @Override
     public boolean isNonDeterministic() {
-        return filter.isNonDeterministic() || base.isNonDeterministic();
+        return getFilter().isNonDeterministic() || base.isNonDeterministic();
     }
 
     @Override
@@ -295,7 +274,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
 
     @Override
     public boolean implementsLimit() {
-        return limitLoFunction != null;
+        return limitBounds != null;
     }
 
     @Override
@@ -313,33 +292,27 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         sink.type("Async JIT Filter");
         sink.meta("workers").val(sharedQueryWorkerCount);
         // calc order and limit if possible
-        long rowsRemaining;
-        int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
-        int order;
-        if (limitLoFunction != null) {
+        long rowsRemaining = Long.MAX_VALUE;
+        final int baseOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
+        int order = baseOrder;
+        if (limitBounds != null) {
+            long limit;
             try {
-                limitLoFunction.init(frameSequence.getSymbolTableSource(), sink.getExecutionContext());
-                rowsRemaining = limitLoFunction.getLong(null);
+                limitBounds.init(frameSequence.getSymbolTableSource(), sink.getExecutionContext());
+                limit = limitBounds.getValues().getLimit();
             } catch (Exception e) {
-                rowsRemaining = Long.MAX_VALUE;
+                limit = -1;
             }
-            // A NULL limit means "no limit", exactly as getCursor() treats it. Recognise it before the
-            // sign flip: negating Numbers.LONG_NULL (Long.MIN_VALUE) overflows back to itself, which
-            // would print a bogus "limit: null" line and reverse the scan direction the plan shows.
-            if (rowsRemaining == Numbers.LONG_NULL) {
-                rowsRemaining = Long.MAX_VALUE;
-                order = baseOrder;
-            } else if (rowsRemaining > -1) {
-                order = baseOrder;
-            } else if (rowsRemaining >= -maxNegativeLimit) {
-                order = reverse(baseOrder);
-                rowsRemaining = -rowsRemaining;
-            } else {
-                order = baseOrder;
+            if (limit > -1) {
+                if (limitBounds.getValues().isFirstN()) {
+                    rowsRemaining = limit;
+                } else if (limit <= maxNegativeLimit) {
+                    order = reverse(baseOrder);
+                    rowsRemaining = limit;
+                } else {
+                    rowsRemaining = limitBounds.getValues().getLo();
+                }
             }
-        } else {
-            rowsRemaining = Long.MAX_VALUE;
-            order = baseOrder;
         }
         if (rowsRemaining != Long.MAX_VALUE) {
             sink.attr("limit").val(rowsRemaining);
@@ -423,18 +396,18 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                         dataAddresses.getAddress(),
                         dataAddresses.size(),
                         auxAddresses.getAddress(),
-                        atom.bindVarMemory.getAddress(),
-                        atom.bindVarFunctions.size(),
+                        atom.getBindVarMemory().getAddress(),
+                        atom.getBindVarFunctions().size(),
                         frameRowCount
                 );
                 task.setFilteredRowCount(filteredRowCount);
             } else { // normal filter task
-                final long filteredRowCount = atom.compiledFilter.call(
+                final long filteredRowCount = atom.getCompiledFilter().call(
                         dataAddresses.getAddress(),
                         dataAddresses.size(),
                         auxAddresses.getAddress(),
-                        atom.bindVarMemory.getAddress(),
-                        atom.bindVarFunctions.size(),
+                        atom.getBindVarMemory().getAddress(),
+                        atom.getBindVarFunctions().size(),
                         rows.getAddress(),
                         frameRowCount
                 );
@@ -463,18 +436,8 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     protected void _close() {
         final RecordCursorFactory base = this.base;
         this.base = null;
-        final ObjList<Function> bindVarFunctions = this.bindVarFunctions;
-        this.bindVarFunctions = null;
-        final MemoryCARW bindVarMemory = this.bindVarMemory;
-        this.bindVarMemory = null;
-        final CompiledCountOnlyFilter compiledCountOnlyFilter = this.compiledCountOnlyFilter;
-        this.compiledCountOnlyFilter = null;
-        final CompiledFilter compiledFilter = this.compiledFilter;
-        this.compiledFilter = null;
         final AsyncFilteredRecordCursor cursor = this.cursor;
         this.cursor = null;
-        final Function filter = this.filter;
-        this.filter = null;
         final PageFrameSequence<AsyncJitFilterAtom> frameSequence = this.frameSequence;
         this.frameSequence = null;
         final AsyncFilteredNegativeLimitRecordCursor negativeLimitCursor = this.negativeLimitCursor;
@@ -482,22 +445,16 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         final DirectLongList negativeLimitRows = this.negativeLimitRows;
         this.negativeLimitRows = null;
         // The generator hands the LIMIT advice function over on construction and keeps no
-        // reference, so this factory is its only owner. Nothing freed it before, which leaked
-        // any LIMIT bound holding native memory on every successful compile.
-        final Function limitLoFunction = this.limitLoFunction;
-        this.limitLoFunction = null;
+        // reference, so the bounds of this factory are its only owner.
+        final LimitBounds limitBounds = this.limitBounds;
+        this.limitBounds = null;
 
         Throwable failure = Misc.freeBestEffort(null, base);
         failure = Misc.freeBestEffort(failure, negativeLimitRows);
         failure = Misc.freeBestEffort(failure, frameSequence);
-        failure = Misc.freeBestEffort(failure, compiledCountOnlyFilter);
         failure = freeRecordsBestEffort(failure, cursor);
         failure = freeRecordsBestEffort(failure, negativeLimitCursor);
-        failure = Misc.freeBestEffort(failure, compiledFilter);
-        failure = Misc.freeBestEffort(failure, filter);
-        failure = Misc.freeBestEffort(failure, bindVarMemory);
-        failure = Misc.freeObjListBestEffort(failure, bindVarFunctions);
-        failure = Misc.freeBestEffort(failure, limitLoFunction);
+        failure = Misc.freeBestEffort(failure, limitBounds);
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -521,11 +478,12 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     }
 
     public static class AsyncJitFilterAtom extends AsyncFilterAtom {
-        final ObjList<Function> bindVarFunctions;
-        final MemoryCARW bindVarMemory;
         final CompiledCountOnlyFilter compiledCountOnlyFilter;
-        final CompiledFilter compiledFilter;
 
+        /**
+         * Takes the filter resources, the count-only filter included, which {@link #close()} frees; frees none of
+         * them when it throws.
+         */
         public AsyncJitFilterAtom(
                 CairoConfiguration configuration,
                 Function filter,
@@ -538,29 +496,23 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 IntList columnTypes,
                 boolean enablePreTouch
         ) {
-            super(configuration, filter, filterUsedColumnIndexes, perWorkerFilters, columnTypes, enablePreTouch);
-            this.compiledFilter = compiledFilter;
+            super(
+                    configuration,
+                    compiledFilter,
+                    bindVarMemory,
+                    bindVarFunctions,
+                    filter,
+                    filterUsedColumnIndexes,
+                    perWorkerFilters,
+                    columnTypes,
+                    enablePreTouch
+            );
             this.compiledCountOnlyFilter = compiledCountOnlyFilter;
-            this.bindVarMemory = bindVarMemory;
-            this.bindVarFunctions = bindVarFunctions;
         }
 
         @Override
-        public void clear() {
-            Throwable failure = Function.cursorClosed(null, bindVarFunctions);
-            try {
-                super.clear();
-            } catch (Throwable th) {
-                failure = Misc.foldCleanupFailure(failure, th);
-            }
-            CairoException.rethrowCleanupFailure(failure);
-        }
-
-        @Override
-        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-            super.init(symbolTableSource, executionContext);
-            Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
-            AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
+        public Throwable close(@Nullable Throwable cleanupFailure) {
+            return super.close(Misc.freeBestEffort(cleanupFailure, compiledCountOnlyFilter));
         }
     }
 }

@@ -191,7 +191,7 @@ public class InsertAsSelectTest extends AbstractCairoTest {
                     .returns("""
                             ts
                             2024-01-01T00:00:00.000000Z
-
+                            
                             2024-01-02T03:04:05.000006Z
                             """);
         });

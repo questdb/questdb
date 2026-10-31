@@ -88,11 +88,6 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             return true;
         }
         if (!hasCastGroup(from) || !hasCastGroup(to)) {
-            // CHAR, LONG256, UUID, IPv4, the geohashes, decimals, arrays and NULL have no group: no
-            // single group could express which numbers convert to a CHAR, a geohash's bit width, a
-            // decimal's precision and scale or an array's dimensionality. INSERT ... SELECT gates the
-            // very same record copier on isConvertibleFrom, so deferring to it admits exactly the
-            // pairs the copier implements.
             return ColumnType.isConvertibleFrom(from, to);
         }
         return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));

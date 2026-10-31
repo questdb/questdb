@@ -2586,6 +2586,29 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByTimestampKeyOrderedDescKeepsFirstAndLast() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, i INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00', 1), ('2024-01-01T00:00:00', 2),
+                        ('2024-01-01T01:00:00', 3), ('2024-01-01T01:00:00', 4)""");
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelGroupByEnabled(isParallel);
+                assertQuery("SELECT ts k, first(i), last(i) FROM t ORDER BY k DESC")
+                        .noLeakCheck()
+                        .timestampDesc("k")
+                        .expectSize()
+                        .returns("""
+                                k\tfirst\tlast
+                                2024-01-01T01:00:00.000000Z\t3\t4
+                                2024-01-01T00:00:00.000000Z\t1\t2
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testGroupByTrivialExpressionKeyBesideUnaryKey() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

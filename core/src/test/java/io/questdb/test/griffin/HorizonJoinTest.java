@@ -416,6 +416,55 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinConstantArgumentAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            assertQuery("""
+                    SELECT count() c, bit_xor(5) x, bool_or(false) o, geomean(4.0) g
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            c\tx\to\tg
+                            0\tnull\tfalse\tnull
+                            """);
+
+            execute("""
+                    INSERT INTO prices VALUES
+                        ('1970-01-01T00:00:00.000000Z', 'a', 1.0),
+                        ('1970-01-01T00:00:00.000000Z', 'b', 2.0)
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('1970-01-01T00:00:01.000000Z', 'a', 1.0),
+                        ('1970-01-01T00:00:02.000000Z', 'a', 2.0),
+                        ('1970-01-01T00:00:03.000000Z', 'b', 3.0)
+                    """);
+
+            assertQuery("""
+                    SELECT t.sym, count() c, bit_xor(5) x, bool_or(false) o, geomean(4.0) g
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    RANGE FROM 0s TO 0s STEP 1s AS h
+                    ORDER BY t.sym
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            sym\tc\tx\to\tg
+                            a\t2\t0\tfalse\t4.0
+                            b\t1\t5\tfalse\t4.0
+                            """);
+        });
+    }
+
+    @Test
     public void testHorizonJoinConstantWhereFalse() throws Exception {
         // WHERE FALSE should produce an empty result set, even with HORIZON JOIN.
         assertMemoryLeak(() -> {

@@ -79,6 +79,7 @@ import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.ChainedSymbolShortCircuit;
 import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
+import io.questdb.griffin.engine.join.EmptyWindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.FilteredAsOfJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashJoinLightRecordCursorFactory;
@@ -282,7 +283,6 @@ final class JoinFactoryGenerator {
             ProjectPlan projection,
             OutputSchema output,
             GenericRecordMetadata innerMetadata,
-            int splitIndex,
             GenericRecordMetadata outerMetadata
     ) {
         final IntList columnIndex = new IntList(projection.getExpressions().size());
@@ -295,7 +295,7 @@ final class JoinFactoryGenerator {
             outerMetadata.add(new TableColumnMetadata(Chars.toString(projection.getOutput().getColumnName(i)), column.getColumnType(),
                     column.getIndexType(), column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata()));
         }
-        outerMetadata.setTimestampIndex(PlanToFactoryRules.windowJoinProjectionTimestampIndex(projection, output, innerMetadata.getTimestampIndex(), splitIndex));
+        outerMetadata.setTimestampIndex(PlanToFactoryRules.windowJoinProjectionTimestampIndex(projection, output, innerMetadata.getTimestampIndex()));
         return isIdentity ? null : columnIndex;
     }
 
@@ -2065,7 +2065,7 @@ final class JoinFactoryGenerator {
             IntList columnIndex = null;
             if (projection != null) {
                 outerMetadata = new GenericRecordMetadata();
-                columnIndex = projectWindowJoinOutput(projection, plan.getOutput(), innerMetadata, splitIndex, outerMetadata);
+                columnIndex = projectWindowJoinOutput(projection, plan.getOutput(), innerMetadata, outerMetadata);
             }
 
             BoundExpression filter = step.getFilter();
@@ -2091,19 +2091,24 @@ final class JoinFactoryGenerator {
                 }
                 if (step.isNullExtending()) {
                     isTransferred = true;
+                    final boolean isNullPadding = step.isNullPadding();
                     Throwable failure = Misc.freeBestEffort(null, slave);
                     failure = Misc.freeBestEffort(failure, joinMetadata);
                     failure = Misc.freeBestEffort(failure, joinFilter);
                     failure = Misc.freeBestEffort(failure, windowLoFunc);
                     failure = Misc.freeBestEffort(failure, windowHiFunc);
-                    failure = Misc.freeObjListBestEffort(failure, groupByFunctions);
+                    if (isNullPadding || failure != null) {
+                        failure = Misc.freeObjListBestEffort(failure, groupByFunctions);
+                    }
                     if (failure != null) {
                         Misc.free(master, failure);
                         CairoException.rethrowCleanupFailure(failure);
                     }
-                    return columnIndex == null
-                            ? new ExtraNullColumnCursorFactory(outerMetadata, splitIndex, master)
-                            : new SelectedRecordCursorFactory(outerMetadata, columnIndex, new ExtraNullColumnCursorFactory(innerMetadata, splitIndex, master));
+                    final GenericRecordMetadata extensionMetadata = columnIndex == null ? outerMetadata : innerMetadata;
+                    final RecordCursorFactory extension = isNullPadding
+                            ? new ExtraNullColumnCursorFactory(extensionMetadata, splitIndex, master)
+                            : new EmptyWindowJoinRecordCursorFactory(extensionMetadata, splitIndex, master, groupByFunctions, valueTypes.getColumnCount());
+                    return columnIndex == null ? extension : new SelectedRecordCursorFactory(outerMetadata, columnIndex, extension);
                 }
                 if (joinFilter.isConstant()) {
                     joinFilter = Misc.free(joinFilter);

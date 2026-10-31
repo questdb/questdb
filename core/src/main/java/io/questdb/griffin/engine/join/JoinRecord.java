@@ -389,6 +389,10 @@ public class JoinRecord implements Record {
         this.slave = slave;
     }
 
+    Record getMaster() {
+        return master;
+    }
+
     void setSlave(Record slave) {
         this.slave = slave;
     }

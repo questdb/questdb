@@ -108,6 +108,7 @@ public final class SampleByPlan extends GroupingPlan {
         return isTimestampRequired;
     }
 
+    @Override
     public SampleByPlan of(LogicalPlan input, int position) {
         configure(input, position);
         return this;
@@ -143,8 +144,6 @@ public final class SampleByPlan extends GroupingPlan {
         PlanReads.expressions(fillValues, visitor);
         from = PlanReads.expression(from, visitor);
         to = PlanReads.expression(to, visitor);
-        setOffset(PlanReads.expression(getOffset(), visitor));
-        setTimezone(PlanReads.expression(getTimezone(), visitor));
     }
 
     /**

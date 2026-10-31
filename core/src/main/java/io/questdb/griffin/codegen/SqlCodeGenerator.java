@@ -457,7 +457,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case SortPlan sort -> {
                 return sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION
                         ? declareTimestamp(base, PhysicalProperties.timestampIndex(sort))
-                        : sortGenerator.generate(frame, sort, base, null, null);
+                        : sortGenerator.generate(frame, sort, base, null);
             }
             case LimitPlan limit -> {
                 if (limit.getApplication() == LimitPlan.Application.INPUT) {

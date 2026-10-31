@@ -3835,7 +3835,8 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                     ) d ORDER BY o.id, d.ts
                     """)
                     .noLeakCheck()
-                    .withPlanContaining("orderedFunctions: [[ts] => [row_number()")
+                    .withPlanContaining("functions: [row_number() over (partition by [__qdb_outer_ref__0.__qdb_outer_ref__0_id])]")
+                    .expectSize()
                     .returns("""
                             id\tts\ts
                             1\t2024-01-01T02:00:00.000000Z\t7
@@ -3850,7 +3851,7 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                     ) d ON true ORDER BY o.id, d.ts
                     """)
                     .noLeakCheck()
-                    .withPlanContaining("orderedFunctions: [[ts] => [row_number()")
+                    .withPlanContaining("functions: [row_number() over (partition by [__qdb_outer_ref__0.__qdb_outer_ref__0_id])]")
                     .returns("""
                             id\tts\ts
                             1\t2024-01-01T04:00:00.000000Z\t11

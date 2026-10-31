@@ -152,6 +152,16 @@ final class SampleByBinder {
         return hasLinearFill(source);
     }
 
+    /**
+     * Records the SAMPLE BY period literal {@code period}, such as {@code 15m}, on {@code grouping}: its stride, which
+     * {@link TimestampSamplerFactory#parsePeriodStride} validates, and the unit letter that ends it.
+     */
+    private static void setPeriodLiteral(GroupingPlan grouping, ExpressionNode period) throws SqlException {
+        final int unitIndex = TimestampSamplerFactory.periodUnitIndex(period.token);
+        grouping.setPeriod(period.token, TimestampSamplerFactory.parsePeriodStride(period.token, period.position), period.position,
+                period.token.charAt(unitIndex), period.position + unitIndex);
+    }
+
     // Reads the value through the getter SampleByFillRecordCursorFactory's record uses for the target type.
     private static Function toFillConstant(Function fill, int targetType, CharSequence fillToken, int fillPosition) throws SqlException {
         try {
@@ -775,9 +785,7 @@ final class SampleByBinder {
         final ExpressionNode unit = source.getSampleByUnit();
         final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         if (unit == null) {
-            final int unitIndex = TimestampSamplerFactory.periodUnitIndex(sampleBy.token);
-            plan.setPeriod(sampleBy.token, TimestampSamplerFactory.parsePeriodStride(sampleBy.token, sampleBy.position), sampleBy.position,
-                    sampleBy.token.charAt(unitIndex), sampleBy.position + unitIndex);
+            setPeriodLiteral(plan, sampleBy);
             TimestampSamplerFactory.getSampleByInstance(driver, plan.getStride(), plan.getPeriodUnit(), plan.getPeriodUnitPosition());
         } else {
             final BoundExpression bound = ctx.functionBinder.bind(sampleBy, ctx.emptySchema, null, executionContext);
@@ -793,12 +801,12 @@ final class SampleByBinder {
     }
 
     /**
-     * The bucket of a SAMPLE BY that lowers to an aggregate grouped by it: the timestamp_floor_utc call over the
-     * input's timestamp, with the period, offset, origin and time zone the clause states. Records the grid on the
-     * aggregate the scope holds for the grouping, see {@link GroupingPlan}.
+     * The bucket of a SAMPLE BY that lowers to {@code aggregate}, an aggregate grouped by it: the timestamp_floor_utc
+     * call over the input's timestamp, with the period, offset, origin and time zone the clause states. Records the
+     * grid on {@code aggregate}, see {@link GroupingPlan}.
      */
     BoundExpression bindSampleByBucket(
-            QueryModel model, QueryModel source, LogicalPlan sourcePlan, SqlExecutionContext executionContext
+            QueryModel model, QueryModel source, LogicalPlan sourcePlan, AggregatePlan aggregate, SqlExecutionContext executionContext
     ) throws SqlException {
         final BindScope scope = ctx.scope();
         scope.sampleByTimestampColumnId = bucketTimestampColumnId(sourcePlan);
@@ -810,7 +818,6 @@ final class SampleByBinder {
         markTimestampSubqueries(source, timestampType);
         bindSampleByBound(from, timestampType, FROM_BOUND_ERROR, executionContext);
         bindSampleByBound(source.getSampleByTo(), timestampType, TO_BOUND_ERROR, executionContext);
-        final AggregatePlan aggregate = ctx.planNodes.aggregates.next();
         final ExpressionNode timezoneName = source.getSampleByTimezoneName();
         aggregate.setTimezone(timezoneName != null ? ctx.functionBinder.bindStandalone(timezoneName, executionContext) : null);
         validateRuntimeConstant(aggregate.getTimezone(), ColumnType.STRING, "timezone must be a constant expression of STRING or CHAR type");
@@ -834,13 +841,11 @@ final class SampleByBinder {
             validateConvertible(ctx.functionBinder.bind(offset, input, sourceAlias(source), ColumnType.STRING, executionContext), ColumnType.STRING, OFFSET_ERROR);
             throw e;
         }
-        aggregate.setPeriod(sampleBy.token, CommonUtils.getStrideMultiple(sampleBy.token, sampleBy.position), sampleBy.position,
-                CommonUtils.getStrideUnit(sampleBy.token, sampleBy.position), sampleBy.position + unitIndex);
+        setPeriodLiteral(aggregate, sampleBy);
         TimestampSamplerFactory.getInstance(ColumnType.getTimestampDriver(bucket.getDataType()), aggregate.getStride(), aggregate.getPeriodUnit(),
                 aggregate.getPeriodUnitPosition());
         aggregate.setOffset(((FunctionExpression) bucket).argumentAt(3));
         aggregate.setTimestampColumnId(scope.sampleByTimestampColumnId);
-        scope.sampleByAggregate = aggregate;
         return bucket;
     }
 

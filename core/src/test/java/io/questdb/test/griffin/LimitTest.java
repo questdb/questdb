@@ -37,6 +37,9 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
+import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.EncodedSortLimitedLightRecordCursorFactory;
+import io.questdb.griffin.engine.orderby.LimitedSizeSortedLightRecordCursorFactory;
 import io.questdb.std.Numbers;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -2948,6 +2951,28 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSortAndDistinctUnderLimitReportDeterminismOfBoundsAndInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x v, x % 4 k, x::TIMESTAMP ts FROM long_sequence(10)) TIMESTAMP(ts)");
+            for (boolean isEncoded : new boolean[]{true, false}) {
+                node1.setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, isEncoded);
+                final Class<? extends RecordCursorFactory> sortClass = isEncoded
+                        ? EncodedSortLimitedLightRecordCursorFactory.class
+                        : LimitedSizeSortedLightRecordCursorFactory.class;
+                assertNonDeterministic("SELECT * FROM t ORDER BY v DESC, ts LIMIT 2, 4", sortClass, false);
+                assertNonDeterministic("SELECT * FROM t ORDER BY v DESC, ts LIMIT now()::LONG % 3 + 1", sortClass, true);
+            }
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            try {
+                assertNonDeterministic("SELECT DISTINCT count() c FROM t GROUP BY k LIMIT 2", DistinctRecordCursorFactory.class, false);
+                assertNonDeterministic("SELECT DISTINCT count() c FROM t GROUP BY k LIMIT now()::LONG % 3 + 1", DistinctRecordCursorFactory.class, true);
+            } finally {
+                sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
+            }
+        });
+    }
+
+    @Test
     public void testSortedAndLimitedFactoriesCorrectlyUpdateWhenLimitsChange() throws Exception {
         assertMemoryLeak(() -> {
             execute(createTableDdl);
@@ -3525,6 +3550,17 @@ public class LimitTest extends AbstractCairoTest {
 
         String query = "select * from y limit 4,6";
         testLimit(expected, expected, query);
+    }
+
+    private static void assertNonDeterministic(String query, Class<? extends RecordCursorFactory> factoryClass, boolean isNonDeterministic)
+            throws SqlException {
+        try (RecordCursorFactory factory = select(query)) {
+            RecordCursorFactory node = factory;
+            while (node.getClass() != factoryClass) {
+                node = node.getBaseFactory();
+            }
+            Assert.assertEquals(isNonDeterministic, node.isNonDeterministic());
+        }
     }
 
     private static void assertSlaveRowReads(String query, int expectedReads) throws SqlException {

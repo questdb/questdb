@@ -151,6 +151,7 @@ public final class AggregatePlan extends GroupingPlan {
         return sharedConsumerCount > 0 || readerCount > 0;
     }
 
+    @Override
     public AggregatePlan of(LogicalPlan input, int position) {
         configure(input, position);
         return this;

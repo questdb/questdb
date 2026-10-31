@@ -177,7 +177,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.LONG ->
                     copyFromLong(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType, decimal256);
             case ColumnType.DATE ->
-                    copyFromDate(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, timestampDriver);
+                    copyFromDate(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType, timestampDriver);
             case ColumnType.TIMESTAMP ->
                     copyFromTimestamp(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, fromColumnType, toColumnType, timestampDriver);
             case ColumnType.BYTE ->
@@ -185,13 +185,14 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.SHORT ->
                     copyFromShort(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType, decimal256);
             case ColumnType.BOOLEAN -> copyFromBoolean(record, row, fromColumnIndex, toColumnWriterIndex, toColumnType);
-            case ColumnType.FLOAT -> copyFromFloat(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag);
+            case ColumnType.FLOAT ->
+                    copyFromFloat(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType);
             case ColumnType.DOUBLE ->
-                    copyFromDouble(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag);
+                    copyFromDouble(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType);
             case ColumnType.CHAR ->
                     copyFromChar(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType);
             case ColumnType.SYMBOL ->
-                    copyFromSymbol(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, timestampDriver);
+                    copyFromSymbol(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType, timestampDriver);
             case ColumnType.VARCHAR ->
                     copyFromVarchar(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType, timestampDriver);
             case ColumnType.STRING ->
@@ -287,7 +288,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         }
     }
 
-    private void copyFromDate(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, TimestampDriver timestampDriver) {
+    private void copyFromDate(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType, TimestampDriver timestampDriver) {
         long value = record.getDate(fromIndex);
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastLongAsByte(value));
@@ -298,7 +299,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.TIMESTAMP -> row.putTimestamp(toIndex, timestampDriver.fromDate(value));
             case ColumnType.FLOAT -> row.putFloat(toIndex, SqlUtil.implicitCastLongAsFloat(value));
             case ColumnType.DOUBLE -> row.putDouble(toIndex, SqlUtil.implicitCastLongAsDouble(value));
-            default -> throw RecordToRowCopierUtils.inconvertibleTypes(ColumnType.DATE, toTypeTag);
+            default -> throw RecordToRowCopierUtils.inconvertibleTypes(ColumnType.DATE, toType);
         }
     }
 
@@ -324,7 +325,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         }
     }
 
-    private void copyFromDouble(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag) {
+    private void copyFromDouble(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType) {
         double value = record.getDouble(fromIndex);
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastDoubleAsByte(value));
@@ -335,11 +336,11 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.TIMESTAMP -> row.putTimestamp(toIndex, SqlUtil.implicitCastDoubleAsLong(value));
             case ColumnType.FLOAT -> row.putFloat(toIndex, SqlUtil.implicitCastDoubleAsFloat(value));
             case ColumnType.DOUBLE -> row.putDouble(toIndex, value);
-            default -> throw RecordToRowCopierUtils.inconvertibleTypes(ColumnType.DOUBLE, toTypeTag);
+            default -> throw RecordToRowCopierUtils.inconvertibleTypes(ColumnType.DOUBLE, toType);
         }
     }
 
-    private void copyFromFloat(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag) {
+    private void copyFromFloat(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType) {
         float value = record.getFloat(fromIndex);
         switch (toTypeTag) {
             case ColumnType.BYTE -> row.putByte(toIndex, SqlUtil.implicitCastFloatAsByte(value));
@@ -350,7 +351,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.TIMESTAMP -> row.putTimestamp(toIndex, SqlUtil.implicitCastFloatAsLong(value));
             case ColumnType.FLOAT -> row.putFloat(toIndex, value);
             case ColumnType.DOUBLE -> row.putDouble(toIndex, SqlUtil.implicitCastFloatAsDouble(value));
-            default -> throw RecordToRowCopierUtils.inconvertibleTypes(ColumnType.FLOAT, toTypeTag);
+            default -> throw RecordToRowCopierUtils.inconvertibleTypes(ColumnType.FLOAT, toType);
         }
     }
 
@@ -524,14 +525,14 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         }
     }
 
-    private void copyFromSymbol(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, TimestampDriver timestampDriver) {
+    private void copyFromSymbol(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType, TimestampDriver timestampDriver) {
         CharSequence value = record.getSymA(fromIndex);
         switch (toTypeTag) {
             case ColumnType.TIMESTAMP -> row.putTimestamp(toIndex, timestampDriver.implicitCast(value));
             case ColumnType.SYMBOL -> row.putSym(toIndex, value);
             case ColumnType.STRING -> row.putStr(toIndex, value);
             case ColumnType.VARCHAR -> RecordToRowCopierUtils.transferStrToVarcharCol(row, toIndex, value);
-            default -> throw RecordToRowCopierUtils.inconvertibleTypes(ColumnType.SYMBOL, toTypeTag);
+            default -> throw RecordToRowCopierUtils.inconvertibleTypes(ColumnType.SYMBOL, toType);
         }
     }
 

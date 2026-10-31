@@ -100,6 +100,23 @@ final class SortFactoryGenerator {
         return bounds == null ? base : new LimitRecordCursorFactory(base, bounds, null);
     }
 
+    /**
+     * Builds the top-K that keeps the first {@code count} rows of the order of the sort's single key. Consumes the
+     * input on entry, including failure.
+     */
+    private static RecordCursorFactory generateLongTopK(SortPlan sort, RecordCursorFactory base, long count) {
+        final GenericRecordMetadata metadata;
+        try {
+            metadata = GenericRecordMetadata.copyOfNew(base.getMetadata());
+            metadata.setTimestampIndex(PhysicalProperties.timestampIndex(sort));
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
+        }
+        final int keyIndex = sort.getChild().getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0));
+        return new LongTopKRecordCursorFactory(metadata, base, keyIndex, (int) count, sort.getDirections().getQuick(0) != SortDirection.DESCENDING);
+    }
+
     private static int sourceIndex(@Nullable ProjectPlan projection, OutputSchema sorted, OutputSchema source, int sortedIndex) {
         final int columnId = projection == null ? sorted.getColumnId(sortedIndex)
                 : ((ColumnExpression) projection.getExpressions().getQuick(sortedIndex)).getColumnId();
@@ -107,8 +124,7 @@ final class SortFactoryGenerator {
     }
 
     // Consumes the input and optional limit bounds on entry, including failure.
-    RecordCursorFactory generate(GenerationFrame frame, SortPlan sort, RecordCursorFactory base, @Nullable LimitPlan limit, @Nullable LimitBounds bounds)
-            throws SqlException {
+    RecordCursorFactory generate(GenerationFrame frame, SortPlan sort, RecordCursorFactory base, @Nullable LimitBounds bounds) throws SqlException {
         boolean isInputTransferred = false;
         boolean isLimitTransferred = false;
         try {
@@ -129,14 +145,8 @@ final class SortFactoryGenerator {
             final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(base.getMetadata());
             metadata.setTimestampIndex(PhysicalProperties.timestampIndex(sort));
             switch (algorithm) {
-                case LONG_TOP_K -> {
-                    assert limit != null;
-                    final long count = LogicalPlans.limitValue((ConstantExpression) limit.getLo());
-                    isInputTransferred = true;
-                    return new LongTopKRecordCursorFactory(metadata, base, Math.abs(firstKey) - 1, (int) count, firstKey > 0);
-                }
-                case PARALLEL_FILTERED_TOP_K, PARALLEL_TOP_K ->
-                        throw new IllegalStateException("parallel top-K generates its own input");
+                case LONG_TOP_K, PARALLEL_FILTERED_TOP_K, PARALLEL_TOP_K ->
+                        throw new IllegalStateException("top-K generates under its LIMIT");
                 case LIMITED, PRESORTED_LIMITED -> {
                     assert bounds != null;
                     isInputTransferred = true;
@@ -303,12 +313,12 @@ final class SortFactoryGenerator {
         }
         final RecordCursorFactory base = codeGenerator.generate(frame, sort.getChild(), executionContext);
         if (limit.getApplication() == LimitPlan.Application.INPUT) {
-            return generate(frame, sort, base, null, null);
+            return generate(frame, sort, base, null);
         }
         if (sort.getAlgorithm() == SortPlan.Algorithm.LONG_TOP_K) {
-            return generate(frame, sort, base, limit, null);
+            return generateLongTopK(sort, base, LogicalPlans.limitValue((ConstantExpression) limit.getLo()));
         }
-        return generate(frame, sort, base, limit, codeGenerator.instantiateLimit(limit, base, executionContext));
+        return generate(frame, sort, base, codeGenerator.instantiateLimit(limit, base, executionContext));
     }
 
 }

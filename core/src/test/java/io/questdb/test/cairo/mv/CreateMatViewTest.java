@@ -648,6 +648,20 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewFailPeriodIntervalTooLong() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            for (String interval : new String[]{"25h", "1000000h", "35791395m", "24856d"}) {
+                assertQuery("create materialized view test refresh period(sample by interval) as (select ts, avg(v) from " + TABLE1
+                        + " sample by " + interval + ") partition by day")
+                        .noLeakCheck()
+                        .fails(40, "maximum supported length interval is 24 hours: " + interval);
+                assertNull(getMatViewDefinition("test"));
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewFailsOnUnionWithNonBaseTable() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);

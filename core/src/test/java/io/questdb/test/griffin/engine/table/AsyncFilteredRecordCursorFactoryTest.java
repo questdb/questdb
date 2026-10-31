@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -50,6 +51,8 @@ import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
@@ -68,6 +71,8 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -611,6 +616,44 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     resetTaskCapacities();
                 }, new AtomicBooleanCircuitBreaker(engine)
         );
+    }
+
+    @Test
+    public void testNegativeLimitPastMaxNegativeLimitInitializesLimitOnce() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x::INT i, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+            final InitCountingLimit limit = new InitCountingLimit(-3);
+            try (
+                    RecordCursorFactory factory = new AsyncFilteredRecordCursorFactory(
+                            engine,
+                            configuration,
+                            engine.getMessageBus(),
+                            select("SELECT * FROM x"),
+                            BooleanConstant.TRUE,
+                            new IntHashSet(),
+                            () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER),
+                            null,
+                            limit,
+                            0,
+                            1,
+                            false
+                    );
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertEquals(1, limit.initCount);
+                println(factory, cursor);
+            }
+            TestUtils.assertEquals(
+                    """
+                            i	ts
+                            8	1970-01-01T00:00:07.000000Z
+                            9	1970-01-01T00:00:08.000000Z
+                            10	1970-01-01T00:00:09.000000Z
+                            """,
+                    sink
+            );
+        });
     }
 
     @Test
@@ -1791,6 +1834,25 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         @Override
         public void toSink(@NotNull CharSink<?> sink) {
             sqlExecutionContext.toSink(sink);
+        }
+    }
+
+    private static class InitCountingLimit extends LongFunction {
+        private final long value;
+        private int initCount;
+
+        private InitCountingLimit(long value) {
+            this.value = value;
+        }
+
+        @Override
+        public long getLong(Record rec) {
+            return value;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            initCount++;
         }
     }
 }

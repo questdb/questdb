@@ -1545,8 +1545,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Returns a {@link RecordToRowCopier} for the live view, compiling a fresh one when
-     * the cached one's metadata version is out of sync with the WAL writer. Throws, as
+     * Returns the {@link RecordToRowCopier} of the live view's compiled plan, generating it
+     * against the view's WAL writer on first use. Throws, as
      * {@link RecordToRowCopierUtils#generateViewCopier} does, when the view's query no
      * longer fits the view's columns.
      */
@@ -1554,14 +1554,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             LiveViewInstance instance,
             WalWriter walWriter
     ) throws SqlException {
-        long metadataVersion = walWriter.getMetadata().getMetadataVersion();
-        RecordToRowCopier copier = instance.getRecordToRowCopier();
-        if (copier == null || instance.getRecordRowCopierMetadataVersion() != metadataVersion) {
+        final LiveViewCompiledPlan plan = instance.getCompiledPlan();
+        RecordToRowCopier copier = plan.getCopier();
+        if (copier == null) {
             // The view's own schema, which is the output projection's when the SELECT
             // wraps a window function in an expression and the window factory's when it
             // does not. Reading the window factory's here instead would generate a copier
             // for the wrong column count and mis-write every row.
-            final RecordMetadata outMetadata = instance.getCompiledPlan().getOutputMetadata();
+            final RecordMetadata outMetadata = plan.getOutputMetadata();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 copier = RecordToRowCopierUtils.generateViewCopier(
                         compiler.getAsm(),
@@ -1570,7 +1570,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         columnFilter,
                         engine.getConfiguration()
                 );
-                instance.setRecordToRowCopier(copier, metadataVersion);
+                plan.setCopier(copier);
             }
         }
         return copier;

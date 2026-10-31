@@ -141,6 +141,14 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
     void close();
 
     /**
+     * Signals the cursor that the outer cursor reads only its last {@code rowCount} rows, as a negative LIMIT does.
+     * From its next {@link #toTop()} the cursor may return only those rows, in its order, when it finds them without
+     * reading the rows before them, so that it counts, skips and returns no more than {@code rowCount} rows.
+     */
+    default void expectLastRows(long rowCount) {
+    }
+
+    /**
      * Signals the cursor that outer code/cursor will do a limited iteration through
      * the rows, e.g. it implements LIMIT N. In such a case, some parallel cursors
      * like async filtered cursor may optimize their execution by limiting the number

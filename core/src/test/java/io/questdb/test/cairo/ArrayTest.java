@@ -3229,7 +3229,7 @@ public class ArrayTest extends AbstractCairoTest {
         // to the shape header would read a different row's array, and one that fell through to
         // Record's ArrayView default would silently lose the O(1) shape read.
         //
-        // Reaching it needs all three: a parquet frame (AsyncFilterContext.shouldUseLateMaterialization
+        // Reaching it needs all three: a parquet frame (AsyncFilter.shouldUseLateMaterialization
         // returns false for native ones), an aggregate (the plain filter path uses the unfiltered
         // record), and a filter over a column the projection does not otherwise read. A WHERE over a
         // native table meets none of them.

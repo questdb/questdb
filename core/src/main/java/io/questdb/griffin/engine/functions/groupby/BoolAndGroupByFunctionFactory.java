@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -58,11 +57,6 @@ public class BoolAndGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        Function arg = args.getQuick(0);
-        if (arg.isConstant()) {
-            // bool_and(true) = true, bool_and(false) = false
-            return BooleanConstant.of(arg.getBool(null));
-        }
-        return new BoolAndGroupByFunction(arg);
+        return new BoolAndGroupByFunction(args.getQuick(0));
     }
 }

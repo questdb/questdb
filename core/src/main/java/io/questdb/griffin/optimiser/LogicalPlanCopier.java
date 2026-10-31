@@ -332,9 +332,6 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         if (project.isImplied()) {
             clone.markImplied();
         }
-        if (project.isTimestampDropped()) {
-            clone.markTimestampDropped();
-        }
         clone.getRequestedOrder().copyFrom(project.getRequestedOrder());
         clone.setRequestedOrderColumnId(project.getRequestedOrderColumnId());
         return clone;

@@ -66,6 +66,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
     private final @Nullable LimitBounds limit;
     // this sink is used to copy recordKeyMap keys to dataMap
     private final RecordSink mapSink;
+    private final LimitBounds.Values planLimit = new LimitBounds.Values();
     private RecordCursorFactory base;
     private DistinctRecordCursor cursor;
 
@@ -109,6 +110,11 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return limit != null && limit.isNonDeterministic() || base.isNonDeterministic();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return false;
     }
@@ -117,8 +123,8 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
     public void toPlan(PlanSink sink) {
         sink.type("Distinct");
         sink.attr("keys").val(getMetadata());
-        if (limit != null && limit.resolve()) {
-            final long earlyExit = earlyExit(limit);
+        if (limit != null && limit.resolve(planLimit)) {
+            final long earlyExit = earlyExit(planLimit);
             if (earlyExit != Long.MAX_VALUE) {
                 sink.attr("earlyExit").val(earlyExit);
             }
@@ -139,7 +145,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
     /**
      * The distinct keys the LIMIT reads at most: the hi bound where the LIMIT keeps the first rows, otherwise all.
      */
-    private static long earlyExit(LimitBounds limit) {
+    private static long earlyExit(LimitBounds.Values limit) {
         return limit.isFirstN() ? limit.getHi() : Long.MAX_VALUE;
     }
 
@@ -233,7 +239,7 @@ public class DistinctRecordCursorFactory extends AbstractRecordCursorFactory {
             this.circuitBreaker = executionContext.getCircuitBreaker();
             if (limit != null) {
                 limit.init(baseCursor, executionContext);
-                earlyExit = earlyExit(limit);
+                earlyExit = earlyExit(limit.getValues());
             } else {
                 earlyExit = Long.MAX_VALUE;
             }

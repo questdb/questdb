@@ -119,6 +119,11 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
     }
 
     @Override
+    public boolean isNonDeterministic() {
+        return bounds.isNonDeterministic() || base.isNonDeterministic();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return true;
     }
@@ -151,7 +156,8 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
      */
     private void initialize(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
         bounds.init(baseCursor, executionContext);
-        cursor.setSelection(bounds.isFirstN(), bounds.getLimit(), bounds.getSkipFirst(), bounds.getSkipLast());
+        final LimitBounds.Values values = bounds.getValues();
+        cursor.setSelection(values.isFirstN(), values.getLimit(), values.getSkipFirst(), values.getSkipLast());
     }
 
     @Override

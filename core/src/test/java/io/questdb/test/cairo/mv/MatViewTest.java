@@ -1271,6 +1271,41 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterRefreshPeriodTooLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_price (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW price_long AS SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1000000h");
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW price_long SET REFRESH PERIOD (SAMPLE BY INTERVAL)",
+                    73,
+                    "maximum supported length interval is 24 hours: 1000000h"
+            );
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW price_long SET REFRESH PERIOD (LENGTH 1000000h)",
+                    62,
+                    "maximum supported length interval is 24 hours: 1000000h"
+            );
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW price_long SET REFRESH PERIOD (LENGTH 35791395m)",
+                    62,
+                    "maximum supported length interval is 24 hours: 35791395m"
+            );
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW price_long SET REFRESH PERIOD (LENGTH 1h DELAY 1000000h)",
+                    71,
+                    "delay cannot be equal to or greater than length"
+            );
+            assertQuery("SELECT view_name, refresh_type, period_length FROM materialized_views()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_name\trefresh_type\tperiod_length
+                            price_long\timmediate\t0
+                            """);
+        });
+    }
+
+    @Test
     public void testAlterRefreshTimer1() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(

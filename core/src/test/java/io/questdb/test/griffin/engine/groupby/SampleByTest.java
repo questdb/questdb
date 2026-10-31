@@ -6496,6 +6496,55 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByConstantArgumentAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('a', '2024-01-01T09:00:00.000000Z'),
+                        ('a', '2024-01-01T09:01:00.000000Z'),
+                        ('b', '2024-01-01T09:02:00.000000Z'),
+                        ('b', '2024-01-01T09:05:00.000000Z')""");
+
+            assertQuery("SELECT ts, bit_xor(5) x, bool_or(false) o, geomean(4.0) g, count() c FROM trades SAMPLE BY 2m")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tx\to\tg\tc
+                            2024-01-01T09:00:00.000000Z\t0\tfalse\t4.0\t2
+                            2024-01-01T09:02:00.000000Z\t5\tfalse\t4.0\t1
+                            2024-01-01T09:04:00.000000Z\t5\tfalse\t4.0\t1
+                            """);
+
+            assertQuery("SELECT ts, sym, bit_xor(5) x, count() c FROM trades SAMPLE BY 2m")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tx\tc
+                            2024-01-01T09:00:00.000000Z\ta\t0\t2
+                            2024-01-01T09:02:00.000000Z\tb\t5\t1
+                            2024-01-01T09:04:00.000000Z\tb\t5\t1
+                            """);
+
+            assertQuery("SELECT ts, bit_xor(5) x, count() c FROM trades SAMPLE BY 1m FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tx\tc
+                            2024-01-01T09:00:00.000000Z\t5\t1
+                            2024-01-01T09:01:00.000000Z\t5\t1
+                            2024-01-01T09:02:00.000000Z\t5\t1
+                            2024-01-01T09:03:00.000000Z\tnull\tnull
+                            2024-01-01T09:04:00.000000Z\tnull\tnull
+                            2024-01-01T09:05:00.000000Z\t5\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleByCountWithNoTsColSelected() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
@@ -8289,6 +8338,71 @@ public class SampleByTest extends AbstractCairoTest {
                         2023-05-16T00:07:00.000000Z\tb\t0.6778564558839208
                         2023-05-16T00:10:00.000000Z\tb\t0.21583224269349388
                         """);
+    }
+
+    @Test
+    public void testSampleByFirstLastCalendarStrideKeepsOffsetWithFromExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', 1.0, '2024-01-15T00:00:00Z'),
+                        ('a', 2.0, '2024-02-01T05:00:00Z'),
+                        ('a', 3.0, '2024-02-20T00:00:00Z'),
+                        ('a', 4.0, '2024-03-01T05:00:00Z'),
+                        ('a', 5.0, '2024-03-10T00:00:00Z')""");
+            final String[][] cases = {
+                    {"1M", """
+                            ts\tfirst\tlast
+                            2024-01-01T10:00:00.000000Z\t1.0\t2.0
+                            2024-02-01T10:00:00.000000Z\t3.0\t4.0
+                            2024-03-01T10:00:00.000000Z\t5.0\t5.0
+                            """},
+                    {"3M", """
+                            ts\tfirst\tlast
+                            2024-01-01T10:00:00.000000Z\t1.0\t5.0
+                            """},
+                    {"1y", """
+                            ts\tfirst\tlast
+                            2024-01-01T10:00:00.000000Z\t1.0\t5.0
+                            """},
+                    {"1w", """
+                            ts\tfirst\tlast
+                            2024-01-11T10:00:00.000000Z\t1.0\t1.0
+                            2024-01-25T10:00:00.000000Z\t2.0\t2.0
+                            2024-02-15T10:00:00.000000Z\t3.0\t3.0
+                            2024-02-29T10:00:00.000000Z\t4.0\t4.0
+                            2024-03-07T10:00:00.000000Z\t5.0\t5.0
+                            """},
+            };
+            for (String[] c : cases) {
+                final String head = "SELECT ts, first(v), last(v) FROM t WHERE s = 'a' SAMPLE BY " + c[0] + " FROM ";
+                final String tail = " ALIGN TO CALENDAR WITH OFFSET '10:00'";
+                assertQuery(head + "'1970-01-01'" + tail)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns(c[1]);
+                assertQuery(head + "'1970-01-01'::TIMESTAMP" + tail)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .withPlanContaining("SampleByFirstLast")
+                        .returns(c[1]);
+                bindVariableService.clear();
+                bindVariableService.setTimestamp(0, 0);
+                assertQuery(head + "$1" + tail)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .withPlanContaining("SampleByFirstLast")
+                        .returns(c[1]);
+                bindVariableService.clear();
+            }
+        });
     }
 
     @Test

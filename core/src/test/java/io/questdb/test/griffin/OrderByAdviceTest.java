@@ -189,8 +189,8 @@ public class OrderByAdviceTest extends AbstractCairoTest {
             assertQuery(query).noLeakCheck().expectSize().returns(expected);
             TestLatchedCounterFunctionFactory.reset(null);
             printSql(query, new StringSink());
-            // the skip to the last rows reads the rows the size of the read filtered
-            Assert.assertEquals(10_000, TestLatchedCounterFunctionFactory.getCount());
+            // the last three rows are rows of the last key, whose rows alone the filter reads, once
+            Assert.assertEquals(10_000 / 4, TestLatchedCounterFunctionFactory.getCount());
 
             query = "SELECT " + tail + " LIMIT 2";
             assertQuery(query)
@@ -203,8 +203,8 @@ public class OrderByAdviceTest extends AbstractCairoTest {
             TestLatchedCounterFunctionFactory.reset(null);
             printSql(query, new StringSink());
             // a LIMIT that the rows of the first key fill filters the page frames before the one that holds the last
-            // row it reads, and only the first key in that one
-            Assert.assertEquals(2 * 1_000 + 1_000 / 4, TestLatchedCounterFunctionFactory.getCount());
+            // row it reads, and in that one the rows of the first key up to that row
+            Assert.assertEquals(2 * 1_000 + (2_992 - 2_004) / 4 + 1, TestLatchedCounterFunctionFactory.getCount());
 
             for (String other : new String[]{
                     "ts, sym, v FROM t WHERE sym IN ('k0', 'k1', 'k2', 'k3') AND ts >= 0 AND ts < 10_001 AND v % 997 < 3 ORDER BY sym DESC, ts DESC",

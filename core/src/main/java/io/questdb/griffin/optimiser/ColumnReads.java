@@ -166,10 +166,7 @@ final class ColumnReads implements Mutable {
         switch (plan) {
             case ScanPlan _, FunctionSourcePlan _, DomainReadPlan _, LimitPlan _ -> {
             }
-            case SampleByPlan sample -> {
-                readColumnIds.add(sample.getTimestampColumnId());
-                sample.visitReads(planReads);
-            }
+            case SampleByPlan sample -> sample.visitReads(planReads);
             case AggregatePlan aggregate -> {
                 if (isRowCount(aggregate) && isCountInputMaterialized(aggregate.getChild())) {
                     readAllColumns(aggregate.getChild().getOutput());

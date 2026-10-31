@@ -136,6 +136,34 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNanosecondFloorStridesBindPerBranchOnlyWhenExact() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_sp_values (t TIMESTAMP)");
+            execute("INSERT INTO lp_sp_values VALUES (-1001),(-1000),(-999),(-1),(0),(1),(999),(1000),(1001),(NULL)");
+            assertFloorPrecisionMismatches("n", "");
+            assertFloorPrecisionMismatches("1000n", "");
+            assertFloorPrecisionMismatches("2000n", "");
+            assertFloorPrecisionMismatches("500n", "");
+            assertFloorPrecisionMismatches("3n", "-1001\n-1000\n-1\n1\n1000\n1001\n");
+            assertFloorPrecisionMismatches("1500n", "-1000\n-1\n1001\n");
+
+            execute("CREATE TABLE lp_sp_micro (ts TIMESTAMP,id INT) TIMESTAMP(ts)");
+            execute("CREATE TABLE lp_sp_nano (ts TIMESTAMP_NS,id INT) TIMESTAMP(ts)");
+            execute("INSERT INTO lp_sp_micro VALUES (0,1),(1,2),(2,3),(999,4),(1000,5),(1001,6)");
+            execute("INSERT INTO lp_sp_nano VALUES (0,11),(1,12),(999,13),(1000,14),(1001,15),(1500,16)");
+            execute("CREATE TABLE lp_sp_one (x INT)");
+            execute("INSERT INTO lp_sp_one VALUES (1)");
+            final String set = "(SELECT ts c,id FROM lp_sp_micro UNION ALL SELECT ts,id FROM lp_sp_nano)";
+            assertNanosecondFloorBinding(set, "n", "1970-01-01T00:00:00.000001Z", "2\n14\n", 2, 0);
+            assertNanosecondFloorBinding(set, "1000n", "1970-01-01T00:00:00.000001Z", "2\n14\n15\n16\n", 2, 0);
+            assertNanosecondFloorBinding(set, "2000n", "1970-01-01T00:00:00.000000Z", "1\n2\n11\n12\n13\n14\n15\n16\n", 2, 0);
+            assertNanosecondFloorBinding(set, "500n", "1970-01-01T00:00:00.000001Z", "2\n14\n15\n", 1, 0);
+            assertNanosecondFloorBinding(set, "3n", "1970-01-01T00:00:00.000000999Z", "2\n13\n14\n15\n", 1, 1);
+            assertNanosecondFloorBinding(set, "1500n", "1970-01-01T00:00:00.000001500Z", "3\n16\n", 1, 1);
+        });
+    }
+
+    @Test
     public void testNullBranchFiltersOverUnifiedType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_sp_micro (ts TIMESTAMP,id INT) TIMESTAMP(ts)");
@@ -208,6 +236,14 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
             assertLogicalResidual("SELECT id FROM " + precisions + " WHERE extract(hour FROM c)=0 ORDER BY id", "id\n1\n2\n3\n11\n12\n13\n", 0);
             assertPrecisionFilter(precisions, "dateadd('n',1,{c})='2024-01-01T00:00:00.000000001Z'", "2\n");
             assertLogicalResidual("SELECT id FROM " + precisions + " WHERE dateadd('n',1,c)='2024-01-01T00:00:00.000000001Z' ORDER BY id", "id\n2\n", 1);
+            assertPrecisionFilter(precisions, "timestamp_floor('3n',{c})='1970-01-01T00:00:00.000000999Z'::TIMESTAMP_NS", "1\n");
+            assertLogicalResidual("SELECT id FROM " + precisions + " WHERE timestamp_floor('3n',c)='1970-01-01T00:00:00.000000999Z'::TIMESTAMP_NS ORDER BY id",
+                    "id\n1\n", 1);
+            assertPrecisionFilter(precisions, "timestamp_floor('3U',{c})='1970-01-01T00:00:00.000000Z'", "1\n11\n");
+            assertPrecisionFilter(precisions, "timestamp_ceil('n',{c})='1970-01-01T00:00:00.000001Z'", "1\n");
+            assertPrecisionFilter(precisions, "date_trunc('nanosecond',{c})='1970-01-01T00:00:00.000001Z'", "1\n");
+            assertPrecisionFilter(precisions, "to_utc({c},'Europe/Berlin')='1969-12-31T23:00:00.000001Z'", "1\n");
+            assertPrecisionFilter(precisions, "to_timezone({c},'Europe/Berlin')='1970-01-01T01:00:00.000001Z'", "1\n");
             bindVariableService.clear();
             bindVariableService.setStr(0, "2024-01-01T00:00:00.000000001Z");
             assertRowsAndIntervalScans("SELECT id FROM " + precisions + " WHERE c>=$1 ORDER BY id", "id\n3\n12\n13\n", 2);
@@ -301,6 +337,12 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
         return count;
     }
 
+    private void assertFloorPrecisionMismatches(String stride, String expected) throws Exception {
+        assertQuery("SELECT t::LONG v FROM lp_sp_values WHERE timestamp_floor('" + stride + "',t)!=timestamp_floor('" + stride + "',t::TIMESTAMP_NS) ORDER BY v")
+                .noLeakCheck()
+                .returns("v\n" + expected);
+    }
+
     private void assertLogicalResidual(String sql, String expected, int expectedResiduals) throws Exception {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
             try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
@@ -308,6 +350,14 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
                 assertRowsOnly(factory, expected);
             }
         }
+    }
+
+    private void assertNanosecondFloorBinding(String set, String stride, String floor, String expected, int intervalScans, int residuals) throws Exception {
+        final String predicate = "timestamp_floor('" + stride + "',{c})='" + floor + "'";
+        assertPrecisionFilter(set, predicate, expected);
+        final String sql = "SELECT id FROM " + set + " WHERE " + predicate.replace("{c}", "c") + " ORDER BY id";
+        assertRowsAndIntervalScans(sql, "id\n" + expected, intervalScans);
+        assertLogicalResidual(sql, "id\n" + expected, residuals);
     }
 
     private void assertPrecisionFilter(String set, String predicate, String expected) throws Exception {

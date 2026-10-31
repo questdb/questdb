@@ -114,14 +114,13 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
     public void testGeomeanConstantArgument() throws Exception {
-        // When the argument is a constant, the factory returns DoubleConstant directly
-        // geomean(c) = c for any positive constant c
         execute("create table tab (x int)");
         execute("insert into tab values (1), (2), (3)");
 
         // Verify the result is correct: geomean(5.0) = 5.0
         assertQuery("select geomean(5.0) from tab")
                 .noLeakCheck()
+                .noRandomAccess()
                 .expectSize()
                 .returns("""
                         geomean
@@ -131,6 +130,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         // Verify with negative constant - should return null (NaN)
         assertQuery("select geomean(-5.0) from tab")
                 .noLeakCheck()
+                .noRandomAccess()
                 .expectSize()
                 .returns("""
                         geomean
@@ -140,6 +140,7 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         // Verify with zero constant - should return null (NaN)
         assertQuery("select geomean(0.0) from tab")
                 .noLeakCheck()
+                .noRandomAccess()
                 .expectSize()
                 .returns("""
                         geomean
@@ -149,10 +150,23 @@ public class GeomeanDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
         // Verify with null constant
         assertQuery("select geomean(null) from tab")
                 .noLeakCheck()
+                .noRandomAccess()
                 .expectSize()
                 .returns("""
                         geomean
                         null
+                        """);
+    }
+
+    @Test
+    public void testGeomeanConstantEmptyTable() throws Exception {
+        assertQuery("SELECT count() c, geomean(4.0) g FROM tab")
+                .ddl("CREATE TABLE tab (x INT)")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        c\tg
+                        0\tnull
                         """);
     }
 

@@ -30,6 +30,7 @@ import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.PlanReadIds;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -78,7 +79,7 @@ final class ScalarCompensation implements Mutable {
     private final ObjList<CharSequence> compensatedNames = new ObjList<>();
     private final ObjList<ProjectPlan> compensatedScalars = new ObjList<>();
     private final ObjList<BoundExpression> compensations = new ObjList<>();
-    private final LimitBounds constantLimit = new LimitBounds();
+    private final LimitBounds.Values constantLimit = new LimitBounds.Values();
     private final IntIntHashMap consumerRemap;
     private final ObjList<JoinInput> drivenInputs = new ObjList<>();
     private final ObjList<ProjectPlan> drivenScalars = new ObjList<>();
@@ -253,16 +254,10 @@ final class ScalarCompensation implements Mutable {
         return !(lo instanceof ConstantExpression first) || !(hi instanceof ConstantExpression) && LogicalPlans.limitValue(first) > 0;
     }
 
-    private static boolean isZeroOnEmpty(FunctionExpression aggregate) {
-        final String name = aggregate.getName();
-        return Chars.equalsIgnoreCase(name, "count") || Chars.equalsIgnoreCase(name, "count_distinct")
-                || Chars.equalsIgnoreCase(name, "approx_count_distinct");
-    }
-
     private static boolean isZeroOnEmptyColumn(int columnId, AggregatePlan aggregate) {
         final int index = aggregate.getOutput().getColumnIndexById(columnId);
         final int keyCount = aggregate.getGroupingExpressions().size();
-        return index >= keyCount && isZeroOnEmpty(aggregate.getAggregates().getQuick(index - keyCount));
+        return index >= keyCount && SqlUtil.isZeroOnEmptyAggregate(aggregate.getAggregates().getQuick(index - keyCount).getName());
     }
 
     private static boolean keepsEveryCount(BoundExpression predicate, ProjectPlan scalar) {
@@ -356,7 +351,8 @@ final class ScalarCompensation implements Mutable {
             if (aggregateIndex >= keyCount) {
                 final ColumnExpression carrier = planNodes.columns.next().of(carrierColumnIds.getQuick(pairIndex(carrierColumnIds, columnId) + 1), type,
                         expression.getPosition());
-                replacement = isZeroOnEmpty(aggregate.getAggregates().getQuick(aggregateIndex - keyCount)) ? zeroCoalesce(carrier, input) : carrier;
+                replacement = SqlUtil.isZeroOnEmptyAggregate(aggregate.getAggregates().getQuick(aggregateIndex - keyCount).getName())
+                        ? zeroCoalesce(carrier, input) : carrier;
             } else {
                 final int substitute = substitution.get(columnId);
                 if (substitute > -1) {
@@ -438,8 +434,8 @@ final class ScalarCompensation implements Mutable {
      * when NULL, and two non-negative bounds that are not NULL apply in ascending order: the planner orders them when
      * it knows both, and execution through {@code least} and {@code greatest}, which skip a NULL second bound,
      * otherwise. A negative constant bound counts from the end of the rows, and so does the second bound after a
-     * negative first one, which must then be a constant: the two resolve as {@link LimitBounds#of} resolves them.
-     * Reads {@code size} only when {@link #isTailLimit} holds; {@code reading} reads any other bound with its
+     * negative first one, which must then be a constant: the two resolve as {@link LimitBounds.Values#of} resolves
+     * them. Reads {@code size} only when {@link #isTailLimit} holds; {@code reading} reads any other bound with its
      * NULL substitute.
      */
     private BoundExpression limitPredicate(BoundExpression lo, BoundExpression hi, BoundExpression rank, BoundExpression size, BoundReading reading,

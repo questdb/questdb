@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.table.AbstractPageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
 import io.questdb.std.LongList;
@@ -304,6 +305,41 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilteredCollectionStaysWithinQueryMemoryLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x id, ('k' || (x % 4))::SYMBOL s, timestamp_sequence(0, 100_000) ts
+                        FROM long_sequence(100_000)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            sqlExecutionContext.changePageFrameSizes(1_000, 1_000);
+            final String tail = "id, s, ts FROM t WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2', 'k3') AND id % 2 = 0 ORDER BY s, ts";
+            final String[] limits = {"", " LIMIT -7", " LIMIT 30_000, 30_007"};
+            final String[] expected = new String[limits.length];
+            final StringSink rows = new StringSink();
+            for (int i = 0; i < limits.length; i++) {
+                printSql("SELECT /*+ no_index(t) */ " + tail + limits[i], rows);
+                expected[i] = rows.toString();
+            }
+            // the 50_000 rows the filter keeps take 200 KB in the collection, past the half of the limit that it may
+            // take, so the passes of the keys read their rows past the page frames the collection went over
+            node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
+            try {
+                for (int i = 0; i < limits.length; i++) {
+                    assertQuery("SELECT " + tail + limits[i]).noLeakCheck().sizeMayVary().inferTimestamp().withPlanContaining("symbolOrder: asc").returns(expected[i]);
+                }
+                try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    TestUtils.assertCursor(expected[0], cursor, factory.getMetadata(), true, rows);
+                    Assert.assertTrue("the collection holds fewer rows than the read returns", sqlExecutionContext.getMemoryTracker().getUsed() < 50_000 * Integer.BYTES);
+                }
+            } finally {
+                node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+            }
+        });
+    }
+
+    @Test
     public void testFilteredLimitGathersWindowOfItsRows() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
@@ -328,6 +364,75 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
                 // the filter keeps a third of the rows of the keys, so the window of the first 100 rows takes the keys the
                 // index counts about 300 rows for, and decodes the row groups that hold them rather than all 400
                 Assert.assertEquals(100, ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool().getDecodeCount());
+            }
+        });
+    }
+
+    @Test
+    public void testFilteredLimitOfLateFirstKeyFiltersFewRowsOfOtherKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            // the first key holds rows only in the last of the ten page frames
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x id, ('k' || (CASE WHEN x > 9_000 THEN x % 4 ELSE 1 + x % 3 END))::SYMBOL s, x::TIMESTAMP ts
+                        FROM long_sequence(10_000)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            sqlExecutionContext.changePageFrameSizes(1_000, 1_000);
+            final String tail = "id, s, ts FROM t WHERE s IN ('k0', 'k1', 'k2', 'k3') AND ts >= 0 AND ts < 10_001"
+                    + " AND test_latched_counter() AND id % 7 < 3 ORDER BY s, ts";
+            for (String limit : new String[]{" LIMIT 3", " LIMIT 500, 503"}) {
+                final StringSink expected = new StringSink();
+                printSql("SELECT /*+ no_index(t) */ " + tail + limit, expected);
+                assertQuery("SELECT " + tail + limit).noLeakCheck().sizeMayVary().inferTimestamp().withPlanContaining("symbolOrder: asc").returns(expected);
+            }
+            TestLatchedCounterFunctionFactory.reset(null);
+            printSql("SELECT " + tail + " LIMIT 3", new StringSink());
+            // a sort of the three rows takes less memory than the rows the other keys keep in the first page frame, so
+            // the read stops storing them there, and reads the rows of the first key by the index
+            Assert.assertTrue("the read filters fewer rows than a page frame holds", TestLatchedCounterFunctionFactory.getCount() < 1_000);
+        });
+    }
+
+    @Test
+    public void testFilteredNegativeLimitFiltersRowsOfLastKeysOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x id, ('k' || (x % 4))::SYMBOL s, timestamp_sequence(0, 100_000) ts
+                        FROM long_sequence(100_000)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            sqlExecutionContext.changePageFrameSizes(1_000, 1_000);
+            final String tail = "id, s, ts FROM t WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2', 'k3')"
+                    + " AND test_latched_counter() AND id % 3 = 0 ORDER BY s, ts";
+            final String[] limits = {" LIMIT -7", " LIMIT -10, -3", " LIMIT -9_000", " LIMIT -20_000"};
+            // the 25_000 rows of a key, which the filter reads to find the last rows the LIMIT selects among them, or
+            // all 100_000 rows, when the last rows reach so far into the keys before them that one pass of all keys
+            // costs less
+            final long[] filteredRowCounts = {25_000, 25_000, 50_000, -1};
+            final String[] expected = new String[limits.length];
+            final StringSink rows = new StringSink();
+            for (int i = 0; i < limits.length; i++) {
+                printSql("SELECT /*+ no_index(t) */ " + tail + limits[i], rows);
+                expected[i] = rows.toString();
+            }
+            // the 33_333 rows the filter keeps take 133 KB in the collection, past the half of the limit it may take
+            node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
+            try {
+                for (int i = 0; i < limits.length; i++) {
+                    assertQuery("SELECT " + tail + limits[i]).noLeakCheck().sizeMayVary().inferTimestamp().withPlanContaining("symbolOrder: asc").returns(expected[i]);
+                    TestLatchedCounterFunctionFactory.reset(null);
+                    printSql("SELECT " + tail + limits[i], rows);
+                    TestUtils.assertEquals(expected[i], rows);
+                    if (filteredRowCounts[i] > 0) {
+                        Assert.assertEquals(filteredRowCounts[i], TestLatchedCounterFunctionFactory.getCount());
+                    } else {
+                        Assert.assertTrue("the read filters every row", TestLatchedCounterFunctionFactory.getCount() >= 100_000);
+                    }
+                }
+            } finally {
+                node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
             }
         });
     }

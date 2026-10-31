@@ -163,7 +163,7 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
                     resources,
                     workerCount
             );
-            final boolean isFiltered = atom.isFiltered();
+            final boolean isFiltered = atom.getMasterFilter().getFilter(-1) != null;
             // The frame sequence adopts the atom, freeing it on its own constructor failure.
             this.frameSequence = new PageFrameSequence<>(
                     engine,
@@ -240,7 +240,7 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
         sink.meta("workers").val(workerCount);
         sink.meta("offsets").val(offsetCount);
         final AsyncHorizonJoinProjectionAtom atom = frameSequence.getAtom();
-        sink.optAttr("filter", atom.getFilter(-1), masterFactory);
+        sink.optAttr("filter", atom.getMasterFilter().getFilter(-1), masterFactory);
         sink.child(masterFactory);
         for (int i = 0, n = slaveFactories.size(); i < n; i++) {
             sink.optAttr("keyCheck", slaveStates.getQuick(i).getKeyCheck(), masterFactory);
@@ -251,7 +251,7 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
 
     @Override
     public boolean usesCompiledFilter() {
-        return frameSequence.getAtom().getCompiledFilter() != null;
+        return frameSequence.getAtom().getMasterFilter().getCompiledFilter() != null;
     }
 
     @Override
@@ -286,25 +286,26 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
 
         final boolean isOwner = stealingFrameSequence != null && stealingFrameSequence == frameSequence;
         final int slotId = atom.maybeAcquire(workerId, isOwner, circuitBreaker);
+        final AsyncFilter masterFilter = atom.getMasterFilter();
         // populateFrameMemory() decodes the frame and can throw, so it sits inside the try that
         // releases the slot, see PerWorkerLocks.acquireSlot().
         try {
             final boolean isParquetFrame = task.isParquetFrame();
             final boolean isCountOnly = task.isCountOnly();
-            final boolean isLateMaterialization = atom.shouldUseLateMaterialization(slotId, isParquetFrame, isCountOnly);
+            final boolean isLateMaterialization = masterFilter.shouldUseLateMaterialization(slotId, isParquetFrame, isCountOnly);
             final PageFrameMemory frameMemory = isLateMaterialization
-                    ? task.populateFrameMemory(atom.getFilterUsedColumnIndexes())
+                    ? task.populateFrameMemory(masterFilter.getFilterUsedColumnIndexes())
                     : task.populateFrameMemory();
             record.init(frameMemory);
 
-            final CompiledFilter compiledFilter = atom.getCompiledFilter();
+            final CompiledFilter compiledFilter = masterFilter.getCompiledFilter();
             if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
-                applyFilter(atom.getFilter(slotId), rows, record, frameRowCount);
+                applyFilter(masterFilter.getFilter(slotId), rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(
                         compiledFilter,
-                        atom.getBindVarMemory(),
-                        atom.getBindVarFunctions(),
+                        masterFilter.getBindVarMemory(),
+                        masterFilter.getBindVarFunctions(),
                         frameMemory,
                         frameSequence.getPageFrameAddressCache(),
                         task.getDataAddresses(),
@@ -317,7 +318,7 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
             final long filteredRowCount = rows.size();
             task.setFilteredRowCount(filteredRowCount);
             if (isParquetFrame) {
-                atom.getSelectivityStats(slotId).update(filteredRowCount, frameRowCount);
+                masterFilter.getSelectivityStats(slotId).update(filteredRowCount, frameRowCount);
             }
             if (filteredRowCount == 0 || isCountOnly) {
                 return;
@@ -325,7 +326,7 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
 
             // Decode the remaining columns before the slots extend the list: the call reads the
             // filtered row indexes, which occupy the whole list until then.
-            if (isLateMaterialization && task.populateRemainingColumns(atom.getFilterUsedColumnIndexes(), rows, true)) {
+            if (isLateMaterialization && task.populateRemainingColumns(masterFilter.getFilterUsedColumnIndexes(), rows, true)) {
                 record.init(frameMemory);
             }
             final long matchedRowCount = Math.min(filteredRowCount, atom.getMaxTaskRows());

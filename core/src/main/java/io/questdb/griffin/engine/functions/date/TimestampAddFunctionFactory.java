@@ -153,14 +153,13 @@ public class TimestampAddFunctionFactory implements FunctionFactory, MonotonicTi
     }
 
     /**
-     * {@link TimestampPrecisionUse#PRESERVING} when the parsed call adds a constant period of a microsecond or longer,
-     * which every timestamp precision adds exactly, otherwise {@link TimestampPrecisionUse#DEPENDENT}.
+     * The use of the parsed call by the constant period it adds, see {@link TimestampPrecisionUse#ofShift}, and
+     * {@link TimestampPrecisionUse#DEPENDENT} when no one-letter literal spells the period.
      */
     static TimestampPrecisionUse periodPrecisionUse(ExpressionNode call) {
         final ExpressionNode period = call.paramCount < 3 ? call.lhs : call.args.getLast();
-        return period != null && period.type == ExpressionNode.CONSTANT && period.token.length() == 3
-                && Chars.isQuoted(period.token) && period.token.charAt(1) != 'n'
-                ? TimestampPrecisionUse.PRESERVING : TimestampPrecisionUse.DEPENDENT;
+        return period != null && period.type == ExpressionNode.CONSTANT && period.token.length() == 3 && Chars.isQuoted(period.token)
+                ? TimestampPrecisionUse.ofShift(period.token.charAt(1)) : TimestampPrecisionUse.DEPENDENT;
     }
 
     private static class TimestampAddConstConstVar extends TimestampFunction implements UnaryFunction, MonotonicTimestampFunction {

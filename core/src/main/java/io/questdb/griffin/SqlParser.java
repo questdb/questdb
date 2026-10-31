@@ -585,8 +585,8 @@ public class SqlParser {
             throw SqlException.position(pos).put("delay cannot be negative");
         }
 
-        final int lengthSeconds = matViewPeriodLengthSeconds(length, lengthUnit, pos);
-        final int delaySeconds = matViewPeriodDelaySeconds(delay, delayUnit, pos);
+        final long lengthSeconds = matViewPeriodLengthSeconds(length, lengthUnit, pos);
+        final long delaySeconds = matViewPeriodDelaySeconds(delay, delayUnit, pos);
         if (delaySeconds >= lengthSeconds) {
             throw SqlException.position(pos).put("delay cannot be equal to or greater than length");
         }

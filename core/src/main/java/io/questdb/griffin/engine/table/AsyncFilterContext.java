@@ -26,19 +26,11 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameFilteredMemoryRecord;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.ParquetDecodeHint;
-import io.questdb.cairo.sql.SymbolTableSource;
-import io.questdb.cairo.vm.api.MemoryCARW;
-import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -46,34 +38,25 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
-import java.io.Closeable;
-
 /**
- * Shared filter and memory-pool infrastructure used by {@link AsyncGroupByAtom},
- * {@link AsyncGroupByNotKeyedAtom}, and {@link AsyncTopKAtom}.
+ * An {@link AsyncFilter} with the memory each worker slot filters its page frames in: a page frame memory pool, the
+ * list of the row ids that pass, the column addresses a JIT-compiled filter reads, and, where requested, a filtered
+ * memory record that reads the rows of a late-materialized frame.
  */
-public class AsyncFilterContext implements Closeable, Mutable {
-    private final ObjList<Function> bindVarFunctions;
-    private final MemoryCARW bindVarMemory;
-    private final CompiledFilter compiledFilter;
-    private final ClonedFunction filter = new ClonedFunction();
-    private final IntHashSet filterUsedColumnIndexes;
+public class AsyncFilterContext extends AsyncFilter implements Mutable {
     private final ObjList<PageFrameFilteredMemoryRecord> frameFilteredMemoryRecords;
     private final DirectLongList ownerAuxAddresses;
     private final DirectLongList ownerDataAddresses;
     private final DirectLongList ownerFilteredRows;
     private final PageFrameMemoryPool ownerMemoryPool;
     private final PageFrameFilteredMemoryRecord ownerPageFrameFilteredMemoryRecord;
-    private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
     private final ObjList<DirectLongList> perWorkerAuxAddresses;
     private final ObjList<DirectLongList> perWorkerDataAddresses;
     private final ObjList<DirectLongList> perWorkerFilteredRows;
     private final ObjList<PageFrameMemoryPool> perWorkerMemoryPools;
-    private final ObjList<SelectivityStats> perWorkerSelectivityStats;
 
     /**
-     * Takes the filter and bind variable resources of {@code resources}; a consumer of the filter of its page frames
-     * reads no count-only filter.
+     * Takes the filter and bind variable resources of {@code resources}, as {@link AsyncFilter} does.
      */
     public AsyncFilterContext(
             CairoConfiguration configuration,
@@ -83,45 +66,12 @@ public class AsyncFilterContext implements Closeable, Mutable {
             long ownerMemoryPoolMaxBytes,
             long perWorkerMemoryPoolMaxBytes
     ) {
-        this(
-                configuration,
-                resources.takeCompiledFilter(),
-                resources.takeBindVarMemory(),
-                resources.takeBindVarFunctions(),
-                resources.takeFilter(),
-                resources.getFilterUsedColumnIndexes(),
-                resources.takePerWorkerFilters(),
-                slotCount,
-                filteredMemoryRecordCount,
-                ownerMemoryPoolMaxBytes,
-                perWorkerMemoryPoolMaxBytes
-        );
-    }
-
-    private AsyncFilterContext(
-            CairoConfiguration configuration,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function ownerFilter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
-            int slotCount,
-            int filteredMemoryRecordCount,
-            long ownerMemoryPoolMaxBytes,
-            long perWorkerMemoryPoolMaxBytes
-    ) {
-        this.compiledFilter = compiledFilter;
-        this.bindVarMemory = bindVarMemory;
-        this.bindVarFunctions = bindVarFunctions;
-        filter.setFunction(ownerFilter);
-        filter.setPerWorkerFunctions(perWorkerFilters);
-        this.filterUsedColumnIndexes = filterUsedColumnIndexes;
-
+        super(resources, slotCount);
+        final boolean isCompiled = getCompiledFilter() != null;
         try {
             ownerMemoryPool = new PageFrameMemoryPool(configuration, ownerMemoryPoolMaxBytes);
             ownerFilteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
-            if (compiledFilter != null) {
+            if (isCompiled) {
                 ownerDataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
                 ownerAuxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
             } else {
@@ -133,15 +83,13 @@ public class AsyncFilterContext implements Closeable, Mutable {
             perWorkerFilteredRows = new ObjList<>(slotCount);
             perWorkerDataAddresses = new ObjList<>(slotCount);
             perWorkerAuxAddresses = new ObjList<>(slotCount);
-            perWorkerSelectivityStats = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
                 perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(configuration, perWorkerMemoryPoolMaxBytes));
                 perWorkerFilteredRows.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD));
-                if (compiledFilter != null) {
+                if (isCompiled) {
                     perWorkerDataAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
                     perWorkerAuxAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
                 }
-                perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
             }
 
             if (filteredMemoryRecordCount > 0) {
@@ -162,12 +110,9 @@ public class AsyncFilterContext implements Closeable, Mutable {
 
     @Override
     public void clear() {
-        Throwable failure = filter.cursorClosed(null);
-        failure = Function.cursorClosed(failure, bindVarFunctions);
+        final Throwable failure = cursorClosed(null);
         Misc.free(ownerMemoryPool);
         Misc.freeObjListAndKeepObjects(perWorkerMemoryPools);
-        ownerSelectivityStats.clear();
-        Misc.clearObjList(perWorkerSelectivityStats);
         // Shrink the row-id and column-address lists back to initial capacity,
         // mirroring the per-task reset in PageFrameReduceTask.clear(). Under a JIT
         // filter the row-id lists grow to a full page frame (up to
@@ -183,13 +128,13 @@ public class AsyncFilterContext implements Closeable, Mutable {
         CairoException.rethrowCleanupFailure(failure);
     }
 
+    /**
+     * Frees the filter, see {@link AsyncFilter#close(Throwable)}, and the memory of every worker slot, folding each
+     * failure into {@code cleanupFailure}, which it returns.
+     */
     @Override
-    public void close() {
-        Throwable cleanupFailure = null;
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, compiledFilter);
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, bindVarMemory);
-        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, bindVarFunctions);
-        cleanupFailure = filter.close(cleanupFailure);
+    public Throwable close(@Nullable Throwable cleanupFailure) {
+        cleanupFailure = super.close(cleanupFailure);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerMemoryPool);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerMemoryPools);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerFilteredRows);
@@ -199,8 +144,7 @@ public class AsyncFilterContext implements Closeable, Mutable {
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerAuxAddresses);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerAuxAddresses);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, frameFilteredMemoryRecords);
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerPageFrameFilteredMemoryRecord);
-        CairoException.rethrowCleanupFailure(cleanupFailure);
+        return Misc.freeBestEffort(cleanupFailure, ownerPageFrameFilteredMemoryRecord);
     }
 
     public DirectLongList getAuxAddresses(int slotId) {
@@ -210,31 +154,11 @@ public class AsyncFilterContext implements Closeable, Mutable {
         return perWorkerAuxAddresses.getQuick(slotId);
     }
 
-    public ObjList<Function> getBindVarFunctions() {
-        return bindVarFunctions;
-    }
-
-    public MemoryCARW getBindVarMemory() {
-        return bindVarMemory;
-    }
-
-    public CompiledFilter getCompiledFilter() {
-        return compiledFilter;
-    }
-
     public DirectLongList getDataAddresses(int slotId) {
         if (slotId == -1) {
             return ownerDataAddresses;
         }
         return perWorkerDataAddresses.getQuick(slotId);
-    }
-
-    public Function getFilter(int slotId) {
-        return filter.get(slotId);
-    }
-
-    public @Nullable IntHashSet getFilterUsedColumnIndexes() {
-        return filterUsedColumnIndexes;
     }
 
     public DirectLongList getFilteredRows(int slotId) {
@@ -266,21 +190,6 @@ public class AsyncFilterContext implements Closeable, Mutable {
         return perWorkerMemoryPools;
     }
 
-    public SelectivityStats getSelectivityStats(int slotId) {
-        if (slotId == -1) {
-            return ownerSelectivityStats;
-        }
-        return perWorkerSelectivityStats.getQuick(slotId);
-    }
-
-    public void initFilters(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
-        filter.init(symbolTableSource, executionContext);
-        if (bindVarFunctions != null) {
-            Function.init(bindVarFunctions, symbolTableSource, executionContext, null);
-            AsyncFilterUtils.prepareBindVarMemory(executionContext, symbolTableSource, bindVarFunctions, bindVarMemory);
-        }
-    }
-
     public void initMemoryPools(PageFrameAddressCache pageFrameAddressCache, MemoryTracker memoryTracker) {
         initMemoryPools(pageFrameAddressCache, memoryTracker, ParquetDecodeHint.MONOTONIC);
     }
@@ -293,28 +202,6 @@ public class AsyncFilterContext implements Closeable, Mutable {
             pool.setMemoryTracker(memoryTracker);
             pool.of(pageFrameAddressCache, ParquetDecodeHint.MONOTONIC);
         }
-    }
-
-    public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame) {
-        if (!isParquetFrame) {
-            return false;
-        }
-        if (filterUsedColumnIndexes == null || filterUsedColumnIndexes.size() == 0) {
-            return false;
-        }
-        return getSelectivityStats(slotId).shouldUseLateMaterialization();
-    }
-
-    public void toPlan(PlanSink sink) {
-        sink.val(filter.getFunction());
-    }
-
-    /**
-     * Rewinds the filter and its clones. A cursor that dispatches its page frames again after its own {@code toTop()}
-     * calls this; one that re-reads what its first pass built does not.
-     */
-    public void toTop() {
-        filter.toTop();
     }
 
     private static void resetCapacity(@Nullable DirectLongList list) {

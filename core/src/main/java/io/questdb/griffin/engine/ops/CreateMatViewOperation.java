@@ -45,23 +45,23 @@ import org.jetbrains.annotations.Nullable;
 
 public interface CreateMatViewOperation extends TableStructure, Operation {
 
-    static int matViewPeriodDelaySeconds(int delay, char delayUnit, int pos) throws SqlException {
+    static long matViewPeriodDelaySeconds(int delay, char delayUnit, int pos) throws SqlException {
         return switch (delayUnit) {
             case 's' -> delay;
-            case 'm' -> delay * 60;
-            case 'h' -> delay * 60 * 60;
-            case 'd' -> delay * 24 * 60 * 60;
+            case 'm' -> delay * 60L;
+            case 'h' -> delay * 60L * 60;
+            case 'd' -> delay * 24L * 60 * 60;
             default -> throw SqlException.position(pos).put("unsupported delay unit: ").put(delay).put(delayUnit)
                     .put(", supported units are 's', 'm', 'h', 'd'");
         };
     }
 
-    static int matViewPeriodLengthSeconds(int length, char lengthUnit, int pos) throws SqlException {
+    static long matViewPeriodLengthSeconds(int length, char lengthUnit, int pos) throws SqlException {
         return switch (lengthUnit) {
             case 's' -> length;
-            case 'm' -> length * 60;
-            case 'h' -> length * 60 * 60;
-            case 'd' -> length * 24 * 60 * 60;
+            case 'm' -> length * 60L;
+            case 'h' -> length * 60L * 60;
+            case 'd' -> length * 24L * 60 * 60;
             default -> throw SqlException.position(pos).put("unsupported length unit: ").put(length).put(lengthUnit)
                     .put(", supported units are 's', 'm', 'h', 'd'");
         };
@@ -92,8 +92,37 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
         }
     }
 
+    /**
+     * The length of a PERIOD (SAMPLE BY INTERVAL) refresh, which aligns the period to the SAMPLE BY bucket: the
+     * sampling interval {@code samplingInterval}, clamped to INT.
+     */
+    static int samplePeriodLength(long samplingInterval) {
+        return (int) Math.min(samplingInterval, Integer.MAX_VALUE);
+    }
+
+    /**
+     * The start of the timer of a PERIOD (SAMPLE BY INTERVAL) refresh, see {@link #periodTimerStartUs}: validates the
+     * {@link #samplePeriodLength length} of {@code samplingInterval} {@code samplingIntervalUnit}, the SAMPLE BY time
+     * zone {@code timeZone}, which the period starts in, and the SAMPLE BY offset {@code timeZoneOffset}, failing at
+     * {@code pos}.
+     */
+    static long samplePeriodTimerStartUs(
+            MicrosecondClock clock,
+            long samplingInterval,
+            char samplingIntervalUnit,
+            @Nullable CharSequence timeZone,
+            @Nullable CharSequence timeZoneOffset,
+            int pos
+    ) throws SqlException {
+        final int length = samplePeriodLength(samplingInterval);
+        validateMatViewPeriodLength(length, samplingIntervalUnit, pos);
+        final TimeZoneRules rules = periodTimeZoneRules(timeZone, pos);
+        validatePeriodSampleByOffset(timeZoneOffset, pos);
+        return periodTimerStartUs(clock, length, samplingIntervalUnit, rules, pos);
+    }
+
     static void validateMatViewPeriodLength(int length, char lengthUnit, int pos) throws SqlException {
-        final int lengthSeconds = matViewPeriodLengthSeconds(length, lengthUnit, pos);
+        final long lengthSeconds = matViewPeriodLengthSeconds(length, lengthUnit, pos);
         if (lengthSeconds > 24 * 60 * 60) {
             throw SqlException.position(pos).put("maximum supported length interval is 24 hours: ").put(length).put(lengthUnit);
         }

@@ -2819,7 +2819,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         char everyUnit = 0;
                         long timerStartUs = Numbers.LONG_NULL;
                         String timerTimeZone = null;
-                        TimeZoneRules tzRulesMicros = null;
                         int length = 0;
                         char lengthUnit = 0;
                         int delay = 0;
@@ -2840,18 +2839,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
 
                         if (tok != null && isPeriodKeyword(tok)) {
-                            final int lengthPosition;
                             expectKeyword(lexer, "(");
                             tok = expectToken(lexer, "'length' or 'sample'");
                             if (isLengthKeyword(tok)) {
                                 // REFRESH ... PERIOD(LENGTH <interval> [TIME ZONE '<timezone>'] [DELAY <interval>])
                                 tok = expectToken(lexer, "LENGTH interval");
-                                lengthPosition = lexer.lastTokenPosition();
+                                final int lengthPosition = lexer.lastTokenPosition();
                                 length = CommonUtils.getStrideMultiple(tok, lengthPosition);
                                 lengthUnit = CommonUtils.getStrideUnit(tok, lengthPosition);
                                 validateMatViewPeriodLength(length, lengthUnit, lengthPosition);
                                 tok = expectToken(lexer, "'time zone' or 'delay' or ')'");
 
+                                TimeZoneRules tzRulesMicros = null;
                                 if (isTimeKeyword(tok)) {
                                     expectKeyword(lexer, "zone");
                                     tok = expectToken(lexer, "TIME ZONE name");
@@ -2870,6 +2869,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                     SqlParser.validateMatViewPeriodDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
                                     tok = expectToken(lexer, "')'");
                                 }
+                                timerStartUs = periodTimerStartUs(configuration.getMicrosecondClock(), length, lengthUnit, tzRulesMicros, lengthPosition);
                             } else if (isSampleKeyword(tok)) {
                                 // REFRESH ... PERIOD(SAMPLE BY INTERVAL)
                                 // Align the period to the SAMPLE BY bucket.
@@ -2877,18 +2877,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 expectKeyword(lexer, "interval");
                                 tok = expectToken(lexer, "')'");
 
-                                lengthPosition = lexer.lastTokenPosition();
-                                length = (int) Math.min(viewDefinition.getSamplingInterval(), Integer.MAX_VALUE);
+                                final int lengthPosition = lexer.lastTokenPosition();
+                                length = samplePeriodLength(viewDefinition.getSamplingInterval());
                                 lengthUnit = viewDefinition.getSamplingIntervalUnit();
-                                validateMatViewPeriodLength(length, lengthUnit, lengthPosition);
                                 timerTimeZone = viewDefinition.getTimeZone();
-                                tzRulesMicros = periodTimeZoneRules(timerTimeZone, lengthPosition);
-                                validatePeriodSampleByOffset(viewDefinition.getTimeZoneOffset(), lengthPosition);
+                                timerStartUs = samplePeriodTimerStartUs(configuration.getMicrosecondClock(), viewDefinition.getSamplingInterval(), lengthUnit,
+                                        timerTimeZone, viewDefinition.getTimeZoneOffset(), lengthPosition);
                             } else {
                                 throw SqlException.position(lexer.lastTokenPosition()).put("'length' or 'sample' expected");
                             }
-
-                            timerStartUs = periodTimerStartUs(configuration.getMicrosecondClock(), length, lengthUnit, tzRulesMicros, lengthPosition);
 
                             if (!Chars.equals(tok, ')')) {
                                 throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");

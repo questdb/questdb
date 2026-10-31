@@ -172,6 +172,11 @@ public abstract sealed class GroupingPlan extends UnaryPlan permits AggregatePla
         return hasKeySpellingKept;
     }
 
+    /**
+     * Makes the node a grouping of the rows of {@code input}.
+     */
+    public abstract GroupingPlan of(LogicalPlan input, int position);
+
     public void setBucketKeyIndex(int bucketKeyIndex) {
         this.bucketKeyIndex = bucketKeyIndex;
     }
@@ -217,5 +222,7 @@ public abstract sealed class GroupingPlan extends UnaryPlan permits AggregatePla
         PlanReads.expressions(groupingExpressions, visitor);
         PlanReads.functions(aggregates, visitor);
         timestampColumnId = PlanReads.columnId(timestampColumnId, -1, visitor);
+        offset = PlanReads.expression(offset, visitor);
+        timezone = PlanReads.expression(timezone, visitor);
     }
 }

@@ -113,18 +113,16 @@ final class OperatorPlanning implements Mutable {
     private final ObjList<JoinInput> generatedInputs = new ObjList<>();
     private final HashJoinAggregationPlanning hashJoinPlanning;
     private final IntList readIds;
-    private final IntList readOrder;
     private final ObjList<LogicalPlan> undecidedMasters = new ObjList<>();
     private final ObjList<JoinInput> undecidedSteps;
     private int frameInputLo;
     private boolean isFullFatJoins;
 
-    OperatorPlanning(CairoConfiguration configuration, OptimiserContext context, PlanNodePools planNodes, IntList readOrder,
-                     IntList readIds, ObjList<JoinInput> undecidedSteps) {
+    OperatorPlanning(CairoConfiguration configuration, OptimiserContext context, PlanNodePools planNodes, IntList readIds,
+                     ObjList<JoinInput> undecidedSteps) {
         this.configuration = configuration;
         this.context = context;
         this.hashJoinPlanning = new HashJoinAggregationPlanning(context, planNodes);
-        this.readOrder = readOrder;
         this.readIds = readIds;
         this.undecidedSteps = undecidedSteps;
     }
@@ -1106,8 +1104,8 @@ final class OperatorPlanning implements Mutable {
     /**
      * A step joins in parallel when it reads the page frames of the master, or steals the master's parallel filter,
      * its aggregate functions support parallelism and its slave serves time frames. A step whose filter is constant
-     * false null-extends the master instead, keeping its page frames for the next step; a step that joins leaves
-     * neither page frames nor a filter to the next.
+     * false null-extends the master instead, keeping its page frames for the next step when it pads with NULL, see
+     * {@link WindowJoinStep#isNullPadding}; a step that joins leaves neither page frames nor a filter to the next.
      */
     private void planWindowJoin(WindowJoinPlan windowJoin) throws SqlException {
         final LogicalPlan master = windowJoin.getMaster();
@@ -1124,6 +1122,7 @@ final class OperatorPlanning implements Mutable {
             validateTimeSeriesOrders(master, step.getSlave(), step.getPosition());
             validateTimestampAggregates(step.getAggregates(), step.getScope(), masterTimestampIndex, false);
             if (step.isNullExtending()) {
+                hasPageFrames &= step.isNullPadding();
                 isFilterStolen = false;
                 continue;
             }
@@ -1758,9 +1757,6 @@ final class OperatorPlanning implements Mutable {
             case SampleByPlan sample -> planSampleBy(sample);
             case FillPlan fill -> planFill(fill);
             case LatestByPlan latest -> planLatestBy(latest);
-            case ProjectPlan project when PlanToFactoryRules.isWindowJoinTimestampDroppable(project)
-                    && !PlanToFactoryRules.isWindowJoinTimestampKept(project, (WindowJoinPlan) project.getChild(), readOrder, readIds) ->
-                    project.markTimestampDropped();
             default -> {
             }
         }

@@ -53,11 +53,14 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     @Test
     public void testCreateAsSelectCastRejectsPairNoCopierConverts() throws Exception {
         assertMemoryLeak(() -> {
-            final String ctas = "CREATE TABLE dest AS (SELECT x::int i, x l, x::double d, x::long256 h, "
+            final String ctas = "CREATE TABLE dest AS (SELECT x::int i, x l, rnd_float() f, x::double d, x::date dt, x::timestamp t, x::long256 h, "
                     + "'11111111-1111-1111-1111-111111111111'::uuid u, ##101 g FROM long_sequence(1)), CAST(";
             assertQuery(ctas + "i AS CHAR)").fails(ctas.length(), "unsupported cast [column=i, from=INT, to=CHAR]");
             assertQuery(ctas + "l AS CHAR)").fails(ctas.length(), "unsupported cast [column=l, from=LONG, to=CHAR]");
+            assertQuery(ctas + "f AS CHAR)").fails(ctas.length(), "unsupported cast [column=f, from=FLOAT, to=CHAR]");
             assertQuery(ctas + "d AS CHAR)").fails(ctas.length(), "unsupported cast [column=d, from=DOUBLE, to=CHAR]");
+            assertQuery(ctas + "dt AS CHAR)").fails(ctas.length(), "unsupported cast [column=dt, from=DATE, to=CHAR]");
+            assertQuery(ctas + "t AS CHAR)").fails(ctas.length(), "unsupported cast [column=t, from=TIMESTAMP, to=CHAR]");
             assertQuery(ctas + "h AS UUID)").fails(ctas.length(), "unsupported cast [column=h, from=LONG256, to=UUID]");
             assertQuery(ctas + "u AS IPV4)").fails(ctas.length(), "unsupported cast [column=u, from=UUID, to=IPv4]");
             assertQuery(ctas + "g AS GEOHASH(1c))").fails(ctas.length(), "unsupported cast [column=g, from=GEOHASH(3b), to=GEOHASH(1c)]");

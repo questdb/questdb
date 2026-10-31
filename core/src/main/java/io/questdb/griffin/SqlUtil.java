@@ -1764,11 +1764,16 @@ public class SqlUtil {
     }
 
     public static boolean isZeroOnEmptyAggregate(ExpressionNode node) {
-        return node != null
-                && node.type == ExpressionNode.FUNCTION
-                && (Chars.equalsIgnoreCase(node.token, "count")
-                || Chars.equalsIgnoreCase(node.token, "count_distinct")
-                || Chars.equalsIgnoreCase(node.token, "approx_count_distinct"));
+        return node != null && node.type == ExpressionNode.FUNCTION && isZeroOnEmptyAggregate(node.token);
+    }
+
+    /**
+     * Whether the aggregate function of that name reads zero over no rows rather than NULL: the counts.
+     */
+    public static boolean isZeroOnEmptyAggregate(CharSequence name) {
+        return Chars.equalsIgnoreCase(name, "count")
+                || Chars.equalsIgnoreCase(name, "count_distinct")
+                || Chars.equalsIgnoreCase(name, "approx_count_distinct");
     }
 
     public static ExpressionNode nextExpr(ObjectPool<ExpressionNode> pool, int exprNodeType, CharSequence token, int position) {

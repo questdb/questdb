@@ -24,9 +24,11 @@
 
 package io.questdb.griffin;
 
+import io.questdb.std.datetime.microtime.Micros;
+
 /**
  * How a function's value depends on the precision of its TIMESTAMP argument, see
- * {@link FunctionFactory#getTimestampPrecisionUse()}.
+ * {@link FunctionFactory#getTimestampPrecisionUse(io.questdb.griffin.model.ExpressionNode)}.
  */
 public enum TimestampPrecisionUse {
     /**
@@ -40,5 +42,25 @@ public enum TimestampPrecisionUse {
     /**
      * The value is a timestamp of the same instant at every precision, typed at the argument's precision.
      */
-    PRESERVING
+    PRESERVING;
+
+    /**
+     * The use of a call that floors its TIMESTAMP argument to the epoch-aligned grid of {@code stride} constant time
+     * units {@code unit}: {@link #PRESERVING} for a grid of nanoseconds whose stride divides a microsecond or is a
+     * whole number of microseconds, which floors an instant to the same instant at microsecond and at nanosecond
+     * precision, otherwise as {@link #ofShift} for the unit.
+     */
+    public static TimestampPrecisionUse ofFloor(long stride, char unit) {
+        return unit == 'n' && stride > 0 && (Micros.MICRO_NANOS % stride == 0 || stride % Micros.MICRO_NANOS == 0) ? PRESERVING : ofShift(unit);
+    }
+
+    /**
+     * The use of a call that shifts its TIMESTAMP argument by a number of constant time units {@code unit}:
+     * {@link #PRESERVING} for a microsecond or a longer unit, which every precision counts exactly, and
+     * {@link #DEPENDENT} for a nanosecond, as microsecond precision truncates a number of nanoseconds that is not a
+     * whole number of microseconds.
+     */
+    public static TimestampPrecisionUse ofShift(char unit) {
+        return unit != 'n' ? PRESERVING : DEPENDENT;
+    }
 }

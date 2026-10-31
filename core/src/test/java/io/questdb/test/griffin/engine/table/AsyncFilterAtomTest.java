@@ -131,6 +131,9 @@ public class AsyncFilterAtomTest extends AbstractCairoTest {
         columnTypes.add(0);
         return new AsyncFilterAtom(
                 configuration,
+                null,
+                null,
+                null,
                 filter,
                 filterColumns,
                 perWorkerFilters,

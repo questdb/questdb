@@ -138,8 +138,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 sink.meta("skip-rows-max").val(cursor.baseRowsToSkip);
                 sink.meta("take-rows-max").val(cursor.baseRowsToTake);
             } else {
-                final long lo = bounds.getLo();
-                final long hi = bounds.getHi();
+                final long lo = bounds.getValues().getLo();
+                final long hi = bounds.getValues().getHi();
                 if (lo < 0) {
                     sink.meta("skip-rows").val("baseRows").val(lo);
                     sink.meta("take-rows-max").val(hi - lo);
@@ -350,10 +350,13 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         private void ensureBoundsResolved() {
             if (!areBoundsResolved()) {
+                final long lo = bounds.getValues().getLo();
+                if (masterSuffixLimit == null && lo < 0 && lo != Numbers.LONG_NULL) {
+                    base.expectLastRows(-lo);
+                }
                 // If baseSize was cheap to get, bounds would already have been sorted out in of().
                 // Now it's time to use the heavy-handed approach to getting baseSize.
                 calculateBaseSize();
-                final long lo = bounds.getLo();
                 if (masterSuffixLimit != null && masterSuffixLimit.isReadingLastRows(lo) && baseSize < -lo) {
                     readOlderMasterRows();
                 }
@@ -385,7 +388,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
          * which the bounds trim to the last {@code -lo}.
          */
         private void readOlderMasterRows() {
-            final long rowCount = -bounds.getLo();
+            final long rowCount = -bounds.getValues().getLo();
             final long ringCapacity = rowCount + 1;
             if (masterRows == null) {
                 masterRows = new DirectLongList(rowCount, MemoryTag.NATIVE_DEFAULT);
@@ -467,8 +470,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         }
 
         private void resolveBoundsCheap() {
-            final long lo = bounds.getLo();
-            final long hi = bounds.getHi();
+            final long lo = bounds.getValues().getLo();
+            final long hi = bounds.getValues().getHi();
             if (lo == hi) {
                 // There's either a single zero argument (LIMIT 0) or two equal arguments (LIMIT n, n).
                 // In both cases the result is an empty cursor.
@@ -485,8 +488,8 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         private void resolveBoundsFromNegativeArgs() {
             assert baseSize >= 0 : "baseSize < 0";
-            final long lo = bounds.getLo();
-            final long hi = bounds.getHi();
+            final long lo = bounds.getValues().getLo();
+            final long hi = bounds.getValues().getHi();
             long startInclusive, endExclusive;
             if (lo < 0) {
                 startInclusive = baseSize + lo;
@@ -518,9 +521,16 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
 
         public void of(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
             this.base = base;
-            this.circuitBreaker = executionContext.getCircuitBreaker();
-
             bounds.init(base, executionContext);
+            ofResolvedBounds(base, executionContext);
+        }
+
+        /**
+         * Opens the cursor over {@code base} at the bounds their owner resolved last, see {@link LimitBounds#init}.
+         */
+        public void ofResolvedBounds(RecordCursor base, SqlExecutionContext executionContext) {
+            this.base = base;
+            this.circuitBreaker = executionContext.getCircuitBreaker();
 
             baseSize = -1;
             size = -1;
@@ -529,12 +539,12 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             remaining = -1;
             isBaseAtFirstRow = false;
             counter.clear();
-            final long lo = bounds.getLo();
+            final long lo = bounds.getValues().getLo();
             // A negative LIMIT over a master suffix resolves its bounds once the join runs.
             if (masterSuffixLimit == null || lo >= 0) {
                 resolveBoundsCheap();
             }
-            if (lo >= 0 && bounds.getHi() > lo) {
+            if (lo >= 0 && bounds.getValues().getHi() > lo) {
                 base.expectLimitedIteration();
             }
         }

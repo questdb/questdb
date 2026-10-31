@@ -393,6 +393,35 @@ public class RecordToRowCopierUtilsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopierRejectsInconvertibleTargetByFullType() {
+        final int[] fromTypes = {ColumnType.DATE, ColumnType.DOUBLE, ColumnType.FLOAT, ColumnType.SYMBOL};
+        final int[] toTypes = {ColumnType.getGeoHashTypeWithBits(25), ColumnType.getDecimalType(10, 2)};
+        for (int copierType : COPIER_TYPES) {
+            setCopierType(copierType);
+            for (int from : fromTypes) {
+                for (int to : toTypes) {
+                    final ArrayColumnTypes fromColumnTypes = new ArrayColumnTypes();
+                    final GenericRecordMetadata toMetadata = new GenericRecordMetadata();
+                    final ListColumnFilter mapping = new ListColumnFilter();
+                    fromColumnTypes.add(from);
+                    toMetadata.add(new TableColumnMetadata("x", to));
+                    mapping.add(1);
+                    try {
+                        RecordToRowCopierUtils.generateCopier(new BytecodeAssembler(), fromColumnTypes, toMetadata, mapping, configuration)
+                                .copy(sqlExecutionContext, NULL_RECORD, new RowAsserter());
+                        Assert.fail("expected the copier to reject " + ColumnType.nameOf(from) + " -> " + ColumnType.nameOf(to));
+                    } catch (CairoException e) {
+                        TestUtils.assertEquals(
+                                "inconvertible types: " + ColumnType.nameOf(from) + " -> " + ColumnType.nameOf(to),
+                                e.getFlyweightMessage()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
     public void testCopierShortToDecimal() {
         RecordToRowCopier copier = generateCopier(ColumnType.SHORT, ColumnType.getDecimalType(16, 3));
         copier.copy(sqlExecutionContext, getLongRecord(ColumnType.SHORT, 1234), getLongAsserter(1234000));

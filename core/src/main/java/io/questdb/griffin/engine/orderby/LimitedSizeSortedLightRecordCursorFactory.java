@@ -124,8 +124,9 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     }
 
     /**
-     * Resolves the bounds, then builds the chain that keeps the {@link LimitBounds#getLimit} rows of the order, and
-     * the cursor that skips the {@link LimitBounds#getSkipFirst} and {@link LimitBounds#getSkipLast} rows of them.
+     * Resolves the bounds, then builds the chain that keeps the {@link LimitBounds.Values#getLimit} rows of the
+     * order, and the cursor that skips the {@link LimitBounds.Values#getSkipFirst} and
+     * {@link LimitBounds.Values#getSkipLast} rows of them.
      */
     public void initializeLimitedSizeCursor(SqlExecutionContext executionContext, RecordCursor baseCursor) throws SqlException {
         bounds.init(baseCursor, executionContext);
@@ -143,7 +144,7 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
                 false
         );
 
-        if (timestampIndex == -1 || !bounds.isFirstN()) {
+        if (timestampIndex == -1 || !bounds.getValues().isFirstN()) {
             this.cursor = new LimitedSizeSortedLightRecordCursor(chain, comparator, rankMaps);
         } else {
             this.cursor = new LimitedSizePartiallySortedLightRecordCursor(chain, comparator, timestampIndex, rankMaps);
@@ -196,8 +197,9 @@ public class LimitedSizeSortedLightRecordCursorFactory extends AbstractRecordCur
     }
 
     private void updateLimits() {
-        chain.updateLimits(bounds.isFirstN(), bounds.getLimit());
-        ((DynamicLimitCursor) cursor).updateLimits(bounds.isFirstN(), bounds.getLimit(), bounds.getSkipFirst(), bounds.getSkipLast());
+        final LimitBounds.Values values = bounds.getValues();
+        chain.updateLimits(values.isFirstN(), values.getLimit());
+        ((DynamicLimitCursor) cursor).updateLimits(values.isFirstN(), values.getLimit(), values.getSkipFirst(), values.getSkipLast());
     }
 
     @Override

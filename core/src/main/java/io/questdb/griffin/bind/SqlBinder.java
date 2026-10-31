@@ -79,7 +79,6 @@ import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
-import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationKind;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
@@ -331,6 +330,22 @@ public final class SqlBinder implements Mutable {
     }
 
     /**
+     * The operand {@code i} of the call or operator {@code node}, see {@link #operandCount}; null where the node has
+     * no left or right operand.
+     */
+    private static ExpressionNode operandAt(ExpressionNode node, int i) {
+        return node.paramCount < 3 ? (i == 0 ? node.lhs : node.rhs) : node.args.getQuick(i);
+    }
+
+    /**
+     * The number of operands of the call or operator {@code node}: its left and right operand below three
+     * parameters, otherwise its arguments.
+     */
+    private static int operandCount(ExpressionNode node) {
+        return node.paramCount < 3 ? 2 : node.args.size();
+    }
+
+    /**
      * The position of a projection column: that of its expression, or, for a sum the projection selects whole and
      * computes from the sum and count of its column, see {@link LogicalPlans#normalisableSumOperation}, that of the
      * sum's operation, which roots the computed value.
@@ -552,10 +567,11 @@ public final class SqlBinder implements Mutable {
         if (source.getSampleBy() != null) {
             ctx.retainImplicitTimestamp(sourcePlan);
         }
-        final boolean isSampleByCursor = source.getSampleBy() != null && SampleByBinder.requiresSampleByCursor(source);
-        final SampleByPlan sampleBy = isSampleByCursor ? sampleByBinder.bindSampleBy(model, source, sourcePlan, executionContext) : null;
-        final BoundExpression sampleByBucket = source.getSampleBy() == null || isSampleByCursor ? null
-                : sampleByBinder.bindSampleByBucket(model, source, sourcePlan, executionContext);
+        final GroupingPlan sampleBy = source.getSampleBy() == null ? null
+                : SampleByBinder.requiresSampleByCursor(source) ? sampleByBinder.bindSampleBy(model, source, sourcePlan, executionContext)
+                  : ctx.planNodes.aggregates.next();
+        final BoundExpression sampleByBucket = sampleBy instanceof AggregatePlan aggregate
+                ? sampleByBinder.bindSampleByBucket(model, source, sourcePlan, aggregate, executionContext) : null;
         bindScope.resetAliases();
         bindScope.projectionAliasIndexes.clear();
 
@@ -1057,11 +1073,9 @@ public final class SqlBinder implements Mutable {
      * {@link #isPrecisionExact}, and one is an instant.
      */
     private boolean hasInstantArgument(ExpressionNode call, boolean isTextExact, SqlExecutionContext executionContext) {
-        final ObjList<ExpressionNode> arguments = call.paramCount < 3 ? null : call.args;
-        final int argumentCount = arguments == null ? 2 : arguments.size();
         boolean hasInstant = false;
-        for (int i = 0; i < argumentCount; i++) {
-            final ExpressionNode argument = arguments == null ? (i == 0 ? call.lhs : call.rhs) : arguments.getQuick(i);
+        for (int i = 0, n = operandCount(call); i < n; i++) {
+            final ExpressionNode argument = operandAt(call, i);
             if (argument != null) {
                 if (isInstant(argument, isTextExact, executionContext)) {
                     hasInstant = true;
@@ -1120,14 +1134,13 @@ public final class SqlBinder implements Mutable {
         if (node.type != ExpressionNode.FUNCTION && node.type != ExpressionNode.OPERATION) {
             return true;
         }
-        final ObjList<ExpressionNode> operands = node.paramCount < 3 ? null : node.args;
-        final int operandCount = operands == null ? 2 : operands.size();
+        final int operandCount = operandCount(node);
         if (ComparisonOperator.of(Chars.toString(node.token)) != null || SqlKeywords.isInKeyword(node.token)
                 || SqlKeywords.isBetweenKeyword(node.token)) {
             boolean isInstantCompared = false;
             boolean isTimestampCompared = true;
             for (int i = 0; i < operandCount; i++) {
-                final ExpressionNode operand = operands == null ? (i == 0 ? node.lhs : node.rhs) : operands.getQuick(i);
+                final ExpressionNode operand = operandAt(node, i);
                 if (operand != null) {
                     if (isInstant(operand, isTextExact, executionContext)) {
                         isInstantCompared = true;
@@ -1144,7 +1157,7 @@ public final class SqlBinder implements Mutable {
             return hasInstantArgument(node, isTextExact, executionContext);
         }
         for (int i = 0; i < operandCount; i++) {
-            if (!isPrecisionExact(operands == null ? (i == 0 ? node.lhs : node.rhs) : operands.getQuick(i), isTextExact, executionContext)) {
+            if (!isPrecisionExact(operandAt(node, i), isTextExact, executionContext)) {
                 return false;
             }
         }

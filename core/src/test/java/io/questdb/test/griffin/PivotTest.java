@@ -467,6 +467,29 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotConstantArgumentAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (grp SYMBOL, cat STRING)");
+            execute("""
+                    INSERT INTO data VALUES
+                        ('A', 'x'),
+                        ('A', 'x'),
+                        ('B', 'x'),
+                        ('B', 'y')
+                    """);
+
+            assertQuery("SELECT * FROM data PIVOT (bit_xor(5) AS b, bool_or(false) AS o FOR cat IN ('x', 'y') GROUP BY grp) ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            grp\tx_b\tx_o\ty_b\ty_o
+                            A\t0\tfalse\tnull\tfalse
+                            B\t5\tfalse\t5\tfalse
+                            """);
+        });
+    }
+
+    @Test
     public void testPivotDefaultNamingRules() throws Exception {
         assertQuery("""
                 trades PIVOT (

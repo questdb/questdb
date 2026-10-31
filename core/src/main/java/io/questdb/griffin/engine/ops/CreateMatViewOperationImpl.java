@@ -493,14 +493,12 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
 
         if (periodLength == -1) {
             // It's PERIOD (SAMPLE BY INTERVAL) which means that we need to align the period to the SAMPLE BY bucket.
-            periodLength = (int) Math.min(samplingInterval, Integer.MAX_VALUE);
+            periodLength = CreateMatViewOperation.samplePeriodLength(samplingInterval);
             periodLengthUnit = samplingIntervalUnit;
-            CreateMatViewOperation.validateMatViewPeriodLength(periodLength, periodLengthUnit, intervalPos);
             assert timerTimeZone == null;
             timerTimeZone = timeZone;
-            final TimeZoneRules rules = CreateMatViewOperation.periodTimeZoneRules(timerTimeZone, intervalPos);
-            CreateMatViewOperation.validatePeriodSampleByOffset(timeZoneOffset, intervalPos);
-            timerStartUs = CreateMatViewOperation.periodTimerStartUs(configuration.getMicrosecondClock(), periodLength, periodLengthUnit, rules, intervalPos);
+            timerStartUs = CreateMatViewOperation.samplePeriodTimerStartUs(configuration.getMicrosecondClock(), samplingInterval, samplingIntervalUnit,
+                    timeZone, timeZoneOffset, intervalPos);
         }
     }
 

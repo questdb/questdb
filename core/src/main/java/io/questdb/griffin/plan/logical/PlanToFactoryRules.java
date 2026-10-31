@@ -33,7 +33,6 @@ import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateConstructors;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunctionConstructor;
 import io.questdb.std.Chars;
-import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -406,57 +405,6 @@ public final class PlanToFactoryRules {
     }
 
     /**
-     * True when operator planning may drop the master's designated timestamp from the projection: a projection over a
-     * window join that the window join factory does not build, see {@link #isWindowJoinTimestampKept}.
-     */
-    public static boolean isWindowJoinTimestampDroppable(ProjectPlan project) {
-        return project.getChild() instanceof WindowJoinPlan && projectionFactory(project) != ProjectionFactory.WINDOW_JOIN;
-    }
-
-    /**
-     * True when a computing projection over the window join keeps the master's designated timestamp: the columns it
-     * reads, in the order the SELECT list names them, reach the master timestamp through distinct master columns
-     * alone, so that it sits at its position among the master columns the SELECT list orders. The order of the
-     * master's own output does not decide it. {@code order} and {@code readIds} are scratch lists.
-     */
-    public static boolean isWindowJoinTimestampKept(ProjectPlan project, WindowJoinPlan windowJoin, IntList order, IntList readIds) {
-        final OutputSchema input = project.getChild().getOutput();
-        final ObjList<BoundExpression> expressions = project.getExpressions();
-        order.clear();
-        for (int i = 0, n = expressions.size(); i < n; i++) {
-            final int position = expressions.getQuick(i).getPosition();
-            int index = order.size();
-            while (index > 0 && position < expressions.getQuick(order.getQuick(index - 1)).getPosition()) {
-                index--;
-            }
-            order.insert(index, i);
-        }
-        readIds.clear();
-        for (int i = 0, n = order.size(); i < n; i++) {
-            LogicalPlans.collectInputColumnIds(expressions.getQuick(order.getQuick(i)), input, readIds);
-        }
-        final OutputSchema master = windowJoin.getMaster().getOutput();
-        final int timestampIndex = master.getTimestampIndex();
-        if (timestampIndex < 0) {
-            return false;
-        }
-        final int timestampId = master.getColumnId(timestampIndex);
-        order.setAll(master.getColumnCount(), 0);
-        for (int i = 0, n = readIds.size(); i < n; i++) {
-            final int readId = readIds.getQuick(i);
-            if (readId == timestampId) {
-                return true;
-            }
-            final int masterIndex = master.getColumnIndexById(readId);
-            if (masterIndex < 0 || order.getQuick(masterIndex) != 0) {
-                return false;
-            }
-            order.setQuick(masterIndex, 1);
-        }
-        return false;
-    }
-
-    /**
      * True when the light cached window under the filter selects the filtered rows itself: the filter reads, at its
      * first position, the BOOLEAN result of the window's sole function, a row-selecting window function SUBSAMPLE
      * binds as its keep flag, which the projection above the filter drops.
@@ -605,7 +553,7 @@ public final class PlanToFactoryRules {
      * The designated timestamp of the factory of a projection over an input whose factory designates
      * {@code inputTimestampIndex}: the one it declares, else the column its requested order reaches when that column
      * is the input's timestamp, else the timestamp it selects, lost when that column only passes through an input
-     * that designates none, or when operator planning dropped it from a computing projection over a window join.
+     * that designates none.
      */
     public static int projectedTimestampIndex(ProjectPlan project, int inputTimestampIndex) {
         final LogicalPlan input = project.getChild();
@@ -618,7 +566,7 @@ public final class PlanToFactoryRules {
                 && (input.getOutput().getTimestampIndex() < 0 || timestamp.getColumnId() == input.getOutput().getTimestampColumnId())) {
             return -1;
         }
-        return project.isTimestampDropped() && isWindowJoinTimestampDroppable(project) ? -1 : timestampIndex;
+        return timestampIndex;
     }
 
     /**
@@ -706,18 +654,13 @@ public final class PlanToFactoryRules {
     }
 
     /**
-     * The designated timestamp a column-only projection over a window join keeps: the master timestamp at
-     * {@code timestampIndex}, while the projection selects only master columns, those below {@code splitIndex},
-     * before it.
+     * The designated timestamp a column-only projection over a window join keeps: the first position at which it
+     * selects the master timestamp, which the window join's {@code output} holds at {@code timestampIndex}.
      */
-    public static int windowJoinProjectionTimestampIndex(ProjectPlan projection, OutputSchema output, int timestampIndex, int splitIndex) {
+    public static int windowJoinProjectionTimestampIndex(ProjectPlan projection, OutputSchema output, int timestampIndex) {
         for (int i = 0, n = projection.getExpressions().size(); i < n; i++) {
-            final int index = output.getColumnIndexById(((ColumnExpression) projection.getExpressions().getQuick(i)).getColumnId());
-            if (index == timestampIndex) {
+            if (output.getColumnIndexById(((ColumnExpression) projection.getExpressions().getQuick(i)).getColumnId()) == timestampIndex) {
                 return i;
-            }
-            if (index >= splitIndex) {
-                return -1;
             }
         }
         return -1;

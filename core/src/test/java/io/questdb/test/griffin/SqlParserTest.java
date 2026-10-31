@@ -3087,6 +3087,21 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 55,
                 "maximum supported length interval is 24 hours: 1441m"
         );
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1000000h)",
+                55,
+                "maximum supported length interval is 24 hours: 1000000h"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 35791395m)",
+                55,
+                "maximum supported length interval is 24 hours: 35791395m"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 24856d)",
+                55,
+                "maximum supported length interval is 24 hours: 24856d"
+        );
     }
 
     @Test
@@ -3136,6 +3151,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertSyntaxError(
                 "create materialized view myview refresh period (length 24h time zone 'Europe/Sofia' delay 2d)",
                 90,
+                "delay cannot be equal to or greater than length"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1h delay 1000000h)",
+                64,
                 "delay cannot be equal to or greater than length"
         );
     }

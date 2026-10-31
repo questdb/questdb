@@ -36,6 +36,7 @@ import io.questdb.griffin.TimestampPrecisionUse;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
@@ -62,7 +63,12 @@ public class TimestampFloorFunctionFactory implements FunctionFactory, Monotonic
 
     @Override
     public TimestampPrecisionUse getTimestampPrecisionUse(ExpressionNode call) {
-        return TimestampPrecisionUse.PRESERVING;
+        final ExpressionNode unit = call.lhs;
+        if (unit.type != ExpressionNode.CONSTANT || unit.token.length() < 3 || !Chars.isQuoted(unit.token)) {
+            return TimestampPrecisionUse.DEPENDENT;
+        }
+        final int hi = unit.token.length() - 1;
+        return TimestampPrecisionUse.ofFloor(stride(unit.token, 1, hi), unit.token.charAt(hi - 1));
     }
 
     @Override
@@ -116,11 +122,19 @@ public class TimestampFloorFunctionFactory implements FunctionFactory, Monotonic
     }
 
     private static int stride(CharSequence str) {
-        if (str == null || str.length() < 2) {
+        return str == null ? 1 : stride(str, 0, str.length());
+    }
+
+    /**
+     * The stride of the unit spelling {@code str[lo, hi)}: the number before its unit letter, 1 without one and 0 for
+     * an invalid one.
+     */
+    private static int stride(CharSequence str, int lo, int hi) {
+        if (hi - lo < 2) {
             return 1;
         }
         try {
-            return Numbers.parseInt(str, 0, str.length() - 1);
+            return Numbers.parseInt(str, lo, hi - 1);
         } catch (NumericException e) {
             return 0;
         }

@@ -146,7 +146,6 @@ public final class PlanVerifier {
     public static final String PREDICATE_TYPE = "predicate is not BOOLEAN";
     public static final String PROJECT_COUNTS = "projection column reference counts are stale";
     public static final String PROJECT_SHAPE = "projection expression count differs from its output";
-    public static final String PROJECT_TIMESTAMP_DROP = "projection drops the timestamp outside a computing projection over a window join";
     public static final String PROJECT_TYPE = "projection output type differs from its expression";
     public static final String READ_UNCHECKED = "node reads an expression or column id its checks do not cover";
     public static final String SAMPLE_BY_ALGORITHM = "SAMPLE BY algorithm contradicts its fill";
@@ -609,6 +608,8 @@ public final class PlanVerifier {
             site = "SAMPLE BY timestamp";
             timestampColumn(input, aggregate.getTimestampColumnId());
         }
+        noColumnReads(aggregate.getOffset());
+        noColumnReads(aggregate.getTimezone());
         if (aggregate instanceof AggregatePlan plain) {
             if (plain.getSharedInputIds().size() != plain.getSharedSourceIds().size()) {
                 fail(SHARED_SOURCE_IDS);
@@ -619,8 +620,6 @@ public final class PlanVerifier {
             failIfViolated(PhysicalChoiceVerifier.sampleBy(sample, isAccessPathRequired));
             noColumnReads(sample.getFrom());
             noColumnReads(sample.getTo());
-            noColumnReads(sample.getOffset());
-            noColumnReads(sample.getTimezone());
             for (int i = 0, n = sample.getFillValues().size(); i < n; i++) {
                 noColumnReads(sample.getFillValues().getQuick(i));
             }
@@ -1003,9 +1002,6 @@ public final class PlanVerifier {
             if (project.getDistinctColumnCount() != distinctColumnCount || project.getDistinctWindowColumnCount() != distinctWindowColumnCount) {
                 fail(PROJECT_COUNTS);
             }
-        }
-        if (project.isTimestampDropped() && !PlanToFactoryRules.isWindowJoinTimestampDroppable(project)) {
-            fail(PROJECT_TIMESTAMP_DROP);
         }
     }
 

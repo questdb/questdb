@@ -64,6 +64,7 @@ import io.questdb.griffin.engine.join.HashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
@@ -81,6 +82,8 @@ import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.RostiAllocFacade;
@@ -110,19 +113,20 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
                         factory,
                         "base",
                         "cursor",
-                        "filter",
                         "frameSequence",
+                        "limitBounds",
                         "negativeLimitCursor",
                         "negativeLimitRows"
                 );
             });
             final Object cursor = allocate(Class.forName("io.questdb.griffin.engine.table.AsyncFilteredRecordCursor"));
             final CloseTrackingBooleanFunction filter = new CloseTrackingBooleanFunction(null);
-            final PageFrameSequence<CloseTrackingAtom> frameSequence = new PageFrameSequence<>(
+            final CloseTrackingBooleanFunction limitLoFunction = new CloseTrackingBooleanFunction(null);
+            final PageFrameSequence<AsyncFilterAtom> frameSequence = new PageFrameSequence<>(
                     engine,
                     engine.getConfiguration(),
                     engine.getMessageBus(),
-                    new CloseTrackingAtom(null, null),
+                    new AsyncFilterAtom(engine.getConfiguration(), null, null, null, filter, new IntHashSet(), null, new IntList(), false),
                     null,
                     null,
                     1,
@@ -134,8 +138,8 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
             final DirectLongList negativeLimitRows = new DirectLongList(2, MemoryTag.NATIVE_OFFLOAD);
             setField(AsyncFilteredRecordCursorFactory.class, factory, "base", base);
             setField(AsyncFilteredRecordCursorFactory.class, factory, "cursor", cursor);
-            setField(AsyncFilteredRecordCursorFactory.class, factory, "filter", filter);
             setField(AsyncFilteredRecordCursorFactory.class, factory, "frameSequence", frameSequence);
+            setField(AsyncFilteredRecordCursorFactory.class, factory, "limitBounds", new LimitBounds(limitLoFunction, null, 0));
             setField(AsyncFilteredRecordCursorFactory.class, factory, "negativeLimitCursor", negativeLimitCursor);
             setField(AsyncFilteredRecordCursorFactory.class, factory, "negativeLimitRows", negativeLimitRows);
 
@@ -143,6 +147,7 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
             Assert.assertEquals(1, callbackCount.get());
             Assert.assertEquals(1, base.getCloseCount());
             Assert.assertEquals(1, filter.closeCount);
+            Assert.assertEquals(1, limitLoFunction.closeCount);
         });
     }
 
@@ -262,13 +267,9 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
                         AsyncJitFilteredRecordCursorFactory.class,
                         factory,
                         "base",
-                        "bindVarFunctions",
-                        "bindVarMemory",
-                        "compiledCountOnlyFilter",
-                        "compiledFilter",
                         "cursor",
-                        "filter",
                         "frameSequence",
+                        "limitBounds",
                         "negativeLimitCursor",
                         "negativeLimitRows"
                 );
@@ -282,11 +283,23 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
             final CompiledFilter compiledFilter = new CompiledFilter();
             final Object cursor = allocate(Class.forName("io.questdb.griffin.engine.table.AsyncFilteredRecordCursor"));
             final CloseTrackingBooleanFunction filter = new CloseTrackingBooleanFunction(filterFailure);
-            final PageFrameSequence<CloseTrackingAtom> frameSequence = new PageFrameSequence<>(
+            final CloseTrackingBooleanFunction limitLoFunction = new CloseTrackingBooleanFunction(null);
+            final PageFrameSequence<AsyncJitFilteredRecordCursorFactory.AsyncJitFilterAtom> frameSequence = new PageFrameSequence<>(
                     engine,
                     engine.getConfiguration(),
                     engine.getMessageBus(),
-                    new CloseTrackingAtom(null, null),
+                    new AsyncJitFilteredRecordCursorFactory.AsyncJitFilterAtom(
+                            engine.getConfiguration(),
+                            filter,
+                            new IntHashSet(),
+                            null,
+                            compiledFilter,
+                            compiledCountOnlyFilter,
+                            bindVarMemory,
+                            bindVarFunctions,
+                            new IntList(),
+                            false
+                    ),
                     null,
                     null,
                     1,
@@ -297,13 +310,9 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
             ));
             final DirectLongList negativeLimitRows = new DirectLongList(2, MemoryTag.NATIVE_OFFLOAD);
             setField(AsyncJitFilteredRecordCursorFactory.class, factory, "base", base);
-            setField(AsyncJitFilteredRecordCursorFactory.class, factory, "bindVarFunctions", bindVarFunctions);
-            setField(AsyncJitFilteredRecordCursorFactory.class, factory, "bindVarMemory", bindVarMemory);
-            setField(AsyncJitFilteredRecordCursorFactory.class, factory, "compiledCountOnlyFilter", compiledCountOnlyFilter);
-            setField(AsyncJitFilteredRecordCursorFactory.class, factory, "compiledFilter", compiledFilter);
             setField(AsyncJitFilteredRecordCursorFactory.class, factory, "cursor", cursor);
-            setField(AsyncJitFilteredRecordCursorFactory.class, factory, "filter", filter);
             setField(AsyncJitFilteredRecordCursorFactory.class, factory, "frameSequence", frameSequence);
+            setField(AsyncJitFilteredRecordCursorFactory.class, factory, "limitBounds", new LimitBounds(limitLoFunction, null, 0));
             setField(AsyncJitFilteredRecordCursorFactory.class, factory, "negativeLimitCursor", negativeLimitCursor);
             setField(AsyncJitFilteredRecordCursorFactory.class, factory, "negativeLimitRows", negativeLimitRows);
 
@@ -312,13 +321,15 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
                 Assert.fail();
             } catch (RuntimeException e) {
                 Assert.assertSame(baseFailure, e);
-                Assert.assertArrayEquals(new Throwable[]{filterFailure, bindVarFailure}, e.getSuppressed());
+                Assert.assertArrayEquals(new Throwable[]{bindVarFailure}, e.getSuppressed());
+                Assert.assertArrayEquals(new Throwable[]{filterFailure}, bindVarFailure.getSuppressed());
             }
             factory.close();
             Assert.assertEquals(1, callbackCount.get());
             Assert.assertEquals(1, base.getCloseCount());
             Assert.assertEquals(1, bindVarFunction.closeCount);
             Assert.assertEquals(1, filter.closeCount);
+            Assert.assertEquals(1, limitLoFunction.closeCount);
         });
     }
 

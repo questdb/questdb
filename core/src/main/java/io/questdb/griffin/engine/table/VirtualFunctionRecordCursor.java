@@ -90,6 +90,11 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void expectLastRows(long rowCount) {
+        baseCursor.expectLastRows(rowCount);
+    }
+
+    @Override
     public void expectLimitedIteration() {
         baseCursor.expectLimitedIteration();
     }
