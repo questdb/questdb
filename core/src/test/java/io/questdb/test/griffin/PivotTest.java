@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
@@ -32,17 +33,24 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
+import io.questdb.griffin.engine.functions.constants.VarcharConstant;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -1364,6 +1372,16 @@ public class PivotTest extends AbstractSqlParserTest {
                 "SELECT * FROM pv ORDER BY grp",
                 "SELECT * FROM pv ORDER BY grp"
         );
+    }
+
+    @Test
+    public void testPivotSubqueryRejectsAdministrativeScalarInViewSelect() throws Exception {
+        assertViewPivotRejectsAdministrativeScalar("SELECT admin_scalar() FROM long_sequence(1)");
+    }
+
+    @Test
+    public void testPivotSubqueryRejectsAdministrativeScalarInViewWhere() throws Exception {
+        assertViewPivotRejectsAdministrativeScalar("SELECT 'a' FROM long_sequence(1) WHERE admin_scalar() = 'a'");
     }
 
     @Test
@@ -4470,6 +4488,72 @@ public class PivotTest extends AbstractSqlParserTest {
                     .expectSize()
                     .returns(PIVOT_RACE_RESULT);
             assertNothingBusy();
+        });
+    }
+
+    private void assertViewPivotRejectsAdministrativeScalar(String inQuery) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (cat VARCHAR, val INT)");
+            execute("INSERT INTO data VALUES ('a', 42)");
+            final String functionName = "admin_scalar";
+            final AtomicInteger constructionCount = new AtomicInteger();
+            final ObjList<FunctionFactoryDescriptor> descriptors = new ObjList<>();
+            descriptors.add(new FunctionFactoryDescriptor(new FunctionFactory() {
+                @Override
+                public int getExecutionRequirements() {
+                    return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+                }
+
+                @Override
+                public String getSignature() {
+                    return functionName + "()";
+                }
+
+                @Override
+                public Function newInstance(
+                        int position,
+                        ObjList<Function> args,
+                        IntList argPositions,
+                        CairoConfiguration configuration,
+                        SqlExecutionContext executionContext
+                ) {
+                    constructionCount.incrementAndGet();
+                    return new VarcharConstant("a");
+                }
+            }));
+            final var functionFactories = engine.getFunctionFactoryCache().getFactories();
+            Assert.assertNull(functionFactories.get(functionName));
+            functionFactories.put(functionName, descriptors);
+            try {
+                // Code generation constructs these scalars, after the optimiser's metadata-subquery scope ends.
+                final String query = """
+                        SELECT * FROM data
+                        PIVOT (SUM(val) FOR cat IN (%s))
+                        """.formatted(inQuery);
+                final String sql = "CREATE VIEW pv AS (" + query + ")";
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(
+                                sql.indexOf(functionName),
+                                "administrative function cannot be used in view PIVOT IN subquery: " + functionName
+                        );
+                Assert.assertEquals(0, constructionCount.get());
+                Assert.assertNull(engine.getTableTokenIfExists("pv"));
+                Assert.assertFalse(sqlExecutionContext.isViewCompile());
+                Assert.assertFalse(sqlExecutionContext.isViewMetadataSubquery());
+                assertQuery(query)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                a
+                                42
+                                """);
+                Assert.assertTrue(constructionCount.get() > 0);
+                assertNothingBusy();
+            } finally {
+                functionFactories.remove(functionName);
+            }
         });
     }
 }

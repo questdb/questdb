@@ -35,7 +35,7 @@ public final class SqlExecutionRequirements implements Mutable {
      * of the caller allows: it returns only the objects the caller may see (see
      * {@link io.questdb.cairo.SecurityContext#isTableVisible(io.questdb.cairo.TableToken)}), or it
      * lists them to admins only. The SHOW statements that list objects or read their metadata count
-     * as such functions, see {@link FunctionParser#addObjectDisclosingStatement}.
+     * as such functions, see {@link FunctionParser#addStatementRequirements}.
      * <p>
      * A materialized or live view refreshes detached from any caller, under a context that sees
      * every object, protected ones included. Every reader of the view reads what the refresh saw, and
@@ -50,20 +50,24 @@ public final class SqlExecutionRequirements implements Mutable {
     public static final int DISCLOSES_OBJECTS = 1 << 2;
     public static final int NONE = 0;
     /**
-     * The function needs the Enterprise security context of the caller, which the refresh of a
-     * materialized or live view does not have, or it has side effects. Materialized and live views
-     * reject such a function, at CREATE and at refresh alike.
+     * The function, or SHOW statement, needs the Enterprise security context of the caller, which
+     * the refresh of a materialized or live view does not have, or it has side effects. Materialized
+     * and live views reject such a function or statement, at CREATE and at refresh alike. A SHOW
+     * statement gets the requirement from {@link SqlParserCallback#getShowExecutionRequirements}.
+     * Ordinary views also reject them in PIVOT IN subqueries, which execute while the detached view
+     * compiler derives metadata; the rest of an ordinary view's SELECT still runs as its caller.
      */
     public static final int REQUIRES_ENTERPRISE_SECURITY_CONTEXT = 1 << 1;
     public static final int REQUIRES_LIVE_WAL_PROGRESS = 1;
     private String disclosingName;
     private int disclosingPosition = -1;
     private String disclosingViewName;
-    private String enterpriseSecurityContextFunctionName;
+    private String enterpriseSecurityContextName;
     private int enterpriseSecurityContextPosition = -1;
     private int flags;
     private boolean isDisclosingStatement;
     private boolean isDisclosingViewAlterable;
+    private boolean isEnterpriseSecurityContextStatement;
     private int liveWalProgressPosition = -1;
 
     /**
@@ -92,6 +96,20 @@ public final class SqlExecutionRequirements implements Mutable {
         checkStoredView0(requirements, position, name, isStatement, viewNameOf(view), isAlterable(view), executionContext);
     }
 
+    public static void checkViewMetadataSubquery(
+            int requirements,
+            int position,
+            CharSequence name,
+            boolean isStatement
+    ) throws SqlException {
+        if ((requirements & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
+            throw SqlException.functionNotAllowed(position)
+                    .put(isStatement ? "administrative statement" : "administrative function")
+                    .put(" cannot be used in view PIVOT IN subquery: ")
+                    .put(name);
+        }
+    }
+
     /**
      * Records the requirements of a function, or a SHOW statement, for checks that run after the
      * compile created it, e.g. CREATE MATERIALIZED VIEW checks what the optimiser created, see
@@ -109,8 +127,9 @@ public final class SqlExecutionRequirements implements Mutable {
     ) {
         flags |= requirements;
         if ((requirements & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0 && enterpriseSecurityContextPosition < 0) {
-            enterpriseSecurityContextFunctionName = Chars.toString(name);
+            enterpriseSecurityContextName = Chars.toString(name);
             enterpriseSecurityContextPosition = position;
+            isEnterpriseSecurityContextStatement = isStatement;
         }
         // one that comes from a view users may alter replaces any other: such a view rejects it outright
         if ((requirements & DISCLOSES_OBJECTS) != 0) {
@@ -137,8 +156,8 @@ public final class SqlExecutionRequirements implements Mutable {
             checkStoredView0(
                     REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
                     enterpriseSecurityContextPosition,
-                    enterpriseSecurityContextFunctionName,
-                    false,
+                    enterpriseSecurityContextName,
+                    isEnterpriseSecurityContextStatement,
                     null,
                     false,
                     executionContext
@@ -162,11 +181,12 @@ public final class SqlExecutionRequirements implements Mutable {
         disclosingName = null;
         disclosingPosition = -1;
         disclosingViewName = null;
-        enterpriseSecurityContextFunctionName = null;
+        enterpriseSecurityContextName = null;
         enterpriseSecurityContextPosition = -1;
         flags = NONE;
         isDisclosingStatement = false;
         isDisclosingViewAlterable = false;
+        isEnterpriseSecurityContextStatement = false;
         liveWalProgressPosition = -1;
     }
 
@@ -193,7 +213,8 @@ public final class SqlExecutionRequirements implements Mutable {
         final CharSequence objectKind = executionContext.isLiveViewCompile() ? "live view" : "materialized view";
         if ((requirements & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
             throw SqlException.functionNotAllowed(position)
-                    .put("administrative function cannot be used in ")
+                    .put(isStatement ? "administrative statement" : "administrative function")
+                    .put(" cannot be used in ")
                     .put(objectKind)
                     .put(": ")
                     .put(name);

@@ -275,12 +275,7 @@ public class ShowCreateMatViewRecordCursorFactory extends AbstractRecordCursorFa
             sink.putAscii(") PARTITION BY ").put(table.getPartitionByName());
             ttlToSink(sink);
             inVolumeToSink(configuration, table, sink);
-            putAdditional();
             sink.putAscii(';');
-        }
-
-        // placeholder for ent, do not remove!
-        protected void putAdditional() {
         }
 
         // overridden in ent, do not remove!

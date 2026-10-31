@@ -282,13 +282,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             putInVolume(config);
             // DEDUP UPSERT(key1, key2)
             putDedup();
-            // placeholder
-            putAdditional();
             sink.putAscii(';');
-        }
-
-        // placeholder, do not remove!
-        protected void putAdditional() {
         }
 
         protected void putColumn(CairoColumn column) {
