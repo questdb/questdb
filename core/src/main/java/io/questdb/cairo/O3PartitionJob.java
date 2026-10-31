@@ -3259,7 +3259,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     columnCounter,
                     o3Basket,
                     partitionUpdateSinkAddr,
-                    dedupColSinkAddr
+                    dedupColSinkAddr,
+                    false
             );
         } else {
             long srcTimestampAddr = 0;
@@ -3276,6 +3277,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long suffixLo;
             long suffixHi;
             final int openColumnMode;
+            final boolean isTailPinned;
             long newMinPartitionTimestamp;
 
             try {
@@ -3339,7 +3341,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Without deduplication, taking timestamp == o3TimestampHi into merge
                 // can result into unnecessary partition rewrites, when instead of appending
                 // rows with equal timestamp a merge is triggered.
-                long mergeEquals = tableWriter.isCommitDedupMode() || tableWriter.isCommitReplaceMode() ? 1 : 0;
+                // a pinned tail merges the rows at o3TimestampLo, so the split below moves just those rows
+                isTailPinned = tableWriter.isPartitionTailPinned(partitionTimestamp);
+                long mergeEquals = tableWriter.isCommitDedupMode() || tableWriter.isCommitReplaceMode() || isTailPinned ? 1 : 0;
 
                 if (o3TimestampLo >= dataTimestampLo) {
                     //   +------+
@@ -3871,7 +3875,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
 
-                boolean canAppendOnly = !partitionSplit;
+                // rows above a pinned parent's max, e.g. in a gap a range-replace commit left, copy the parent
+                boolean canAppendOnly = !partitionSplit && !isTailPinned;
                 if (tableWriter.isCommitReplaceMode()) {
                     canAppendOnly &= (!overlaps && suffixType == O3_BLOCK_O3);
                 } else {
@@ -3950,7 +3955,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     columnCounter,
                     o3Basket,
                     partitionUpdateSinkAddr,
-                    dedupColSinkAddr
+                    dedupColSinkAddr,
+                    isTailPinned
             );
         }
     }
@@ -5468,7 +5474,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             AtomicInteger columnCounter,
             O3Basket o3Basket,
             long partitionUpdateSinkAddr,
-            long dedupColSinkAddr
+            long dedupColSinkAddr,
+            boolean isTailPinned
     ) {
         // Number of rows to insert from the O3 segment into this partition.
         final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
@@ -5476,12 +5483,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long timestampMergeIndexAddr = 0;
         long timestampMergeIndexSize = 0;
         final TableRecordMetadata metadata = tableWriter.getMetadata();
-        if (mergeType == O3_BLOCK_MERGE) {
-            long mergeRowCount = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
-            long tempIndexSize = mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
-            assert tempIndexSize > 0; // avoid SIGSEGV
+        try {
+            if (mergeType == O3_BLOCK_MERGE) {
+                long mergeRowCount = mergeOOOHi - mergeOOOLo + 1 + mergeDataHi - mergeDataLo + 1;
+                long tempIndexSize = mergeRowCount * TIMESTAMP_MERGE_ENTRY_BYTES;
+                assert tempIndexSize > 0; // avoid SIGSEGV
 
-            try {
                 if (tableWriter.isCommitPlainInsert()) {
                     timestampMergeIndexSize = tempIndexSize;
 
@@ -5585,6 +5592,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         appendOnly = oooTimestampMin >= dataMergeMaxTimestamp;
                     }
 
+                    if (appendOnly && isTailPinned) {
+                        appendOnly = false;
+                    }
+
                     if (appendOnly) {
                         mergeType = O3_BLOCK_NONE;
                         mergeDataHi = -1;
@@ -5658,24 +5669,26 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 } else {
                     throw new IllegalStateException("commit mode not supported");
                 }
-            } catch (Throwable e) {
-                tableWriter.o3BumpErrorCount(e);
-                LOG.critical().$("open column error [table=").$(tableWriter.getTableToken())
-                        .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                        .$(", e=").$(e)
-                        .I$();
-
-                Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
-                O3CopyJob.closeColumnIdleQuick(
-                        0,
-                        0,
-                        srcTimestampFd,
-                        srcTimestampAddr,
-                        srcTimestampSize,
-                        tableWriter
-                );
-                throw e;
             }
+
+            if (openColumnMode == OPEN_MID_PARTITION_FOR_APPEND || openColumnMode == OPEN_LAST_PARTITION_FOR_APPEND) {
+                tableWriter.notifyPartitionAppend(oldPartitionTimestamp, srcNameTxn, srcDataMax);
+            }
+        } catch (Throwable e) {
+            tableWriter.o3BumpErrorCount(e);
+            LOG.critical().$("open column error [table=").$(tableWriter.getTableToken())
+                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", e=").$(e)
+                    .I$();
+            O3CopyJob.closeColumnIdleQuick(
+                    timestampMergeIndexAddr,
+                    timestampMergeIndexSize,
+                    srcTimestampFd,
+                    srcTimestampAddr,
+                    srcTimestampSize,
+                    tableWriter
+            );
+            throw e;
         }
 
         final boolean isAppend = isOpenColumnModeForAppend(openColumnMode);

@@ -5548,6 +5548,45 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTruncateParquetThenBlockCommitIntoEarlierPartition() throws Exception {
+        // TRUNCATE resets the writer's append horizon. A stale one would survive a block commit into an
+        // earlier partition, and on a parquet table the next single-transaction commit would suspend the table.
+        assertMemoryLeak(() -> {
+            String tableName = testName.getMethodName();
+            execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, val INT, sym SYMBOL)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
+            TableToken tableToken = engine.verifyTableName(tableName);
+
+            execute("INSERT INTO " + tableName + " VALUES ('2022-02-25T10:00:00.000000Z', 1, 'a')");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            // Queue everything, then drain once, so a single writer applies all of it.
+            execute("TRUNCATE TABLE " + tableName);
+            // Two consecutive INSERTs form a block that lands in an earlier partition than
+            // the one TRUNCATE dropped.
+            execute("INSERT INTO " + tableName + " VALUES ('2022-02-24T10:00:00.000000Z', 2, 'b')");
+            execute("INSERT INTO " + tableName + " VALUES ('2022-02-24T11:00:00.000000Z', 3, 'c')");
+            // A structural change ends the block, so the next INSERT applies on its own.
+            execute("ALTER TABLE " + tableName + " RENAME COLUMN val TO val2");
+            execute("INSERT INTO " + tableName + " VALUES ('2022-02-25T12:00:00.000000Z', 4, 'd')");
+            drainWalQueue();
+
+            Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery(tableName)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tval2\tsym
+                            2022-02-24T10:00:00.000000Z\t2\tb
+                            2022-02-24T11:00:00.000000Z\t3\tc
+                            2022-02-25T12:00:00.000000Z\t4\td
+                            """);
+        });
+    }
+
+    @Test
     public void testTruncateWithoutKeepingSymbolTablesThrows() throws Exception {
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(testName.getMethodName());

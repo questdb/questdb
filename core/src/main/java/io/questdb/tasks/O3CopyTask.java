@@ -56,7 +56,6 @@ public class O3CopyTask {
     private long partitionUpdateSinkAddr;
     private long srcDataFixAddr;
     private long srcDataFixFd;
-    private long srcDataFixOffset;
     private long srcDataFixSize;
     private long srcDataHi;
     private long srcDataLo;
@@ -66,7 +65,6 @@ public class O3CopyTask {
     private long srcDataTop;
     private long srcDataVarAddr;
     private long srcDataVarFd;
-    private long srcDataVarOffset;
     private long srcDataVarSize;
     private long srcOooFixAddr;
     private long srcOooHi;
@@ -183,10 +181,6 @@ public class O3CopyTask {
         return srcDataFixFd;
     }
 
-    public long getSrcDataFixOffset() {
-        return srcDataFixOffset;
-    }
-
     public long getSrcDataFixSize() {
         return srcDataFixSize;
     }
@@ -221,10 +215,6 @@ public class O3CopyTask {
 
     public long getSrcDataVarFd() {
         return srcDataVarFd;
-    }
-
-    public long getSrcDataVarOffset() {
-        return srcDataVarOffset;
     }
 
     public long getSrcDataVarSize() {
@@ -300,11 +290,9 @@ public class O3CopyTask {
             long timestampMergeIndexSize,
             long srcDataFixFd,
             long srcDataFixAddr,
-            long srcDataFixOffset,
             long srcDataFixSize,
             long srcDataVarFd,
             long srcDataVarAddr,
-            long srcDataVarOffset,
             long srcDataVarSize,
             long srcDataLo,
             long srcDataHi,
@@ -353,11 +341,9 @@ public class O3CopyTask {
         this.timestampMergeIndexSize = timestampMergeIndexSize;
         this.srcDataFixFd = srcDataFixFd;
         this.srcDataFixAddr = srcDataFixAddr;
-        this.srcDataFixOffset = srcDataFixOffset;
         this.srcDataFixSize = srcDataFixSize;
         this.srcDataVarFd = srcDataVarFd;
         this.srcDataVarAddr = srcDataVarAddr;
-        this.srcDataVarOffset = srcDataVarOffset;
         this.srcDataVarSize = srcDataVarSize;
         this.srcDataTop = srcDataTop;
         this.srcDataLo = srcDataLo;
