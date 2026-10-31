@@ -4463,7 +4463,7 @@ public class CopyExportTest extends AbstractCairoTest {
 
                 // and again when the export runs, since the factory can be executed long after compilation
                 securityContext.selectColumns.clear();
-                securityContext.denySelect = true;
+                securityContext.isSelectDenied = true;
                 CopyExportRunnable stmt = () -> {
                     try (RecordCursor cursor = factory.getCursor(context)) {
                         Assert.assertTrue(cursor.hasNext());
@@ -4657,14 +4657,14 @@ public class CopyExportTest extends AbstractCairoTest {
 
     private static final class ColumnRecordingSecurityContext extends AllowAllSecurityContext {
         final ObjList<CharSequence> selectColumns = new ObjList<>();
-        volatile boolean denySelect;
+        volatile boolean isSelectDenied;
 
         @Override
         public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
             for (int i = 0, n = columnNames.size(); i < n; i++) {
                 selectColumns.add(Chars.toString(columnNames.getQuick(i)));
             }
-            if (denySelect) {
+            if (isSelectDenied) {
                 throw CairoException.nonCritical().put("permission denied [table=").put(tableToken.getTableName()).put(']');
             }
         }

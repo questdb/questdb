@@ -2222,10 +2222,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return tableName;
     }
 
-    private void authorizeSelectForCopy(SqlExecutionContext executionContext, ExportModel model) {
+    private void authorizeSelectForCopy(SqlExecutionContext executionContext, ExportModel model) throws SqlException {
         final CharSequence tableName = unquote(model.getTableName());
-        final TableToken tt = engine.verifyTableName(tableName);
-        if (tt != null) {
+        for (int retries = 0; ; retries++) {
+            final TableToken tt = engine.verifyTableName(tableName);
             // a table the principal may not see fails exactly like a missing one does in verifyTableName()
             if (!executionContext.getSecurityContext().isTableVisible(tt)) {
                 throw CairoException.tableDoesNotExist(tableName);
@@ -2237,6 +2237,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     columnNames.add(metadata.getColumnName(i));
                 }
                 executionContext.getSecurityContext().authorizeSelect(tt, columnNames);
+                return;
+            } catch (TableReferenceOutOfDateException e) {
+                if (retries >= maxRecompileAttempts) {
+                    throw SqlException.position(model.getTableNameExpr().position)
+                            .put("table schema changed too many times [table=").put(tableName).put(']');
+                }
+                // DROP/CREATE can replace the token before metadata opens. Resolve the name and
+                // check visibility again rather than authorize the replacement with the old token.
             }
         }
     }
