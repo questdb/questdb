@@ -48,8 +48,9 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * <p>
  * Shape:
  * <pre>
- * SELECT [key AS e0[, key AS e1],] agg AS a0[, ...], count() AS aN, count(x.k) AS aN+1
- * FROM input l (JOIN | LEFT JOIN | RIGHT JOIN) input r ON l.key = r.key [AND (one-side predicate)]
+ * SELECT [key AS e0[, key AS e1],] agg AS a0[, ...], count() AS aN, count(x.k) AS aN+1[, count(l.k) AS aN+2]
+ * FROM input l (JOIN | LEFT JOIN | RIGHT JOIN | FULL JOIN) input r ON l.key = r.key [AND l.key2 = r.key2]
+ *     [AND (one-side predicate)]
  * [WHERE conjunct [AND ...]]
  * [GROUP BY e0[, e1] | SAMPLE BY interval [FILL(...)] [ALIGN TO CALENDAR | ALIGN TO FIRST OBSERVATION]]
  * [ORDER BY ...]
@@ -59,7 +60,10 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * {@code k} and the SYMBOL column {@code sym}, which the fused plan reads through its narrow INT
  * layout, and the LONG column {@code lk} and the VARCHAR column {@code vk}, which it stages
  * through a {@link io.questdb.cairo.RecordSink} into a map, as it stages every composite key and
- * the SYMBOL-against-VARCHAR pair. A SYMBOL pair compares as an int on either route, because the
+ * the SYMBOL-against-VARCHAR pair. The composite keys (INT and SYMBOL, LONG and VARCHAR, INT and
+ * LONG) are also the only ones that put the ordinary hash join's key map on an
+ * {@link io.questdb.cairo.map.OrderedMap}, with a fixed-size or a variable-size key; a single key
+ * takes one of the unordered maps. A SYMBOL pair compares as an int on either route, because the
  * probe translates its key into the build's domain; only a SYMBOL against text compares as text. Grouping keys, aggregate arguments and single-side predicates
  * come from either input, so every join type sees them on the probe, on the build and on the
  * null-extended side. Each input is the table itself, a projection over it that renames some
@@ -91,10 +95,16 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * outside the fused allowlist. A planner that accepts one of them by mistake returns different
  * rows than the ordinary plan, and the fused axis reports it.
  * <p>
+ * A FULL join is never fused, as the fused planner accepts INNER, LEFT and RIGHT joins only, so
+ * both arms of the fused axis run the ordinary plan for it. QueryRunner's map page axis checks it
+ * instead: it reruns the query with tiny map pages, so that the ordinary hash join's key map can
+ * grow while the probe stages its keys. That catches a RIGHT or FULL join that reads its
+ * unmatched build rows through a map cursor it took before the map grew.
+ * <p>
  * Two exact counts close every projection: {@code count()} counts the joined pairs of the group,
  * and {@code count(x.k)} counts the null-extended side's key, so a match that turns into a
- * null-extended row changes it. FLOAT and DOUBLE aggregates compare within the runner's
- * floating-point tolerance, and the counts cannot absorb a dropped or duplicated pair the way
+ * null-extended row changes it. A FULL join null-extends both sides and counts both keys. FLOAT
+ * and DOUBLE aggregates compare within the runner's floating-point tolerance, and the counts cannot absorb a dropped or duplicated pair the way
  * that tolerance can. The tolerance is relative to the result, so the generator leaves out the
  * aggregates whose result can cancel to near zero while their inputs stay large (covariance,
  * correlation, regression, skewness, kurtosis): their reduction-order noise would exceed it.
@@ -136,7 +146,7 @@ public final class HashJoinGroupByClause {
     // Interval widths in hours. The fuzz tables start at FuzzConfig's 2024-01-01 and span 30 to
     // 75 hours, so an interval selects anything from no row to every row of a table.
     private static final int[] INTERVAL_HOURS = {1, 3, 12, 48};
-    private static final String[] JOIN_KINDS = {"JOIN", "LEFT JOIN", "RIGHT JOIN"};
+    private static final String[] JOIN_KINDS = {"JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"};
     private static final String LEFT_ALIAS = "l";
     private static final String LONG_KEY = "lk";
     // min() and max() arguments. The fused plan accepts every type but BOOLEAN and BYTE, which the
@@ -167,13 +177,17 @@ public final class HashJoinGroupByClause {
         final String joinKind = JOIN_KINDS[rnd.nextInt(JOIN_KINDS.length)];
         final boolean isRightJoin = joinKind.startsWith("RIGHT");
         final boolean isLeftJoin = joinKind.startsWith("LEFT");
+        final boolean isFullJoin = joinKind.startsWith("FULL");
+        // A RIGHT and a FULL join null-extend the master, so l.ts can be NULL.
+        final boolean isMasterNullExtended = isRightJoin || isFullJoin;
         // One query in twenty may reference any column, which exercises the fallback for the
         // column types the fused plan does not read.
         final boolean isFusableOnly = rnd.nextInt(20) != 0;
         // The planner builds the slave of a LEFT OUTER join and the master of a RIGHT OUTER one,
         // so the other side is the probe. An INNER join picks its build by size, which this cannot
-        // predict, so neither of its inputs widens; a side this guesses wrong only keeps the
-        // ordinary plan in both arms of the fused axis, which still compares.
+        // predict, and a FULL join never fuses, so neither of their inputs widens; a side this
+        // guesses wrong only keeps the ordinary plan in both arms of the fused axis, which still
+        // compares.
         final Input l = pickInput(rnd, left, isFusableOnly, isLeftJoin, ctx);
         final Input r = pickInput(rnd, right, isFusableOnly, isRightJoin, ctx);
 
@@ -195,15 +209,28 @@ public final class HashJoinGroupByClause {
         sql.put("count() AS a").put(aggCount++);
         sql.put(", count(").put(isRightJoin ? LEFT_ALIAS : RIGHT_ALIAS).put('.')
                 .put((isRightJoin ? l : r).name(INT_KEY)).put(") AS a").put(aggCount++);
+        if (isFullJoin) {
+            sql.put(", count(").put(LEFT_ALIAS).put('.').put(l.name(INT_KEY)).put(") AS a").put(aggCount++);
+        }
 
         sql.put(" FROM ").put(l.fromSql).put(' ').put(LEFT_ALIAS);
         sql.put(' ').put(joinKind).put(' ').put(r.fromSql).put(' ').put(RIGHT_ALIAS);
         // 0-11: INT key and 12-23: SYMBOL key, the two the narrow INT layout reads.
-        // 24-29: LONG key, 30-35: VARCHAR key, 36-37: SYMBOL against VARCHAR and
-        // 38-39: INT and SYMBOL together, the four that stage their key into a map.
-        final int keyPick = rnd.nextInt(40);
+        // 24-29: LONG key, 30-35: VARCHAR key, 36-37: SYMBOL against VARCHAR, and the composite
+        // keys 38-45: INT and SYMBOL, 46-50: LONG and VARCHAR and 51-55: INT and LONG, the ones
+        // that stage their key into a map. The composite keys put the ordinary hash join's key map
+        // on an OrderedMap, the LONG and VARCHAR pair with a variable-size key.
+        final int keyPick = rnd.nextInt(56);
         sql.put(" ON ");
-        if (keyPick < 12 || keyPick >= 38) {
+        if (keyPick >= 46 && keyPick < 51) {
+            appendKeyEquality(sql, rnd, l.name(LONG_KEY), r.name(LONG_KEY));
+            sql.put(" AND ");
+            appendKeyEquality(sql, rnd, l.name(VARCHAR_KEY), r.name(VARCHAR_KEY));
+        } else if (keyPick >= 51) {
+            appendKeyEquality(sql, rnd, l.name(INT_KEY), r.name(INT_KEY));
+            sql.put(" AND ");
+            appendKeyEquality(sql, rnd, l.name(LONG_KEY), r.name(LONG_KEY));
+        } else if (keyPick < 12 || keyPick >= 38) {
             appendKeyEquality(sql, rnd, l.name(INT_KEY), r.name(INT_KEY));
         } else if (keyPick < 24) {
             appendKeyEquality(sql, rnd, l.name(SYMBOL_KEY), r.name(SYMBOL_KEY));
@@ -216,7 +243,7 @@ public final class HashJoinGroupByClause {
             // both sides stage their text, which is the one shape that does not translate.
             appendKeyEquality(sql, rnd, l.name(SYMBOL_KEY), r.name(VARCHAR_KEY));
         }
-        if (keyPick >= 38) {
+        if (keyPick >= 38 && keyPick < 46) {
             sql.put(" AND ");
             appendKeyEquality(sql, rnd, l.name(SYMBOL_KEY), r.name(SYMBOL_KEY));
         }
@@ -229,6 +256,7 @@ public final class HashJoinGroupByClause {
             // outer join never does, so an outer join puts it on the build three times in four.
             // An INNER join moves it into the WHERE clause either way.
             final boolean isOnBuild = rnd.nextInt(4) != 0;
+            // A FULL join preserves both sides, so like an INNER one it takes either.
             final boolean isLeft = isRightJoin ? isOnBuild : isLeftJoin ? !isOnBuild : rnd.nextBoolean();
             sql.put(" AND (").put(predicate(rnd, isLeft ? l : r, isLeft ? LEFT_ALIAS : RIGHT_ALIAS, ctx)).put(')');
         }
@@ -277,19 +305,19 @@ public final class HashJoinGroupByClause {
         // table master gets a SAMPLE BY.
         if (l.isTable && rnd.nextInt(7) == 0) {
             // The optimiser rewrites SAMPLE BY aligned to calendar into a GROUP BY, which fuses
-            // unless it fills. A RIGHT JOIN null-extends l.ts, and a filled SAMPLE BY fails on a
-            // NULL designated timestamp ("SAMPLE BY designated timestamp cannot be NULL"), so
-            // only INNER and LEFT joins get a FILL.
+            // unless it fills. A RIGHT or FULL JOIN null-extends l.ts, and a filled SAMPLE BY
+            // fails on a NULL designated timestamp ("SAMPLE BY designated timestamp cannot be
+            // NULL"), so only INNER and LEFT joins get a FILL.
             sql.put(" SAMPLE BY ").put(SAMPLE_BY_INTERVALS[rnd.nextInt(SAMPLE_BY_INTERVALS.length)]);
-            if (!isRightJoin && rnd.nextInt(3) == 0) {
+            if (!isMasterNullExtended && rnd.nextInt(3) == 0) {
                 appendFill(sql, rnd, aggCount);
             }
             // ALIGN TO FIRST OBSERVATION skips the rewrite and needs l.ts in order, which a
-            // RIGHT JOIN does not keep ("TIMESTAMP column is required but not provided").
+            // RIGHT or FULL JOIN does not keep ("TIMESTAMP column is required but not provided").
             final int align = rnd.nextInt(3);
             if (align == 1) {
                 sql.put(" ALIGN TO CALENDAR");
-            } else if (align == 2 && !isRightJoin) {
+            } else if (align == 2 && !isMasterNullExtended) {
                 sql.put(" ALIGN TO FIRST OBSERVATION");
             }
         } else if (keyCount > 0 && rnd.nextBoolean()) {
