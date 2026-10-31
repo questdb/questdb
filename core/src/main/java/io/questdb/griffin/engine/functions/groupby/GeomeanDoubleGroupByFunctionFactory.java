@@ -58,6 +58,7 @@ public class GeomeanDoubleGroupByFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) {
-        return new GeomeanDoubleGroupByFunction(args.getQuick(0));
+        final Function arg = args.getQuick(0);
+        return arg.isConstant() ? new GeomeanConstantGroupByFunction(arg) : new GeomeanDoubleGroupByFunction(arg);
     }
 }

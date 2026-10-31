@@ -22100,20 +22100,18 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Encode sort
-                                  keys: [timestamp]
-                                    VirtualRecord
-                                      functions: [price+1,sum+10,timestamp]
-                                        Async Window Join workers: 1
-                                          vectorized: true
-                                          window lo: 1000000 preceding (include prevailing)
-                                          window hi: 120000000 following
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: trades
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: quotes
+                                VirtualRecord
+                                  functions: [price+1,sum+10,timestamp]
+                                    Async Window Join workers: 1
+                                      vectorized: true
+                                      window lo: 1000000 preceding (include prevailing)
+                                      window hi: 120000000 following
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: quotes
                             """);
             assertQuery("select t.* from trades t WINDOW JOIN quotes range between 2 second preceding and 1 second preceding order by t.timestamp")
                     .noLeakCheck()
