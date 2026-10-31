@@ -1064,10 +1064,6 @@ public class QwpWalAppender implements QuietCloseable {
                                 .put(columnName)
                                 .put(']');
                     }
-                    if (writer.getTableToken().isDelta()) {
-                        throw CairoException.schemaMismatch().put("automatic column creation is not supported for Delta tables [table=")
-                                .put(writer.getTableToken().getTableName()).put(", column=").put(columnName).put(']');
-                    }
                     if (autoCreateNewColumns && TableUtils.isValidColumnName(columnName, maxFileNameLength)) {
                         final int newColumnType;
                         if (colType == TYPE_DOUBLE_ARRAY) {

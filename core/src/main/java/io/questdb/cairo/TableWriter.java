@@ -76,6 +76,7 @@ import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TableMetadataChange;
 import io.questdb.cairo.wal.seq.TableSequencerImpl;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.ConvertOperatorImpl;
@@ -1270,6 +1271,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long rowsAffected = applyOutsideWal(alterOp, contextAllowsAnyStructureChanges);
         checkDebugInvariants("alter");
         return rowsAffected;
+    }
+
+    public long applySequencedMetadataChange(
+            long seqTxn,
+            long newStructureVersion,
+            TableMetadataChange metadataChange
+    ) throws AlterTableContextException {
+        if (getColumnStructureVersion() != newStructureVersion - 1) {
+            throw CairoException.critical(0)
+                    .put("unexpected new WAL structure version [walStructure=").put(newStructureVersion)
+                    .put(", tableStructureVersion=").put(getColumnStructureVersion())
+                    .put(']');
+        }
+        setSeqTxn(seqTxn);
+        try {
+            return metadataChange.apply(this, true);
+        } catch (Throwable th) {
+            setSeqTxn(seqTxn - 1);
+            throw th;
+        }
     }
 
     @Override

@@ -314,6 +314,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return command;
     }
 
+    public CharSequence getColumnNameArgument(int index) {
+        return activeExtraStrInfo.getStrA(index);
+    }
+
     @Override
     public boolean isForceWalBypass() {
         return command == FORCE_DROP_PARTITION;
@@ -335,6 +339,14 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             }
         }
         return false;
+    }
+
+    public boolean isSingleColumnStructureChange() {
+        return switch (command) {
+            case ADD_COLUMN, DROP_COLUMN -> activeExtraStrInfo.size() == 1;
+            case RENAME_COLUMN -> activeExtraStrInfo.size() == 2;
+            default -> false;
+        };
     }
 
     @Override
