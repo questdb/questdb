@@ -47,6 +47,7 @@ import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.SuspensionScope;
+import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -121,6 +122,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private Rnd random;
     private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
+    private @Nullable String sessionResourceGroup;
+    private boolean sessionScoped;
     private TableFunctionView tableFunctionView;
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
@@ -411,6 +414,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public @Nullable CharSequence getSessionResourceGroup() {
+        return sessionResourceGroup;
+    }
+
+    @Override
     public int getSharedQueryWorkerCount() {
         return sharedQueryWorkerCount;
     }
@@ -496,6 +504,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean isParallelWindowJoinEnabled() {
         return parallelWindowJoinEnabled;
+    }
+
+    @Override
+    public boolean isSessionScoped() {
+        return sessionScoped;
     }
 
     @Override
@@ -737,6 +750,15 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setSessionResourceGroup(@Nullable CharSequence resourceGroup) {
+        this.sessionResourceGroup = Chars.toString(resourceGroup);
+    }
+
+    public void setSessionScoped(boolean sessionScoped) {
+        this.sessionScoped = sessionScoped;
+    }
+
+    @Override
     public void setTableFunctionView(TableFunctionView view) {
         this.tableFunctionView = view;
     }
@@ -788,6 +810,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.securityContext = securityContext;
         this.bindVariableService = bindVariableService;
         this.random = rnd;
+        this.sessionResourceGroup = null;
         resetState();
         return this;
     }
@@ -829,6 +852,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.bindVariableService = bindVariableService;
         this.random = rnd;
         this.requestFd = requestFd;
+        this.sessionResourceGroup = null;
         this.circuitBreaker = circuitBreaker == null ? SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER : circuitBreaker;
         this.pageFrameMaxRows = defaultPageFrameMaxRows;
         this.pageFrameMinRows = defaultPageFrameMinRows;
