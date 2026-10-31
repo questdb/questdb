@@ -131,11 +131,12 @@ final class PhysicalChoiceVerifier {
     /**
      * Whether the join step records the input it hashes as operator planning settles it: none for a step that is not a
      * light INNER hash join, or whose master side is undecided, and the slave for one whose master is fixed. A step the
-     * smaller input drives records the input to hash where its master is one input and both inputs have a row bound,
-     * see {@link PhysicalProperties#rowBoundScan}: one that every LIMIT whose count only execution knows that bounds the
-     * other input bounds too, see {@link PhysicalProperties#hasRuntimeLimitsOf}. It leaves the choice to execution,
-     * {@link JoinInput.BuildSide#SMALLER}, only where the inputs have no row bound, where such LIMITs differ between
-     * them, or where codegen decides the random access of the master.
+     * smaller input drives records an input to hash only where its master is one input, both inputs have a row bound,
+     * see {@link PhysicalProperties#rowBoundScan}, and every LIMIT whose count only execution knows that bounds the
+     * other input bounds it too, see {@link PhysicalProperties#hasRuntimeLimitsOf}. Where the row counts of tables give
+     * the rows of both inputs, see {@link PhysicalProperties#rowCountScan}, one never holds more rows than the other, so
+     * it leaves the choice to execution, {@link JoinInput.BuildSide#SMALLER}, only where such LIMITs differ between
+     * them or codegen decides the random access of the master.
      */
     private static boolean isBuildSideSettled(JoinPlan join, int position, JoinInput step) {
         final JoinInput.BuildSide side = step.getBuildSide();
@@ -149,9 +150,9 @@ final class PhysicalChoiceVerifier {
         final LogicalPlan slave = step.getInput();
         final boolean isBounded = position == 1 && hasRowBound(master) && hasRowBound(slave);
         return switch (side) {
-            case SMALLER ->
-                    !isBounded || PhysicalProperties.masterSupportsRandomAccess(join, position) == PhysicalProperties.Capability.UNKNOWN
-                            || !PhysicalProperties.hasRuntimeLimitsOf(slave, master) || !PhysicalProperties.hasRuntimeLimitsOf(master, slave);
+            case SMALLER -> !isBounded || PhysicalProperties.rowCountScan(master) == null || PhysicalProperties.rowCountScan(slave) == null
+                    || PhysicalProperties.masterSupportsRandomAccess(join, position) == PhysicalProperties.Capability.UNKNOWN
+                    || !PhysicalProperties.hasRuntimeLimitsOf(slave, master) || !PhysicalProperties.hasRuntimeLimitsOf(master, slave);
             case SLAVE -> isBounded && PhysicalProperties.hasRuntimeLimitsOf(slave, master);
             case MASTER -> isBounded && PhysicalProperties.hasRuntimeLimitsOf(master, slave);
             case null -> false;

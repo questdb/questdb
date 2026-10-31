@@ -248,15 +248,15 @@ public class TransitiveFilterTest extends AbstractCairoTest {
                                 SelectedRecord
                                     Hash Join Light
                                       condition: r.k=l.k
-                                        Async Filter workers: 1
-                                          filter: k=1
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_trans_l
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_trans_r
                                         Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_trans_r
+                                            Async Filter workers: 1
+                                              filter: k=1
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_trans_l
                             """);
             assertRowsAndPlan(query("l.k=null"), "lid\trid\n4\t14\n",
                     """
@@ -265,15 +265,15 @@ public class TransitiveFilterTest extends AbstractCairoTest {
                                 SelectedRecord
                                     Hash Join Light
                                       condition: r.k=l.k
-                                        Async JIT Filter workers: 1
-                                          filter: k=null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_trans_l
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_trans_r
                                         Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_trans_r
+                                            Async JIT Filter workers: 1
+                                              filter: k=null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_trans_l
                             """);
             assertRowsAndPlan(query("l.k IS NULL"), "lid\trid\n4\t14\n",
                     """
@@ -282,15 +282,15 @@ public class TransitiveFilterTest extends AbstractCairoTest {
                                 SelectedRecord
                                     Hash Join Light
                                       condition: r.k=l.k
-                                        Async JIT Filter workers: 1
-                                          filter: k=null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_trans_l
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_trans_r
                                         Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_trans_r
+                                            Async JIT Filter workers: 1
+                                              filter: k=null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_trans_l
                             """);
             assertRowsAndPlan(query("l.k = NULL"), "lid\trid\n4\t14\n",
                     """
@@ -299,15 +299,15 @@ public class TransitiveFilterTest extends AbstractCairoTest {
                                 SelectedRecord
                                     Hash Join Light
                                       condition: r.k=l.k
-                                        Async JIT Filter workers: 1
-                                          filter: k=null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_trans_l
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_trans_r
                                         Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_trans_r
+                                            Async JIT Filter workers: 1
+                                              filter: k=null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_trans_l
                             """);
             assertRowsAndPlan(query("l.k=null::INT"), "lid\trid\n4\t14\n",
                     """
@@ -316,15 +316,15 @@ public class TransitiveFilterTest extends AbstractCairoTest {
                                 SelectedRecord
                                     Hash Join Light
                                       condition: r.k=l.k
-                                        Async Filter workers: 1
-                                          filter: k=null
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_trans_l
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_trans_r
                                         Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_trans_r
+                                            Async Filter workers: 1
+                                              filter: k=null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_trans_l
                             """);
             assertRowsAndPlan("SELECT l.id lid,r.id rid FROM (SELECT id,k FROM lp_trans_l WHERE k=1) l "
                             + "JOIN lp_trans_r r ON l.k=r.k ORDER BY lid,rid", "lid\trid\n1\t11\n",
@@ -334,15 +334,15 @@ public class TransitiveFilterTest extends AbstractCairoTest {
                                 SelectedRecord
                                     Hash Join Light
                                       condition: r.k=l.k
-                                        Async JIT Filter workers: 1
-                                          filter: k=1
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_trans_l
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_trans_r
                                         Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_trans_r
+                                            Async JIT Filter workers: 1
+                                              filter: k=1
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_trans_l
                             """);
             assertRowsAndPlan("SELECT l.id lid,r.id rid,x.id xid FROM lp_trans_l l "
                             + "JOIN lp_trans_r r ON l.k=r.k JOIN lp_trans_l x ON r.id=x.id+10 "

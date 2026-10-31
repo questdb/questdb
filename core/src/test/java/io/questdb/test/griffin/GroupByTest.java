@@ -3464,17 +3464,17 @@ public class GroupByTest extends AbstractCairoTest {
                                                 Filter filter: data.ts>=cnt.max-80000
                                                     Hash Join Light
                                                       condition: data.i=cnt.i
-                                                        Async Group By workers: 1
-                                                          keys: [i]
-                                                          values: [max(ts)]
-                                                          filter: null
-                                                            PageFrame
-                                                                Row forward scan
-                                                                Frame forward scan on: tab
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: tab
                                                         Hash
-                                                            PageFrame
-                                                                Row forward scan
-                                                                Frame forward scan on: tab
+                                                            Async Group By workers: 1
+                                                              keys: [i]
+                                                              values: [max(ts)]
+                                                              filter: null
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: tab
                             """);
 
             String query2 = "select last(ts) as ts, " +

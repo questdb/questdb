@@ -181,6 +181,13 @@ public class EngineMigration {
                     if (ff.exists(path.concat(TableUtils.META_FILE_NAME).$())) {
                         final long fdMeta = openFileRWOrFail(ff, path.$(), context.getConfiguration().getWriterFileOpenOpts());
                         try {
+                            final long metaSize = ff.length(fdMeta);
+                            if (metaSize < TableUtils.META_OFFSET_COLUMN_TYPES) {
+                                LOG.error().$("skipping table, _meta is shorter than its header [path=").$(path)
+                                        .$(", size=").$(metaSize)
+                                        .I$();
+                                return;
+                            }
                             int currentTableVersion = TableUtils.readIntOrFail(ff, fdMeta, META_OFFSET_VERSION, mem, path);
                             // A version in (latestTableVersion, ColumnType.MAX_STORAGE_VERSION] is not a migration
                             // step: it marks a table that holds composite partitions and has received what

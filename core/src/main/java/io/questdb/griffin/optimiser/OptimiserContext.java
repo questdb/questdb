@@ -202,6 +202,15 @@ final class OptimiserContext implements Mutable {
         return limit < Long.MAX_VALUE ? limit : -1;
     }
 
+    /**
+     * A lower bound of the rows the factory of the plan returns under the LIMITs whose count only execution knows, see
+     * {@link PhysicalProperties#hasRuntimeLimitsOf}: its row bound where the row count of a table gives its rows, see
+     * {@link PhysicalProperties#rowCountScan}, else 0.
+     */
+    long rowFloor(LogicalPlan plan) {
+        return PhysicalProperties.rowCountScan(plan) != null ? rowBound(plan) : 0;
+    }
+
     private ColumnExpression column(OutputSchema output, int columnId, int position) {
         return planNodes.columns.next().of(columnId, output.getColumnType(output.getColumnIndexById(columnId)), position);
     }

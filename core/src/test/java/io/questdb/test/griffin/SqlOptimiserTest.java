@@ -3220,12 +3220,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                           symbolKeyJoin: true
                                             PageFrame
                                                 Row forward scan
-                                                Interval forward scan on: t1
-                                                  intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
+                                                Frame forward scan on: t2
                                             Hash
                                                 PageFrame
                                                     Row forward scan
-                                                    Frame forward scan on: t2
+                                                    Interval forward scan on: t1
+                                                      intervals: [("2023-09-01T00:00:00.000000Z","2023-09-01T01:00:00.000000Z")]
                             """);
             assertQuery(query)
                     .noLeakCheck()

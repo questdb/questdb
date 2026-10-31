@@ -356,6 +356,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private SqlExecutionCircuitBreaker circuitBreaker;
         private int crossRowState;
         private long currentRow;
+        // The bucket of the first row the scan finds; every later bucket starts after it.
+        private long firstBucketTimestamp;
         private int frameCount = 0;
         private PageFrameCursor frameCursor;
         private long frameHi = -1;
@@ -463,7 +465,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             // Skip initialization if timestamp is the same as last returned
             if (!initialized || timestamp != localEpoch - tzOffset) {
                 if (fixedOffset != Long.MIN_VALUE) {
-                    localEpoch = timestampSampler.round(timestamp + tzOffset);
+                    localEpoch = calendarBucket(timestamp + tzOffset);
                 } else {
                     localEpoch = timestamp + tzOffset;
                 }
@@ -515,9 +517,8 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         }
 
         private int fillSamplePeriodsUntil(long lastInDataTimestamp) {
-            long nextTs = samplePeriodStart;
+            long nextTs = Math.min(samplePeriodStart, startFrom(samplePeriodStart));
             long currentTs = Long.MIN_VALUE;
-            nextTs = startFrom(nextTs);
 
             samplePeriodAddress.clear();
             for (int i = 0; i < maxSamplePeriodSize && currentTs <= lastInDataTimestamp; i++) {
@@ -527,6 +528,11 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 samplePeriodAddress.add(currentTs);
             }
             return (int) samplePeriodAddress.size();
+        }
+
+        // The first sample period starts at the first row, which may precede its bucket.
+        private long getBucketTimestamp(long samplePeriodIndex) {
+            return Math.max(firstBucketTimestamp, samplePeriodAddress.get(samplePeriodIndex));
         }
 
         // This method evaluates RecordCursor state
@@ -591,7 +597,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                         long rowId = indexFrameAddress > 0 ? Unsafe.getLong(indexFrameAddress) : frameLo;
                         long offsetTimestampColumnAddress = frameMemory.getPageAddress(timestampIndex) - frameLo * Long.BYTES;
                         samplePeriodStart = Unsafe.getLong(offsetTimestampColumnAddress + rowId * Long.BYTES);
-                        startFrom(samplePeriodStart);
+                        firstBucketTimestamp = startFrom(samplePeriodStart);
                     }
                     // Fall to STATE_SEARCH;
 
@@ -706,7 +712,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             for (int i = 0, length = firstLastIndexByCol.length; i < length; i++) {
                 if (i == groupByTimestampIndex) {
                     long tsIndex = rowIdOutAddress.get(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset;
-                    crossFrameRow.set(i, samplePeriodAddress.get(tsIndex));
+                    crossFrameRow.set(i, getBucketTimestamp(tsIndex));
                 } else {
                     long rowId = rowIdOutAddress.get(firstLastIndexByCol[i]);
                     saveRowIdValueToCrossRow(rowId, i);
@@ -1122,7 +1128,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                         // groupByTimestampIndex is the projection-space index of that column (-1 when
                         // it is not projected); comparing against the base-table timestampIndex would
                         // alias an unrelated projected column whenever the two index spaces disagree.
-                        return samplePeriodAddress.get(getRowId(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset);
+                        return getBucketTimestamp(getRowId(TIMESTAMP_OUT_INDEX) - prevSamplePeriodOffset);
                     } else {
                         return Numbers.LONG_NULL;
                     }

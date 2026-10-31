@@ -1446,12 +1446,12 @@ public class MultiJoinTest extends AbstractCairoTest {
                                           condition: b.k=a.k
                                             PageFrame
                                                 Row forward scan
-                                                Interval forward scan on: lp_multi_a
-                                                  intervals: [("MIN","2020-01-01T00:00:00.000000Z")]
+                                                Frame forward scan on: lp_multi_b
                                             Hash
                                                 PageFrame
                                                     Row forward scan
-                                                    Frame forward scan on: lp_multi_b
+                                                    Interval forward scan on: lp_multi_a
+                                                      intervals: [("MIN","2020-01-01T00:00:00.000000Z")]
                                         Hash
                                             Async JIT Filter workers: 1
                                               filter: 0<v

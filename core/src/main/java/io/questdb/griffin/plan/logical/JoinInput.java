@@ -132,8 +132,8 @@ public final class JoinInput implements Mutable {
     /**
      * The input a light INNER hash join step hashes, which operator planning records once it settles the step: the
      * slave of a step whose master side is {@link MasterSide#FIXED}, and for one the smaller input drives, the input
-     * with the smaller row bound or {@link BuildSide#SMALLER}, which leaves the choice to execution. Null for a step of
-     * another algorithm or kind, and for one operator planning has not settled.
+     * proven never to hold more rows than the other or {@link BuildSide#SMALLER}, which leaves the choice to execution.
+     * Null for a step of another algorithm or kind, and for one operator planning has not settled.
      */
     public BuildSide getBuildSide() {
         return buildSide;

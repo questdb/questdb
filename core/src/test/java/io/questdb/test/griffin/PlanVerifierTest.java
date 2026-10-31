@@ -679,6 +679,20 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 step.setMasterSide(JoinInput.MasterSide.SMALLER);
                 assertFails(plan, PlanVerifier.LIMIT_APPLICATION, "LimitPlan");
             }
+            execute("INSERT INTO bs_a VALUES (1, 1, '2024-01-01'), (2, 2, '2024-01-01')");
+            execute("INSERT INTO bs_b VALUES (1, 1), (2, 2), (3, 3)");
+            // The filter may leave fewer rows of bs_b than bs_a holds, so execution picks the input to hash.
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    RecordCursorFactory ignored = compiler.compile("SELECT a.x, l.x FROM bs_a a JOIN (SELECT k, x FROM bs_b WHERE x > 1) l ON a.k = l.k",
+                            sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                final LogicalPlan plan = compiler.getPlanForTesting();
+                final JoinInput step = find(plan, JoinPlan.class).getOrderedInputs().getQuick(1);
+                Assert.assertEquals(JoinInput.MasterSide.SMALLER, step.getMasterSide());
+                Assert.assertEquals(JoinInput.BuildSide.SMALLER, step.getBuildSide());
+                verifier.verifyAccessPaths(plan);
+            }
         });
     }
 

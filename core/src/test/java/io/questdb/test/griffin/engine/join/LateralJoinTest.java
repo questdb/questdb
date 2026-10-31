@@ -3544,19 +3544,19 @@ public class LateralJoinTest extends AbstractCairoTest {
                             SelectedRecord
                                 Hash Join Light
                                   condition: l.__qdb_outer_ref__0_k=t1.k
-                                    SelectedRecord
-                                        Filter filter: coalesce(k-1,9223372036854775807L)>=__lateral_rn
-                                            CachedWindowLight
-                                              orderedFunctions: [[v] => [row_number() over (partition by [k])]]
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t2
+                                    Async Filter workers: 1
+                                      filter: __lateral_limit(k-1,0L)>=0
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t1
                                     Hash
-                                        Async Filter workers: 1
-                                          filter: __lateral_limit(k-1,0L)>=0
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: t1
+                                        SelectedRecord
+                                            Filter filter: coalesce(k-1,9223372036854775807L)>=__lateral_rn
+                                                CachedWindowLight
+                                                  orderedFunctions: [[v] => [row_number() over (partition by [k])]]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
                             """);
 
             execute("INSERT INTO t1 VALUES (0)");
@@ -3623,18 +3623,18 @@ public class LateralJoinTest extends AbstractCairoTest {
                             SelectedRecord
                                 Hash Join Light
                                   condition: l.__qdb_outer_ref__0_k=t1.k
-                                    SelectedRecord
-                                        Filter filter: -2L<__lateral_rn-__lateral_count
-                                            CachedWindowLight
-                                              orderedFunctions: [[v] => [row_number() over (partition by [k])]]
-                                              unorderedFunctions: [count(*) over (partition by [k])]
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t2
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t1
                                     Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: t1
+                                        SelectedRecord
+                                            Filter filter: -2L<__lateral_rn-__lateral_count
+                                                CachedWindowLight
+                                                  orderedFunctions: [[v] => [row_number() over (partition by [k])]]
+                                                  unorderedFunctions: [count(*) over (partition by [k])]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
                             """);
             assertLateralLimitMatchesOracle("ORDER BY v LIMIT -2", """
                     k\tv
@@ -19745,15 +19745,15 @@ public class LateralJoinTest extends AbstractCairoTest {
                                       symbolKeyJoin: true
                                         Hash Join Light
                                           condition: t2.t1_id=t1.id
-                                            Async JIT Filter workers: 1
-                                              filter: status='ACTIVE'
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t1
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t2
                                             Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: t2
+                                                Async JIT Filter workers: 1
+                                                  filter: status='ACTIVE'
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t1
                                         Hash
                                             SelectedRecord
                                                 GroupBy vectorized: false

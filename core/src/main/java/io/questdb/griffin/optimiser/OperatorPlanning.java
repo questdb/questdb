@@ -275,12 +275,13 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * True when the plan, of {@code rows} row bound, never holds more rows than {@code other}, of {@code otherRows}, see
-     * {@link OptimiserContext#rowBound}: both have a bound, its bound is no larger, and every LIMIT whose count only
-     * execution knows that bounds {@code other} bounds the plan too, see {@link PhysicalProperties#hasRuntimeLimitsOf}.
+     * True when the plan, of {@code rows} row bound, see {@link OptimiserContext#rowBound}, never holds more rows than
+     * {@code other}, which holds at least {@code otherRows}, see {@link OptimiserContext#rowFloor}: its bound is no
+     * larger, and every LIMIT whose count only execution knows that bounds {@code other} bounds the plan too, see
+     * {@link PhysicalProperties#hasRuntimeLimitsOf}.
      */
     private static boolean isNeverLarger(LogicalPlan plan, long rows, LogicalPlan other, long otherRows) {
-        return rows > -1 && otherRows > -1 && rows <= otherRows && PhysicalProperties.hasRuntimeLimitsOf(plan, other);
+        return rows <= otherRows && PhysicalProperties.hasRuntimeLimitsOf(plan, other);
     }
 
     /**
@@ -701,8 +702,9 @@ final class OperatorPlanning implements Mutable {
      * holds more rows than the master, see {@link #isNeverLarger}, else the master when it never holds more rows than
      * the slave and has random access, and keeps the row counts the choice holds for, see {@link #keepBuildSide}. Any
      * other step leaves the choice to execution, {@link JoinInput.BuildSide#SMALLER}: one over a master of several
-     * inputs, {@code master} null, one with an input without a bound, one where a LIMIT whose count only execution knows
-     * may make either input the smaller, and one whose smaller master has the random access codegen decides.
+     * inputs, {@code master} null, one with an input without a bound, one where neither input is proven never to hold
+     * more rows than the other, such as one whose filter, interval or GROUP BY leaves an unknown part of its table, and
+     * one whose smaller master has the random access codegen decides.
      */
     private void planBuildSide(JoinInput step, @Nullable LogicalPlan master) {
         if (master == null) {
@@ -712,12 +714,18 @@ final class OperatorPlanning implements Mutable {
         final LogicalPlan slave = step.getInput();
         final long masterRows = context.rowBound(master);
         final long slaveRows = context.rowBound(slave);
-        if (isNeverLarger(slave, slaveRows, master, masterRows)) {
+        if (masterRows == -1 || slaveRows == -1) {
+            step.setBuildSide(JoinInput.BuildSide.SMALLER);
+            return;
+        }
+        final long masterFloor = context.rowFloor(master);
+        final long slaveFloor = context.rowFloor(slave);
+        if (isNeverLarger(slave, slaveRows, master, masterFloor)) {
             step.setBuildSide(JoinInput.BuildSide.SLAVE);
-            keepBuildSide(slave, slaveRows, master, masterRows);
-        } else if (isNeverLarger(master, masterRows, slave, slaveRows) && isRandomAccess(master)) {
+            keepBuildSide(slave, slaveRows, master, PhysicalProperties.rowCountScan(master), masterFloor);
+        } else if (isNeverLarger(master, masterRows, slave, slaveFloor) && isRandomAccess(master)) {
             step.setBuildSide(JoinInput.BuildSide.MASTER);
-            keepBuildSide(master, masterRows, slave, slaveRows);
+            keepBuildSide(master, masterRows, slave, PhysicalProperties.rowCountScan(slave), slaveFloor);
         } else {
             step.setBuildSide(JoinInput.BuildSide.SMALLER);
         }
@@ -1635,18 +1643,18 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * Keeps a choice to hash {@code built}, bounded by {@code builtRows} rows, and probe it with {@code probe}, bounded by
-     * {@code probeRows}, no fewer. The choice holds while the hashed input holds at most twice the rows of the other
-     * one. The scans whose tables bound the two inputs, see {@link PhysicalProperties#rowBoundScan}, keep the row
-     * counts that guarantee it: the probed one at least half its rows and at least the square root of half the product
-     * of the two, and the hashed one at most twice that, so it may grow to at least the rows of the probed one. A cursor
-     * open past them compiles the statement again, and a compile at the same row counts keeps them. Inputs that one
-     * table bounds record none when the LIMITs of the hashed one allow no more rows than those of the other, see
+     * Keeps a choice to hash {@code built}, bounded by {@code builtRows} rows, and probe it with {@code probe}, of
+     * {@code probeRows} rows, no fewer, that the row count of the table {@code probeScan} reads gives, null when none
+     * does. The choice holds while the hashed input holds at most twice the rows of the other one. The scan whose table
+     * bounds the hashed input, see {@link PhysicalProperties#rowBoundScan}, and {@code probeScan} keep the row counts
+     * that guarantee it: the probed one at least half its rows and at least the square root of half the product of the
+     * two, and the hashed one at most twice that, so it may grow to at least the rows of the probed one. A cursor open
+     * past them compiles the statement again, and a compile at the same row counts keeps them. Inputs whose rows one
+     * table gives record none when the LIMITs of the hashed one allow no more rows than those of the other, see
      * {@link PhysicalProperties#rowBoundLimit}, as its row bound then never exceeds the other's.
      */
-    static void keepBuildSide(LogicalPlan built, long builtRows, LogicalPlan probe, long probeRows) {
+    static void keepBuildSide(LogicalPlan built, long builtRows, LogicalPlan probe, @Nullable ScanPlan probeScan, long probeRows) {
         final ScanPlan builtScan = PhysicalProperties.rowBoundScan(built);
-        final ScanPlan probeScan = PhysicalProperties.rowBoundScan(probe);
         final long builtLimit = PhysicalProperties.rowBoundLimit(built);
         if (builtScan != null && probeScan != null && builtScan.getTableToken().equals(probeScan.getTableToken())
                 && builtLimit <= PhysicalProperties.rowBoundLimit(probe)) {

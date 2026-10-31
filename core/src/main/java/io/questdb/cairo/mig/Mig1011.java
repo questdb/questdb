@@ -48,10 +48,11 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
  * QuestDB's gains a footer that carries the record; one another writer wrote, such as an attached external
  * file, stays as it is. Row group pruning trusts NaN to be a Parquet null only in a recorded partition.
  * <p>
- * The migration reads {@code _meta} and {@code _txn} through read-only mappings and never modifies them. A
- * table whose {@code _meta} or {@code _txn} is shorter than the fields it reads, or holds a partition table
- * that does not fit, is logged and left as it is: its partitions are still read correctly without the record,
- * and the damaged file fails only that table when it opens, not the server start. Each {@code _pm} gains its
+ * The migration reads {@code _meta} and {@code _txn} through read-only mappings and never modifies them.
+ * {@link EngineMigration} skips a table whose {@code _meta} is shorter than its header before any migration
+ * reads it. A table whose {@code _txn} is shorter than the fields it reads, or holds a partition table that does
+ * not fit, is logged and left as it is: its partitions are still read correctly without the record, and the
+ * damaged file fails only that table when it opens, not the server start. Each {@code _pm} gains its
  * footer through the same append-then-publish sequence as an incremental update, so a crash leaves the
  * committed snapshot in place, and a rerun skips partitions already recorded.
  * <p>
@@ -88,17 +89,7 @@ public final class Mig1011 {
         final int plen = path.size();
 
         path.concat(META_FILE_NAME);
-        if (!ff.exists(path.$())) {
-            path.trimTo(plen);
-            return;
-        }
         final long metaFileSize = ff.length(path.$());
-        if (metaFileSize < META_OFFSET_COLUMN_TYPES) {
-            LOG.error().$("skipping table, _meta is shorter than its header [path=").$(path)
-                    .$(", size=").$(metaFileSize).I$();
-            path.trimTo(plen);
-            return;
-        }
         final int partitionBy;
         final int timestampType;
         try (MemoryCMR metaMem = Vm.getCMRInstance(ff, path.$(), metaFileSize, MemoryTag.NATIVE_MIG_MMAP)) {

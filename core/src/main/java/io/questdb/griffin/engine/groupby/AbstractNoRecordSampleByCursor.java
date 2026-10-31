@@ -208,11 +208,9 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         }
 
         if (from != Long.MIN_VALUE) {
-            // the top epoch is the bucket of FROM; timestamp_floor_utc puts the values between FROM and a later
-            // anchor (a positive OFFSET) into the bucket at the anchor
-            final long anchor = timestampSampler.localAnchorAsUtc(localAnchor(from));
-            topLocalEpoch = Math.max(anchor, timestampSampler.round(timestampSampler.localAnchorAsUtc(localFrom(from))));
-            localEpoch = Math.max(anchor, timestampSampler.round(timestamp + tzOffset));
+            // the top epoch is the bucket of FROM
+            topLocalEpoch = calendarBucket(timestampSampler.localAnchorAsUtc(localFrom(from)));
+            localEpoch = calendarBucket(timestamp + tzOffset);
         } else {
             topLocalEpoch = localEpoch = timestampSampler.round(timestamp + tzOffset);
         }

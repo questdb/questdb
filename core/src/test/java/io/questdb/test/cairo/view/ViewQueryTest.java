@@ -2293,17 +2293,17 @@ public class ViewQueryTest extends AbstractViewTest {
                             SelectedRecord
                                 Hash Join Light
                                   condition: t2.v=v1.v_max
-                                    Async Group By workers: 1
-                                      keys: [ts,k]
-                                      values: [max(v)]
-                                      filter: 4<v
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: table1
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: table2
                                     Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: table2
+                                        Async Group By workers: 1
+                                          keys: [ts,k]
+                                          values: [max(v)]
+                                          filter: 4<v
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: table1
                             """,
                     VIEW1
             );

@@ -54,6 +54,7 @@ import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
@@ -384,7 +385,7 @@ final class HashJoinAggregationPlanning implements Mutable {
         }
         if (isPresized) {
             OperatorPlanning.keepBuildSide(hashJoin.getBuildInput(), isMasterBuilt ? masterRows : slaveRows,
-                    hashJoin.getProbeInput(), isMasterBuilt ? slaveRows : masterRows);
+                    hashJoin.getProbeInput(), PhysicalProperties.rowBoundScan(hashJoin.getProbeInput()), isMasterBuilt ? slaveRows : masterRows);
         }
         hashJoin.setFilters(onFilter, postJoinFilter, isPresized);
         return hashJoin;

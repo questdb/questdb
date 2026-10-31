@@ -8593,6 +8593,63 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFirstLastKeepsRowsBeforeOffsetAnchor() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL INDEX, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00', 'a', 10), ('2024-01-08T06:00', 'a', 20)");
+            // FROM plus OFFSET anchors the grid at 2024-01-01T05:30, and the rows from FROM up to the anchor
+            // belong to the bucket at the anchor
+            final String[][] cases = {
+                    {"1w", """
+                            ts\tfirst\tlast
+                            2024-01-01T05:30:00.000000Z\t10\t10
+                            2024-01-08T05:30:00.000000Z\t20\t20
+                            """},
+                    {"2w", """
+                            ts\tfirst\tlast
+                            2024-01-01T05:30:00.000000Z\t10\t20
+                            """},
+            };
+            for (String[] c : cases) {
+                assertQuery("SELECT ts, first(v), last(v) FROM t WHERE k = 'a' SAMPLE BY " + c[0]
+                        + " FROM '2024-01-01'::TIMESTAMP ALIGN TO CALENDAR WITH OFFSET '05:30'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .withPlanContaining("SampleByFirstLast")
+                        .returns(c[1]);
+            }
+
+            execute("CREATE TABLE one (ts TIMESTAMP, k SYMBOL INDEX, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO one VALUES ('2024-01-01T01:00', 'a', 10)");
+            final String bindFrom = "SELECT ts, first(v) FROM one WHERE k = 'a' SAMPLE BY 1w FROM $1"
+                    + " ALIGN TO CALENDAR WITH OFFSET '05:30'";
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 1_704_067_200_000_000L);
+            assertQuery(bindFrom)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanContaining("SampleByFirstLast")
+                    .returns("""
+                            ts\tfirst
+                            2024-01-01T05:30:00.000000Z\t10
+                            """);
+            bindVariableService.setTimestamp(0, Numbers.LONG_NULL);
+            assertQuery(bindFrom)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .withPlanContaining("SampleByFirstLast")
+                    .returns("ts\tfirst\n");
+            bindVariableService.clear();
+        });
+    }
+
+    @Test
     public void testSampleByFirstLastLayoutSurvivesCompilerReuse() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (sym SYMBOL INDEX, val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -8632,6 +8689,102 @@ public class SampleByTest extends AbstractCairoTest {
                             2024-01-01T00:00:00.000000Z\t10\t20
                             2024-01-01T01:00:00.000000Z\t30\t30
                             """);
+        });
+    }
+
+    @Test
+    public void testSampleByFirstLastOffsetGridSameAsNonIndexed() throws Exception {
+        assertMemoryLeak(() -> {
+            final String rows = """
+                    ('2023-12-31T18:30', 'a', 1),
+                    ('2023-12-31T20:00', 'a', 2),
+                    ('2024-01-01T00:00', 'a', 3),
+                    ('2024-01-01T01:00', 'a', 4),
+                    ('2024-01-01T01:00', 'b', 5),
+                    ('2024-01-01T05:30', 'a', 6),
+                    ('2024-01-01T06:00', 'a', 7),
+                    ('2024-01-01T18:30', 'a', 8),
+                    ('2024-01-02T05:30', 'a', 9),
+                    ('2024-01-07T18:30', 'a', 10),
+                    ('2024-01-08T05:30', 'a', 11),
+                    ('2024-01-15T05:30', 'b', 12),
+                    ('2024-02-01T05:30', 'a', 13),
+                    ('2024-04-01T05:30', 'a', 14),
+                    ('2024-06-01T00:00', 'a', 15),
+                    ('2025-01-01T05:30', 'a', 16),
+                    ('2025-01-01T06:00', 'a', 17)""";
+            for (String type : new String[]{"TIMESTAMP", "TIMESTAMP_NS"}) {
+                execute("CREATE TABLE fl (ts " + type + ", k SYMBOL INDEX, v LONG) TIMESTAMP(ts) PARTITION BY HOUR");
+                execute("CREATE TABLE nfl (ts " + type + ", k SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY HOUR");
+                execute("INSERT INTO fl VALUES " + rows);
+                execute("INSERT INTO nfl SELECT * FROM fl");
+                for (String zone : new String[]{"", " TIME ZONE '+03:00'", " TIME ZONE 'Europe/Berlin'"}) {
+                    for (String stride : new String[]{"1h", "1d", "1w", "2w", "1M", "3M", "1y"}) {
+                        for (String offset : new String[]{"05:30", "-05:30", "00:00"}) {
+                            for (boolean hasTo : new boolean[]{false, true}) {
+                                final String sampleBy = " WHERE k = 'a' SAMPLE BY " + stride + " FROM ";
+                                final String tail = " ALIGN TO CALENDAR" + zone + " WITH OFFSET '" + offset + "'";
+                                final String literal = "'2024-01-01'" + (hasTo ? " TO '2024-06-01'" : "");
+                                printSql("SELECT ts, first(v), last(v) FROM nfl" + sampleBy + literal + tail);
+                                final String expected = sink.toString();
+                                final String cast = "'2024-01-01'::" + type
+                                        + (hasTo ? " TO '2024-06-01'::" + type : "");
+                                assertSampleByFirstLast("fl" + sampleBy + literal + tail, false, expected);
+                                for (String table : new String[]{"fl", "nfl"}) {
+                                    final boolean isIndexed = "fl".equals(table);
+                                    assertSampleByFirstLast(table + sampleBy + cast + tail, isIndexed, expected);
+                                    bindVariableService.clear();
+                                    if ("TIMESTAMP".equals(type)) {
+                                        bindVariableService.setTimestamp(0, 1_704_067_200_000_000L);
+                                    } else {
+                                        bindVariableService.setTimestampNano(0, 1_704_067_200_000_000_000L);
+                                    }
+                                    if (hasTo) {
+                                        bindVariableService.setStr(1, "2024-06-01");
+                                    }
+                                    final String bind = hasTo ? "$1 TO $2" : "$1";
+                                    assertSampleByFirstLast(table + sampleBy + bind + tail, isIndexed, expected);
+                                    bindVariableService.clear();
+                                }
+                            }
+                        }
+                    }
+                }
+                execute("DROP TABLE fl");
+                execute("DROP TABLE nfl");
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByFirstLastOffsetGridSameAsNonIndexedAcrossFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[][] layouts = {{"INDEX CAPACITY 4", "HOUR"}, {"INDEX", "DAY"}};
+            for (String[] layout : layouts) {
+                execute("CREATE TABLE fl (ts TIMESTAMP, k SYMBOL " + layout[0] + ", v LONG) TIMESTAMP(ts) PARTITION BY "
+                        + layout[1]);
+                execute("CREATE TABLE nfl (ts TIMESTAMP, k SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY HOUR");
+                execute("""
+                        INSERT INTO fl
+                        SELECT timestamp_sequence('2023-12-31T20:00', 60_000_000L),
+                            CASE WHEN x % 3 = 0 THEN 'b' ELSE 'a' END,
+                            x
+                        FROM long_sequence(20_000)""");
+                execute("INSERT INTO nfl SELECT * FROM fl");
+                for (String zone : new String[]{"", " TIME ZONE 'Europe/Berlin'"}) {
+                    for (String stride : new String[]{"7m", "1h", "1d", "1w"}) {
+                        for (String offset : new String[]{"05:30", "-05:30", "00:00"}) {
+                            final String sampleBy = " WHERE k = 'a' SAMPLE BY " + stride + " FROM ";
+                            final String tail = " ALIGN TO CALENDAR" + zone + " WITH OFFSET '" + offset + "'";
+                            printSql("SELECT ts, first(v), last(v) FROM nfl" + sampleBy + "'2024-01-01'" + tail);
+                            final String expected = sink.toString();
+                            assertSampleByFirstLast("fl" + sampleBy + "'2024-01-01'::TIMESTAMP" + tail, true, expected);
+                        }
+                    }
+                }
+                execute("DROP TABLE fl");
+                execute("DROP TABLE nfl");
+            }
         });
     }
 
@@ -27434,6 +27587,17 @@ public class SampleByTest extends AbstractCairoTest {
 
     private void assertScalarSubQueryBound(String sql, String expected) throws Exception {
         assertQuery(sql).noLeakCheck().timestamp("ts").inferRandomAccess().sizeMayVary().returns(expected);
+    }
+
+    // Asserts first(v) and last(v) per bucket of a SAMPLE BY over the table and clauses in sampleBy, on the
+    // SampleByFirstLast index search when isIndexed is set.
+    private void assertSampleByFirstLast(String sampleBy, boolean isIndexed, String expected) throws Exception {
+        final QueryAssertion assertion = assertQuery("SELECT ts, first(v), last(v) FROM " + sampleBy)
+                .noLeakCheck()
+                .timestamp("ts")
+                .inferRandomAccess()
+                .sizeMayVary();
+        (isIndexed ? assertion.withPlanContaining("SampleByFirstLast") : assertion).returns(expected);
     }
 
     private void assertSampleByFlavours(String expected, String sql) throws Exception {

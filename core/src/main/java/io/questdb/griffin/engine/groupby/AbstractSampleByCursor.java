@@ -55,6 +55,8 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
     protected long localEpoch;
     protected TimestampSampler timestampSampler;
     protected long tzOffset;
+    // The FROM anchor in the sampler's output space, Long.MIN_VALUE without FROM.
+    private long gridAnchor;
     private TimezoneFloorTimestampSampler zonedSampler;
 
     public AbstractSampleByCursor(
@@ -97,17 +99,33 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
      * Anchors the calendar grid at FROM, or at OFFSET without FROM, and returns FROM, Long.MIN_VALUE without it.
      */
     protected long anchorCalendarGrid() {
+        gridAnchor = Long.MIN_VALUE;
         if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
             final long from = sampleFromFunc.getTimestamp(null);
-            timestampSampler.setLocalAnchor(from != Long.MIN_VALUE ? localAnchor(from) : 0);
+            if (from != Long.MIN_VALUE) {
+                final long localAnchor = localAnchor(from);
+                timestampSampler.setLocalAnchor(localAnchor);
+                gridAnchor = timestampSampler.localAnchorAsUtc(localAnchor);
+            } else {
+                timestampSampler.setLocalAnchor(0);
+            }
             return from;
         }
         timestampSampler.setOffset(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0);
         return Long.MIN_VALUE;
     }
 
+    /**
+     * Returns the bucket of a timestamp in the sampler's input space on the grid {@link #anchorCalendarGrid()}
+     * anchored: the grid line at or before the timestamp, or the FROM anchor for a timestamp before it, where
+     * timestamp_floor_utc puts the values between FROM and a later anchor (a positive OFFSET).
+     */
+    protected long calendarBucket(long timestamp) {
+        return Math.max(gridAnchor, timestampSampler.round(timestamp));
+    }
+
     // The grid line timestamp_floor_utc anchors at: FROM plus OFFSET.
-    protected long localAnchor(long from) {
+    private long localAnchor(long from) {
         return localFrom(from) + (fixedOffset != Long.MIN_VALUE ? fixedOffset : 0);
     }
 

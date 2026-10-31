@@ -162,6 +162,22 @@ public final class PhysicalProperties {
     }
 
     /**
+     * The scan whose table's row count, capped by the LIMITs along the way, see {@link #rowBoundLimit} and
+     * {@link #hasRuntimeLimitsOf}, is the number of rows the factory returns, null when no table's is: the scan reads
+     * every row of its table, and the projections, sorts and windows over it return each row of their input, and the
+     * LIMITs the first or the last rows of their input, up to their count, see {@link #isWithoutOffset}.
+     */
+    public static ScanPlan rowCountScan(LogicalPlan plan) {
+        LogicalPlan node = plan;
+        while (node instanceof ProjectPlan || node instanceof SortPlan || node instanceof WindowPlan
+                || node instanceof LimitPlan limit && isWithoutOffset(limit)) {
+            node = boundingInput(node);
+        }
+        return node instanceof ScanPlan scan && scan.getAccessPath() == ScanPlan.AccessPath.PAGE_FRAMES && !scan.isIntervalScan()
+                && scan.getResidual() == null && !scan.getTableToken().isLiveView() ? scan : null;
+    }
+
+    /**
      * The order the factory emits its rows in, by designated timestamp.
      */
     public static ScanDirection scanDirection(LogicalPlan plan) {
@@ -588,6 +604,19 @@ public final class PhysicalProperties {
         }
         return Capability.of(sortedLimit == null ? algorithm == SortPlan.Algorithm.INPUT_ORDER || algorithm == SortPlan.Algorithm.TIMESTAMP_DECLARATION
                 : sortedLimit.getApplication() == LimitPlan.Application.INPUT && algorithm == SortPlan.Algorithm.INPUT_ORDER);
+    }
+
+    /**
+     * Whether the LIMIT returns the first or the last rows of its input, up to its count, and skips none: one count,
+     * which execution may know alone, or constant bounds of which one is zero, see {@link LimitBounds.Values#of}.
+     */
+    private static boolean isWithoutOffset(LimitPlan limit) {
+        final BoundExpression hi = limit.getHi();
+        if (isRuntimeLimit(limit)) {
+            return hi == null;
+        }
+        return limitCount(limit) > -1 && (hi == null || LogicalPlans.limitValue((ConstantExpression) limit.getLo()) == 0
+                || LogicalPlans.limitValue((ConstantExpression) hi) == 0);
     }
 
     /**
