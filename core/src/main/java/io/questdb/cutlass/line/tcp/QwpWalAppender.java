@@ -921,8 +921,9 @@ public class QwpWalAppender implements QuietCloseable {
                                 throw typeMismatchException(qwpType, columnType, tableBlock, col);
                             }
                         } else {
-                            // Unsupported column type - this should not happen as all types are handled
-                            throw CairoException.nonCritical()
+                            // Column types QWP cannot write, such as LONG128. Replaying the batch fails
+                            // the same way, so refuse it as a schema mismatch instead of a retryable error.
+                            throw CairoException.schemaMismatch()
                                     .put("unsupported column type for columnar write: ")
                                     .put(ColumnType.nameOf(columnType));
                         }
