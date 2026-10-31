@@ -1,0 +1,85 @@
+# name: test/parquet/filter_negative_limit.test
+# description: filtered read_parquet() with a negative LIMIT returns the last N matching rows
+# group: [parquet]
+
+require parquet
+
+# The file has 20 rows in 5 row groups of 4 rows: event = 1..20, walid = event % 3,
+# created = designated timestamp, one row per second from the epoch.
+# A negative LIMIT makes the parallel filter scan row groups backward, last one first.
+
+query IIT
+SELECT * FROM read_parquet('data/parquet-testing/filter_negative_limit.parquet')
+WHERE event > 5 AND created > '1970-01-01T00:00:03' AND walid = 1
+LIMIT -2
+----
+16 1 1970-01-01 00:00:15
+19 1 1970-01-01 00:00:18
+
+query IIT
+SELECT * FROM read_parquet('data/parquet-testing/filter_negative_limit.parquet')
+WHERE walid = 1
+LIMIT -3
+----
+13 1 1970-01-01 00:00:12
+16 1 1970-01-01 00:00:15
+19 1 1970-01-01 00:00:18
+
+query IIT
+SELECT * FROM read_parquet('data/parquet-testing/filter_negative_limit.parquet')
+LIMIT -2
+----
+19 1 1970-01-01 00:00:18
+20 2 1970-01-01 00:00:19
+
+# min/max statistics prune the last two row groups during the backward scan
+query IIT
+SELECT * FROM read_parquet('data/parquet-testing/filter_negative_limit.parquet')
+WHERE event < 11 AND walid = 1
+LIMIT -2
+----
+7 1 1970-01-01 00:00:06
+10 1 1970-01-01 00:00:09
+
+# min/max statistics prune the middle row groups during the backward scan
+query IIT
+SELECT * FROM read_parquet('data/parquet-testing/filter_negative_limit.parquet')
+WHERE event IN (2, 5, 19)
+LIMIT -2
+----
+5 2 1970-01-01 00:00:04
+19 1 1970-01-01 00:00:18
+
+# projection over the parquet scan
+query IT
+SELECT event, created FROM read_parquet('data/parquet-testing/filter_negative_limit.parquet')
+WHERE walid = 1
+LIMIT -2
+----
+16 1970-01-01 00:00:15
+19 1970-01-01 00:00:18
+
+# negative limit range
+query IIT
+SELECT * FROM read_parquet('data/parquet-testing/filter_negative_limit.parquet')
+WHERE walid = 1
+LIMIT -3, -1
+----
+13 1 1970-01-01 00:00:12
+16 1 1970-01-01 00:00:15
+
+# positive limit still returns the first N matching rows
+query IIT
+SELECT * FROM read_parquet('data/parquet-testing/filter_negative_limit.parquet')
+WHERE walid = 1
+LIMIT 2
+----
+1 1 1970-01-01 00:00:00
+4 1 1970-01-01 00:00:03
+
+# no matching rows
+query IIT
+SELECT * FROM read_parquet('data/parquet-testing/filter_negative_limit.parquet')
+WHERE walid = 5
+LIMIT -2
+----
