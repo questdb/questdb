@@ -656,6 +656,62 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinEqualTimestampRunStraddlingFrameBoundary() throws Exception {
+        // a run of equal slave timestamps may continue into the next frame;
+        // the last row <= master timestamp can live there (issue #8034)
+        setProperty(PropertyKey.CAIRO_SQL_ASOF_JOIN_LOOKAHEAD, "1");
+        assertMemoryLeak(() -> {
+            // force small page frames so the equal-timestamp run straddles a frame boundary
+            sqlExecutionContext.changePageFrameSizes(4, 4);
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE trades (
+                                symbol SYMBOL,
+                                price DOUBLE,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) partition by DAY""",
+                    leftTableTimestampType.getTypeName()
+            );
+
+            executeWithRewriteTimestamp(
+                    """
+                            CREATE TABLE quotes (
+                                symbol SYMBOL INDEX,
+                                bid DOUBLE,
+                                ts #TIMESTAMP
+                            ) timestamp(ts) partition by DAY""",
+                    rightTableTimestampType.getTypeName()
+            );
+
+            execute("INSERT INTO quotes VALUES ('K2', 2.0, '2024-01-01T10:00:00.000000Z')");
+            execute("INSERT INTO quotes VALUES ('K9', 9.0, '2024-01-01T10:00:01.000000Z')");
+            // the equal-timestamp block starts inside the first frame and
+            // continues past its last row (row 3 of 4) into the next frame
+            execute("INSERT INTO quotes VALUES ('K0', 0.0, '2024-01-01T10:00:02.000000Z')");
+            execute("INSERT INTO quotes VALUES ('K1', 1.0, '2024-01-01T10:00:02.000000Z')");
+            execute("INSERT INTO quotes VALUES ('K2', 2.2, '2024-01-01T10:00:02.000000Z')");
+            execute("INSERT INTO quotes VALUES ('K0', 0.1, '2024-01-01T10:00:03.000000Z')");
+            execute("INSERT INTO quotes VALUES ('K8', 8.0, '2024-01-01T10:00:04.000000Z')");
+            execute("INSERT INTO quotes VALUES ('K8', 8.1, '2024-01-01T10:00:05.000000Z')");
+
+            execute("INSERT INTO trades VALUES ('K2', 100.0, '2024-01-01T10:00:00.000000Z')");
+            execute("INSERT INTO trades VALUES ('K2', 101.0, '2024-01-01T10:00:02.000000Z')");
+
+            String expected = """
+                    symbol\tprice\tbid
+                    K2\t100.0\t2.0
+                    K2\t101.0\t2.2
+                    """;
+
+            String queryBody = "t.symbol, t.price, q.bid FROM trades t ASOF JOIN quotes q ON t.symbol = q.symbol";
+            assertAlgoAndResult(queryBody, "", "Fast", expected);
+            assertAlgoAndResult(queryBody, "asof_index(t q)", "Indexed", expected);
+            assertAlgoAndResult(queryBody, "asof_memoized(t q)", "Memoized", expected);
+            assertAlgoAndResult(queryBody, "asof_dense(t q)", "Dense", expected);
+        });
+    }
+
+    @Test
     public void testAsOfJoinIndexedSymbolEmptyRightTable() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
