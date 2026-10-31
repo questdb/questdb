@@ -497,11 +497,15 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\thohoho\t8
                             """,
                     query,
+                    null,
+                    false,
+                    false,
                     """
                             QUERY PLAN
                             VirtualRecord
                               functions: [ts,k,'hohoho',v_max]
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
                                   keys: [ts,k]
                                   values: [max(v)]
                                   filter: 5<v
@@ -521,24 +525,22 @@ public class ViewQueryTest extends AbstractViewTest {
                             """,
                     query,
                     "ts",
-                    true,
+                    false,
                     false,
                     """
                             QUERY PLAN
-                            Encode sort light
-                              keys: [ts]
+                            VirtualRecord
+                              functions: [ts,1,2*v_max]
                                 VirtualRecord
-                                  functions: [ts,1,2*v_max]
-                                    VirtualRecord
-                                      functions: [ts,v_max]
-                                        Filter filter: 6<v_max
-                                            Async Group By workers: 1
-                                              keys: [ts]
-                                              values: [max(v)]
-                                              filter: 5<v
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: table1
+                                  functions: [ts,v_max]
+                                    Filter filter: 6<v_max
+                                        Async Stream Group By workers: 1
+                                          keys: [ts]
+                                          values: [max(v)]
+                                          filter: 5<v
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: table1
                             """,
                     VIEW1
             );
@@ -840,7 +842,7 @@ public class ViewQueryTest extends AbstractViewTest {
             assertQuery(VIEW1)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .sizeMayVary()
+                    .noRandomAccess()
                     .returns("""
                             ts\tsensor\tavg_val
                             2024-01-01T00:00:00.000000Z\tA\t20.0
@@ -853,7 +855,7 @@ public class ViewQueryTest extends AbstractViewTest {
             assertQuery("DECLARE @min_value := 35.0 SELECT * FROM " + VIEW1)
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tsensor\tavg_val
                             2024-01-01T00:01:00.000000Z\tA\t40.0
@@ -1382,14 +1384,16 @@ public class ViewQueryTest extends AbstractViewTest {
                                           functions: [ts,k2::symbol,v_max]
                                             Union
                                                 Filter filter: 7<v_max
-                                                    Async Group By workers: 1
+                                                    Async Stream Group By workers: 1
+                                                      segmentKey: ts
                                                       keys: [ts,k2]
                                                       values: [max(v)]
                                                       filter: 6<v
                                                         PageFrame
                                                             Row forward scan
                                                             Frame forward scan on: Aкции_ягоды
-                                                Async Group By workers: 1
+                                                Async Stream Group By workers: 1
+                                                  segmentKey: ts
                                                   keys: [ts,k]
                                                   values: [max(v)]
                                                   filter: (4<v and k='k5')
@@ -1518,9 +1522,13 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     query,
+                    null,
+                    false,
+                    false,
                     """
                             QUERY PLAN
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
+                              segmentKey: ts
                               keys: [ts,k]
                               values: [max(v)]
                               filter: 5<v
@@ -1540,14 +1548,15 @@ public class ViewQueryTest extends AbstractViewTest {
                             """,
                     query,
                     null,
-                    true,
+                    false,
                     false,
                     """
                             QUERY PLAN
                             VirtualRecord
                               functions: [ts,1,2*v_max]
                                 Filter filter: 6<v_max
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: ts
                                       keys: [ts,k]
                                       values: [max(v)]
                                       filter: 5<v
@@ -1577,9 +1586,13 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     query,
+                    null,
+                    false,
+                    false,
                     """
                             QUERY PLAN
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
+                              segmentKey: ts
                               keys: [ts,k]
                               values: [max(v)]
                               filter: 5<v
@@ -1599,10 +1612,14 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\t8
                             """,
                     query,
+                    null,
+                    false,
+                    false,
                     """
                             QUERY PLAN
                             SelectedRecord
-                                Async Group By workers: 1
+                                Async Stream Group By workers: 1
+                                  segmentKey: ts
                                   keys: [ts,k]
                                   values: [max(v)]
                                   filter: 5<v
@@ -1637,8 +1654,12 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     query,
+                    null,
+                    false,
+                    false,
                     "QUERY PLAN\n" +
-                            "Async Group By workers: 1\n" +
+                            "Async Stream Group By workers: 1\n" +
+                            "  segmentKey: ts\n" +
                             "  keys: [ts,k]\n" +
                             "  values: [max(v)]\n" +
                             "  filter: 5<v\n" +
@@ -1657,9 +1678,13 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\t8
                             """,
                     query,
+                    null,
+                    false,
+                    false,
                     "QUERY PLAN\n" +
                             "SelectedRecord\n" +
-                            "    Async Group By workers: 1\n" +
+                            "    Async Stream Group By workers: 1\n" +
+                            "      segmentKey: ts\n" +
                             "      keys: [ts,k]\n" +
                             "      values: [max(v)]\n" +
                             "      filter: 5<v\n" +
@@ -1800,14 +1825,15 @@ public class ViewQueryTest extends AbstractViewTest {
                             """,
                     "(select v1.ts, v1.v_max from " + VIEW1 + " v1 where v_max > 6) timestamp(ts)",
                     "ts",
-                    true,
+                    false,
                     false,
                     """
                             QUERY PLAN
                             SelectedRecord
                                 SelectedRecord
                                     Filter filter: 6<v_max
-                                        Async Group By workers: 1
+                                        Async Stream Group By workers: 1
+                                          segmentKey: ts
                                           keys: [ts,k]
                                           values: [max(v)]
                                           filter: 5<v
@@ -2137,9 +2163,13 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1,
+                    null,
+                    false,
+                    false,
                     """
                             QUERY PLAN
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
+                              segmentKey: ts
                               keys: [ts,k]
                               values: [max(v)]
                               filter: 5<v
@@ -2156,9 +2186,13 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:00.000000Z\tk6\t6
                             """,
                     VIEW1 + " where k = 'k6'",
+                    null,
+                    false,
+                    false,
                     """
                             QUERY PLAN
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
+                              segmentKey: ts
                               keys: [ts,k]
                               values: [max(v)]
                               filter: (5<v and k='k6')
@@ -2176,9 +2210,13 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     VIEW1 + " where k in ('k6', 'k8')",
+                    null,
+                    false,
+                    false,
                     """
                             QUERY PLAN
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
+                              segmentKey: ts
                               keys: [ts,k]
                               values: [max(v)]
                               filter: (5<v and k in [k6,k8])
@@ -2195,9 +2233,13 @@ public class ViewQueryTest extends AbstractViewTest {
                             1970-01-01T00:01:20.000000Z\tk8\t8
                             """,
                     "(" + VIEW1 + " where k in ('k6', 'k8')) where k = 'k8'",
+                    null,
+                    false,
+                    false,
                     """
                             QUERY PLAN
-                            Async Group By workers: 1
+                            Async Stream Group By workers: 1
+                              segmentKey: ts
                               keys: [ts,k]
                               values: [max(v)]
                               filter: (5<v and k in [k6,k8] and k='k8')
@@ -2236,7 +2278,8 @@ public class ViewQueryTest extends AbstractViewTest {
                             SelectedRecord
                                 Hash Join Light
                                   condition: t2.v=v1.v_max
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: ts
                                       keys: [ts,k]
                                       values: [max(v)]
                                       filter: 4<v
@@ -2260,11 +2303,11 @@ public class ViewQueryTest extends AbstractViewTest {
                     "select t1.ts, v_max from " + TABLE1 + " t1 join (" + VIEW1 + " where v_max > 6) t2 on t1.v = t2.v_max",
                     "ts",
                     false,
-                    false,
+                    true,
                     """
                             QUERY PLAN
                             SelectedRecord
-                                Hash Join Light
+                                Hash Join
                                   condition: t2.v_max=t1.v
                                     PageFrame
                                         Row forward scan
@@ -2272,7 +2315,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                     Hash
                                         SelectedRecord
                                             Filter filter: 6<v_max
-                                                Async Group By workers: 1
+                                                Async Stream Group By workers: 1
+                                                  segmentKey: ts
                                                   keys: [ts,k]
                                                   values: [max(v)]
                                                   filter: 4<v
@@ -2291,11 +2335,11 @@ public class ViewQueryTest extends AbstractViewTest {
                             """,
                     "with t2 as (" + VIEW1 + " where v_max > 6) select t1.ts, v_max from " + TABLE1 + " t1 join t2 on t1.v = t2.v_max", "ts",
                     false,
-                    false,
+                    true,
                     """
                             QUERY PLAN
                             SelectedRecord
-                                Hash Join Light
+                                Hash Join
                                   condition: t2.v_max=t1.v
                                     PageFrame
                                         Row forward scan
@@ -2303,7 +2347,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                     Hash
                                         SelectedRecord
                                             Filter filter: 6<v_max
-                                                Async Group By workers: 1
+                                                Async Stream Group By workers: 1
+                                                  segmentKey: ts
                                                   keys: [ts,k]
                                                   values: [max(v)]
                                                   filter: 4<v
@@ -2327,9 +2372,10 @@ public class ViewQueryTest extends AbstractViewTest {
                     """
                             QUERY PLAN
                             SelectedRecord
-                                Hash Join Light
+                                Hash Join
                                   condition: v12.v_max=v11.v_max
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: ts
                                       keys: [ts,k]
                                       values: [max(v)]
                                       filter: 4<v
@@ -2338,7 +2384,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                             Frame forward scan on: table1
                                     Hash
                                         Filter filter: v_max<7
-                                            Async Group By workers: 1
+                                            Async Stream Group By workers: 1
+                                              segmentKey: ts
                                               keys: [ts,k]
                                               values: [max(v)]
                                               filter: 4<v
@@ -2369,9 +2416,10 @@ public class ViewQueryTest extends AbstractViewTest {
                                         Frame forward scan on: table1
                                     Hash
                                         SelectedRecord
-                                            Hash Join Light
+                                            Hash Join
                                               condition: v12.v_max=v11.v_max
-                                                Async Group By workers: 1
+                                                Async Stream Group By workers: 1
+                                                  segmentKey: ts
                                                   keys: [ts,k]
                                                   values: [max(v)]
                                                   filter: 4<v
@@ -2380,7 +2428,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                                         Frame forward scan on: table1
                                                 Hash
                                                     Filter filter: 6<v_max
-                                                        Async Group By workers: 1
+                                                        Async Stream Group By workers: 1
+                                                          segmentKey: ts
                                                           keys: [ts,k]
                                                           values: [max(v)]
                                                           filter: 4<v
@@ -2712,14 +2761,16 @@ public class ViewQueryTest extends AbstractViewTest {
                               functions: [ts,k2::symbol,v_max]
                                 Union
                                     Filter filter: 7<v_max
-                                        Async Group By workers: 1
+                                        Async Stream Group By workers: 1
+                                          segmentKey: ts
                                           keys: [ts,k2]
                                           values: [max(v)]
                                           filter: 6<v
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: table2
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: ts
                                       keys: [ts,k]
                                       values: [max(v)]
                                       filter: (4<v and k='k5')
@@ -2746,7 +2797,8 @@ public class ViewQueryTest extends AbstractViewTest {
                             Union
                                 SelectedRecord
                                     Filter filter: 6<v_max
-                                        Async Group By workers: 1
+                                        Async Stream Group By workers: 1
+                                          segmentKey: ts
                                           keys: [ts,k2]
                                           values: [max(v)]
                                           filter: 6<v
@@ -2754,7 +2806,8 @@ public class ViewQueryTest extends AbstractViewTest {
                                                 Row forward scan
                                                 Frame forward scan on: table2
                                 SelectedRecord
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: ts
                                       keys: [ts,k]
                                       values: [max(v)]
                                       filter: (4<v and k='k5')
@@ -2788,14 +2841,16 @@ public class ViewQueryTest extends AbstractViewTest {
                                           functions: [ts,k2::symbol,v_max]
                                             Union
                                                 Filter filter: 7<v_max
-                                                    Async Group By workers: 1
+                                                    Async Stream Group By workers: 1
+                                                      segmentKey: ts
                                                       keys: [ts,k2]
                                                       values: [max(v)]
                                                       filter: 6<v
                                                         PageFrame
                                                             Row forward scan
                                                             Frame forward scan on: table2
-                                                Async Group By workers: 1
+                                                Async Stream Group By workers: 1
+                                                  segmentKey: ts
                                                   keys: [ts,k]
                                                   values: [max(v)]
                                                   filter: (4<v and k='k5')
@@ -2824,13 +2879,14 @@ public class ViewQueryTest extends AbstractViewTest {
                             """,
                     "select v1.ts, v1.v_max from " + VIEW1 + " v1 where v_max > 6",
                     null,
-                    true,
+                    false,
                     false,
                     """
                             QUERY PLAN
                             SelectedRecord
                                 Filter filter: 6<v_max
-                                    Async Group By workers: 1
+                                    Async Stream Group By workers: 1
+                                      segmentKey: ts
                                       keys: [ts,k]
                                       values: [max(v)]
                                       filter: 5<v

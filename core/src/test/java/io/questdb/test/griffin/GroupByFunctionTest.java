@@ -61,7 +61,7 @@ public class GroupByFunctionTest extends AbstractCairoTest {
                         " from long_sequence(100)" +
                         "), index(seller), index(buyer) timestamp(delivery_start_utc)")
                 .timestamp("y_utc_15m")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         y_utc_15m\ty_sf_position_mw
                         1970-01-01T00:00:00.000000Z\t-0.2246301342497259

@@ -45,6 +45,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
+import io.questdb.griffin.engine.groupby.GroupByShardMerger;
 import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
 import io.questdb.griffin.engine.groupby.vect.CountVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
@@ -53,7 +54,6 @@ import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
-import io.questdb.griffin.engine.table.GroupByShardingContext;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedRecordCursorFactory;
 import io.questdb.mp.CountDownLatchSPI;
@@ -1293,7 +1293,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                             final long mergeCursor = mergeSubSeq.next();
                             if (mergeCursor > -1) {
                                 final GroupByMergeShardTask task = mergeQueue.get(mergeCursor);
-                                final GroupByShardingContext context = task.getShardingContext();
+                                final GroupByShardMerger context = task.getMerger();
                                 try {
                                     GroupByMergeShardJob.run(-1, task, mergeSubSeq, mergeCursor, context);
                                 } catch (Throwable th) {
@@ -1471,7 +1471,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                             final long cursor = subSeq.next();
                             if (cursor > -1) {
                                 final GroupByMergeShardTask task = queue.get(cursor);
-                                final GroupByShardingContext context = task.getShardingContext();
+                                final GroupByShardMerger context = task.getMerger();
                                 try {
                                     GroupByMergeShardJob.run(-1, task, subSeq, cursor, context);
                                 } catch (Throwable th) {
@@ -2520,7 +2520,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                         final boolean isTaskCleared = isLongTopK
                                 ? longTopKTask.getAtom() == null
                                   && longTopKTask.getShardIndex() == -1
-                                : mergeShardTask.getShardingContext() == null
+                                : mergeShardTask.getMerger() == null
                                   && mergeShardTask.getShardIndex() == -1;
 
                         if (!isTaskCleared) {
@@ -4030,7 +4030,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                                 long seq;
                                 while ((seq = mergeSubSeq.next()) > -1) {
                                     final GroupByMergeShardTask task = mergeQueue.get(seq);
-                                    final GroupByShardingContext shardingContext = task.getShardingContext();
+                                    final GroupByShardMerger shardingContext = task.getMerger();
                                     final AsyncQueryProgressState mergeProgress = shardingContext.getProgressState();
                                     GroupByMergeShardJob.run(-1, task, mergeSubSeq, seq, shardingContext);
                                     try {
@@ -4072,7 +4072,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                             sharedBreaker = entry.getCircuitBreaker();
                         } else if (taskType == DrainTaskType.MERGE_SHARD) {
                             final GroupByMergeShardTask task = messageBus.getGroupByMergeShardQueue().get(victimCursor);
-                            victimProgress = task.getShardingContext().getProgressState();
+                            victimProgress = task.getMerger().getProgressState();
                             sharedBreaker = task.getCircuitBreaker();
                         } else {
                             final GroupByLongTopKTask task = messageBus.getGroupByLongTopKQueue().get(victimCursor);
@@ -4106,7 +4106,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                                 messageBus.getVectorAggregateQueue().get(seq).entry.run(-1, subSeq, seq);
                             } else if (taskType == DrainTaskType.MERGE_SHARD) {
                                 final GroupByMergeShardTask task = messageBus.getGroupByMergeShardQueue().get(seq);
-                                final GroupByShardingContext shardingContext = task.getShardingContext();
+                                final GroupByShardMerger shardingContext = task.getMerger();
                                 GroupByMergeShardJob.run(-1, task, subSeq, seq, shardingContext);
                             } else {
                                 final GroupByLongTopKTask task = messageBus.getGroupByLongTopKQueue().get(seq);
@@ -4693,7 +4693,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     .run(-1, subSeq, cursor, dispatcher);
             case MERGE_SHARD -> {
                 final GroupByMergeShardTask task = messageBus.getGroupByMergeShardQueue().get(cursor);
-                GroupByMergeShardJob.run(-1, task, subSeq, cursor, task.getShardingContext(), dispatcher);
+                GroupByMergeShardJob.run(-1, task, subSeq, cursor, task.getMerger(), dispatcher);
             }
             case LONG_TOP_K -> {
                 final GroupByLongTopKTask task = messageBus.getGroupByLongTopKQueue().get(cursor);

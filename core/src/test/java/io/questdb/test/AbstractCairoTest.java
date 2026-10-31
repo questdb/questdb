@@ -464,6 +464,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
         sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
         sqlExecutionContext.setParallelHashJoinGroupByEnabled(configuration.isSqlParallelHashJoinGroupByEnabled());
+        sqlExecutionContext.setStreamGroupByEnabled(configuration.isSqlStreamGroupByEnabled());
         sqlExecutionContext.setParallelTopKEnabled(configuration.isSqlParallelTopKEnabled());
         sqlExecutionContext.setParallelWindowJoinEnabled(configuration.isSqlParallelWindowJoinEnabled());
         sqlExecutionContext.setParallelHorizonJoinEnabled(configuration.isSqlParallelHorizonJoinEnabled());

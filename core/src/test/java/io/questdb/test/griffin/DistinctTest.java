@@ -45,17 +45,17 @@ public class DistinctTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctConstAliasOrderByLimitFromFuzzer() throws Exception {
-        // Original failing query from the query fuzzer (seed s0=104514844543552, s1=1779785264959).
+        // Fuzzer seed s0=104514844543552, s1=1779785264959; e1 breaks ties on the constant e0.
         assertQuery("SELECT DISTINCT -676 AS e0, t0.x AS e1, -97 AS e2," +
                 " '2024-01-23T16:57:00.000000Z'::TIMESTAMP AS e3, t0.x AS e4" +
                 " FROM long_sequence(73) t0" +
                 " WHERE (t0.x > (t0.x - t0.x) AND t0.x IS NOT NULL)" +
-                " ORDER BY e0 DESC LIMIT 2")
+                " ORDER BY e0 DESC, e1 LIMIT 2")
                 .expectSize()
                 .returns("""
                         e0	e1	e2	e3	e4
-                        -676	26	-97	2024-01-23T16:57:00.000000Z	26
-                        -676	36	-97	2024-01-23T16:57:00.000000Z	36
+                        -676	1	-97	2024-01-23T16:57:00.000000Z	1
+                        -676	2	-97	2024-01-23T16:57:00.000000Z	2
                         """);
     }
 
@@ -64,12 +64,12 @@ public class DistinctTest extends AbstractCairoTest {
         // Duplicate column refs trigger rewriteTrivialGroupByExpressions which used to push
         // LIMIT past the virtual carrying the constant alias; ORDER BY e0 then resolved at the
         // limited group-by and crashed with AIOOBE.
-        assertQuery("SELECT DISTINCT -1 AS e0, t0.x AS e1, t0.x AS e4 FROM long_sequence(3) t0 ORDER BY e0 DESC LIMIT 2")
+        assertQuery("SELECT DISTINCT -1 AS e0, t0.x AS e1, t0.x AS e4 FROM long_sequence(3) t0 ORDER BY e0 DESC, e1 LIMIT 2")
                 .expectSize()
                 .returns("""
                         e0	e1	e4
+                        -1	1	1
                         -1	2	2
-                        -1	3	3
                         """);
     }
 
@@ -160,16 +160,15 @@ public class DistinctTest extends AbstractCairoTest {
         // no early exit
         assertQuery("SELECT DISTINCT sym, origin, lag(origin) over() from x order by 1 limit 5")
                 .withPlan("""
-                        Limit value: 5 skip-rows: 0 take-rows: 5
-                            Encode sort
-                              keys: [sym]
-                                Distinct
-                                  keys: sym,origin,lag
-                                    Window
-                                      functions: [lag(origin, 1, NULL) over ()]
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: x
+                        Encode sort lo: 5
+                          keys: [sym]
+                            Distinct
+                              keys: sym,origin,lag
+                                Window
+                                  functions: [lag(origin, 1, NULL) over ()]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: x
                         """)
                 .expectSize()
                 .returns("""
@@ -196,9 +195,9 @@ public class DistinctTest extends AbstractCairoTest {
             final String pushedPlan = """
                     VirtualRecord
                       functions: [-1,e1,e4]
-                        Long Top K lo: 2
+                        Encode sort lo: 2
                           keys: [e1 desc]
-                            GroupBy vectorized: false
+                            Stream Group By
                               keys: [e1,e4]
                                 long_sequence count: 3
                     """;
@@ -211,11 +210,11 @@ public class DistinctTest extends AbstractCairoTest {
 
             // position 1 == e0 (virtual-only constant): not pushed, same plan as the alias form, no AIOOBE.
             final String notPushedPlan = """
-                    Encode sort light lo: 2
+                    Encode sort lo: 2
                       keys: [e0 desc]
                         VirtualRecord
                           functions: [-1,e1,e4]
-                            GroupBy vectorized: false
+                            Stream Group By
                               keys: [e1,e4]
                                 long_sequence count: 3
                     """;
@@ -248,9 +247,9 @@ public class DistinctTest extends AbstractCairoTest {
             final String pushedPlan2 = """
                     VirtualRecord
                       functions: [-1,x,e4]
-                        Long Top K lo: 2
+                        Encode sort lo: 2
                           keys: [x desc]
-                            GroupBy vectorized: false
+                            Stream Group By
                               keys: [x,e4]
                                 long_sequence count: 3
                     """;
@@ -306,7 +305,6 @@ public class DistinctTest extends AbstractCairoTest {
                 " (278444 * t0.x) AS e4" +
                 " FROM long_sequence(2) t0" +
                 " ORDER BY e1")
-                .expectSize()
                 .returns("""
                         e0\te1\te2\te3\te4
                         -614\t1\t786\t-716\t278444
@@ -320,7 +318,7 @@ public class DistinctTest extends AbstractCairoTest {
         // pointed the outer projection at the translating-model alias "x" while the
         // group-by metadata only exposed "e1"; generateSelectChoose hit "wtf? x".
         assertQuery("SELECT DISTINCT abs(x) AS e0, x AS e1, x AS e2 FROM long_sequence(3)")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         e0\te1\te2
                         1\t1\t1
@@ -340,7 +338,7 @@ public class DistinctTest extends AbstractCairoTest {
                         "    timestamp_sequence(0, 0) created" +
                         "  from long_sequence(10)" +
                         ") timestamp(created);")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         created
                         1970-01-01T00:00:00.000000Z

@@ -152,4 +152,9 @@ public class BitXorShortGroupByFunction extends ShortFunction implements GroupBy
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

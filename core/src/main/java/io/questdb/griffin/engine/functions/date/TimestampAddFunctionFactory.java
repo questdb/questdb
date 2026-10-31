@@ -137,6 +137,16 @@ public class TimestampAddFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean preservesTimestampOrder() {
+            if (timestampFunc.getType() != getType()
+                    || (stride != 0 && period != 'u' && period != 'H' && !CommonUtils.isFixedDurationUnit(period))) {
+                return false;
+            }
+            final long shift = periodAddFunction.add(0, stride);
+            return shift <= Long.MAX_VALUE - timestampDriver.getMaxDesignatedTimestamp();
+        }
+
+        @Override
         public int invertTimestampInterval(Interval io) {
             if (stride == Integer.MIN_VALUE) {
                 return NONE;

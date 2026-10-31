@@ -2204,7 +2204,6 @@ public class GroupByTest extends AbstractCairoTest {
     public void testGroupByOrderByExpression() throws Exception {
         assertQuery("SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('1970-01-01T00:00:00.000002Z');")
                 .ddl("CREATE TABLE x AS (SELECT x::timestamp AS ts, x::short AS event, x::short AS origin FROM long_sequence(2)) TIMESTAMP(ts);")
-                .expectSize()
                 .returns("""
                         ref0
                         1970-01-01T00:00:00.000002Z
@@ -2263,16 +2262,6 @@ public class GroupByTest extends AbstractCairoTest {
                             C\t1\t40.0
                             """
                     },
-                    {
-                            "SELECT ts, avg(price) + 1 a FROM trades SAMPLE BY 1s ORDER BY price * 2",
-                            """
-                            ts\ta
-                            2000-01-01T00:00:00.000000Z\t11.0
-                            2000-01-01T00:00:01.000000Z\t21.0
-                            2000-01-01T00:00:02.000000Z\t31.0
-                            2000-01-01T00:00:03.000000Z\t41.0
-                            """
-                    },
                     // with DISTINCT, the distinct model referenced the expression as a regular column
                     {
                             "SELECT DISTINCT sym, count() c FROM trades ORDER BY max(price) * 2, sym",
@@ -2296,6 +2285,16 @@ public class GroupByTest extends AbstractCairoTest {
             // SAMPLE BY with FILL, and ALIGN TO FIRST OBSERVATION, which keeps the SAMPLE BY model,
             // with and without a projection above it; their sorted cursors do not report a size
             final String[][] sampleByQueries = {
+                    {
+                            "SELECT ts, avg(price) + 1 a FROM trades SAMPLE BY 1s ORDER BY price * 2",
+                            """
+                            ts\ta
+                            2000-01-01T00:00:00.000000Z\t11.0
+                            2000-01-01T00:00:01.000000Z\t21.0
+                            2000-01-01T00:00:02.000000Z\t31.0
+                            2000-01-01T00:00:03.000000Z\t41.0
+                            """
+                    },
                     {
                             "SELECT ts, avg(price) + 1 a FROM trades WHERE sym = 'A' SAMPLE BY 1s FILL(NULL) ORDER BY price * 2, ts",
                             """
@@ -3065,7 +3064,7 @@ public class GroupByTest extends AbstractCairoTest {
                       SUM(1)\s
                     FROM foo;""";
             assertQuery(query)
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             time\tTO_STR\tSUM
@@ -3623,24 +3622,22 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertQuery(query)
                     .timestamp("y_utc_15m")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns(expected);
 
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Stream Group By
                               keys: [y_utc_15m]
-                                GroupBy vectorized: false
-                                  keys: [y_utc_15m]
-                                  values: [sum(case([seller='sf',-1.0*volume_mw,buyer='sf',1.0*volume_mw,0.0]))]
-                                    SelectedRecord
-                                        Async JIT Filter workers: 1
-                                          filter: (seller='sf' or buyer='sf')
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: trades
+                              values: [sum(case([seller='sf',-1.0*volume_mw,buyer='sf',1.0*volume_mw,0.0]))]
+                                SelectedRecord
+                                    Async JIT Filter workers: 1
+                                      filter: (seller='sf' or buyer='sf')
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: trades
                             """);
         });
     }
@@ -4486,7 +4483,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "GROUP BY ts " +
                     "ORDER BY ts")
                     .timestamp("ref0")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("ref0\n2023-05-29T15:30:00.000000Z\n");
 
@@ -4495,7 +4492,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "GROUP BY tst.ts " +
                     "ORDER BY tst.ts")
                     .timestamp("ref0")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("ref0\n2023-05-29T15:30:00.000000Z\n");
 
@@ -4504,7 +4501,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "GROUP BY ts " +
                     "ORDER BY tst.ts")
                     .timestamp("ref0")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("ref0\n2023-05-29T15:30:00.000000Z\n");
 
@@ -4513,7 +4510,7 @@ public class GroupByTest extends AbstractCairoTest {
                     "GROUP BY tst.ts " +
                     "ORDER BY ts")
                     .timestamp("ref0")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("ref0\n2023-05-29T15:30:00.000000Z\n");
 
@@ -4561,21 +4558,19 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
-                              keys: [ref0]
-                                VirtualRecord
-                                  functions: [created]
-                                    Async JIT Group By workers: 1
-                                      keys: [created]
-                                      filter: null!=created
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: tab
+                            VirtualRecord
+                              functions: [created]
+                                Async JIT Stream Group By workers: 1
+                                  keys: [created]
+                                  filter: null!=created
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
                             """);
 
             assertQuery(query)
                     .timestamp("ref0")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             ref0
@@ -4606,11 +4601,11 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Encode sort
                               keys: [ref0]
                                 VirtualRecord
                                   functions: [dateadd('h',1,created)]
-                                    Async JIT Group By workers: 1
+                                    Async JIT Stream Group By workers: 1
                                       keys: [created]
                                       filter: null!=created
                                         PageFrame
@@ -4620,7 +4615,6 @@ public class GroupByTest extends AbstractCairoTest {
 
             assertQuery(query)
                     .timestamp("ref0")
-                    .expectSize()
                     .noLeakCheck()
                     .returns("""
                             ref0
@@ -4650,19 +4644,17 @@ public class GroupByTest extends AbstractCairoTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Encode sort light
+                            Async JIT Stream Group By workers: 1
                               keys: [created]
-                                Async JIT Group By workers: 1
-                                  keys: [created]
-                                  filter: null!=created
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
+                              filter: null!=created
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
                             """);
 
             assertQuery(query)
                     .timestamp("created")
-                    .expectSize()
+                    .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
                             created

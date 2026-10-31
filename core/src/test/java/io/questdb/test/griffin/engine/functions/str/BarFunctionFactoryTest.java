@@ -186,7 +186,7 @@ public class BarFunctionFactoryTest extends AbstractCairoTest {
             assertQuery("SELECT ts, sum(amount) total, bar(sum(amount), 0, 100, 20) FROM t SAMPLE BY 1h")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\ttotal\tbar
                             2024-01-01T00:00:00.000000Z\t30.0\t██████

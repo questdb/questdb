@@ -69,14 +69,17 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
     private static final long VAR_PREFIX6_KEY_BYTES = 7;
     private static final long VAR_PREFIX6_MASK = 0xFFFFFFFFFFFFFF00L;
     private final DirectLongList entryMem;
+    private final boolean hasRowCopies;
     private final long keyCapBytes;
     private final long keyHeapPageSize;
     private final long parallelThreshold;
+    private final DirectLongList sortScratchMem;
     // A copy, not a buffer address: entryMem may reallocate on growth. For
     // variable keys the words are (k1, k2, len, stale offset, rowId); the
     // boundary's key tail lives in thresholdTailMem.
     private final long[] thresholdEntry = new long[SortKeyType.MAX_ENTRY_LONGS];
     private final long valueCapBytes;
+    private long compactionCount;
     private long compactionTrigger;
     private long count;
     private int entrySize;
@@ -97,12 +100,14 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
     private MemoryCARW scratchHeap;
     private DirectLongList thresholdTailMem;
 
-    public EncodedTopKBuffer(CairoConfiguration configuration, boolean parallelSort) {
+    public EncodedTopKBuffer(CairoConfiguration configuration, boolean parallelSort, boolean hasRowCopies) {
         this.entryMem = new DirectLongList(16 * 1024, MemoryTag.NATIVE_DEFAULT, true);
+        this.hasRowCopies = hasRowCopies;
         this.keyCapBytes = configuration.getSqlSortKeyMaxBytes();
         this.valueCapBytes = configuration.getSqlSortLightValueMaxBytes();
         this.parallelThreshold = parallelSort ? configuration.getSqlSortEncodedParallelThreshold() : Long.MAX_VALUE;
         this.keyHeapPageSize = configuration.getSqlSortKeyPageSize();
+        this.sortScratchMem = new DirectLongList(0, MemoryTag.NATIVE_DEFAULT, true);
     }
 
     /**
@@ -111,7 +116,7 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
      */
     public long beginAppend() {
         if (count >= maxEntries) {
-            SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
+            SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes, !hasRowCopies);
         }
         entryMem.ensureCapacity(longsPerEntry);
         return entryMem.getAppendAddress();
@@ -130,6 +135,7 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
     @Override
     public void close() {
         Misc.free(entryMem);
+        Misc.free(sortScratchMem);
         keyHeap = Misc.free(keyHeap);
         scratchHeap = Misc.free(scratchHeap);
         thresholdTailMem = Misc.free(thresholdTailMem);
@@ -252,6 +258,14 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
         return entryMem.getAddress();
     }
 
+    /**
+     * The number of compactions since construction; a change across an append
+     * tells the caller that the append compacted the buffer.
+     */
+    public long getCompactionCount() {
+        return compactionCount;
+    }
+
     public long getCount() {
         return count;
     }
@@ -289,7 +303,9 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
         entrySize = keyType.entrySize();
         keyLongs = keyType.keyLength() / Long.BYTES;
         longsPerEntry = entrySize / Long.BYTES;
-        maxEntries = SortKeyEncoder.maxEntries(keyCapBytes, valueCapBytes, keyType);
+        maxEntries = hasRowCopies
+                ? Math.min(keyCapBytes, SortKeyEncoder.MAX_ENTRY_HEAP_BYTES) / entrySize
+                : SortKeyEncoder.maxEntries(keyCapBytes, valueCapBytes, keyType);
         maxEntryMemBytes = maxEntries * entrySize;
         if (isVariable && keyHeap == null) {
             keyHeap = newKeyHeap();
@@ -306,9 +322,26 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
 
     public void presize(long entries) {
         if (entries > maxEntries) {
-            SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
+            SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes, !hasRowCopies);
         }
         entryMem.setCapacity(entries * longsPerEntry);
+    }
+
+    /**
+     * Replaces each entry's rowId with the entry's position, and the threshold's
+     * rowId with the boundary entry's position. A caller that keeps its own copy
+     * of the rows calls this right after a compaction, once it has re-stored the
+     * surviving rows in entry order. Positions keep the rowId tie-break order:
+     * compaction leaves the entries sorted, and every later candidate carries a
+     * rowId past the last position.
+     */
+    public void renumberRowIds() {
+        for (long i = 0, addr = entryMem.getAddress() + entrySize - Long.BYTES; i < count; i++, addr += entrySize) {
+            Unsafe.putLong(addr, i);
+        }
+        if (hasThreshold) {
+            thresholdEntry[longsPerEntry - 1] = isFirstN ? limit - 1 : 0;
+        }
     }
 
     @Override
@@ -320,6 +353,7 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
     // active workload's per-query counter. Null when no per-query limit applies.
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         entryMem.setMemoryTracker(tracker);
+        sortScratchMem.setMemoryTracker(tracker);
     }
 
     /**
@@ -330,11 +364,22 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
      */
     public void sort() {
         if (count > 1) {
+            // A compacting buffer holds O(limit) entries, so the scratch that merges its sorted runs stays O(limit).
+            long scratchAddr = 0;
+            long scratchSize = 0;
+            if (compactionTrigger != Long.MAX_VALUE) {
+                final long scratchLongs = (count >> 1) * longsPerEntry;
+                if (sortScratchMem.getCapacity() < scratchLongs) {
+                    sortScratchMem.setCapacity(scratchLongs);
+                }
+                scratchAddr = sortScratchMem.getAddress();
+                scratchSize = sortScratchMem.getCapacity() << 3;
+            }
             if (isVariable) {
                 final long heapAddr = keyHeap.getAppendOffset() == 0 ? 0 : keyHeap.addressOf(0);
-                Vect.sortEncodedVarEntries(entryMem.getAddress(), count, heapAddr, parallelThreshold);
+                Vect.sortEncodedVarEntries(entryMem.getAddress(), count, heapAddr, parallelThreshold, scratchAddr, scratchSize);
             } else {
-                Vect.sortEncodedEntries(entryMem.getAddress(), count, keyLongs, parallelThreshold);
+                Vect.sortEncodedEntries(entryMem.getAddress(), count, keyLongs, parallelThreshold, scratchAddr, scratchSize);
             }
         }
     }
@@ -407,6 +452,7 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
             captureThresholdTail();
         }
         hasThreshold = true;
+        compactionCount++;
         if (isFirstN) {
             fastRejectKeyThreshold = thresholdEntry[0];
         }

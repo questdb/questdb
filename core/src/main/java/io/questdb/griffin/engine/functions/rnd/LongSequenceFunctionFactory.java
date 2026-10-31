@@ -32,6 +32,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.FunctionFactory;
@@ -46,6 +47,10 @@ import io.questdb.std.Transient;
 
 public class LongSequenceFunctionFactory implements FunctionFactory {
     private static final RecordMetadata METADATA;
+
+    public static boolean isLongSequence(RecordCursorFactory factory) {
+        return factory instanceof LongSequenceCursorFactory || factory instanceof SeedingLongSequenceCursorFactory;
+    }
 
     @Override
     public String getSignature() {

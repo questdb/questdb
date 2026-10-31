@@ -43,7 +43,9 @@ import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.FixedTimeZoneRule;
 import io.questdb.std.datetime.TimeZoneRules;
 
 public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory {
@@ -163,6 +165,14 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory 
         @Override
         public Function getTimestampArg() {
             return timestampFunc;
+        }
+
+        @Override
+        public boolean preservesTimestampOrder() {
+            return timestampFunc.getType() == getType()
+                    && timeZoneRules instanceof FixedTimeZoneRule
+                    && (stride == 0 || period == 'u' || period == 'H' || CommonUtils.isFixedDurationUnit(period))
+                    && periodAddFunction.add(0, stride) <= Long.MAX_VALUE - timestampDriver.getMaxDesignatedTimestamp();
         }
 
         @Override

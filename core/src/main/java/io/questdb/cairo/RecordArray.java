@@ -29,8 +29,10 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
+import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -77,6 +79,11 @@ public class RecordArray extends RecordChain {
             super.close();
             throw th;
         }
+    }
+
+    protected RecordArray(@NotNull ColumnTypes columnTypes, RecordSink recordSink, MemoryCARW mem, MemoryARW auxMem) {
+        super(columnTypes, recordSink, mem);
+        this.auxMem = varOffset > 0 ? auxMem : Misc.free(auxMem);
     }
 
     public long beginRecord() {
@@ -150,6 +157,19 @@ public class RecordArray extends RecordChain {
 
     public void recordAtRowIndex(Record record, long rowIndex) {
         recordAt(record, rowToOffset(rowIndex));
+    }
+
+    /**
+     * Empties the array like {@link #clear()}, but keeps its memory, so a caller
+     * that refills the array repeatedly does not reallocate it each time.
+     */
+    public void reset() {
+        varAppendOffset = 0L;
+        size = 0L;
+        nextRecordIndex = 0L;
+        if (auxMem != null) {
+            auxMem.jumpTo(0);
+        }
     }
 
     @Override

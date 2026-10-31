@@ -200,4 +200,9 @@ public class MinIPv4GroupByFunction extends IPv4Function implements GroupByFunct
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

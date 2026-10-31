@@ -783,6 +783,7 @@ public class UnnestTest extends AbstractCairoTest {
                     + ")");
             assertQuery("SELECT u.val FROM t, UNNEST(t.arr) u(val) ORDER BY u.val LIMIT 3")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             val
                             1.0

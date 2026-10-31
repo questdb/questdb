@@ -224,6 +224,7 @@ public class FilesFunctionFactoryTest extends AbstractCairoTest {
     public void testFilesLimitOrdering() throws Exception {
         assertMemoryLeak(() -> assertQuery("select path, diskSize from files('" + testRoot + "') order by diskSize desc limit 2")
                 .noLeakCheck()
+                .expectSize()
                 .returns("""
                         path\tdiskSize
                         large.bin\t1048576

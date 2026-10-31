@@ -262,9 +262,9 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
         if (count > 1) {
             if (isVariable) {
                 long heapAddr = keyHeap.getAppendOffset() == 0 ? 0 : keyHeap.addressOf(0);
-                Vect.sortEncodedVarEntries(entryMem.getAddress(), count, heapAddr, parallelThreshold);
+                Vect.sortEncodedVarEntries(entryMem.getAddress(), count, heapAddr, parallelThreshold, 0, 0);
             } else {
-                Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
+                Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold, 0, 0);
             }
             circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
         }

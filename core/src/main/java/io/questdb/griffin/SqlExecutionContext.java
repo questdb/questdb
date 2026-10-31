@@ -442,6 +442,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
+    boolean isStreamGroupByEnabled();
+
     boolean isTimestampRequired();
 
     default boolean isUninterruptible() {
@@ -601,6 +603,8 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
             throw new UnsupportedOperationException("table-valued functions in views require a view-aware execution context");
         }
     }
+
+    void setStreamGroupByEnabled(boolean isEnabled);
 
     void setUseSimpleCircuitBreaker(boolean value);
 

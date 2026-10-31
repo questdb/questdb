@@ -181,6 +181,7 @@ import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.MapSymbolColumn;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillNullNotKeyedRecordCursorFactory;
@@ -192,6 +193,8 @@ import io.questdb.griffin.engine.groupby.SampleByFillValueNotKeyedRecordCursorFa
 import io.questdb.griffin.engine.groupby.SampleByFillValueRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFirstLastRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByInterpolateRecordCursorFactory;
+import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
+import io.questdb.griffin.engine.groupby.StreamGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.groupby.vect.AvgDoubleVectorAggregateFunction;
@@ -253,6 +256,7 @@ import io.questdb.griffin.engine.join.LtJoinNoKeyFastRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.LtJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.MarkoutHorizonRecordCursorFactory;
+import io.questdb.griffin.engine.join.MaterializedRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopLeftJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.NestedLoopRightJoinRecordCursorFactory;
@@ -282,6 +286,7 @@ import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.orderby.SortKeyMaterializingRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilterContext;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
@@ -294,8 +299,8 @@ import io.questdb.griffin.engine.table.AsyncHorizonJoinResources;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncStreamGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
-import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
@@ -399,6 +404,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -1834,6 +1840,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return null;
     }
 
+    private static int findUnsupportedFullFatJoinColumn(RecordMetadata metadata, ListColumnFilter keyColumns) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (!RecordValueSinkFactory.isSupportedColumnType(metadata.getColumnType(i))) {
+                boolean isKey = false;
+                for (int k = 0, m = keyColumns.getColumnCount(); k < m; k++) {
+                    if (keyColumns.getColumnIndexFactored(k) == i) {
+                        isKey = true;
+                        break;
+                    }
+                }
+                if (!isKey) {
+                    return i;
+                }
+            }
+        }
+        return -1;
+    }
+
     private static int getOrderByDirectionOrDefault(IQueryModel model, int index) {
         final IntList direction = model.getOrderByDirectionAdvice();
         return index >= direction.size() ? IQueryModel.ORDER_DIRECTION_ASCENDING : direction.getQuick(index);
@@ -1865,6 +1889,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return viewExpr != null ? viewExpr.position : 0;
     }
 
+    private static boolean hasFillValues(IQueryModel fillModel) {
+        final ObjList<ExpressionNode> fill = fillModel.getFillValues();
+        return fill != null && fill.size() > 0 && (fill.size() > 1 || !isNoneKeyword(fill.getQuick(0).token));
+    }
+
     /**
      * Returns true when the base factory delivers rows in ascending designated-timestamp order, which the
      * TWAP and sparkline aggregates require: their single-batch step-function integration trusts each page
@@ -1877,6 +1906,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static boolean isBaseTimestampAscending(RecordCursorFactory factory, int timestampIndex) {
         return factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD
                 && factory.getMetadata().getTimestampIndex() == timestampIndex;
+    }
+
+    private static boolean isStreamGroupByFillSupported(IQueryModel model, int keyCount, RecordMetadata metadata) {
+        for (IQueryModel current = model; current != null; current = current.getNestedModel()) {
+            if (current.getFillStride() == null || keyCount > 1 || !hasFillValues(current)) {
+                continue;
+            }
+            final ObjList<ExpressionNode> fill = current.getFillValues();
+            for (int i = 0, n = fill.size(); i < n; i++) {
+                if (isPrevKeyword(fill.getQuick(i).token)) {
+                    for (int col = 0, count = metadata.getColumnCount(); col < count; col++) {
+                        if (!isFixedSizePrevSlotEligible(ColumnType.tagOf(metadata.getColumnType(col)))) {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+        return true;
     }
 
     // FunctionParser resolves a column literal through SqlUtil.getColumnIndexQuiet(), which ignores
@@ -1973,6 +2021,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
+    private static boolean isRandomAccessLostToStream(RecordCursorFactory factory) {
+        for (RecordCursorFactory f = factory; f != null && !f.recordCursorSupportsRandomAccess(); f = f.getBaseFactory()) {
+            if (f.isRewindRecomputing()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
@@ -1981,6 +2038,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return joinColumns.getColumnCount() == 1 &&
                 symbolShortCircuit != NoopSymbolShortCircuit.INSTANCE &&
                 !(symbolShortCircuit instanceof ChainedSymbolShortCircuit);
+    }
+
+    private static boolean isTemporalJoinCopySupported(RecordMetadata metadata) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final int type = metadata.getColumnType(i);
+            final boolean isSupported = RecordValueSinkFactory.isSupportedColumnType(type) || switch (ColumnType.tagOf(type)) {
+                case STRING, VARCHAR, BINARY, ARRAY, INTERVAL, NULL -> true;
+                default -> false;
+            };
+            if (!isSupported) {
+                // RecordChain cannot retain pseudo-types such as nested RECORD values.
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isTimestampOrderRequested(
@@ -1993,6 +2065,51 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return advice.size() == 1
                 && metadataA.getColumnIndexQuiet(advice.getQuick(0).token) == timestampIndex
                 && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
+    }
+
+    /**
+     * Reports the stream group-by key as the designated timestamp only where a hash group-by gains one
+     * through a sort: for the SAMPLE BY bucket, which the rewrite orders by and the fill requires in
+     * order, and for an ORDER BY that leads with the key, held by the model or advised by an enclosing
+     * one. An ORDER BY that leads with the key descending turns the stream group-by into a backward
+     * scan when the caller supports one and no fill reads the buckets. generateFill and generateOrderBy
+     * then skip the sort. Any other GROUP BY reports no designated timestamp, so the schema that
+     * INSERT ... SELECT and CREATE TABLE AS see does not depend on which group-by implementation the
+     * aggregates select.
+     *
+     * @return true when the stream group-by scans backward
+     */
+    private static boolean setStreamGroupByTimestampIndex(
+            IQueryModel model,
+            GenericRecordMetadata metadata,
+            ObjList<Function> functions,
+            int keyIndex,
+            boolean isBackwardScanSupported
+    ) {
+        final int timestampIndex = GroupByUtils.getStreamGroupByTimestampIndex(metadata, functions, keyIndex);
+        if (timestampIndex < 0) {
+            return false;
+        }
+        IQueryModel fillModel = model;
+        while (fillModel != null && fillModel.getFillStride() == null) {
+            fillModel = fillModel.getNestedModel();
+        }
+        final boolean isSampleByBucket = fillModel != null && findFillBucketIndex(model, metadata, fillModel) == timestampIndex;
+        ObjList<ExpressionNode> orderBy = model.getOrderBy();
+        IntList orderByDirection = model.getOrderByDirection();
+        if (orderBy.size() == 0) {
+            orderBy = model.getOrderByAdvice();
+            orderByDirection = model.getOrderByDirectionAdvice();
+        }
+        final boolean isOrderedByKey = orderBy.size() > 0 && SqlUtil.getColumnIndexQuiet(metadata, orderBy.getQuick(0).token) == timestampIndex;
+        final boolean isDescending = isOrderedByKey
+                && orderByDirection.size() > 0
+                && orderByDirection.getQuick(0) == IQueryModel.ORDER_DIRECTION_DESCENDING;
+        final boolean isBackward = isDescending && isBackwardScanSupported && !(isSampleByBucket && hasFillValues(fillModel));
+        if (isSampleByBucket || isBackward || (isOrderedByKey && !isDescending)) {
+            metadata.setTimestampIndex(timestampIndex);
+        }
+        return isBackward;
     }
 
     private static long tolerance(IQueryModel slaveModel, int leftTimestamp, int rightTimestampType) throws SqlException {
@@ -2994,26 +3111,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             moveRepeatedSlaveKeyColumnsLast();
         }
 
-        // map doesn't support variable length types in map value, which is ok
-        // when we join tables on strings - technically string is the key,
-        // and we do not need to store it in value, but we will still reject
-        //
-        // never mind, this is a stop-gap measure until I understand the problem
-        // fully
-
-        for (int k = 0, m = slaveMetadata.getColumnCount(); k < m; k++) {
-            if (intHashSet.excludes(k)) {
-                // A non-key slave column is materialized into the map value, so it must be a
-                // type the value sink can store. That excludes variable-length types and
-                // fixed-size types the map value cannot hold (e.g. INTERVAL). Reject them here
-                // with a user-facing message instead of letting RecordValueSinkFactory throw a
-                // bare UnsupportedOperationException.
-                if (!RecordValueSinkFactory.isSupportedColumnType(slaveMetadata.getColumnType(k))) {
-                    throw SqlException
-                            .position(joinPosition).put("right side column '")
-                            .put(slaveMetadata.getColumnName(k)).put("' is of unsupported type");
-                }
-            }
+        // The map retains non-key columns as values, which excludes variable-length types
+        // and some fixed-size types (e.g. INTERVAL). Keys have a separate representation.
+        final int unsupportedColumn = findUnsupportedFullFatJoinColumn(slaveMetadata, listColumnFilterA);
+        if (unsupportedColumn != -1) {
+            throw SqlException
+                    .position(joinPosition).put("right side column '")
+                    .put(slaveMetadata.getColumnName(unsupportedColumn)).put("' is of unsupported type");
         }
 
         // at this point listColumnFilterB has column indexes of the master record that are JOIN keys
@@ -5076,75 +5180,82 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // The fill cursor requires sorted input, but the optimizer strips
-            // rewriteSampleBy's ORDER BY before code generation, so build it here.
-            // Strategy comes from cairo.sql.sampleby.fill.sort.strategy; startup
-            // validation makes the switch exhaustive.
-            final RecordMetadata sortMetadata = groupByFactory.getMetadata();
-            listColumnFilterA.clear();
-            listColumnFilterA.add(timestampIndex + 1); // positive = ascending
-            entityColumnFilter.of(sortMetadata.getColumnCount());
-            final int sortStrategy = configuration.getSampleByFillSortStrategy();
-            // LIGHT_RECORDCHAIN and FULL_RECORDCHAIN need null-before-risky:
-            // SortedLight/SortedRecordCursorFactory's ctor catch cascades close()
-            // and frees `base`, so the outer catch's Misc.free(groupByFactory)
-            // would double-free unless we null first. Risky-arg calls (newInstance,
-            // RecordSinkFactory.getInstance, copy) run BEFORE the null so the
-            // outer catch still owns base on their failure. LIGHT_ENCODED and
-            // FULL_ENCODED have no such ctor catch -- the caller is the single
-            // owner there.
-            switch (sortStrategy) {
-                case SampleBySortStrategy.LIGHT_ENCODED -> {
-                    assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA)
-                            && groupByFactory.recordCursorSupportsRandomAccess();
-                    groupByFactory = new EncodedSortLightRecordCursorFactory(
-                            configuration,
-                            sortMetadata,
-                            groupByFactory,
-                            listColumnFilterA.copy()
-                    );
+            // Keyed fills cache forward-only input; non-keyed wide PREV values need recordAt.
+            if (!isBaseTimestampAscending(groupByFactory, timestampIndex)
+                    || (keyColIndices.size() == 0 && needsPrevPositioning)) {
+                final RecordMetadata sortMetadata = groupByFactory.getMetadata();
+                listColumnFilterA.clear();
+                listColumnFilterA.add(timestampIndex + 1); // positive = ascending
+                entityColumnFilter.of(sortMetadata.getColumnCount());
+                int sortStrategy = configuration.getSampleByFillSortStrategy();
+                if (!groupByFactory.recordCursorSupportsRandomAccess()) {
+                    sortStrategy = switch (sortStrategy) {
+                        case SampleBySortStrategy.LIGHT_ENCODED -> SampleBySortStrategy.FULL_ENCODED;
+                        case SampleBySortStrategy.LIGHT_RECORDCHAIN -> SampleBySortStrategy.FULL_RECORDCHAIN;
+                        default -> sortStrategy;
+                    };
                 }
-                case SampleBySortStrategy.FULL_ENCODED -> {
-                    assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA);
-                    groupByFactory = new EncodedSortRecordCursorFactory(
-                            configuration,
-                            sortMetadata,
-                            groupByFactory,
-                            RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter),
-                            listColumnFilterA.copy()
-                    );
+                // LIGHT_RECORDCHAIN and FULL_RECORDCHAIN need null-before-risky:
+                // SortedLight/SortedRecordCursorFactory's ctor catch cascades close()
+                // and frees `base`, so the outer catch's Misc.free(groupByFactory)
+                // would double-free unless we null first. Risky-arg calls (newInstance,
+                // RecordSinkFactory.getInstance, copy) run BEFORE the null so the
+                // outer catch still owns base on their failure. LIGHT_ENCODED and
+                // FULL_ENCODED have no such ctor catch -- the caller is the single
+                // owner there.
+                switch (sortStrategy) {
+                    case SampleBySortStrategy.LIGHT_ENCODED -> {
+                        assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA)
+                                && groupByFactory.recordCursorSupportsRandomAccess();
+                        groupByFactory = new EncodedSortLightRecordCursorFactory(
+                                configuration,
+                                sortMetadata,
+                                groupByFactory,
+                                listColumnFilterA.copy()
+                        );
+                    }
+                    case SampleBySortStrategy.FULL_ENCODED -> {
+                        assert SortKeyEncoder.isSupported(sortMetadata, listColumnFilterA);
+                        groupByFactory = new EncodedSortRecordCursorFactory(
+                                configuration,
+                                sortMetadata,
+                                groupByFactory,
+                                RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter),
+                                listColumnFilterA.copy()
+                        );
+                    }
+                    case SampleBySortStrategy.LIGHT_RECORDCHAIN -> {
+                        assert groupByFactory.recordCursorSupportsRandomAccess();
+                        final RecordComparator comparator = recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA);
+                        final ListColumnFilter filterCopy = listColumnFilterA.copy();
+                        final RecordCursorFactory base = groupByFactory;
+                        groupByFactory = null;
+                        groupByFactory = new SortedLightRecordCursorFactory(
+                                configuration,
+                                sortMetadata,
+                                base,
+                                comparator,
+                                filterCopy
+                        );
+                    }
+                    case SampleBySortStrategy.FULL_RECORDCHAIN -> {
+                        final RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter);
+                        final RecordComparator comparator = recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA);
+                        final ListColumnFilter filterCopy = listColumnFilterA.copy();
+                        final RecordCursorFactory base = groupByFactory;
+                        groupByFactory = null;
+                        groupByFactory = new SortedRecordCursorFactory(
+                                configuration,
+                                sortMetadata,
+                                base,
+                                recordSink,
+                                comparator,
+                                filterCopy
+                        );
+                    }
+                    default -> throw new IllegalStateException("unknown sample-by fill sort strategy: "
+                            + SampleBySortStrategy.toString(sortStrategy));
                 }
-                case SampleBySortStrategy.LIGHT_RECORDCHAIN -> {
-                    assert groupByFactory.recordCursorSupportsRandomAccess();
-                    final RecordComparator comparator = recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA);
-                    final ListColumnFilter filterCopy = listColumnFilterA.copy();
-                    final RecordCursorFactory base = groupByFactory;
-                    groupByFactory = null;
-                    groupByFactory = new SortedLightRecordCursorFactory(
-                            configuration,
-                            sortMetadata,
-                            base,
-                            comparator,
-                            filterCopy
-                    );
-                }
-                case SampleBySortStrategy.FULL_RECORDCHAIN -> {
-                    final RecordSink recordSink = RecordSinkFactory.getInstance(configuration, asm, sortMetadata, entityColumnFilter);
-                    final RecordComparator comparator = recordComparatorCompiler.newInstance(sortMetadata, listColumnFilterA);
-                    final ListColumnFilter filterCopy = listColumnFilterA.copy();
-                    final RecordCursorFactory base = groupByFactory;
-                    groupByFactory = null;
-                    groupByFactory = new SortedRecordCursorFactory(
-                            configuration,
-                            sortMetadata,
-                            base,
-                            recordSink,
-                            comparator,
-                            filterCopy
-                    );
-                }
-                default -> throw new IllegalStateException("unknown sample-by fill sort strategy: "
-                        + SampleBySortStrategy.toString(sortStrategy));
             }
 
             final GenericRecordMetadata fillMetadata = GenericRecordMetadata.copyOfNew(groupByFactory.getMetadata());
@@ -6144,6 +6255,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (!supportsParallelism) {
+                if (isRandomAccessLostToStream(masterFactory)) {
+                    final RecordCursorFactory masterToMaterialize = masterFactory;
+                    masterFactory = null;
+                    masterFactory = materialize(masterToMaterialize, true);
+                }
                 // Single-threaded path: verify master factory supports random access (needed to revisit rows in sorted order)
                 if (!masterFactory.recordCursorSupportsRandomAccess()) {
                     throw SqlException.position(slaveModel.getJoinKeywordPosition())
@@ -7039,6 +7155,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         joinType == IQueryModel.JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1
                                 );
                                 joinFilter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
+                                // The nested loop rewinds its inner side, the master of a right join, per outer row.
+                                if (joinType == IQueryModel.JOIN_CROSS_RIGHT) {
+                                    if (master.isRewindRecomputing()) {
+                                        final RecordCursorFactory masterToMaterialize = master;
+                                        master = null;
+                                        master = materialize(masterToMaterialize, false);
+                                    }
+                                } else if (joinType == IQueryModel.JOIN_CROSS_FULL
+                                        ? !slaveToFree.recordCursorSupportsRandomAccess()
+                                        : slaveToFree.isRewindRecomputing()) {
+                                    final RecordCursorFactory slaveToMaterialize = slaveToFree;
+                                    slaveToFree = null;
+                                    slaveToFree = materialize(slaveToMaterialize, joinType == IQueryModel.JOIN_CROSS_FULL);
+                                }
                                 master = switch (joinType) {
                                     case IQueryModel.JOIN_CROSS_LEFT -> new NestedLoopLeftJoinRecordCursorFactory(
                                             joinMetadata,
@@ -7101,7 +7231,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             slaveRecordSink
                                     );
                                 } else {
-                                    // Fall back to standard CrossJoinRecordCursorFactory
+                                    // Fall back to standard CrossJoinRecordCursorFactory, which rewinds its slave per master row
+                                    if (slaveToFree.isRewindRecomputing()) {
+                                        final RecordCursorFactory slaveToMaterialize = slaveToFree;
+                                        slaveToFree = null;
+                                        slaveToFree = materialize(slaveToMaterialize, false);
+                                    }
                                     master = new CrossJoinRecordCursorFactory(
                                             createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata),
                                             master,
@@ -7122,6 +7257,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 boolean isSelfJoin = isSameTable(master, slaveToFree);
                                 processJoinContext(index == 1, isSelfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 validateTimestampNotInJoinKeys(slaveModel, masterMetadata, slaveMetadata);
+                                if (!fullFatJoins
+                                        && !slaveToFree.recordCursorSupportsRandomAccess()
+                                        && findUnsupportedFullFatJoinColumn(slaveMetadata, listColumnFilterA) != -1
+                                        && isTemporalJoinCopySupported(slaveMetadata)) {
+                                    // Light temporal joins retain row IDs. Copy only inputs that the full-fat
+                                    // value sink cannot store; compatible inputs keep their per-key state.
+                                    final RecordCursorFactory slaveToMaterialize = slaveToFree;
+                                    slaveToFree = null;
+                                    slaveToFree = materialize(slaveToMaterialize, true);
+                                }
                                 master = joinType == IQueryModel.JOIN_ASOF
                                         ? generateJoinAsof(isSelfJoin, model, slaveModel, master, masterMetadata, masterAlias, slaveToFree, slaveMetadata)
                                         : generateJoinLt(model, slaveModel, master, masterMetadata, masterAlias, slaveToFree, slaveMetadata);
@@ -7134,6 +7279,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestampOrders(master, slaveToFree, slaveModel.getJoinKeywordPosition());
                                 validateOuterJoinExpressions(slaveModel, "SPLICE");
                                 processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                if (isRandomAccessLostToStream(master)) {
+                                    final RecordCursorFactory masterToMaterialize = master;
+                                    master = null;
+                                    master = materialize(masterToMaterialize, true);
+                                }
+                                if (isRandomAccessLostToStream(slaveToFree)) {
+                                    final RecordCursorFactory slaveToMaterialize = slaveToFree;
+                                    slaveToFree = null;
+                                    slaveToFree = materialize(slaveToMaterialize, true);
+                                }
                                 if (slaveToFree.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     master = createSpliceJoin(
                                             // splice join result does not have timestamp
@@ -8166,6 +8321,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.$(model.getModelPosition(), "latest by query does not provide dedicated TIMESTAMP column");
             }
 
+            if (isRandomAccessLostToStream(factory)) {
+                final RecordCursorFactory factoryToMaterialize = factory;
+                factory = null;
+                factory = materialize(factoryToMaterialize, true);
+            }
+
             final RecordMetadata metadata = factory.getMetadata();
             prepareLatestByColumnIndexes(latestBy, metadata);
 
@@ -8184,23 +8345,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 );
             }
 
-            boolean orderedByTimestampAsc = false;
-            // A table function leaf (e.g. LATEST ON over generate_series()) holds the latest-by nodes
-            // itself and has no nested model, so there is no ORDER BY to inspect. Leave the flag unset:
-            // the cursor then stores and compares timestamps instead of trusting the base scan order,
-            // which is correct for any scan direction (generate_series() with a negative step descends).
-            final IQueryModel nested = model.getNestedModel();
-            if (nested != null) {
-                final LowerCaseCharSequenceIntHashMap orderBy = nested.getOrderHash();
-                CharSequence timestampColumn = metadata.getColumnName(timestampIndex);
-                if (orderBy.get(timestampColumn) == IQueryModel.ORDER_DIRECTION_ASCENDING) {
-                    // ORDER BY the timestamp column case.
-                    orderedByTimestampAsc = true;
-                } else if (timestampIndex == metadata.getTimestampIndex() && orderBy.size() == 0) {
-                    // Empty ORDER BY, but the timestamp column in the designated timestamp.
-                    orderedByTimestampAsc = true;
-                }
-            }
+            final boolean orderedByTimestampAsc = timestampIndex == metadata.getTimestampIndex()
+                    && factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_FORWARD;
 
             // LatestByLightRecordCursorFactory's constructor does not free the base on failure, so the
             // catch below owns it (factory stays non-null until the constructor returns successfully).
@@ -8630,6 +8776,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             loFunc = getLoFunction(model, executionContext);
             hiFunc = getHiFunction(model, executionContext);
+            // A negative bound makes the limit count the base rows and then rewind the base, which reruns
+            // a stream GROUP BY.
+            if (factory.isRewindRecomputing()
+                    && (mayBeNegativeLimit(loFunc, executionContext) || (hiFunc != null && mayBeNegativeLimit(hiFunc, executionContext)))) {
+                final RecordCursorFactory base = factory;
+                factory = null;
+                factory = materialize(base, false);
+            }
             final Function adoptedLoFunc = loFunc;
             final Function adoptedHiFunc = hiFunc;
             loFunc = null;
@@ -9076,6 +9230,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             if (!supportsParallelism) {
+                if (isRandomAccessLostToStream(masterFactory)) {
+                    final RecordCursorFactory masterToMaterialize = masterFactory;
+                    masterFactory = null;
+                    masterFactory = materialize(masterToMaterialize, true);
+                }
                 // Verify master supports random access for ST path
                 if (!masterFactory.recordCursorSupportsRandomAccess()) {
                     throw SqlException.position(slaveModels.getQuick(0).getJoinKeywordPosition())
@@ -9593,7 +9752,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     loFunc,
                                     hiFunc,
                                     listColumnFilterA.copy(),
-                                    baseCursorTimestampIndex
+                                    baseCursorTimestampIndex,
+                                    null
                             );
                         }
                         return new LimitedSizeSortedLightRecordCursorFactory(
@@ -9679,6 +9839,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // we have to copy entire record into ordered structure
                 entityColumnFilter.of(orderedMetadata.getColumnCount());
                 if (isEncodedSortSupported) {
+                    if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
+                        // copies only the rows that can enter the LIMIT window
+                        return new EncodedSortLimitedLightRecordCursorFactory(
+                                configuration,
+                                orderedMetadata,
+                                recordCursorFactory,
+                                loFunc,
+                                hiFunc,
+                                listColumnFilterA.copy(),
+                                firstOrderByColumnIndex == timestampIndex
+                                        && recordCursorFactory.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_OTHER
+                                        ? timestampIndex : -1,
+                                RecordSinkFactory.getInstance(configuration, asm, orderedMetadata, entityColumnFilter)
+                        );
+                    }
                     return new EncodedSortRecordCursorFactory(
                             configuration,
                             orderedMetadata,
@@ -10070,6 +10245,41 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         null
                 );
 
+                final ArrayColumnTypes interpolationKeyTypes = new ArrayColumnTypes().addAll(keyTypes);
+                final ArrayColumnTypes interpolationValueTypes = new ArrayColumnTypes().addAll(valueTypes);
+                final ListColumnFilter interpolationColumnFilter = listColumnFilterA.copy();
+                final IntList interpolationFunctionPositions = new IntList(groupByFunctionPositions);
+                boolean isPreAggregated = false;
+                final long linearOffset = offsetFunc.isConstant() && offsetFunc.getStrA(null) != null
+                        ? Dates.parseOffset(offsetFunc.getStrA(null)) : Numbers.LONG_NULL;
+                if (executionContext.isStreamGroupByEnabled()
+                        && timestampSampler instanceof SimpleTimestampSampler
+                        && sampleByUnits == null
+                        && model.getSampleByOffset() != null
+                        && model.getSampleByFrom() == null
+                        && model.getSampleByTo() == null
+                        && timezoneNameFunc.isConstant()
+                        && (timezoneNameFunc.getStrA(null) == null || Chars.equalsIgnoreCase(timezoneNameFunc.getStrA(null), "UTC"))
+                        && linearOffset != Numbers.LONG_NULL
+                        && Numbers.decodeLowInt(linearOffset) == 0
+                        && isBaseTimestampAscending(factory, timestampIndex)) {
+                    boolean isSupported = true;
+                    for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                        final GroupByFunction function = groupByFunctions.getQuick(i);
+                        if (!function.isScalar() || !function.isStateSelfContained() || !function.isStableWithinExecution()) {
+                            isSupported = false;
+                            break;
+                        }
+                    }
+                    if (isSupported) {
+                        final RecordCursorFactory base = factory;
+                        factory = null;
+                        factory = generateSampleByLinearStream(model, executionContext, base, timestampIndex,
+                                outerProjectionFunctions, interpolationValueTypes, interpolationKeyTypes);
+                        isPreAggregated = factory != base;
+                    }
+                }
+
                 final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
                 final ObjList<Function> outerProjectionFunctions0 = outerProjectionFunctions;
                 innerProjectionFunctions = null;
@@ -10084,20 +10294,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 offsetFunc = null;
                 sampleFromFunc = null;
                 sampleToFunc = null;
+                final RecordCursorFactory base0 = factory;
+                factory = null;
                 return new SampleByInterpolateRecordCursorFactory(
                         asm,
                         configuration,
-                        factory,
+                        base0,
                         projectionMetadata,
                         groupByFunctions0,
                         outerProjectionFunctions0,
                         timestampSampler,
                         model,
-                        listColumnFilterA,
-                        keyTypes,
-                        valueTypes,
+                        interpolationColumnFilter,
+                        interpolationKeyTypes,
+                        interpolationValueTypes,
                         entityColumnFilter,
-                        groupByFunctionPositions,
+                        interpolationFunctionPositions,
                         timestampIndex,
                         timestampType,
                         timezoneNameFunc0,
@@ -10105,7 +10317,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         offsetFunc0,
                         offsetFuncPos,
                         sampleFromFunc0,
-                        sampleToFunc0
+                        sampleToFunc0,
+                        isPreAggregated
                 );
             }
 
@@ -10571,6 +10784,162 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(offsetFunc, e);
             Misc.free(factory, e);
             throw e;
+        }
+    }
+
+    private RecordCursorFactory generateSampleByLinearStream(
+            IQueryModel model,
+            SqlExecutionContext executionContext,
+            RecordCursorFactory base,
+            int timestampIndex,
+            ObjList<Function> interpolationFunctions,
+            ArrayColumnTypes interpolationValueTypes,
+            ArrayColumnTypes interpolationKeyTypes
+    ) throws SqlException {
+        ObjList<Function> recordFunctions = new ObjList<>();
+        ObjList<Function> innerFunctions = new ObjList<>();
+        ObjList<ObjList<GroupByFunction>> perWorkerFunctions = null;
+        ObjList<ObjList<Function>> perWorkerKeys = null;
+        ObjList<Function> perWorkerFilters = null;
+        Function filter = null;
+        CompiledFilter compiledFilter = null;
+        MemoryCARW bindVarMemory = null;
+        ObjList<Function> bindVarFunctions = null;
+        try {
+            final RecordMetadata baseMetadata = base.getMetadata();
+            final ObjList<QueryColumn> columns = new ObjList<>();
+            for (int i = 0, n = interpolationFunctions.size(); i < n; i++) {
+                if (interpolationFunctions.getQuick(i) != null) {
+                    columns.add(model.getColumns().getQuick(i));
+                }
+            }
+            final ExpressionNode bucket = expressionNodePool.next().of(FUNCTION, "timestamp_floor", 0, model.getSampleBy().position);
+            bucket.paramCount = 2;
+            bucket.lhs = expressionNodePool.next().of(CONSTANT, "'" + model.getSampleBy().token + "'", 0, bucket.position);
+            bucket.rhs = expressionNodePool.next().of(LITERAL, baseMetadata.getColumnName(timestampIndex), 0, bucket.position);
+            String bucketAlias = "__sample_by_bucket";
+            while (model.getAliasToColumnMap().contains(bucketAlias)) {
+                bucketAlias += '_';
+            }
+            columns.add(queryColumnPool.next().of(bucketAlias, bucket));
+
+            final ObjList<GroupByFunction> functions = new ObjList<>();
+            final IntList flags = new IntList();
+            final GenericRecordMetadata metadata = new GenericRecordMetadata();
+            final ArrayColumnTypes values = new ArrayColumnTypes().add(BYTE);
+            final ArrayColumnTypes keys = new ArrayColumnTypes();
+            final ListColumnFilter columnFilter = new ListColumnFilter();
+            GroupByUtils.assembleGroupByFunctions(
+                    functionParser, sqlNodeStack, model, executionContext, baseMetadata, timestampIndex, true, true,
+                    functions, new IntList(), recordFunctions, innerFunctions, new IntList(), flags, metadata,
+                    values, keys, columnFilter, null, false, columns, null
+            );
+            final ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(innerFunctions, flags);
+            final int streamKeyIndex = keys.getColumnCount() - 1;
+            if (GroupByUtils.getStreamGroupByKeyIndex(base, keys, columnFilter, keyFunctions, functions) != streamKeyIndex
+                    || values.getColumnCount() != interpolationValueTypes.getColumnCount()
+                    || keys.getColumnCount() != interpolationKeyTypes.getColumnCount() + 1) {
+                final ObjList<Function> unusedRecordFunctions = recordFunctions;
+                final ObjList<Function> unusedInnerFunctions = innerFunctions;
+                recordFunctions = null;
+                innerFunctions = null;
+                GroupByUtils.freeAssembledProjectionFunctions(unusedRecordFunctions, unusedInnerFunctions);
+                return base;
+            }
+            metadata.setTimestampIndex(columns.size() - 1);
+            final Function streamKey = GroupByUtils.getGroupByKeyFunction(base, keys, columnFilter, keyFunctions, streamKeyIndex);
+            for (int i = 0, columnIndex = 0, n = interpolationFunctions.size(); i < n; i++) {
+                if (interpolationFunctions.getQuick(i) != null) {
+                    if (interpolationFunctions.getQuick(i) instanceof MapSymbolColumn symbol) {
+                        interpolationFunctions.setQuick(i, new MapSymbolColumn(symbol, columnIndex));
+                        symbol.close();
+                    }
+                    columnIndex++;
+                }
+            }
+
+            final boolean isParallel = executionContext.isParallelGroupByEnabled()
+                    && SqlUtil.isParallelismSupported(keyFunctions)
+                    && GroupByUtils.isParallelismSupported(functions)
+                    && (base.supportsPageFrameCursor() || base.supportsFilterStealing());
+            if (isParallel) {
+                IntHashSet filterColumns = null;
+                ExpressionNode filterExpr = null;
+                if (!base.supportsPageFrameCursor()) {
+                    final RecordCursorFactory filtered = base;
+                    compiledFilter = filtered.getCompiledFilter();
+                    bindVarMemory = filtered.getBindVarMemory();
+                    bindVarFunctions = filtered.getBindVarFunctions();
+                    filter = filtered.getFilter();
+                    filterExpr = filtered.getStealFilterExpr();
+                    base = filtered.getBaseFactory();
+                    filtered.halfClose();
+                    filterColumns = new IntHashSet();
+                    collectColumnIndexes(sqlNodeStack, base.getMetadata(), filterExpr, filterColumns);
+                }
+                final WorkerFunctionLists workers = compilePerWorkerInnerProjectionFunctions(
+                        executionContext, columns, innerFunctions, executionContext.getSharedQueryWorkerCount(), baseMetadata, flags
+                );
+                if (workers != null) {
+                    perWorkerFunctions = workers.getGroupByFunctions();
+                    perWorkerKeys = workers.getKeyFunctions();
+                }
+                perWorkerFilters = compileWorkerFiltersConditionally(executionContext, filter,
+                        executionContext.getSharedQueryWorkerCount(), filterExpr, base.getMetadata());
+
+                final RecordCursorFactory base0 = base;
+                final ObjList<Function> recordFunctions0 = recordFunctions;
+                final ObjList<ObjList<GroupByFunction>> perWorkerFunctions0 = perWorkerFunctions;
+                final ObjList<ObjList<Function>> perWorkerKeys0 = perWorkerKeys;
+                final ObjList<Function> perWorkerFilters0 = perWorkerFilters;
+                final Function filter0 = filter;
+                final CompiledFilter compiledFilter0 = compiledFilter;
+                final MemoryCARW bindVarMemory0 = bindVarMemory;
+                final ObjList<Function> bindVarFunctions0 = bindVarFunctions;
+                base = null;
+                recordFunctions = null;
+                innerFunctions = null;
+                perWorkerFunctions = null;
+                perWorkerKeys = null;
+                perWorkerFilters = null;
+                filter = null;
+                compiledFilter = null;
+                bindVarMemory = null;
+                bindVarFunctions = null;
+                return new AsyncStreamGroupByRecordCursorFactory(
+                        executionContext.getCairoEngine(), asm, configuration, executionContext.getMessageBus(),
+                        base0, metadata, columnFilter, keys, values, streamKeyIndex, streamKey,
+                        functions, perWorkerFunctions0, keyFunctions, perWorkerKeys0, recordFunctions0,
+                        compiledFilter0, bindVarMemory0, bindVarFunctions0, filter0, filterColumns, perWorkerFilters0,
+                        reduceTaskFactory, executionContext.getSharedQueryWorkerCount(), false
+                );
+            }
+            final RecordCursorFactory base0 = base;
+            final ObjList<Function> recordFunctions0 = recordFunctions;
+            base = null;
+            recordFunctions = null;
+            innerFunctions = null;
+            return new StreamGroupByRecordCursorFactory(asm, configuration, base0, metadata, keys, values,
+                    columnFilter, streamKeyIndex, streamKey, functions, keyFunctions, recordFunctions0);
+        } catch (Throwable th) {
+            GroupByUtils.freeAssembledProjectionFunctions(recordFunctions, innerFunctions, th);
+            if (perWorkerFunctions != null) {
+                for (int i = 0, n = perWorkerFunctions.size(); i < n; i++) {
+                    PerWorkerFunctionList.close(perWorkerFunctions.getQuick(i), th);
+                }
+            }
+            if (perWorkerKeys != null) {
+                for (int i = 0, n = perWorkerKeys.size(); i < n; i++) {
+                    PerWorkerFunctionList.close(perWorkerKeys.getQuick(i), th);
+                }
+            }
+            Misc.freeObjList(perWorkerFilters, th);
+            Misc.freeObjList(bindVarFunctions, th);
+            Misc.free(bindVarMemory, th);
+            Misc.free(compiledFilter, th);
+            Misc.free(filter, th);
+            Misc.free(base, th);
+            throw th;
         }
     }
 
@@ -11275,6 +11644,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(innerProjectionFunctions, projectionFunctionFlags);
+            final int streamKeyIndex = executionContext.isStreamGroupByEnabled()
+                    && sharedOuterProjectionFunctions == null
+                    && isStreamGroupByFillSupported(model, keyTypes.getColumnCount(), outerProjectionMetadata)
+                    ? GroupByUtils.getStreamGroupByKeyIndex(factory, keyTypes, listColumnFilterA, keyFunctions, groupByFunctions)
+                    : -1;
+            final Function streamKey = streamKeyIndex >= 0
+                    ? GroupByUtils.getGroupByKeyFunction(factory, keyTypes, listColumnFilterA, keyFunctions, streamKeyIndex)
+                    : null;
             if (
                     enableParallelGroupBy
                             && SqlUtil.isParallelismSupported(keyFunctions)
@@ -11404,6 +11781,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     perWorkerKeyFunctions = null;
                     sharedOuterProjectionFunctions = null;
 
+                    if (streamKey != null) {
+                        final boolean isDescending = setStreamGroupByTimestampIndex(model, outerProjectionMetadata, outerProjectionFunctions0,
+                                valueTypesCopy.getColumnCount() + streamKeyIndex, true);
+                        return generateFill(
+                                model,
+                                new AsyncStreamGroupByRecordCursorFactory(
+                                        executionContext.getCairoEngine(), asm, configuration, executionContext.getMessageBus(),
+                                        factory, outerProjectionMetadata, listColumnFilterCopy, keyTypesCopy, valueTypesCopy, streamKeyIndex, streamKey,
+                                        groupByFunctions0, perWorkerGroupByFunctions0, keyFunctions, perWorkerKeyFunctions0,
+                                        outerProjectionFunctions0, compiledFilter, bindVarMemory, bindVarFunctions,
+                                        filter, filterUsedColumnIndexes, perWorkerFilters0,
+                                        reduceTaskFactory, executionContext.getSharedQueryWorkerCount(), isDescending
+                                ),
+                                executionContext
+                        );
+                    }
+
                     return generateFill(
                             model,
                             new AsyncGroupByRecordCursorFactory(
@@ -11463,6 +11857,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             innerProjectionFunctions = null;
             outerProjectionFunctions = null;
             sharedOuterProjectionFunctions = null;
+
+            if (streamKey != null) {
+                setStreamGroupByTimestampIndex(model, outerProjectionMetadata, outerProjectionFunctions0, valueTypes.getColumnCount() + streamKeyIndex, false);
+                return generateFill(
+                        model,
+                        new StreamGroupByRecordCursorFactory(asm, configuration, factory, outerProjectionMetadata,
+                                keyTypes, valueTypes, listColumnFilterA, streamKeyIndex,
+                                streamKey, groupByFunctions0, keyFunctions, outerProjectionFunctions0),
+                        executionContext
+                );
+            }
 
             return generateFill(
                     model,
@@ -14871,6 +15276,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0, n = columnNames.size(); i < n; i++) {
             filter.add(SqlUtil.getColumnIndex(metadata, columnNames.getQuick(i)) + 1);
         }
+    }
+
+    /**
+     * Consumes the base on entry, including on failure.
+     */
+    private RecordCursorFactory materialize(RecordCursorFactory base, boolean isStrict) {
+        final RecordSink recordSink;
+        try {
+            entityColumnFilter.of(base.getMetadata().getColumnCount());
+            recordSink = RecordSinkFactory.getInstance(configuration, asm, base.getMetadata(), entityColumnFilter);
+        } catch (Throwable th) {
+            Misc.free(base, th);
+            throw th;
+        }
+        return new MaterializedRecordCursorFactory(configuration, base, recordSink, isStrict, !isRandomAccessLostToStream(base));
     }
 
     /**

@@ -167,6 +167,7 @@ public final class QueryRunner {
     private final boolean diffFused;
     private final boolean diffJit;
     private final boolean diffShadow;
+    private final boolean diffStream;
     private final CairoEngine engine;
     private final SqlExecutionContext executionContext;
     // The engine's FilesFacade when it is a FailureFileFacade, which enables FILE
@@ -192,6 +193,7 @@ public final class QueryRunner {
     private int fusedAxisCompletedRuns;
     private int fusedAxisRuns;
     private int fusedAxisSelected;
+    private int streamAxisRuns;
     private final TextPlanSink planSink = new TextPlanSink();
     private final boolean primaryHasAnyParquet;
     private final Pattern[] primaryPatterns;
@@ -216,6 +218,7 @@ public final class QueryRunner {
             boolean diffJit,
             boolean diffShadow,
             boolean diffFused,
+            boolean diffStream,
             boolean verifyCursor,
             ObjList<FuzzTable> tables,
             String queryWorkerNamePrefix
@@ -225,6 +228,7 @@ public final class QueryRunner {
         this.diffFused = diffFused;
         this.diffJit = diffJit;
         this.diffShadow = diffShadow;
+        this.diffStream = diffStream;
         this.verifyCursor = verifyCursor;
         this.queryWorkerNamePrefix = queryWorkerNamePrefix;
         this.failureFf = engine.getConfiguration().getFilesFacade() instanceof FailureFileFacade ff ? ff : null;
@@ -308,6 +312,10 @@ public final class QueryRunner {
      */
     public int getFusedAxisSelected() {
         return fusedAxisSelected;
+    }
+
+    public int getStreamAxisRuns() {
+        return streamAxisRuns;
     }
 
     /**
@@ -1575,7 +1583,8 @@ public final class QueryRunner {
             if (Chars.indexOf(plan, 0, plan.length(), "Hash Join Group By Build Choice") >= 0) {
                 buildChoiceRuns++;
             }
-            return Outcome.ok(rowsRead, planUsesIndex(plan), usesParquet, isFusedHashJoinPlan(plan), fpColumnMask);
+            return Outcome.ok(rowsRead, planUsesIndex(plan), usesParquet, isFusedHashJoinPlan(plan),
+                    Chars.indexOf(plan, 0, plan.length(), "Stream Group By") >= 0, fpColumnMask);
         } catch (CursorCheckException e) {
             throw e;
         } catch (SqlException e) {
@@ -1595,9 +1604,41 @@ public final class QueryRunner {
         }
     }
 
+    /**
+     * Runs the query on the primary at JIT-off with the stream GROUP BY disabled and reconciles it
+     * against the pivot {@code bJ}, whose plan used it. The hash GROUP BY is the oracle for every
+     * stream plan, including a SAMPLE BY nested under LATEST ON, a join or a LIMIT.
+     */
+    private Result runStreamVariant(GeneratedQuery query, Outcome bJ) {
+        executionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        executionContext.setStreamGroupByEnabled(false);
+        Outcome bS;
+        try {
+            bS = runOnce(query.sql(), rowsE, primaryHasAnyParquet, query.deterministic());
+        } finally {
+            executionContext.setStreamGroupByEnabled(true);
+        }
+        streamAxisRuns++;
+        if (bS.hasStreamGroupBy) {
+            return Result.failed(query.sql(), new AssertionError(
+                    "the stream GROUP BY is disabled but the plan still uses it: " + query.sql()));
+        }
+        return reconcilePair(
+                query.sql(),
+                bJ,
+                bS,
+                rowsB,
+                rowsE,
+                query.deterministic(),
+                "stream GROUP BY divergence",
+                "stream on ",
+                "stream off"
+        );
+    }
+
     private Result runQuery(GeneratedQuery query) {
         String sql = query.sql();
-        if (!diffJit && !diffShadow && !isFusedAxisApplicable(query) && !query.hasBind()) {
+        if (!diffJit && !diffShadow && !diffStream && !isFusedAxisApplicable(query) && !query.hasBind()) {
             Outcome outcome = runOnce(sql, rowsA, primaryHasAnyParquet, query.deterministic());
             return toResult(sql, outcome);
         }
@@ -1646,6 +1687,13 @@ public final class QueryRunner {
                 Result fusedResult = runFusedVariant(query, bJ);
                 if (fusedResult.isFailed()) {
                     return fusedResult;
+                }
+            }
+
+            if (diffStream && bJ.hasStreamGroupBy) {
+                Result streamResult = runStreamVariant(query, bJ);
+                if (streamResult.isFailed()) {
+                    return streamResult;
                 }
             }
 
@@ -1777,6 +1825,7 @@ public final class QueryRunner {
             boolean hasBlockingAggregation,
             boolean usesParquet,
             boolean hasFusedHashJoin,
+            boolean hasStreamGroupBy,
             boolean[] fpColumnMask,
             Throwable failure,
             String exceptionClass,
@@ -1784,15 +1833,15 @@ public final class QueryRunner {
     ) {
 
         static Outcome error(Throwable t, String message, boolean usesParquet) {
-            return new Outcome(0, false, false, false, false, usesParquet, false, EMPTY_FP_MASK, t, t.getClass().getSimpleName(), message);
+            return new Outcome(0, false, false, false, false, usesParquet, false, false, EMPTY_FP_MASK, t, t.getClass().getSimpleName(), message);
         }
 
         static Outcome ok(int rowsRead, boolean hasIndex, boolean hasPushedLimit, boolean hasEarlyExitGroupBy, boolean hasBlockingAggregation, boolean usesParquet) {
-            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, false, EMPTY_FP_MASK, null, null, null);
+            return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, false, false, EMPTY_FP_MASK, null, null, null);
         }
 
-        static Outcome ok(int rowsRead, boolean hasIndex, boolean usesParquet, boolean hasFusedHashJoin, boolean[] fpColumnMask) {
-            return new Outcome(rowsRead, hasIndex, false, false, false, usesParquet, hasFusedHashJoin, fpColumnMask, null, null, null);
+        static Outcome ok(int rowsRead, boolean hasIndex, boolean usesParquet, boolean hasFusedHashJoin, boolean hasStreamGroupBy, boolean[] fpColumnMask) {
+            return new Outcome(rowsRead, hasIndex, false, false, false, usesParquet, hasFusedHashJoin, hasStreamGroupBy, fpColumnMask, null, null, null);
         }
     }
 

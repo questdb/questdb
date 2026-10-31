@@ -192,4 +192,9 @@ public class FirstIPv4GroupByFunction extends IPv4Function implements GroupByFun
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

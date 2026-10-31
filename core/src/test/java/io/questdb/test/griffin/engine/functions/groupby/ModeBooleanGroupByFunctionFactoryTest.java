@@ -264,7 +264,7 @@ public class ModeBooleanGroupByFunctionFactoryTest extends AbstractCairoTest {
                         "from long_sequence(30)" +
                         ") timestamp(k) partition by HOUR")
                 .timestamp("k")
-                .expectSize()
+                .noRandomAccess()
                 .returns("""
                         k\tmode
                         1970-01-01T00:00:00.000000Z\ttrue

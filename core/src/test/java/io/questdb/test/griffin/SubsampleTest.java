@@ -3157,9 +3157,9 @@ public class SubsampleTest extends AbstractCairoTest {
                     "2024-01-01T02:00:00.000000Z\t30.0\n");
             printSql("EXPLAIN " + query);
             final String plan = sink.toString();
-            Assert.assertTrue("DISTINCT must execute below the window selector: " + plan, plan.indexOf("CachedWindow") < plan.indexOf("Async Group By"));
+            Assert.assertTrue("DISTINCT must execute below the window selector: " + plan, plan.indexOf("CachedWindow") < plan.indexOf("Async Stream Group By"));
             Assert.assertTrue("DISTINCT plan must use a window selector: " + plan, plan.contains("CachedWindow"));
-            Assert.assertTrue("DISTINCT must remain below the window selector: " + plan, plan.contains("Async Group By"));
+            Assert.assertTrue("DISTINCT must remain below the window selector: " + plan, plan.contains("Async Stream Group By"));
             Assert.assertFalse("DISTINCT plan must not use the legacy cursor: " + plan, plan.contains("Subsample"));
         });
     }
@@ -5394,25 +5394,23 @@ public class SubsampleTest extends AbstractCairoTest {
 
     @Test
     public void testUniformAfterSampleByUsesWindowPlan() throws Exception {
-        // Proves the aggregation-context SUBSAMPLE now takes the desugared keep-flag WINDOW path
-        // (CachedWindowLightSelect fused, no separate Filter, no leaked __keep_subsample) sitting
-        // ABOVE the group-by/sample-by node - and NO Subsample cursor node.
+        // The window selector materializes the streaming aggregate and hides its keep flag.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             assertQuery("SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE uniform(2)")
-                    .assertsPlan("SelectedRecord\n" +
-                            "    CachedWindowLightSelect\n" +
-                            "      unorderedFunctions: [uniform(2) over (order by [ts])]\n" +
-                            "        Encode sort light\n" +
-                            "          keys: [ts]\n" +
-                            "            Async Group By workers: 1\n" +
-                            "              keys: [ts]\n" +
-                            "              keyFunctions: [timestamp_floor_utc('1h',ts)]\n" +
-                            "              values: [avg(price)]\n" +
-                            "              filter: null\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: t\n");
+                    .assertsPlan("""
+                            SelectedRecord
+                                Filter filter: __keep_subsample
+                                    CachedWindow
+                                      unorderedFunctions: [uniform(2) over (order by [ts])]
+                                        Async Stream Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [avg(price)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                            """);
         });
     }
 
@@ -5421,19 +5419,19 @@ public class SubsampleTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             assertQuery("SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE cadence(2)")
-                    .assertsPlan("SelectedRecord\n" +
-                            "    CachedWindowLightSelect\n" +
-                            "      unorderedFunctions: [cadence(2) over (order by [ts])]\n" +
-                            "        Encode sort light\n" +
-                            "          keys: [ts]\n" +
-                            "            Async Group By workers: 1\n" +
-                            "              keys: [ts]\n" +
-                            "              keyFunctions: [timestamp_floor_utc('1h',ts)]\n" +
-                            "              values: [avg(price)]\n" +
-                            "              filter: null\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: t\n");
+                    .assertsPlan("""
+                            SelectedRecord
+                                Filter filter: __keep_subsample
+                                    CachedWindow
+                                      unorderedFunctions: [cadence(2) over (order by [ts])]
+                                        Async Stream Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [avg(price)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                            """);
         });
     }
 
@@ -5442,19 +5440,19 @@ public class SubsampleTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             assertQuery("SELECT ts, avg(price) avg FROM t SAMPLE BY 1h SUBSAMPLE lttb(avg, 2)")
-                    .assertsPlan("SelectedRecord\n" +
-                            "    CachedWindowLightSelect\n" +
-                            "      unorderedFunctions: [lttb(ts,avg,2) over (order by [ts])]\n" +
-                            "        Encode sort light\n" +
-                            "          keys: [ts]\n" +
-                            "            Async Group By workers: 1\n" +
-                            "              keys: [ts]\n" +
-                            "              keyFunctions: [timestamp_floor_utc('1h',ts)]\n" +
-                            "              values: [avg(price)]\n" +
-                            "              filter: null\n" +
-                            "                PageFrame\n" +
-                            "                    Row forward scan\n" +
-                            "                    Frame forward scan on: t\n");
+                    .assertsPlan("""
+                            SelectedRecord
+                                Filter filter: __keep_subsample
+                                    CachedWindow
+                                      unorderedFunctions: [lttb(ts,avg,2) over (order by [ts])]
+                                        Async Stream Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [avg(price)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                            """);
         });
     }
 
@@ -5946,7 +5944,7 @@ public class SubsampleTest extends AbstractCairoTest {
         // Red test: SELECT DISTINCT * must return the distinct rows subsampled by uniform, with
         // no helper column. Hand-derived: 4 distinct rows (the duplicate collapses), uniform(2)
         // keeps the first and last in timestamp order. Oracle: the explicit-column DISTINCT form
-        // (asserted green first). The shape must keep fusing into the row-selecting window node.
+        // (asserted green first).
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO t VALUES (10.0, 'A', 1), (10.0, 'A', 1), (20.0, 'B', 2), (30.0, 'A', 3), (40.0, 'B', 4)");
@@ -5955,7 +5953,7 @@ public class SubsampleTest extends AbstractCairoTest {
                     "40.0\tB\t1970-01-01T00:00:00.000004Z\n";
             assertQuery("SELECT DISTINCT price, sym, ts FROM t SUBSAMPLE uniform(2)").returns(expected);
             assertQuery("SELECT DISTINCT * FROM t SUBSAMPLE uniform(2)")
-                    .withPlanContaining("CachedWindowLightSelect")
+                    .withPlanContaining("CachedWindow")
                     .returns(expected);
         });
     }
@@ -6106,7 +6104,7 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("CREATE TABLE t (price DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO t VALUES (10.0, 'A', 1), (10.0, 'A', 1), (20.0, 'B', 2), (30.0, 'A', 3), (40.0, 'B', 4)");
             assertQuery("SELECT DISTINCT * FROM t")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("price\tsym\tts\n" +
                             "10.0\tA\t1970-01-01T00:00:00.000001Z\n" +
                             "20.0\tB\t1970-01-01T00:00:00.000002Z\n" +

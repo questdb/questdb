@@ -65,6 +65,11 @@ public class RecordAsAFieldRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public boolean isRewindRecomputing() {
+        return base.isRewindRecomputing();
+    }
+
+    @Override
     public boolean recordCursorSupportsRandomAccess() {
         return base.recordCursorSupportsRandomAccess();
     }

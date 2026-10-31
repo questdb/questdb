@@ -601,18 +601,15 @@ public class TimestampFloorUtcBucketCachingFunctionTest extends AbstractCairoTes
                                 .withContext(sqlExecutionContext)
                                 .noLeakCheck()
                                 .timestamp("ts")
-                                .expectSize()
+                                .noRandomAccess()
                                 .withPlan("""
-                                        Encode sort light
+                                        Async Stream Group By workers: 4
                                           keys: [ts]
-                                            Async Group By workers: 4
-                                              keys: [ts]
-                                              keyFunctions: [timestamp_floor_utc('%s',ts,null,'00:00','Europe/Berlin')]
-                                              values: [count(*)]
-                                              filter: null
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
+                                          keyFunctions: [timestamp_floor_utc('%s',ts,null,'00:00','Europe/Berlin')]
+                                          values: [count(*)]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: x
                                         """.formatted(stride))
                                 .returns(expected);
                     },

@@ -158,4 +158,9 @@ public class ArgMinTimestampUuidGroupByFunction extends TimestampFunction implem
     private static boolean isNullUuid(long lo, long hi) {
         return lo == Numbers.LONG_NULL && hi == Numbers.LONG_NULL;
     }
+
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
 }

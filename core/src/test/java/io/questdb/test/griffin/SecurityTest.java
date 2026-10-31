@@ -888,13 +888,13 @@ public class SecurityTest extends AbstractCairoTest {
                     " timestamp_sequence(0, 1000000000) ts" +
                     " from long_sequence(10000)) timestamp(ts)");
 
-            assertQuery("select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear) ALIGN TO FIRST OBSERVATION")
+            assertQuery("select ts, sum(d) from tb1 SAMPLE BY 1d FILL(linear) ALIGN TO FIRST OBSERVATION")
                     .noLeakCheck()
                     .withCompiler(memoryRestrictedCompiler)
                     .withContext(readOnlyExecutionContext)
                     .failsWith("limit of 2 resizes exceeded");
 
-            assertQuery("select ts, sum(d) from tb1 SAMPLE BY 5d FILL(linear) ALIGN TO CALENDAR")
+            assertQuery("select ts, sum(d) from tb1 SAMPLE BY 1d FILL(linear) ALIGN TO CALENDAR")
                     .noLeakCheck()
                     .withCompiler(memoryRestrictedCompiler)
                     .withContext(readOnlyExecutionContext)

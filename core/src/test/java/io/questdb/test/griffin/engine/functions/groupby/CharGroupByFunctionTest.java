@@ -97,7 +97,7 @@ public class CharGroupByFunctionTest extends AbstractCairoTest {
             assertQuery("select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tmin\tmax\tfirst\tlast\tcount
                             2020-01-01T00:00:00.000000Z\t\u0001\t2\t\u0001\t2\t50
@@ -106,7 +106,7 @@ public class CharGroupByFunctionTest extends AbstractCairoTest {
             assertQuery("select ts, min(ch), max(ch), first(ch), last(ch), count() from tab sample by d align to calendar")
                     .noLeakCheck()
                     .timestamp("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns("""
                             ts\tmin\tmax\tfirst\tlast\tcount
                             2020-01-01T00:00:00.000000Z\t\u0001\t2\t\u0001\t2\t50

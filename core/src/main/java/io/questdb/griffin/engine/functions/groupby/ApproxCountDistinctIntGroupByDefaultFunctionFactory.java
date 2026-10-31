@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -49,6 +50,9 @@ public class ApproxCountDistinctIntGroupByDefaultFunctionFactory implements Func
                                 IntList argPositions,
                                 CairoConfiguration configuration,
                                 SqlExecutionContext sqlExecutionContext) {
-        return new ApproxCountDistinctIntGroupByFunction(args.getQuick(0));
+        final Function arg = args.getQuick(0);
+        return arg.getType() == ColumnType.BYTE
+                ? new CountDistinctByteGroupByFunction(arg, "approx_count_distinct")
+                : new ApproxCountDistinctIntGroupByFunction(arg);
     }
 }

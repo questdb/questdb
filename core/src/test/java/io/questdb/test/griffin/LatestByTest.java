@@ -1768,12 +1768,11 @@ public class LatestByTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByOverGenerateSeriesDescending() throws Exception {
-        // A negative step makes the base scan descend. A table-function leaf has no nested model, so
-        // generateLatestBy() has no ORDER BY to inspect and must leave orderedByTimestampAsc unset: the
-        // cursor then stores and compares timestamps instead of trusting the scan order. The rows alone
-        // cannot prove that - PARTITION BY generate_series keys on the timestamp itself, so every key
-        // holds exactly one row and both map builds agree - hence the plan assertion, which goes red the
-        // moment the nested == null path starts claiming ascending order.
+        // A negative step makes the base scan descend, so generateLatestBy() must leave
+        // orderedByTimestampAsc unset: the cursor then stores and compares timestamps instead of
+        // trusting the scan order. The rows alone cannot prove that - PARTITION BY generate_series keys
+        // on the timestamp itself, so every key holds exactly one row and both map builds agree - hence
+        // the plan assertion, which goes red the moment a descending base counts as ascending.
         assertQuery(
                 """
                         SELECT * FROM generate_series(
@@ -2024,6 +2023,54 @@ public class LatestByTest extends AbstractCairoTest {
                     .timestamp("version")
                     .expectSize()
                     .returns(expected);
+        });
+    }
+
+    @Test
+    public void testLatestByOverWrappedDescendingSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts " + timestampType.getTypeName() + ", k SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00', 'A', 1), ('2024-01-01T00:00', 'B', 2), ('2024-01-01T01:00', 'A', 3), ('2024-01-01T01:00', 'B', 4)");
+            final String expected = replaceTimestampSuffix1("""
+                    ts\tk\tv
+                    2024-01-01T01:00:00.000000Z\tA\t3
+                    2024-01-01T01:00:00.000000Z\tB\t4
+                    """, timestampType.getTypeName());
+            for (boolean parallel : new boolean[]{true, false}) {
+                sqlExecutionContext.setParallelGroupByEnabled(parallel);
+                for (String base : new String[]{
+                        "SELECT * FROM t ORDER BY ts DESC",
+                        "SELECT ts, k, sum(v) v FROM t SAMPLE BY 1h ORDER BY ts DESC"
+                }) {
+                    assertQuery("SELECT * FROM (SELECT * FROM (" + base + ")) LATEST ON ts PARTITION BY k ORDER BY ts, k")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .withPlanContaining("LatestBy light order_by_timestamp: false")
+                            .returns(expected);
+                }
+            }
+            assertQuery("SELECT * FROM (SELECT * FROM (SELECT * FROM t ORDER BY ts)) LATEST ON ts PARTITION BY k ORDER BY ts, k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlanContaining("LatestBy light order_by_timestamp: true")
+                    .returns(expected);
+
+            execute("CREATE TABLE t2 (ts " + timestampType.getTypeName() + ", ts2 " + timestampType.getTypeName() + ", k SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t2 VALUES
+                        ('2024-01-01T00:00', '2024-01-01T03:00', 'A', 1), ('2024-01-01T00:00', '2024-01-01T02:00', 'B', 2),
+                        ('2024-01-01T01:00', '2024-01-01T01:00', 'A', 3), ('2024-01-01T01:00', '2024-01-01T00:00', 'B', 4)""");
+            assertQuery("SELECT k, v FROM (SELECT * FROM (SELECT * FROM t2)) LATEST ON ts2 PARTITION BY k ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("LatestBy light order_by_timestamp: false")
+                    .returns("""
+                            k\tv
+                            A\t1
+                            B\t2
+                            """);
         });
     }
 

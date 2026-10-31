@@ -134,6 +134,7 @@ public class WriterPoolTableFunctionTest extends AbstractCairoTest {
             execute("create table c as (select 1 x)");
             assertQuery("select a.table_name l, b.table_name r from writer_pool() a cross join writer_pool() b order by l, r limit 20")
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             l\tr
                             a\ta

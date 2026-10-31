@@ -222,6 +222,11 @@ class AvgDecimal128GroupByFunction extends Decimal128Function implements GroupBy
         return UnaryFunction.super.supportsParallelism();
     }
 
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
+
     private void calc(Record rec) {
         long count = rec.getLong(valueIndex + 2);
         if (count > 0) {

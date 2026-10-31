@@ -134,8 +134,8 @@ public class MatViewRefreshRetryTest extends AbstractCairoTest {
 
             execute(
                     "create materialized view price_1h as (" +
-                            "  select ts, sym, avg(price) as avg_price from base_price sample by 10s" +
-                            ") partition by hour"
+                            "  select ts, sym, avg(price) as avg_price from base_price sample by 1d" +
+                            ") partition by day"
             );
 
             // Set RSS limit, so that the refresh will fail due to OOM.

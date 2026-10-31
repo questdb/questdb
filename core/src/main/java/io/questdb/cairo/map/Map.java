@@ -85,6 +85,41 @@ public interface Map extends Mutable, Closeable, Reopenable {
         return encoded < 0;
     }
 
+    /**
+     * Returns the source block that {@link #merge(Map, MapValueMergeFunction)} visits at the
+     * given position. Front to back, a source table lists its keys in the order of the hash
+     * bits the destination uses to place them, so each new key lands just past the previous
+     * one. Once the destination is more than half full, those keys pile up into one probe
+     * chain that every insert walks, and the merge turns quadratic. The golden-ratio stride
+     * sends consecutive blocks to distant parts of the destination at any destination size,
+     * which bounds that chain by the block size, while each block still reads memory
+     * sequentially. Up to four blocks keep the front-to-back order, where the chain stays
+     * short.
+     *
+     * @param blockCount number of blocks, a power of two
+     */
+    static long mergeBlock(long position, long blockCount) {
+        return (position * 0x9E3779B97F4A7C15L) & (blockCount - 1);
+    }
+
+    /**
+     * Returns the slot count of a {@link #mergeBlock(long, long)} block of a source table. The
+     * load factor keeps a share of every destination region free; while the source adds keys
+     * to a region at under half that share, the front-to-back walk cannot pile them up, and the
+     * whole source makes one block.
+     *
+     * @param srcCapacity  slot count of the source table, a power of two
+     * @param srcSize      key count of the source table
+     * @param destCapacity slot count of the destination table
+     * @param loadFactor   load factor of the destination table
+     */
+    static long mergeBlockSlots(long srcCapacity, long srcSize, long destCapacity, double loadFactor) {
+        if (2 * srcSize < (1 - loadFactor) * Math.max(srcCapacity, destCapacity)) {
+            return srcCapacity;
+        }
+        return Math.min(srcCapacity, 1024);
+    }
+
     @Override
     void close();
 

@@ -209,6 +209,11 @@ public abstract class AbstractRegressionGroupByFunction extends DoubleFunction i
         return BinaryFunction.super.supportsParallelism();
     }
 
+    @Override
+    public boolean isStateSelfContained() {
+        return true;
+    }
+
     protected void aggregate(MapValue mapValue, double y, double x) {
         double meanY = mapValue.getDouble(valueIndex);
         double sumY = mapValue.getDouble(valueIndex + 1);
