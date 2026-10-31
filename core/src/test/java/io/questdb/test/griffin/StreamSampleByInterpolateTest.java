@@ -245,9 +245,9 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
                         context.getBindVariableService().setDouble("max_price", 2049);
                         try (RecordCursor cursor = factory.getCursor(context)) {
                             cursor.hasNext();
-                            Assert.fail("expected map resize limit breach");
+                            Assert.fail("expected grid resize limit breach");
                         } catch (CairoException e) {
-                            TestUtils.assertContains(e.getFlyweightMessage(), "limit of 0 resizes exceeded in FastMap");
+                            TestUtils.assertContains(e.getFlyweightMessage(), "limit of 0 resizes exceeded in FILL(LINEAR)");
                         }
                         Assert.assertEquals(0, tracker.getUsed());
                         context.getBindVariableService().setDouble("max_price", 3);

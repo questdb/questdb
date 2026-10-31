@@ -276,9 +276,9 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
                         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                             try {
                                 cursor.hasNext();
-                                Assert.fail("expected key map resize limit");
+                                Assert.fail("expected grid resize limit");
                             } catch (CairoException e) {
-                                TestUtils.assertContains(e.getFlyweightMessage(), "limit of 0 resizes exceeded in FastMap");
+                                TestUtils.assertContains(e.getFlyweightMessage(), "limit of 0 resizes exceeded in FILL(LINEAR)");
                                 Assert.assertTrue(interpolation(factory).getKeyCapacity() > 1);
                                 Assert.assertFalse(interpolation(factory).isBuilt());
                             }

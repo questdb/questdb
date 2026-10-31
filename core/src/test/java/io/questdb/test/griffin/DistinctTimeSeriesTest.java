@@ -194,7 +194,7 @@ public class DistinctTimeSeriesTest extends AbstractCairoTest {
                     .mutateWith(// duplicate timestamp and symbol shouldn't change the result
                             "insert into x values (11, 'ibm', '1970-01-06T19:42:50.000000Z')")
                     .timestampDesc("ts")
-                    .expectSize()
+                    .noRandomAccess()
                     .returns(expected, expected);
         });
     }

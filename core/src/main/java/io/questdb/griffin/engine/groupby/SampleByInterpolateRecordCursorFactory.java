@@ -54,6 +54,7 @@ import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.join.JoinRecord;
@@ -432,6 +433,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private final Map keyMap;
         private final MapRecordCursor keyMapCursor;
         private final DirectLongList keyRowIds;
+        private final int maxResizes;
         private final Function offsetFunc;
         private final int offsetFuncPos;
         private final Function sampleFromFunc;
@@ -453,6 +455,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private int keyCount;
         private long lastBucket;
         private Record managedRecord;
+        private int resizes;
         private long rowId;
         private long rowSize;
         private TimeZoneRules rules;
@@ -481,6 +484,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 keyMap = MapFactory.createOrderedMap(configuration, keyTypes, new ArrayColumnTypes().add(ColumnType.INT), false);
                 keyMapCursor = keyMap.newCursor();
                 grid = Vm.getCARWInstance(configuration.getSqlSmallMapPageSize(), Integer.MAX_VALUE, MemoryTag.NATIVE_FAST_MAP);
+                maxResizes = configuration.getSqlMapMaxResizes();
                 bucketTimestamps = new DirectLongList(configuration.getSqlSmallMapKeyCapacity(), MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST, true);
                 keyBuckets = new DirectLongList(configuration.getSqlSmallMapKeyCapacity(), MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST, true);
                 keyRowIds = new DirectLongList(configuration.getSqlSmallMapKeyCapacity(), MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST, true);
@@ -637,8 +641,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
         private void appendBucket(long timestamp) {
             final long offset = bucketCount * rowSize;
-            grid.extend(offset + rowSize);
-            gridAddress = grid.getPageAddress(0);
+            extendGrid(offset + rowSize);
             final long row = gridAddress + offset;
             for (long p = row, hi = row + rowSize; p < hi; p += cellSize) {
                 Unsafe.putByte(p, (byte) 1);
@@ -679,11 +682,21 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             }
         }
 
+        private void extendGrid(long size) {
+            if (size > grid.size() && grid.size() > 0) {
+                if (resizes == maxResizes) {
+                    throw LimitOverflowException.instance().put("limit of ").put(maxResizes).put(" resizes exceeded in FILL(LINEAR)");
+                }
+                resizes++;
+            }
+            grid.extend(size);
+            gridAddress = grid.getPageAddress(0);
+        }
+
         private void growKeys() {
             final int capacity = keyCapacity * 2;
             final long size = capacity * cellSize;
-            grid.extend(bucketCount * size);
-            gridAddress = grid.getPageAddress(0);
+            extendGrid(bucketCount * size);
             for (long bucket = bucketCount - 1; bucket >= 0; bucket--) {
                 final long row = gridAddress + bucket * size;
                 Vect.memmove(row, gridAddress + bucket * rowSize, rowSize);
@@ -831,6 +844,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             keyCapacity = 1;
             rowSize = cellSize;
             rowId = 0;
+            resizes = 0;
             isBuilt = false;
         }
 

@@ -283,7 +283,7 @@ public final class FuzzSource {
         final String interval = SAMPLE_INTERVALS[rnd.nextInt(SAMPLE_INTERVALS.length)];
         final String sql = isKeyed
                 ? "SELECT " + tsName + " AS ts, " + key.getName() + " AS k, count() AS cnt FROM " + base.getFromSql()
-                + " SAMPLE BY " + interval + " ORDER BY ts, k"
+                  + " SAMPLE BY " + interval + " ORDER BY ts, k"
                 : "SELECT " + tsName + " AS ts, count() AS cnt FROM " + base.getFromSql() + " SAMPLE BY " + interval;
         final ObjList<FuzzColumn> cols = new ObjList<>();
         cols.add(new FuzzColumn("ts", ts.getType()));

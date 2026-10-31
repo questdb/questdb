@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
@@ -61,7 +60,6 @@ import io.questdb.std.Os;
 import java.util.concurrent.atomic.AtomicInteger;
 
 class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
-    private final int dispatchLimit;
     private final boolean isIntKey;
     private final int keyIndex;
     private final DirectLongList memory;
@@ -112,12 +110,10 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
             StreamGroupByMap segmentMap,
             WorkStealingStrategy workStealingStrategy
     ) {
-        final CairoConfiguration configuration = engine.getConfiguration();
         this.messageBus = messageBus;
         this.workStealingStrategy = workStealingStrategy;
         this.segmentMap = segmentMap;
         postAggregationCircuitBreaker = new PostAggregationCircuitBreaker(engine);
-        dispatchLimit = Math.max(1, configuration.getSqlParallelFilterDispatchLimit());
         keyIndex = stateTypes.getColumnCount() - 1;
         isIntKey = stateTypes.getColumnType(keyIndex) == ColumnType.INT;
         value = new FlyweightPackedMapValue(stateTypes);
@@ -471,7 +467,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         }
         while (frameIndex < frameLimit) {
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-            cursor = frameSequence.next(dispatchLimit, false);
+            cursor = frameSequence.next(frameSequence.getAtom().getDispatchLimit(), false);
             if (cursor >= 0) {
                 final PageFrameReduceTask task = frameSequence.getTask(cursor);
                 if (task.hasError()) {

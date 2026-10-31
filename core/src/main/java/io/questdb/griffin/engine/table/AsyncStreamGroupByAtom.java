@@ -116,14 +116,14 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
             IntHashSet filterUsedColumnIndexes,
             ObjList<Function> perWorkerFilters,
             int workerCount,
-            boolean isDescending
+            boolean isDescending,
+            int dispatchLimit
     ) {
         this.configuration = configuration;
-        final int frameSlots = configuration.getPageFrameReduceQueueCapacity();
-        this.frameRecords = new ObjList<>(frameSlots);
-        this.frameRecords.setPos(frameSlots);
-        this.frameValues = new ObjList<>(frameSlots);
-        this.frameValues.setPos(frameSlots);
+        this.frameRecords = new ObjList<>(dispatchLimit);
+        this.frameRecords.setPos(dispatchLimit);
+        this.frameValues = new ObjList<>(dispatchLimit);
+        this.frameValues.setPos(dispatchLimit);
         this.keyFunction = keyFunction;
         this.isDescending = isDescending;
         this.keyFunctionIndex = streamKeyIndex - columnFilter.getColumnCount();
@@ -230,6 +230,10 @@ public class AsyncStreamGroupByAtom implements StatefulAtom, PerWorkerLockOwner,
 
     public AsyncFilterContext getFilterContext() {
         return filterContext;
+    }
+
+    public int getDispatchLimit() {
+        return frameRecords.size();
     }
 
     public ObjList<GroupByFunction> getFunctions(int slot) {
