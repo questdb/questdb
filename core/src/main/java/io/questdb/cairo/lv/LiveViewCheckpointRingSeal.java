@@ -185,7 +185,9 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
      *                                     {@link WindowFunction#freezeCheckpointRingState}
      * @param value                        the partition's map value, or null for a
      *                                     scalar function
-     * @param key                          the encoded partition key
+     * @param keyAddress                   the encoded partition key, copied into
+     *                                     {@code out} before this returns
+     * @param keyLength                    the encoded partition key's length
      * @param previous                     the same partition's entry in the boundary
      *                                     before this one, or null when there is none
      *                                     or when the caller cannot prove this batch
@@ -198,48 +200,16 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
             @NotNull LiveViewCheckpointDataSegmentWriter dataWriter,
             @NotNull WindowFunction function,
             @Nullable MapValue value,
-            @NotNull byte[] key,
+            long keyAddress,
+            int keyLength,
             @Nullable LiveViewCheckpointPartitionMapEntry previous,
             long previousBoundaryMaxTimestamp,
             @NotNull LiveViewCheckpointPartitionMapEntry out
     ) {
-        writer = dataWriter;
-        valueKind = function.checkpointRingValueKind();
-        valueWords = LiveViewCheckpointRangeRingStateReader.valueWords(valueKind);
-        scalarWords = function.checkpointRingScalarWords();
         try {
-            boolean isShared = false;
-            if (previous != null) {
-                builder.of(previous, valueKind, scalarWords);
-                isShared = builder.getChunkCount() < chunkCap(builder.getRowCount())
-                        && builder.getLastTimestamp() <= previousBoundaryMaxTimestamp;
-            }
-            beginPartition(isShared, previousBoundaryMaxTimestamp);
-            function.freezeCheckpointRingState(this, value);
-            endSurvivors();
-            if (isRebuildRequired) {
-                // Nothing has been appended yet: every rejection above is decided
-                // before the first row above the split, so the rebuild re-streams
-                // the same ring into an empty builder and writes no orphan page.
-                beginPartition(false, previousBoundaryMaxTimestamp);
-                function.freezeCheckpointRingState(this, value);
-                endSurvivors();
-                if (isRebuildRequired) {
-                    throw CairoException.critical(0)
-                            .put("live view checkpoint ring state rebuild did not converge");
-                }
-            }
-            if (!hasScalarState) {
-                // Any bit pattern is a legitimate stored scalar (0 for a
-                // value-carrying ring, a NaN for a double aggregate), so a function
-                // that never published its continuation state would otherwise seal a
-                // plausible-looking partition whose scalar is invented.
-                throw CairoException.critical(0)
-                        .put("live view checkpoint ring state published no scalar state");
-            }
-            builder.freeze(writer, key, scalarWord0, scalarWord1, scalarWord2, scalarWord3, frameSize, out);
-            return LiveViewCheckpointRangeRingStateReader.scalarStateBytes(scalarWords)
-                    + rowsStreamed * (1 + valueWords) * Long.BYTES;
+            streamRing(dataWriter, function, value, previous, previousBoundaryMaxTimestamp);
+            builder.freeze(writer, keyAddress, keyLength, scalarWord0, scalarWord1, scalarWord2, scalarWord3, frameSize, out);
+            return logicalStateBytes();
         } finally {
             writer = null;
         }
@@ -273,6 +243,62 @@ public class LiveViewCheckpointRingSeal implements Closeable, LiveViewCheckpoint
             endSurvivors();
         }
         return !isRebuildRequired;
+    }
+
+    /**
+     * @return the logical state bytes the ring {@link #streamRing} just streamed accounts
+     * for, keys excluded
+     */
+    private long logicalStateBytes() {
+        return LiveViewCheckpointRangeRingStateReader.scalarStateBytes(scalarWords)
+                + rowsStreamed * (1 + valueWords) * Long.BYTES;
+    }
+
+    /**
+     * Streams the function's ring through the survivor split, rebuilding from empty when
+     * the stream is not the previous ring plus new rows, and leaves the builder ready to
+     * freeze.
+     */
+    private void streamRing(
+            @NotNull LiveViewCheckpointDataSegmentWriter dataWriter,
+            @NotNull WindowFunction function,
+            @Nullable MapValue value,
+            @Nullable LiveViewCheckpointPartitionMapEntry previous,
+            long previousBoundaryMaxTimestamp
+    ) {
+        writer = dataWriter;
+        valueKind = function.checkpointRingValueKind();
+        valueWords = LiveViewCheckpointRangeRingStateReader.valueWords(valueKind);
+        scalarWords = function.checkpointRingScalarWords();
+        boolean isShared = false;
+        if (previous != null) {
+            builder.of(previous, valueKind, scalarWords);
+            isShared = builder.getChunkCount() < chunkCap(builder.getRowCount())
+                    && builder.getLastTimestamp() <= previousBoundaryMaxTimestamp;
+        }
+        beginPartition(isShared, previousBoundaryMaxTimestamp);
+        function.freezeCheckpointRingState(this, value);
+        endSurvivors();
+        if (isRebuildRequired) {
+            // Nothing has been appended yet: every rejection above is decided
+            // before the first row above the split, so the rebuild re-streams
+            // the same ring into an empty builder and writes no orphan page.
+            beginPartition(false, previousBoundaryMaxTimestamp);
+            function.freezeCheckpointRingState(this, value);
+            endSurvivors();
+            if (isRebuildRequired) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint ring state rebuild did not converge");
+            }
+        }
+        if (!hasScalarState) {
+            // Any bit pattern is a legitimate stored scalar (0 for a
+            // value-carrying ring, a NaN for a double aggregate), so a function
+            // that never published its continuation state would otherwise seal a
+            // plausible-looking partition whose scalar is invented.
+            throw CairoException.critical(0)
+                    .put("live view checkpoint ring state published no scalar state");
+        }
     }
 
     private void beginPartition(boolean isShared, long previousBoundaryMaxTimestamp) {

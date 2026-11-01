@@ -33,11 +33,9 @@ import io.questdb.cairo.lv.LiveViewSnapshotKeyCodec;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
-import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
@@ -335,27 +333,12 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         /**
-         * Writes the partition's sum back over itself, which is what this family's
-         * finalization amounts to. It stays an override rather than being dropped because
-         * inheriting {@code avg}'s would replace the sum with the average; and it stays
-         * skipped when bound for the same reason every bound function's does - the group
-         * keeps the raw pair and there is no map of this function's own to walk.
+         * Finalizes nothing: pass 1 already left the slot holding the sum, which
+         * {@code getDouble} reads back. It stays an override because inheriting {@code avg}'s
+         * would divide the sum by the count.
          */
         @Override
         public void preparePass2() {
-            if (isWindowStateOwned()) {
-                return;
-            }
-            RecordCursor cursor = map.getCursor();
-            MapRecord record = map.getRecord();
-            while (cursor.hasNext()) {
-                MapValue value = record.getValue();
-                long count = value.getLong(1);
-                if (count > 0) {
-                    double sum = value.getDouble(0);
-                    value.putDouble(0, sum);
-                }
-            }
         }
 
         @Override
@@ -762,6 +745,14 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         @Override
         public int windowAccumulatorProjection() {
             return WindowAccumulatorProjection.PROJECTION_SUM;
+        }
+
+        /**
+         * The image is {@code (sum, nonNullCount)}; an unbounded frame start retains no rows.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return Double.BYTES + Long.BYTES;
         }
 
         @Override

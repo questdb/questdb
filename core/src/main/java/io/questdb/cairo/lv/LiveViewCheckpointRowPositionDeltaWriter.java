@@ -92,6 +92,17 @@ public class LiveViewCheckpointRowPositionDeltaWriter implements Closeable {
     }
 
     /**
+     * Releases the reader's mappings and any in-flight segment while keeping every
+     * shell, so the writer can serve the next publication without holding a
+     * mapping into a file a retire or compaction unlinks.
+     */
+    public void detach() {
+        reader.detach();
+        segmentWriter.discard();
+        releasedSegmentIds.clear();
+    }
+
+    /**
      * @return the metadata segment of every page the last mutation superseded,
      * one element per page, for the caller to release against the segment
      * catalogue

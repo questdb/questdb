@@ -31,6 +31,11 @@ module io.questdb.benchmarks {
     requires org.jetbrains.annotations;
     requires java.sql;
     requires io.questdb.client;
+    // com.sun.management.ThreadMXBean, which the live-view benchmarks read per-operation Java
+    // allocation from. The heap gate of the checkpoint acceptance matrix is tracked apart from
+    // the native one, so a native saving paid for in heap churn cannot hide inside one total.
+    requires java.management;
+    requires jdk.management;
 
     exports org.questdb.jmh_generated;
 }

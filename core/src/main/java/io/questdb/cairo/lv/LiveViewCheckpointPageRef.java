@@ -26,6 +26,7 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.cairo.vm.api.MemoryW;
+import io.questdb.std.Mutable;
 
 /**
  * A reference to an immutable metadata page inside a metadata segment
@@ -46,7 +47,7 @@ import io.questdb.cairo.vm.api.MemoryW;
  * callers reuse one instance across reads/writes to stay allocation-free on the
  * checkpoint path.
  */
-public final class LiveViewCheckpointPageRef {
+public final class LiveViewCheckpointPageRef implements Mutable {
 
     /**
      * On-disk/in-metadata size of a serialized reference: {@code segmentId} LONG,
@@ -67,11 +68,11 @@ public final class LiveViewCheckpointPageRef {
     /**
      * Resets this reference to null.
      */
-    public LiveViewCheckpointPageRef clear() {
+    @Override
+    public void clear() {
         segmentId = NULL_SEGMENT_ID;
         offset = 0;
         length = 0;
-        return this;
     }
 
     /**

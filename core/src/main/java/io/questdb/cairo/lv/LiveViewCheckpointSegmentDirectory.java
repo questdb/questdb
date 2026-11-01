@@ -28,12 +28,12 @@ package io.questdb.cairo.lv;
  * Node framing for the persistent copy-on-write B+ tree that catalogues data and
  * metadata segments and their generation-transactional reference counts.
  * <p>
- * The directory is ordered by {@code segmentId} and stored as immutable,
- * individually-checksummed metadata pages (kind {@link #PAGE_KIND_LEAF} or
- * {@link #PAGE_KIND_INTERNAL}), exactly like the timeline tree beside it. A
- * publication copies only the search paths its mutations touch and reuses every
- * untouched subtree by page reference, so the metadata a seal writes follows the
- * segments it added or re-referenced rather than how many segments are live.
+ * Like the timeline tree beside it, the directory is ordered by {@code segmentId} and
+ * stored as immutable, individually-checksummed metadata pages
+ * ({@link #PAGE_KIND_LEAF} or {@link #PAGE_KIND_INTERNAL}). A publication copies only
+ * the search paths its mutations touch and reuses untouched subtrees by page
+ * reference, so the metadata a seal writes follows the segments it added or
+ * re-referenced, not the number of live segments.
  *
  * <h2>Leaf page payload</h2>
  * <pre>
@@ -45,42 +45,30 @@ package io.questdb.cairo.lv;
  *     retireGeneration    LONG   (+24)
  *     kind                LONG   (+32)
  * </pre>
- * Entry stride is {@link #LEAF_ENTRY_STRIDE} (40 bytes). Entries are sorted
- * ascending by {@code segmentId}, which is unique because segment ids are
- * monotonic within a history epoch and never reused - and unique across both
- * kinds, because one id names at most one file in exactly one of {@code data/}
- * and {@code meta/}.
+ * Entry stride is {@link #LEAF_ENTRY_STRIDE} (40 bytes). Entries sort ascending by
+ * {@code segmentId}, which is unique across both kinds: ids are monotonic within a
+ * history epoch, never reused, and name at most one file in exactly one of
+ * {@code data/} and {@code meta/}. That makes {@code kind} redundant, but storing it
+ * lets catalogue walkers (compaction, purge) read the kind instead of probing paths,
+ * and keeps a segment whose file is missing classifiable.
  * <p>
- * {@code kind} is strictly redundant with that shared id namespace: a probe of
- * both paths would answer it. The directory stores it anyway, so a caller that
- * iterates the catalogue - a compaction pass looking for sparse data segments, a
- * purge sweep building the path to unlink - reads the kind rather than inferring
- * it, and a segment whose file is missing stays distinguishable from one of the
- * other kind.
- * <p>
- * What a {@code referenceCount} counts depends on the kind, and the three kinds
- * split along which question a reclamation has to answer:
+ * What {@code referenceCount} counts depends on the kind:
  * <ul>
- *     <li>{@link #SEGMENT_KIND_DATA} counts logical roots, not pages: a root that
- *     names one segment from several of its pages counts once.</li>
- *     <li>{@link #SEGMENT_KIND_META} counts pages - the pages of the three
- *     superblock-rooted trees that reside in it and are still reachable from the
- *     current generation's roots. There is one live version of each of those
- *     trees at a time, and a publication knows exactly which pages its path copy
- *     replaced, so pages are both maintainable and the finest unit available.</li>
- *     <li>{@link #SEGMENT_KIND_BOUNDARY} counts logical roots again, like a data
- *     segment. Boundary metadata - checkpoint roots, anchor roots, function roots
- *     and the partition-map pages below them - has one live version per surviving
- *     boundary rather than one in total, and boundaries retire in bulk, so the
- *     unit that matters is "does any surviving boundary reach this file". Each
- *     root carries the set of boundary segments its own closure names, which is
- *     what lets a repair splice or a truncate release a whole boundary in one
- *     reference transaction.</li>
+ *     <li>{@link #SEGMENT_KIND_DATA}: logical roots, not pages - a root that names the
+ *     segment from several of its pages counts once.</li>
+ *     <li>{@link #SEGMENT_KIND_META}: pages of the three superblock-rooted trees that
+ *     reside in it and are reachable from the current generation's roots. Each tree
+ *     has one live version and a publication knows exactly which pages its path copy
+ *     replaced, so pages are maintainable and the finest unit available.</li>
+ *     <li>{@link #SEGMENT_KIND_BOUNDARY}: logical roots, like data. Boundary metadata
+ *     (checkpoint, window and function roots and the partition-map pages below them)
+ *     has one live version per surviving boundary, and boundaries retire in bulk.
+ *     Each root carries the set of boundary segments its closure names, so a repair
+ *     splice or truncate releases a whole boundary in one reference transaction.</li>
  * </ul>
- * All three reach zero exactly when the current generation stops naming the file,
- * which is all the purge rule needs. A zero count carries the generation at which
- * the segment became obsolete, so a later purge can prove no reader can still
- * reach it.
+ * Every kind reaches zero exactly when the current generation stops naming the file,
+ * which is all the purge rule needs. A zero count records the generation at which the
+ * segment became obsolete, so a later purge can prove no reader still reaches it.
  *
  * <h2>Internal page payload</h2>
  * <pre>
@@ -89,10 +77,10 @@ package io.questdb.cairo.lv;
  *     minSegmentId        LONG   (+0)   min key of the child subtree
  *     childRef            PAGE_REF, 20 bytes (+8)
  * </pre>
- * Child stride is {@link #INTERNAL_CHILD_STRIDE} (28 bytes). Storing each
- * child's minimum key rather than {@code n-1} separators keeps descent and node
- * construction simple: the child that may hold key {@code K} is the rightmost
- * child whose minimum key is {@code <=} {@code K}.
+ * Child stride is {@link #INTERNAL_CHILD_STRIDE} (28 bytes). Storing each child's
+ * minimum key instead of {@code n-1} separators keeps descent and construction
+ * simple: the child that may hold key {@code K} is the rightmost child whose
+ * minimum key is {@code <= K}.
  */
 public final class LiveViewCheckpointSegmentDirectory {
 
@@ -158,7 +146,7 @@ public final class LiveViewCheckpointSegmentDirectory {
     public static final long RETIRE_GENERATION_NONE = -1;
     /**
      * A {@code meta/m.<segmentId>} file holding one boundary's metadata: a
-     * checkpoint root and its function directory, an anchor root, or a function
+     * checkpoint root and its function directory, a window root, or a function
      * root and the partition-map pages its build path-copied. Its
      * {@code referenceCount} is the number of current logical roots whose closure
      * names it, exactly as a data segment's is, and it moves through

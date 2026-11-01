@@ -87,6 +87,10 @@ import org.jetbrains.annotations.Nullable;
  * treated as the filter.
  */
 public final class LiveViewCompiledPlan {
+    // The base metadata this plan was compiled against, which lets the refresh context serve it
+    // a base reader that moved by SYMBOL capacity alone. Null on the plan CREATE validates, which
+    // never reads the base.
+    private final @Nullable LiveViewBaseMetadataSnapshot baseMetadataSnapshot;
     private final RecordCursorFactory filterFactory;
     // The three optional nodes are kept for traceOutputColumnToBaseScan, which walks their
     // functions and cross index. Driving the refresh chain goes through the cursors below
@@ -108,7 +112,8 @@ public final class LiveViewCompiledPlan {
             VirtualRecordCursorFactory inputProjection,
             SelectedRecordCursorFactory inputMapping,
             RecordCursorFactory filterFactory,
-            PageFrameRecordCursorFactory pageFrameFactory
+            PageFrameRecordCursorFactory pageFrameFactory,
+            @Nullable LiveViewBaseMetadataSnapshot baseMetadataSnapshot
     ) {
         this.root = root;
         this.outputProjection = outputProjection;
@@ -117,6 +122,7 @@ public final class LiveViewCompiledPlan {
         this.inputMapping = inputMapping;
         this.filterFactory = filterFactory;
         this.pageFrameFactory = pageFrameFactory;
+        this.baseMetadataSnapshot = baseMetadataSnapshot;
         // The adapters borrow the compiled factories' functions and cross index, so they
         // are bound to this plan's lifetime and cannot be shared across views. A view
         // with no projection allocates none of them, which is every view that existed
@@ -136,6 +142,18 @@ public final class LiveViewCompiledPlan {
      * @param position the CREATE statement position every reject is anchored at
      */
     public static LiveViewCompiledPlan of(RecordCursorFactory factory, int position) throws SqlException {
+        return of(factory, position, null);
+    }
+
+    /**
+     * Decomposes {@code factory} like {@link #of(RecordCursorFactory, int)} and keeps the base
+     * metadata it was compiled against, for the refresh path to run the plan on.
+     */
+    static LiveViewCompiledPlan of(
+            RecordCursorFactory factory,
+            int position,
+            @Nullable LiveViewBaseMetadataSnapshot baseMetadataSnapshot
+    ) throws SqlException {
         // SqlCompiler wraps every compiled query in a QueryProgress factory for registry
         // tracking; unwrap it (and any other transparent wrapper that exposes
         // getBaseFactory()) so we reason about the actual query shape.
@@ -197,7 +215,8 @@ public final class LiveViewCompiledPlan {
                 inputProjection,
                 inputMapping,
                 filterFactory,
-                pageFrameFactory
+                pageFrameFactory,
+                baseMetadataSnapshot
         );
     }
 
@@ -283,6 +302,41 @@ public final class LiveViewCompiledPlan {
     }
 
     /**
+     * Resolves a window-input column back to the base-scan column it passes through, or
+     * {@code -1} when it is computed rather than passed through.
+     * <p>
+     * This is the tail of {@link #traceOutputColumnToBaseScan(int)}, entered at the
+     * window's input rather than at the view's output, and it answers a different
+     * question: a PARTITION BY key resolves against
+     * {@link #getWindowInputMetadata() the window's input}, so tracing it to a base column
+     * is what decides whether that key is a base column an index can name or an expression
+     * only a full scan can produce.
+     *
+     * @param windowInputColumnIndex a column index into {@link #getWindowInputMetadata()}
+     * @return the column index into {@link #getBaseScanMetadata()}, or {@code -1}
+     */
+    public int traceWindowInputColumnToBaseScan(int windowInputColumnIndex) {
+        int index = windowInputColumnIndex;
+        if (index < 0) {
+            return -1;
+        }
+        if (inputProjection != null) {
+            index = traceThroughProjection(inputProjection, index);
+            if (index < 0) {
+                return -1;
+            }
+        }
+        if (inputMapping != null) {
+            final IntList crossIndex = inputMapping.getColumnCrossIndex();
+            if (index >= crossIndex.size()) {
+                return -1;
+            }
+            index = crossIndex.getQuick(index);
+        }
+        return index >= 0 && index < getBaseScanMetadata().getColumnCount() ? index : -1;
+    }
+
+    /**
      * Rebuilds the compiled nodes between the base scan and the window over {@code source},
      * so the window sees rows in the shape its functions were compiled against. Returns
      * {@code source} unchanged when the window reads the scan directly.
@@ -319,6 +373,15 @@ public final class LiveViewCompiledPlan {
         }
         outputProjectionCursor.of(windowCursor, executionContext);
         return outputProjectionCursor;
+    }
+
+    /**
+     * The base metadata this plan was compiled against, or null when the compile did not
+     * record it.
+     */
+    @Nullable
+    LiveViewBaseMetadataSnapshot getBaseMetadataSnapshot() {
+        return baseMetadataSnapshot;
     }
 
     private static boolean containsWindowFactory(RecordCursorFactory factory) {

@@ -48,6 +48,21 @@ import org.junit.Test;
  */
 public class LiveViewCheckpointRepairDispositionTest extends AbstractLiveViewTest {
 
+    // The anchored window's from-base equivalent, and the base it reads. ANCHOR is
+    // accepted only inside a live view, so an anchored case cannot use its own SELECT as
+    // its oracle and spells the reset out as a partition on the bucket the anchor floors
+    // to instead.
+    private static final String ANCHOR_ORACLE_SOURCE =
+            " FROM (SELECT ts, sym, x, timestamp_floor('1d', ts) AS bucket FROM base)";
+    private static final String ANCHOR_ORACLE_WINDOW =
+            "PARTITION BY sym, bucket ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW";
+    // A daily anchor over the same partition and order the ROWS frame below uses. Every
+    // row in the history sits in one calendar day, so the segment this proves converges
+    // TOMORROW - far above any frontier the fixture's runtime reaches, which is the shape
+    // the anchored cases are about. ANCHOR is accepted only on a named WINDOW clause, so
+    // the frame lives here and the projections reference it as `w`.
+    private static final String ANCHOR_WINDOW_CLAUSE =
+            " WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))";
     // In-order commits driven before the out-of-order one, one per 10 seconds.
     private static final int HISTORY_COMMITS = 12;
     // Second-of-day of the null-run cases' correction. Mid-history and inside the null
@@ -71,6 +86,48 @@ public class LiveViewCheckpointRepairDispositionTest extends AbstractLiveViewTes
     public void pinClockBelowTestData() {
         // Below the 2026 rows, so a START FROM NOW view admits every one of them.
         setCurrentMicros(0L);
+    }
+
+    @Test
+    public void testARowsFunctionBesideAnAnchoredOneKeepsTheFiniteBoundRequirement() throws Exception {
+        // The union shape, and the one where getting the requirement wrong corrupts state
+        // instead of failing loudly. A bounded ROWS frame declared beside the anchored one
+        // keeps sliding across every segment boundary, so it holds a key's last Nmax rows
+        // however old they are and cannot survive the promotion an EOF bound forces. The
+        // requirement therefore rides on the ROWS arm, not on the shape as a whole: this
+        // view is denied exactly where the anchored-only case above is not, and the
+        // recompute assertion is what says the denial bought correctness rather than
+        // hiding a wrong answer.
+        assertRepairOutcome(
+                "sum(x) OVER w AS a, sum(x) OVER (" + ROWS_WINDOW_FRAME + ")",
+                "",
+                ANCHOR_WINDOW_CLAUSE,
+                "SELECT ts, sym, sum(x) OVER (" + ANCHOR_ORACLE_WINDOW + ") AS a, "
+                        + "sum(x) OVER (" + ROWS_WINDOW_FRAME + ") AS s" + ANCHOR_ORACLE_SOURCE,
+                "rows+anchor",
+                "boundary rebuild",
+                "frontier below convergence"
+        );
+    }
+
+    @Test
+    public void testAnAnchoredRepairLocalizesWithoutReachingItsSegmentEnd() throws Exception {
+        // The anchor segment is a calendar day and the whole history sits inside one, so
+        // the convergence boundary is TOMORROW and the runtime frontier cannot reach it
+        // until the day rolls over. The repair localizes anyway: the anchor expires by
+        // time, so a key with no row in the correction's segment holds nothing there
+        // either, and promoting the replay's state loses only what the next reset was
+        // going to discard. Nothing is denied, and the floors come off the segment rather
+        // than off the view's START FROM boundary.
+        assertRepairOutcome(
+                "sum(x) OVER w",
+                "",
+                ANCHOR_WINDOW_CLAUSE,
+                "SELECT ts, sym, sum(x) OVER (" + ANCHOR_ORACLE_WINDOW + ") AS s" + ANCHOR_ORACLE_SOURCE,
+                "anchor",
+                "localized rebuild",
+                null
+        );
     }
 
     @Test
@@ -265,12 +322,32 @@ public class LiveViewCheckpointRepairDispositionTest extends AbstractLiveViewTes
             String expectedDisposition,
             String expectedDenial
     ) throws Exception {
+        assertRepairOutcome(projection, dedupClause, "", null, expectedPlan, expectedDisposition, expectedDenial);
+    }
+
+    /**
+     * @param windowClause the view's named {@code WINDOW} clause, or an empty string for a
+     *                     view whose frames are all inline. Only an anchored frame needs
+     *                     it: the parser accepts {@code ANCHOR} nowhere else
+     * @param oracleSql    the from-base recompute the view has to equal, or null when the
+     *                     view's own SELECT doubles as its oracle. An anchored view needs
+     *                     one of its own for the same reason it needs the window clause
+     */
+    private void assertRepairOutcome(
+            String projection,
+            String dedupClause,
+            String windowClause,
+            String oracleSql,
+            String expectedPlan,
+            String expectedDisposition,
+            String expectedDenial
+    ) throws Exception {
         // One boundary per flush, so the correction at 5s sits below every one of them.
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
 
-        final String viewSql = projection.contains(" OVER (")
+        final String viewSql = (projection.contains(" OVER ")
                 ? "SELECT ts, sym, " + projection + " AS s FROM base"
-                : "SELECT ts, sym, sum(x) OVER (" + projection + ") AS s FROM base";
+                : "SELECT ts, sym, sum(x) OVER (" + projection + ") AS s FROM base") + windowClause;
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL"
                     + dedupClause);
@@ -319,7 +396,7 @@ public class LiveViewCheckpointRepairDispositionTest extends AbstractLiveViewTes
                 TestUtils.assertSqlCursors(
                         engine,
                         sqlExecutionContext,
-                        "(" + viewSql + ") ORDER BY 2, 1",
+                        "(" + (oracleSql != null ? oracleSql : viewSql) + ") ORDER BY 2, 1",
                         "(lv) ORDER BY 2, 1",
                         LOG,
                         true

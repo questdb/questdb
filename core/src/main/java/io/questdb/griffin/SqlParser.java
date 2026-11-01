@@ -2395,6 +2395,13 @@ public class SqlParser {
      *     <li>Tz-aware: {@code timestamp_floor_utc('1d', <ts>, '1970-01-01THH:MM:00.000000Z'::timestamp, '+00:00', '<tz>')}
      *     using the UTC-encoded variant so DST fall-back keeps bucket distinctness.</li>
      * </ul>
+     * <p>
+     * A day-or-larger period whose anchor time lands in the hour a DST fall-back repeats
+     * (e.g. {@code ANCHOR DAILY '02:30' 'Europe/Berlin'}) makes the floor non-monotone: an
+     * anchor value can recur after a later one. A live view segment is one maximal run of
+     * adjacent rows sharing an anchor value, so the second run opens its own accumulator
+     * ({@code LiveViewWindow.processRow} resets on inequality). SAMPLE BY over the same floor
+     * differs by design: its hash aggregation rejoins both runs into one bucket.
      */
     private static String desugarDailyAnchor(WindowExpression w) throws SqlException {
         ObjList<ExpressionNode> orderBy = w.getOrderBy();

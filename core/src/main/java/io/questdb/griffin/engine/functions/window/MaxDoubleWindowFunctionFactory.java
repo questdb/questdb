@@ -2035,7 +2035,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                     valueTypesCopy.add(MAX_COLUMN_TYPES_LV.getColumnType(i));
                 }
                 this.mapValueTypes = valueTypesCopy;
-                this.tombstoneValueIndex = 2;
+                this.tombstoneValueIndex = 1;
             } else {
                 this.mapValueTypes = null;
                 this.tombstoneValueIndex = -1;
@@ -2086,21 +2086,17 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
             if (Numbers.isFinite(d)) {
                 MapValue value = key.createValue();
-                if (value.isNew() && tombstoneValueIndex >= 0) {
-                    value.putByte(tombstoneValueIndex, (byte) 0);
-                }
-                // The "initialized" byte only exists in the live-view layout, where
-                // resetPartition clears it to re-arm a partition the anchor has retired.
-                // Outside a live view resetPartition never runs, so isNew() alone decides.
-                if (value.isNew() || (liveView && value.getByte(1) == 0)) {
-                    value.putDouble(0, d);
-                    if (liveView) {
-                        value.putByte(1, (byte) 1);
+                if (value.isNew()) {
+                    if (tombstoneValueIndex >= 0) {
+                        value.putByte(tombstoneValueIndex, (byte) 0);
                     }
+                    value.putDouble(0, d);
                     this.maxMin = d;
                 } else {
                     double max = value.getDouble(0);
-                    if (comparator.compare(d, max)) {
+                    // max can be NaN after an anchor reset re-armed the slot
+                    // (resetPartition writes the null sentinel); re-anchor on it.
+                    if (Numbers.isNull(max) || comparator.compare(d, max)) {
                         value.putDouble(0, d);
                         max = d;
                     }
@@ -2108,9 +2104,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 }
             } else {
                 MapValue value = key.findValue();
-                this.maxMin = value != null && (!liveView || value.getByte(1) == 1)
-                        ? value.getDouble(0)
-                        : Double.NaN;
+                this.maxMin = value != null ? value.getDouble(0) : Double.NaN;
             }
         }
 
@@ -2182,11 +2176,13 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                 // this function has no map left to probe.
                 return;
             }
+            // ANCHOR-driven reset. Restore the null sentinel so the next computeNext
+            // re-anchors the running max/min on the post-reset row.
             partitionByRecord.of(record);
             MapKey key = map.withKey();
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.createValue();
-            value.putByte(1, (byte) 0);
+            value.putDouble(0, Double.NaN);
             if (value.isNew()) {
                 if (tombstoneValueIndex >= 0) {
                     value.putByte(tombstoneValueIndex, (byte) 0);
@@ -2201,23 +2197,30 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         public long restoreCheckpointState(LiveViewStatePageReader source, long offset, MapValue value) {
             value.putDouble(0, source.getDouble(offset));
             offset += Double.BYTES;
-            value.putByte(1, source.getByte(offset));
-            offset += Byte.BYTES;
             if (tombstoneValueIndex >= 0) {
                 value.putByte(tombstoneValueIndex, (byte) 0);
             }
             return offset;
         }
 
+        /**
+         * The image is the running extremum, one DOUBLE - the family's one slot.
+         */
+        @Override
+        public int checkpointStateFixedLength() {
+            return Double.BYTES;
+        }
+
         @Override
         public int checkpointStateFormatVersion() {
-            return 1;
+            // Version 2 dropped the "initialized" byte from the layout and the image, so a
+            // version-1 root must not resolve here: its extra byte would read as the next entry.
+            return 2;
         }
 
         @Override
         public void freezeCheckpointState(LiveViewStatePageWriter sink, MapValue value) {
             sink.putDouble(value.getDouble(0));
-            sink.putByte(value.getByte(1));
         }
 
         @Override
@@ -2381,16 +2384,12 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         MAX_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_COLUMN_TYPES.add(ColumnType.DOUBLE); // max value
 
-        // Live-view ANCHOR contract: an explicit "initialized" byte lets resetPartition
-        // signal "no value yet for this partition" without deleting the map entry. The
-        // MapValue's intrinsic isNew() flips to false on first access, which is too
-        // coarse for repeated resets within the same partition. Only the live-view layout
-        // carries it: resetPartition never runs outside a live view, so adding the byte to
-        // MAX_COLUMN_TYPES would widen the map entry of every ordinary max()/min() query
-        // for a flag it can never read.
+        // Live-view ANCHOR contract: resetPartition re-arms a retired partition by writing NaN
+        // into the value slot, which no contributing row can produce. Only a live view carries
+        // the tombstone byte: resetPartition never runs outside one, so adding it to
+        // MAX_COLUMN_TYPES would widen every ordinary max()/min() map entry for nothing.
         MAX_COLUMN_TYPES_LV = new ArrayColumnTypes();
         MAX_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // max value
-        MAX_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // initialized flag
         MAX_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // tombstone (anchor-driven compaction)
 
         MAX_OVER_PARTITION_RANGE_COLUMN_TYPES = new ArrayColumnTypes();

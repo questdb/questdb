@@ -25,12 +25,14 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.lv.LiveViewCheckpointAnchorPlan;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.nanotime.Nanos;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -116,13 +118,102 @@ public class LiveViewCheckpointAnchorPlanTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testAnchorDailyWithTimeZoneHasNoPlan() throws Exception {
-        // A tz-aware daily anchor desugars to timestamp_floor_utc, whose buckets change
-        // width across a DST transition. There is no closed-form end, so the anchor
-        // declines the plan rather than claiming a boundary it cannot honour.
+    public void testAnchorDailyWithTimeZonePlansTheZonesCivilDay() throws Exception {
+        // A tz-aware daily anchor desugars to timestamp_floor_utc, whose buckets follow the
+        // zone's civil day rather than a fixed stride. The plan describes them from the
+        // zone's own transition table; LiveViewCheckpointTimeZoneAnchorPlanTest is where the
+        // DST widths and the plan-versus-runtime agreement are pinned.
         assertMemoryLeak(() -> {
-            createBaseAndView("ANCHOR DAILY '00:00' 'Europe/London'");
-            Assert.assertNull(refreshAndGetPlan());
+            createBaseAndView("ANCHOR DAILY '00:00' 'Europe/Berlin'");
+            final LiveViewCheckpointAnchorPlan plan = refreshAndGetPlan();
+            Assert.assertNotNull("a tz-aware DAILY anchor must carry a fixed segment too", plan);
+            Assert.assertEquals('d', plan.getUnit());
+            Assert.assertEquals(1, plan.getStride());
+            Assert.assertEquals(0, plan.getSegmentOffset());
+
+            // Berlin runs two hours ahead of UTC in August, so its civil day starts at
+            // 22:00Z the evening before.
+            final long dayStart = ts("2026-07-31T22:00:00.000000Z");
+            final long nextDay = ts("2026-08-01T22:00:00.000000Z");
+            Assert.assertEquals(dayStart, plan.getSegmentStart(dayStart));
+            Assert.assertEquals(dayStart, plan.getSegmentStart(nextDay - 1));
+            Assert.assertEquals(nextDay, plan.getSegmentEndExclusive(dayStart));
+            Assert.assertEquals(nextDay, plan.getSegmentEndExclusive(nextDay - 1));
+            Assert.assertEquals(nextDay, plan.getSegmentStart(nextDay));
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorDailyNonMidnightOverNanosPlansTheOriginInNanos() throws Exception {
+        // The DAILY wall time is captured in MICROSECONDS whatever the base column is, so a
+        // nanosecond base has to scale it before it can be an alignment origin. Left
+        // unscaled, 09:30 would seed the grid 34_200_000_000 NANOS past the epoch - nine
+        // and a half milliseconds - and every segment boundary would sit a thousandfold
+        // below the one the runtime timestamp_floor resets on, which is a localized repair
+        // replacing the wrong range with no fault raised.
+        assertMemoryLeak(() -> {
+            createBase("TIMESTAMP_NS");
+            createView("ts, sym", "ANCHOR DAILY '09:30'");
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T12:00:00.000000000Z', 10, 'a'), " +
+                    "('2026-08-02T09:29:59.999999999Z', 20, 'a'), " +
+                    "('2026-08-02T09:30:00.000000000Z', 5, 'a'), " +
+                    "('2026-08-02T09:30:00.000000001Z', 7, 'a')");
+            final LiveViewCheckpointAnchorPlan plan = refreshAndGetPlan();
+            Assert.assertNotNull("DAILY over a nanosecond base must carry a fixed segment", plan);
+            Assert.assertEquals(ColumnType.TIMESTAMP_NANO, plan.getTimestampType());
+            Assert.assertEquals('d', plan.getUnit());
+            Assert.assertEquals(1, plan.getStride());
+            Assert.assertEquals(
+                    9 * Nanos.HOUR_NANOS + 30 * Nanos.MINUTE_NANOS,
+                    plan.getSegmentOffset()
+            );
+
+            final long inFirstBucket = nanos("2026-08-01T12:00:00.000000Z");
+            Assert.assertEquals(nanos("2026-08-01T09:30:00.000000Z"), plan.getSegmentStart(inFirstBucket));
+            Assert.assertEquals(
+                    nanos("2026-08-02T09:30:00.000000Z"),
+                    plan.getSegmentEndExclusive(inFirstBucket)
+            );
+
+            // And that boundary is the one the runtime resets on: the row one nanosecond
+            // below it still accumulates into the first segment.
+            assertQuery("SELECT ts, s FROM lv WHERE sym = 'a' ORDER BY ts").noLeakCheck().timestamp("ts").returns("ts\ts\n" +
+                    "2026-08-01T12:00:00.000000000Z\t10.0\n" +
+                    "2026-08-02T09:29:59.999999999Z\t30.0\n" +
+                    "2026-08-02T09:30:00.000000000Z\t5.0\n" +
+                    "2026-08-02T09:30:00.000000001Z\t12.0\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorDailyWithTimeZoneOverNanosPlansTheOriginInNanos() throws Exception {
+        // The zoned branch reads the very same captured wall time, so it needs the same
+        // scaling - and it is the branch with no nanosecond case at all otherwise.
+        // LiveViewCheckpointTimeZoneAnchorPlanTest pins the zone arithmetic itself on both
+        // precisions; this pins the origin the compiler hands it.
+        assertMemoryLeak(() -> {
+            createBase("TIMESTAMP_NS");
+            createView("ts, sym", "ANCHOR DAILY '09:30' 'Europe/Berlin'");
+            final LiveViewCheckpointAnchorPlan plan = refreshAndGetPlan();
+            Assert.assertNotNull("a tz-aware DAILY anchor over nanos must carry a fixed segment", plan);
+            Assert.assertEquals(ColumnType.TIMESTAMP_NANO, plan.getTimestampType());
+            Assert.assertEquals('d', plan.getUnit());
+            Assert.assertEquals(1, plan.getStride());
+            Assert.assertEquals(
+                    9 * Nanos.HOUR_NANOS + 30 * Nanos.MINUTE_NANOS,
+                    plan.getSegmentOffset()
+            );
+
+            // Berlin runs two hours ahead of UTC in August, so 09:30 local is 07:30Z.
+            final long inBucket = nanos("2026-08-01T12:00:00.000000Z");
+            Assert.assertEquals(nanos("2026-08-01T07:30:00.000000Z"), plan.getSegmentStart(inBucket));
+            Assert.assertEquals(nanos("2026-08-02T07:30:00.000000Z"), plan.getSegmentEndExclusive(inBucket));
+
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -194,6 +285,76 @@ public class LiveViewCheckpointAnchorPlanTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testEveryFixedStrideBoundIsAWallOfTheRuntimeFloor() {
+        // The property the two bounds exist to carry, swept for the zone-less anchor: each
+        // bound the plan reports finite is a wall of the floor the runtime anchor calls -
+        // TimestampFloorOffsetFunction holds this same getTimestampFloorWithOffsetMethod - so
+        // the instant one below a start and the end itself carry another anchor value than
+        // the probe. Each bound is held to that on its own, because callers read them apart.
+        //
+        // A non-zero origin is where the two part company. The floor clamps every instant
+        // below the origin to the origin itself, and the first aligned bucket floors there
+        // too, so the origin is no wall: rows on either side of it are one run.
+        int finiteStarts = 0;
+        int openBelowStarts = 0;
+        int finiteEnds = 0;
+        for (int precision = 0; precision < 2; precision++) {
+            final int timestampType = precision == 0 ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
+            final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+            final TimestampDriver.TimestampFloorWithOffsetMethod floor = driver.getTimestampFloorWithOffsetMethod('d');
+            for (int stride = 1; stride <= 2; stride++) {
+                for (int originMinutes = 0; originMinutes < 24 * 60; originMinutes += 15) {
+                    final long origin = driver.fromMinutes(originMinutes);
+                    final LiveViewCheckpointAnchorPlan plan =
+                            LiveViewCheckpointAnchorPlan.of('d', stride, origin, timestampType);
+                    Assert.assertNotNull(plan);
+                    // Four days of quarter-hour probes, each also one tick either side, so
+                    // every probe lands on, just below and just above a grid point.
+                    for (int probeMinutes = 0; probeMinutes < 4 * 24 * 60; probeMinutes += 15) {
+                        for (int tick = -1; tick <= 1; tick++) {
+                            final long probe = driver.fromMinutes(probeMinutes) + tick;
+                            if (probe < 0) {
+                                continue;
+                            }
+                            final long value = floor.floor(probe, stride, origin);
+                            final long start = plan.getSegmentStart(probe);
+                            if (start == Long.MIN_VALUE) {
+                                openBelowStarts++;
+                            } else {
+                                finiteStarts++;
+                                Assert.assertTrue(start <= probe);
+                                Assert.assertEquals(value, floor.floor(start, stride, origin));
+                                Assert.assertNotEquals(
+                                        "start is no wall [origin=" + origin + ", stride=" + stride
+                                                + ", probe=" + probe + ']',
+                                        value,
+                                        floor.floor(start - 1, stride, origin)
+                                );
+                            }
+                            final long end = plan.getSegmentEndExclusive(probe);
+                            if (end != Numbers.LONG_NULL) {
+                                finiteEnds++;
+                                Assert.assertTrue(end > probe);
+                                Assert.assertEquals(value, floor.floor(end - 1, stride, origin));
+                                Assert.assertNotEquals(
+                                        "end is no wall [origin=" + origin + ", stride=" + stride
+                                                + ", probe=" + probe + ']',
+                                        value,
+                                        floor.floor(end, stride, origin)
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // The sweep must not pass vacuously on either bound.
+        Assert.assertTrue(finiteStarts > 0);
+        Assert.assertTrue(openBelowStarts > 0);
+        Assert.assertTrue(finiteEnds > 0);
+    }
+
+    @Test
     public void testNanosecondColumnSegmentBoundaries() {
         // The bounds are expressed in the designated timestamp's own units, so the same
         // anchor over a nanosecond column produces nanosecond boundaries.
@@ -216,11 +377,15 @@ public class LiveViewCheckpointAnchorPlanTest extends AbstractLiveViewTest {
         Assert.assertEquals(bucketStart, plan.getSegmentStart(nextBucket - 1));
         Assert.assertEquals(nextBucket, plan.getSegmentEndExclusive(nextBucket - 1));
 
-        // Every row below the origin carries the origin as its anchor value, so they
-        // share one segment that is open below and ends where the first bucket starts.
+        // Every row below the origin carries the origin as its anchor value, and so does the
+        // whole first aligned bucket, so they share one segment that is open below and ends
+        // where the first bucket ends.
         final long belowOrigin = origin - 1;
+        final long firstBucketEnd = origin + Micros.DAY_MICROS;
         Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(belowOrigin));
-        Assert.assertEquals(origin, plan.getSegmentEndExclusive(belowOrigin));
+        Assert.assertEquals(firstBucketEnd, plan.getSegmentEndExclusive(belowOrigin));
+        Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(origin));
+        Assert.assertEquals(firstBucketEnd, plan.getSegmentEndExclusive(origin));
     }
 
     @Test
@@ -239,6 +404,51 @@ public class LiveViewCheckpointAnchorPlanTest extends AbstractLiveViewTest {
         final LiveViewCheckpointAnchorPlan daily = LiveViewCheckpointAnchorPlan.of('d', 1, 0, ColumnType.TIMESTAMP_MICRO);
         Assert.assertNotNull(daily);
         Assert.assertEquals(Numbers.LONG_NULL, daily.getSegmentEndExclusive(Long.MAX_VALUE));
+    }
+
+    @Test
+    public void testTheOriginIsNoWallBetweenTheRowsAroundIt() throws Exception {
+        // ANCHOR DAILY '09:30' without a zone desugars to the three-argument timestamp_floor,
+        // which floors every instant below its origin to the origin itself. The instant below
+        // the origin, the origin and the last instant of the first aligned bucket therefore
+        // share one anchor value, and the next value starts a whole day later.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE probes (ts TIMESTAMP)");
+            execute("""
+                    INSERT INTO probes VALUES
+                    ('1970-01-01T09:29:59.999999Z'),
+                    ('1970-01-01T09:30:00.000000Z'),
+                    ('1970-01-02T09:29:59.999999Z'),
+                    ('1970-01-02T09:30:00.000000Z')""");
+            assertQuery("SELECT ts, timestamp_floor('1d', ts, '1970-01-01T09:30:00.000000Z'::timestamp) anchor FROM probes")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tanchor
+                            1970-01-01T09:29:59.999999Z\t1970-01-01T09:30:00.000000Z
+                            1970-01-01T09:30:00.000000Z\t1970-01-01T09:30:00.000000Z
+                            1970-01-02T09:29:59.999999Z\t1970-01-01T09:30:00.000000Z
+                            1970-01-02T09:30:00.000000Z\t1970-01-02T09:30:00.000000Z
+                            """);
+
+            // So the segment is open below for every probe in that run, and ends where the
+            // next value starts, whichever side of the origin the probe sits on.
+            final long origin = ts("1970-01-01T09:30:00.000000Z");
+            final long firstBucketEnd = ts("1970-01-02T09:30:00.000000Z");
+            final LiveViewCheckpointAnchorPlan plan =
+                    LiveViewCheckpointAnchorPlan.of('d', 1, origin, ColumnType.TIMESTAMP_MICRO);
+            Assert.assertNotNull(plan);
+            Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(origin - 1));
+            Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(origin));
+            Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(firstBucketEnd - 1));
+            Assert.assertEquals(firstBucketEnd, plan.getSegmentEndExclusive(0));
+            Assert.assertEquals(firstBucketEnd, plan.getSegmentEndExclusive(origin - 1));
+            Assert.assertEquals(firstBucketEnd, plan.getSegmentEndExclusive(origin));
+            Assert.assertEquals(firstBucketEnd, plan.getSegmentEndExclusive(firstBucketEnd - 1));
+            // The second bucket opens on an ordinary wall.
+            Assert.assertEquals(firstBucketEnd, plan.getSegmentStart(firstBucketEnd));
+            Assert.assertEquals(firstBucketEnd + Micros.DAY_MICROS, plan.getSegmentEndExclusive(firstBucketEnd));
+        });
     }
 
     @Test
@@ -274,7 +484,17 @@ public class LiveViewCheckpointAnchorPlanTest extends AbstractLiveViewTest {
     }
 
     private static void createBase() throws Exception {
-        execute("CREATE TABLE base (ts TIMESTAMP, other_ts TIMESTAMP, x INT, sym SYMBOL) " +
+        createBase("TIMESTAMP");
+    }
+
+    /**
+     * The same base over a chosen designated timestamp precision. Every bound the plan
+     * reports - the alignment origin included - lives in the base column's own units, so a
+     * nanosecond base is a different arithmetic domain rather than the same one rescaled at
+     * the edges.
+     */
+    private static void createBase(String timestampType) throws Exception {
+        execute("CREATE TABLE base (ts " + timestampType + ", other_ts " + timestampType + ", x INT, sym SYMBOL) " +
                 "TIMESTAMP(ts) PARTITION BY DAY WAL");
     }
 
@@ -295,6 +515,14 @@ public class LiveViewCheckpointAnchorPlanTest extends AbstractLiveViewTest {
     private void createBaseAndView(String anchorClause) throws Exception {
         createBase();
         createView("ts, sym", anchorClause);
+    }
+
+    /**
+     * Parses a timestamp literal into nanoseconds, which is what a TIMESTAMP_NS base's
+     * plan expresses its origin and both of its bounds in.
+     */
+    private static long nanos(String timestamp) {
+        return ts(timestamp) * Nanos.MICRO_NANOS;
     }
 
     /**
