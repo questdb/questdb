@@ -9433,11 +9433,11 @@ public class JoinTest extends AbstractCairoTest {
 
             final String reference =
                     "select * from (" +
-                    "  select x.i, x.sym, x.amt, y.price, x.timestamp, y.timestamp ts1 from x asof join y on y.sym2 = x.sym" +
-                    "  union all" +
-                    "  select x2.i, x2.sym, x2.amt, y2.price, x2.timestamp, y2.timestamp ts1 from y y2 asof join x x2 on y2.sym2 = x2.sym" +
-                    "  where x2.timestamp is null or x2.timestamp != y2.timestamp" +
-                    ")";
+                            "  select x.i, x.sym, x.amt, y.price, x.timestamp, y.timestamp ts1 from x asof join y on y.sym2 = x.sym" +
+                            "  union all" +
+                            "  select x2.i, x2.sym, x2.amt, y2.price, x2.timestamp, y2.timestamp ts1 from y y2 asof join x x2 on y2.sym2 = x2.sym" +
+                            "  where x2.timestamp is null or x2.timestamp != y2.timestamp" +
+                            ")";
             final String splice =
                     "select x.i, x.sym, x.amt, y.price, x.timestamp, y.timestamp ts1 from x splice join y on y.sym2 = x.sym";
 
