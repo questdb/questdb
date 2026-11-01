@@ -150,9 +150,10 @@ final class PhysicalChoiceVerifier {
         final LogicalPlan slave = step.getInput();
         final boolean isBounded = position == 1 && hasRowBound(master) && hasRowBound(slave);
         return switch (side) {
-            case SMALLER -> !isBounded || PhysicalProperties.rowCountScan(master) == null || PhysicalProperties.rowCountScan(slave) == null
-                    || PhysicalProperties.masterSupportsRandomAccess(join, position) == PhysicalProperties.Capability.UNKNOWN
-                    || !PhysicalProperties.hasRuntimeLimitsOf(slave, master) || !PhysicalProperties.hasRuntimeLimitsOf(master, slave);
+            case SMALLER ->
+                    !isBounded || PhysicalProperties.rowCountScan(master) == null || PhysicalProperties.rowCountScan(slave) == null
+                            || PhysicalProperties.masterSupportsRandomAccess(join, position) == PhysicalProperties.Capability.UNKNOWN
+                            || !PhysicalProperties.hasRuntimeLimitsOf(slave, master) || !PhysicalProperties.hasRuntimeLimitsOf(master, slave);
             case SLAVE -> isBounded && PhysicalProperties.hasRuntimeLimitsOf(slave, master);
             case MASTER -> isBounded && PhysicalProperties.hasRuntimeLimitsOf(master, slave);
             case null -> false;
