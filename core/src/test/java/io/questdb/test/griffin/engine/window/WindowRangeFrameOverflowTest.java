@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -452,54 +453,43 @@ public class WindowRangeFrameOverflowTest extends AbstractCairoTest {
 
             // A ROWS frame counts rows rather than measuring time, so the widest width reaches a
             // different and older defect: every bounded ROWS family sizes its ring buffer with
-            // (int) Math.abs(rowsHi), which carries no width above Integer.MAX_VALUE, and
-            // 3000000000 PRECEDING already reads past that buffer. normalizeWindowFrame() folds
-            // this one width onto Long.MIN_VALUE, whose (int) cast is 0, and the modulus that
-            // indexes the ring then divides by zero - loud, deterministic, and thrown before any
-            // memory is touched. That is what master does and this test keeps it that way: the
-            // frame-end fix these other tests cover is scoped to RANGE frames precisely so this
-            // stays put. Discriminating on the bound expression here too would leave rowsHi at
-            // Long.MIN_VALUE + 1, whose (int) cast is -1, and 0 % -1 is 0 - which hands the
-            // ring's first read an offset into memory it never allocated, an AssertionError under
-            // -ea and an unchecked read of native address 0 without it. Correcting the ROWS path
-            // means rejecting an over-int width outright, which also rejects finite widths that
-            // compile today, so it belongs to a change of its own.
+            // (int) Math.abs(rowsHi), which cannot carry a width above Integer.MAX_VALUE.
+            // normalizeWindowFrame() used to fold this one width onto Long.MIN_VALUE, whose
+            // (int) cast is 0, and the modulus that indexes the ring then divided by zero -
+            // loud and deterministic, but an unhandled ArithmeticException on plain supported
+            // SQL. The ROWS path now rejects an over-int width at compile time instead (the same
+            // rejection NthValueWindowFunctionFactoryHelper already applies), naming the width.
             try {
                 printSql("SELECT ts, avg(j) OVER (ORDER BY ts" + WIDEST_LAGGING_END_ROWS + " FROM tab");
-                Assert.fail("expected ArithmeticException");
-            } catch (ArithmeticException e) {
-                Assert.assertEquals("/ by zero", e.getMessage());
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                Assert.assertTrue("unexpected message: " + e.getMessage(),
+                        e.getFlyweightMessage().toString().contains("ROWS frame end exceeds maximum supported size [width=9223372036854775807, max=2147483647]"));
             }
 
-            // count(*) reaches the same bound without a ring buffer at all, so it answers the
-            // empty frame the way SQL requires - and must keep doing so.
-            assertQuery("SELECT ts, count(*) OVER (ORDER BY ts" + WIDEST_LAGGING_END_ROWS + " FROM tab")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("""
-                            ts\tcount
-                            1970-01-01T00:00:00.000000Z\t0
-                            1970-01-01T00:00:01.000000Z\t0
-                            1970-01-01T00:00:02.000000Z\t0
-                            """);
+            // count(*) reaches the same bound without a ring buffer at all, but the rejection is
+            // at compile time in normalizeWindowFrame(), before any runtime family is chosen, so
+            // it is refused too - the user is told the width is unsupported rather than silently
+            // given the empty frame.
+            try {
+                printSql("SELECT ts, count(*) OVER (ORDER BY ts" + WIDEST_LAGGING_END_ROWS + " FROM tab");
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                Assert.assertTrue("unexpected message: " + e.getMessage(),
+                        e.getFlyweightMessage().toString().contains("ROWS frame end exceeds maximum supported size [width=9223372036854775807, max=2147483647]"));
+            }
 
-            // A finite frame start sorts above the folded end, which trips the empty-frame
-            // shortcut before any buffer is sized. This is the shape a live view can carry, and
-            // it answers correctly today.
-            assertQuery("SELECT ts, avg(j) OVER (ORDER BY ts ROWS BETWEEN 10 PRECEDING" +
-                    " AND 9_223_372_036_854_775_807 PRECEDING) FROM tab")
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("""
-                            ts\tavg
-                            1970-01-01T00:00:00.000000Z\tnull
-                            1970-01-01T00:00:01.000000Z\tnull
-                            1970-01-01T00:00:02.000000Z\tnull
-                            """);
+            // A finite frame start sorts above the folded end, which used to trip the empty-frame
+            // shortcut before any buffer was sized. The END is still over-int, so the compile-time
+            // rejection wins and the width is named.
+            try {
+                printSql("SELECT ts, avg(j) OVER (ORDER BY ts ROWS BETWEEN 10 PRECEDING" +
+                        " AND 9_223_372_036_854_775_807 PRECEDING) FROM tab");
+                Assert.fail("expected SqlException");
+            } catch (SqlException e) {
+                Assert.assertTrue("unexpected message: " + e.getMessage(),
+                        e.getFlyweightMessage().toString().contains("ROWS frame end exceeds maximum supported size [width=9223372036854775807, max=2147483647]"));
+            }
 
             // The same width at the frame's START folds onto UNBOUNDED PRECEDING, which is what
             // an unbounded look-behind means anyway, and gives the cheap cumulative plan.
