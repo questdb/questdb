@@ -157,6 +157,7 @@ import io.questdb.griffin.engine.functions.constants.StrConstant;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.griffin.engine.functions.constants.TimestampConstant;
 import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
+import io.questdb.griffin.engine.functions.groupby.GroupingFunction;
 import io.questdb.griffin.engine.functions.memoization.ArrayFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.BooleanFunctionMemoizer;
 import io.questdb.griffin.engine.functions.memoization.ByteFunctionMemoizer;
@@ -181,6 +182,7 @@ import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.GroupingSetsRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillNullNotKeyedRecordCursorFactory;
@@ -286,6 +288,7 @@ import io.questdb.griffin.engine.table.AsyncFilterContext;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncGroupingSetsRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
@@ -421,6 +424,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     public static final int GKK_NANO_HOUR_INT = 2;
     public static final int GKK_VANILLA_INT = 0;
     public static final boolean[] joinsRequiringTimestamp = new boolean[IQueryModel.JOIN_MAX + 1];
+    // Each grouping set needs one map for the owner and one for each worker.
+    private static final int ASYNC_GROUPING_SETS_MAP_BUDGET = 256;
     private static final VectorAggregateFunctionConstructor COUNT_CONSTRUCTOR = (keyKind, _, _, _) -> new CountVectorAggregateFunction(keyKind);
     private static final FullFatJoinGenerator CREATE_FULL_FAT_AS_OF_JOIN = SqlCodeGenerator::createFullFatAsOfJoin;
     private static final FullFatJoinGenerator CREATE_FULL_FAT_LT_JOIN = SqlCodeGenerator::createFullFatLtJoin;
@@ -2631,6 +2636,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final Function function = isOwned
                             ? functionParser.parseFunction(queryColumns.getQuick(columnIndex).getAst(), metadata, executionContext)
                             : ownerFunction;
+                    if (function instanceof GroupingFunction groupingFunction && isOwned) {
+                        IntList keyPositions = queryColumns.getQuick(columnIndex).getGroupingArgKeyPositions();
+                        for (int a = 0, an = keyPositions.size(); a < an; a++) {
+                            groupingFunction.setArgKeyPosition(a, keyPositions.getQuick(a));
+                        }
+                    }
                     if (projectionFunctionFlags.getQuick(columnIndex) == GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY) {
                         final GroupByFunction groupByFunction = (GroupByFunction) function;
                         if (isOwned) {
@@ -4492,6 +4503,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateFill(IQueryModel model, RecordCursorFactory groupByFactory, SqlExecutionContext executionContext) throws SqlException {
+        return generateFill(model, groupByFactory, executionContext, null);
+    }
+
+    private RecordCursorFactory generateFill(IQueryModel model, RecordCursorFactory groupByFactory, SqlExecutionContext executionContext, IntList fillKeyColumnPositions) throws SqlException {
+        final boolean isGroupingSetsFill = fillKeyColumnPositions != null;
         // locate fill
         IQueryModel curr = model;
 
@@ -4565,6 +4581,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     fillValues = null;
                     CairoException.rethrowCleanupFailure(cleanupFailure);
                     return groupByFactory;
+                }
+                if (isGroupingSetsFill && (isPrevKeyword(expr.token) || isLinearKeyword(expr.token))) {
+                    throw SqlException.$(expr.position, "FILL(PREV) and FILL(LINEAR) are not supported with ROLLUP, CUBE, or GROUPING SETS");
                 }
                 // LINEAR is unsupported on the fast path. SqlOptimiser.hasLinearFill
                 // routes LINEAR-bearing fills to the legacy SAMPLE BY path; reaching
@@ -4642,6 +4661,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final int columnCount = groupByMetadata.getColumnCount();
             final IntList fillModes = new IntList(columnCount);
             constantFills = new ObjList<>(columnCount);
+            final IntHashSet forcedFillKeyColumns = new IntHashSet();
+            if (fillKeyColumnPositions != null) {
+                for (int i = 0, n = fillKeyColumnPositions.size(); i < n; i++) {
+                    forcedFillKeyColumns.add(fillKeyColumnPositions.getQuick(i));
+                }
+            }
 
             final ObjList<QueryColumn> bottomUpCols = model.getBottomUpColumns();
 
@@ -4657,6 +4682,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             int userFillIdx = 0;
             for (int i = 0, n = bottomUpCols.size(); i < n; i++) {
                 final QueryColumn qc = bottomUpCols.getQuick(i);
+                final CharSequence qcAlias = qc.getAlias();
+                final int factoryIdx = qcAlias != null
+                        ? SqlUtil.getColumnIndexQuiet(groupByMetadata, qcAlias)
+                        : -1;
+                if (factoryIdx >= 0 && forcedFillKeyColumns.contains(factoryIdx)) {
+                    continue;
+                }
                 // Key columns (LITERAL) and the timestamp column (timestamp_floor)
                 // do NOT consume a fill-value index.
                 final ExpressionNode ast = qc.getAst();
@@ -4681,9 +4713,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         : "generateFill aggregate arm: expected aggregate FUNCTION, got type=" + ast.type + " token=" + ast.token;
                 // Aggregate column. Always advances userFillIdx so subsequent aggregates
                 // land on the correct slot, even when outer projection drops this column.
-                final CharSequence qcAlias = qc.getAlias();
                 if (qcAlias != null) {
-                    final int factoryIdx = SqlUtil.getColumnIndexQuiet(groupByMetadata, qcAlias);
                     if (factoryIdx >= 0 && factoryIdx != timestampIndex) {
                         factoryColToUserFillIdx.setQuick(factoryIdx, userFillIdx);
                     }
@@ -4703,6 +4733,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 for (int col = 0; col < columnCount; col++) {
                     if (col == timestampIndex) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+                        constantFills.add(NullConstant.NULL);
+                    } else if (forcedFillKeyColumns.contains(col)) {
+                        fillModes.add(SampleByFillRecordCursorFactory.FILL_KEY);
                         constantFills.add(NullConstant.NULL);
                     } else if (factoryColToUserFillIdx.getQuick(col) < 0) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_KEY);
@@ -4773,6 +4806,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 for (int col = 0; col < columnCount; col++) {
                     if (col == timestampIndex) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
+                        constantFills.add(NullConstant.NULL);
+                        continue;
+                    }
+                    if (forcedFillKeyColumns.contains(col)) {
+                        fillModes.add(SampleByFillRecordCursorFactory.FILL_KEY);
                         constantFills.add(NullConstant.NULL);
                         continue;
                     }
@@ -5084,7 +5122,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             listColumnFilterA.clear();
             listColumnFilterA.add(timestampIndex + 1); // positive = ascending
             entityColumnFilter.of(sortMetadata.getColumnCount());
-            final int sortStrategy = configuration.getSampleByFillSortStrategy();
+            int sortStrategy = configuration.getSampleByFillSortStrategy();
+            if (!groupByFactory.recordCursorSupportsRandomAccess()) {
+                if (sortStrategy == SampleBySortStrategy.LIGHT_ENCODED) {
+                    sortStrategy = SampleBySortStrategy.FULL_ENCODED;
+                } else if (sortStrategy == SampleBySortStrategy.LIGHT_RECORDCHAIN) {
+                    sortStrategy = SampleBySortStrategy.FULL_RECORDCHAIN;
+                }
+            }
             // LIGHT_RECORDCHAIN and FULL_RECORDCHAIN need null-before-risky:
             // SortedLight/SortedRecordCursorFactory's ctor catch cascades close()
             // and frees `base`, so the outer catch's Misc.free(groupByFactory)
@@ -10629,7 +10674,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (overrideTimestampRequired) {
                 executionContext.pushTimestampRequiredFlag(false);
             }
-            if (model instanceof QueryModel qm && qm.getSharedRefCount() > 0) {
+            if (!model.hasGroupingSets() && model instanceof QueryModel qm && qm.getSharedRefCount() > 0) {
                 IQueryModel nested = qm.getNestedModel();
                 if (nested instanceof QueryModel nestedQm) {
                     nestedQm.setSharedRefByParentCount(qm.getSharedRefCount());
@@ -11101,7 +11146,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // in its pre-conversion source type. Let the guarded Async group-by handle those.
             boolean canVectorize = !factory.hasParquetConvertedColumns(executionContext);
             // Inspect model for possibility of vector aggregate intrinsics.
-            if (canVectorize && enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, baseMetadata, hourIndex)) {
+            if (!model.hasGroupingSets() && canVectorize && enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, baseMetadata, hourIndex)) {
                 // Create baseMetadata from everything we've gathered.
                 GenericRecordMetadata meta = new GenericRecordMetadata();
 
@@ -11225,7 +11270,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final GenericRecordMetadata outerProjectionMetadata = new GenericRecordMetadata();
             final IntList projectionFunctionFlags = new IntList(columnCount);
 
-            if (model instanceof QueryModel qm && qm.getSharedRefCount() > 0) {
+            if (!model.hasGroupingSets() && model instanceof QueryModel qm && qm.getSharedRefCount() > 0) {
                 final int dependentsCount = qm.getSharedRefCount();
                 sharedOuterProjectionFunctions = new ObjList<>(dependentsCount);
                 for (int d = 0; d < dependentsCount; d++) {
@@ -11263,6 +11308,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     sharedOuterProjectionFunctions
             );
 
+            if (!model.hasGroupingSets()) {
+                guardAgainstGroupingFunctionWithoutGroupingSets(groupByFunctions);
+            }
+
             // Check if we have a non-keyed query with all early exit aggregate functions (e.g. count_distinct(symbol))
             // and no filter. In such a case, use single-threaded factories instead of the multithreaded ones.
             if (
@@ -11275,8 +11324,82 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             ObjList<Function> keyFunctions = extractVirtualFunctionsFromProjection(innerProjectionFunctions, projectionFunctionFlags);
+            final IntList groupingSetKeyColumnIndices = model.hasGroupingSets()
+                    ? GroupByUtils.buildGroupingSetKeyColumnIndices(model, baseMetadata, innerProjectionFunctions, projectionFunctionFlags)
+                    : null;
+            if (
+                    model.hasGroupingSets()
+                            && enableParallelGroupBy
+                            && keyTypes.getColumnCount() > 0
+                            && keyTypes.getColumnCount() <= 31
+                            && executionContext.getSharedQueryWorkerCount() > 0
+                            && model.getGroupingSets().size() <= ASYNC_GROUPING_SETS_MAP_BUDGET
+                            / (executionContext.getSharedQueryWorkerCount() + 1)
+                            && factory.supportsPageFrameCursor()
+                            && SqlUtil.isParallelismSupported(keyFunctions)
+                            && GroupByUtils.isParallelismSupported(groupByFunctions)
+            ) {
+                final WorkerFunctionLists workerFunctions = compilePerWorkerInnerProjectionFunctions(
+                        executionContext,
+                        model.getColumns(),
+                        innerProjectionFunctions,
+                        executionContext.getSharedQueryWorkerCount(),
+                        baseMetadata,
+                        projectionFunctionFlags
+                );
+                if (workerFunctions != null) {
+                    perWorkerGroupByFunctions = workerFunctions.getGroupByFunctions();
+                    perWorkerKeyFunctions = workerFunctions.getKeyFunctions();
+                }
+                IntList fillKeyColumnPositions = new IntList();
+                int tsIdx = outerProjectionMetadata.getTimestampIndex();
+                for (int i = 0, n = projectionFunctionFlags.size(); i < n; i++) {
+                    if (projectionFunctionFlags.getQuick(i) == GroupByUtils.PROJECTION_FUNCTION_FLAG_COLUMN && i != tsIdx) {
+                        fillKeyColumnPositions.add(i);
+                    } else if (projectionFunctionFlags.getQuick(i) == GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY
+                            && outerProjectionFunctions.getQuick(i) instanceof GroupingFunction) {
+                        fillKeyColumnPositions.add(i);
+                    }
+                }
+
+                final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
+                final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions0 = perWorkerGroupByFunctions;
+                final ObjList<Function> keyFunctions0 = keyFunctions;
+                final ObjList<ObjList<Function>> perWorkerKeyFunctions0 = perWorkerKeyFunctions;
+                final ObjList<Function> recordFunctions0 = outerProjectionFunctions;
+                innerProjectionFunctions = null;
+                outerProjectionFunctions = null;
+                perWorkerGroupByFunctions = null;
+                perWorkerKeyFunctions = null;
+
+                return generateFill(
+                        model,
+                        new AsyncGroupingSetsRecordCursorFactory(
+                                executionContext.getCairoEngine(),
+                                asm,
+                                configuration,
+                                executionContext.getMessageBus(),
+                                factory,
+                                outerProjectionMetadata,
+                                listColumnFilterA,
+                                keyTypes,
+                                valueTypes,
+                                groupByFunctions0,
+                                perWorkerGroupByFunctions0,
+                                keyFunctions0,
+                                perWorkerKeyFunctions0,
+                                recordFunctions0,
+                                model.getGroupingSets(),
+                                groupingSetKeyColumnIndices,
+                                executionContext.getSharedQueryWorkerCount()
+                        ),
+                        executionContext,
+                        fillKeyColumnPositions
+                );
+            }
             if (
                     enableParallelGroupBy
+                            && !model.hasGroupingSets()
                             && SqlUtil.isParallelismSupported(keyFunctions)
                             && GroupByUtils.isParallelismSupported(groupByFunctions)
             ) {
@@ -11453,6 +11576,53 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         groupByFunctions0,
                         valueTypes.getColumnCount(),
                         sharedOuterProjectionFunctions0
+                );
+            }
+
+            if (model.hasGroupingSets()) {
+                // Build output column positions that should be preserved in fill
+                // rows. This includes GROUP BY key columns (SYMBOL) and
+                // GROUPING() columns (which are metadata, not aggregates).
+                // SampleByFillRecordCursorFactory stores these values in its key map
+                // and emits them unchanged for generated gap rows.
+                IntList fillKeyColumnPositions = new IntList();
+                int tsIdx = outerProjectionMetadata.getTimestampIndex();
+                for (int i = 0, n = projectionFunctionFlags.size(); i < n; i++) {
+                    if (projectionFunctionFlags.getQuick(i) == GroupByUtils.PROJECTION_FUNCTION_FLAG_COLUMN
+                            && i != tsIdx) {
+                        fillKeyColumnPositions.add(i);
+                    } else if (projectionFunctionFlags.getQuick(i) == GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY
+                            && outerProjectionFunctions.getQuick(i) instanceof GroupingFunction) {
+                        fillKeyColumnPositions.add(i);
+                    }
+                }
+
+                // Transfer ownership to the grouping-sets factory. It owns the base,
+                // aggregate, key, and projection functions even when construction fails.
+                final ObjList<GroupByFunction> groupByFunctions0 = groupByFunctions;
+                final ObjList<Function> outerProjectionFunctions0 = outerProjectionFunctions;
+                innerProjectionFunctions = null;
+                outerProjectionFunctions = null;
+
+                return generateFill(
+                        model,
+                        new GroupingSetsRecordCursorFactory(
+                                asm,
+                                configuration,
+                                factory,
+                                listColumnFilterA,
+                                keyTypes,
+                                valueTypes,
+                                outerProjectionMetadata,
+                                groupByFunctions0,
+                                keyFunctions,
+                                outerProjectionFunctions0,
+                                model.getGroupingSets(),
+                                groupingSetKeyColumnIndices,
+                                model.getModelPosition()
+                        ),
+                        executionContext,
+                        fillKeyColumnPositions
                 );
             }
 
@@ -14388,6 +14558,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0, n = advice.size(); i < n; i++) {
             if (Chars.indexOf(advice.getQuick(i).token, '.') > -1) {
                 throw SqlException.$(advice.getQuick(i).position, "cannot use table-prefixed names in order by");
+            }
+        }
+    }
+
+    private static void guardAgainstGroupingFunctionWithoutGroupingSets(ObjList<GroupByFunction> groupByFunctions) throws SqlException {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (groupByFunctions.getQuick(i) instanceof GroupingFunction groupingFunction) {
+                throw SqlException.$(groupingFunction.getPosition(),
+                        "GROUPING() / GROUPING_ID() can only be used with GROUPING SETS, ROLLUP, or CUBE");
             }
         }
     }

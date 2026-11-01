@@ -383,6 +383,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ObjList<IntList> getGroupingSets() {
+        return delegate.getGroupingSets();
+    }
+
+    @Override
     public LowerCaseCharSequenceObjHashMap<CharSequence> getHints() {
         return delegate.getHints();
     }
@@ -819,6 +824,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public boolean hasExplicitTimestamp() {
         return delegate.hasExplicitTimestamp();
+    }
+
+    @Override
+    public boolean hasGroupingSets() {
+        return delegate.hasGroupingSets();
     }
 
     @Override
