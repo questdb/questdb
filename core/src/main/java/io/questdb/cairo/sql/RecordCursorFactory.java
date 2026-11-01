@@ -450,6 +450,17 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Returns true if {@link #newTimeFrameCursor()} returns a cursor that parallel WINDOW and HORIZON
+     * JOINs can read: one whose records and timestamps come from the frames of
+     * {@link #getPageFrameCursor}. Implies {@link #supportsTimeFrameCursor()}.
+     *
+     * @return true if the factory supports concurrent time frames
+     */
+    default boolean supportsConcurrentTimeFrameCursor() {
+        return supportsTimeFrameCursor();
+    }
+
+    /**
      * Returns true if the factory stands for nothing more but a filter, so that
      * the above factory (e.g. a parallel GROUP BY one) can steal the filter.
      *
@@ -504,8 +515,8 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      * Time frames are supported only for full table scan cursors, i.e. "x" queries.
      *
      * @return true if the factory supports time frames
-     * and {@link #getTimeFrameCursor(SqlExecutionContext)}
-     * or {@link #newTimeFrameCursor()} can be safely called.
+     * and {@link #getTimeFrameCursor(SqlExecutionContext)} can be safely called;
+     * {@link #supportsConcurrentTimeFrameCursor()} governs {@link #newTimeFrameCursor()}.
      */
     default boolean supportsTimeFrameCursor() {
         return false;

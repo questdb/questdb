@@ -43,12 +43,16 @@ import io.questdb.std.datetime.TimeZoneRules;
  * <p>
  * IR layout:
  * <pre>
- *   ir[0]:                         header (counts + flags, see HDR_* constants)
+ *   ir[0]:                         header (flags, see HDR_* constants)
  *   ir[1]:                         numericTzOffset (Long.MIN_VALUE if not numeric)
- *   ir[2 .. 2+D):                  duration parts (encoded unit+value)
- *   ir[2+D .. 2+D+3T):             time override triples (offset, width, zoneMatch)
- *   ir[2+D+3T .. end):             elements
+ *   ir[2]:                         element count
+ *   ir[3]:                         time override count (T)
+ *   ir[4]:                         duration part count (D)
+ *   ir[5 .. 5+D):                  duration parts (encoded unit+value)
+ *   ir[5+D .. 5+D+3T):             time override triples (offset, width, zoneMatch)
+ *   ir[5+D+3T .. end):             elements
  * </pre>
+ * Each count takes a whole IR slot, so no count can overflow its field.
  * Element encodings (tag in bits 63-62, expr in bits 59-0):
  * <ul>
  *   <li>SINGLE_VAR (tag 00): 1 long — encoded DateVariableExpr</li>
@@ -63,12 +67,17 @@ public class CompiledTickExpression extends UntypedFunction {
     static final long TAG_SINGLE_VAR = 0x0000_0000_0000_0000L;
     static final long TAG_STATIC = 0x4000_0000_0000_0000L;
 
+    // ---- IR prefix slots ----
+    static final int IR_DURATION_COUNT_INDEX = 4;
+    static final int IR_ELEM_COUNT_INDEX = 2;
+    static final int IR_HEADER_INDEX = 0;
+    static final int IR_PREFIX_SIZE = 5;
+    static final int IR_TIME_OVERRIDE_COUNT_INDEX = 3;
+    static final int IR_TZ_OFFSET_INDEX = 1;
+
     // ---- Header (ir[0]) bit layout ----
     private static final long HDR_DAY_MASK = 0x7FL;
-    private static final int HDR_DUR_SHIFT = 40;
     private static final long HDR_DWE_BIT = 1L << 23;
-    private static final int HDR_ELEM_SHIFT = 56;
-    private static final int HDR_TO_SHIFT = 48;
 
     // ---- Expr encoding (bits 59-0) ----
     private static final long IR_BD_BIT = 1L << 57;
@@ -111,15 +120,15 @@ public class CompiledTickExpression extends UntypedFunction {
         this.dateLocale = dateLocale;
         this.exchangeSchedule = exchangeSchedule;
 
-        // Pre-decode header and section offsets
-        long header = ir.getQuick(0);
-        this.elemCount = (int) ((header >>> HDR_ELEM_SHIFT) & 0xFF);
-        this.timeOverrideCount = (int) ((header >>> HDR_TO_SHIFT) & 0xFF);
-        this.durationPartCount = (int) ((header >>> HDR_DUR_SHIFT) & 0xFF);
+        // Pre-decode header, counts and section offsets
+        long header = ir.getQuick(IR_HEADER_INDEX);
+        this.elemCount = (int) ir.getQuick(IR_ELEM_COUNT_INDEX);
+        this.timeOverrideCount = (int) ir.getQuick(IR_TIME_OVERRIDE_COUNT_INDEX);
+        this.durationPartCount = (int) ir.getQuick(IR_DURATION_COUNT_INDEX);
         this.hasDurationWithExchange = (header & HDR_DWE_BIT) != 0;
         this.dayFilterMask = (int) (header & HDR_DAY_MASK);
-        this.durationOff = 2;
-        this.toOff = 2 + durationPartCount;
+        this.durationOff = IR_PREFIX_SIZE;
+        this.toOff = durationOff + durationPartCount;
         this.elemOff = toOff + timeOverrideCount * 3;
     }
 
@@ -127,19 +136,31 @@ public class CompiledTickExpression extends UntypedFunction {
         return ((long) (unit & 0xFFFF) << 32) | (value & 0xFFFFFFFFL);
     }
 
-    static long encodeHeader(int elemCount, int timeOverrideCount, int durationPartCount,
-                             boolean hasDurationWithExchange, int dayFilterMask) {
-        return ((long) (elemCount & 0xFF) << HDR_ELEM_SHIFT)
-                | ((long) (timeOverrideCount & 0xFF) << HDR_TO_SHIFT)
-                | ((long) (durationPartCount & 0xFF) << HDR_DUR_SHIFT)
-                | (hasDurationWithExchange ? HDR_DWE_BIT : 0L)
-                | (dayFilterMask & HDR_DAY_MASK);
+    static long encodeHeader(boolean hasDurationWithExchange, int dayFilterMask) {
+        return (hasDurationWithExchange ? HDR_DWE_BIT : 0L) | (dayFilterMask & HDR_DAY_MASK);
+    }
+
+    // Micros.addPeriod() and Nanos.addPeriod() return NULL for a unit they do not know, and
+    // DateVariableExpr.parseEncoded() accepts any single character as the unit. evaluateExpr()
+    // maps 'D' to 'd', and a zero unit means no offset.
+    private static boolean hasKnownOffsetUnit(long encoded) {
+        final char unit = (char) ((encoded >>> IR_UNIT_SHIFT) & 0xFFFF);
+        return unit == 0 || unit == 'D' || isKnownDurationUnit(unit);
+    }
+
+    // The units Micros.addPeriod() and Nanos.addPeriod() know. IntervalUtils.compileTickExpr()
+    // accepts any character as a duration unit, and applyDuration() passes it to the driver as is.
+    private static boolean isKnownDurationUnit(char unit) {
+        return switch (unit) {
+            case 'n', 'u', 'T', 's', 'm', 'h', 'd', 'w', 'M', 'y' -> true;
+            default -> false;
+        };
     }
 
     /**
      * Evaluates the tick expression with the given "now" timestamp and appends
-     * the resulting [lo, hi] interval pairs to outIntervals.
-     * This overload is intended for testing without a SqlExecutionContext.
+     * the resulting [lo, hi] interval pairs to outIntervals. For callers that
+     * read "now" themselves, and for tests without a SqlExecutionContext.
      */
     public void evaluate(LongList outIntervals, long now) {
         this.now = now;
@@ -191,6 +212,82 @@ public class CompiledTickExpression extends UntypedFunction {
         if (outIntervals.size() > outStart + 2) {
             IntervalUtils.unionBracketExpandedIntervals(outIntervals, outStart);
         }
+    }
+
+    public String getExpression() {
+        return expression;
+    }
+
+    /**
+     * Returns an upper bound on the number of intervals {@link #evaluate} yields for any "now", or
+     * -1 when this method knows no bound or the bound exceeds {@code cap}. The JIT filter compiles a
+     * fixed number of range checks for the expression and fills them on every execution, so the
+     * bound has to hold for every clock value, not only for the current one: '$today#workday' yields
+     * one interval on a weekday and none at a weekend.
+     * <p>
+     * The bound is the sum of the element bounds. The day filter only drops intervals, the timezone
+     * conversion maps each interval to one, and the final merge only joins them, so none of them
+     * raises the count.
+     * <ul>
+     *     <li>STATIC: 1. The compiler expands a static element into one STATIC entry per
+     *     interval.</li>
+     *     <li>SINGLE_VAR: the time override count, or 1 without time overrides.
+     *     {@link #emitSingleVar} emits one interval per time override for a day-aligned value, and
+     *     one interval otherwise.</li>
+     *     <li>RANGE: 1 when the range is contiguous, that is, it has no business-day walk, and the
+     *     expression has no time override, duration, day filter or named timezone (a numeric offset
+     *     is fine). {@link #emitRange} then emits either one interval or a run of adjacent whole
+     *     days, which the final merge joins into one. Any other range yields a count that follows
+     *     the length of the range, the weekends in it or the clock changes of the zone, and gets no
+     *     bound.</li>
+     * </ul>
+     * An exchange calendar splits intervals into sessions, so it gets no bound. Nor does an offset or
+     * duration unit the timestamp driver does not know: the driver adds it as NULL, and the JIT
+     * filter compares a NULL bound unlike the Java filter.
+     */
+    public int getMaxIntervalCount(int cap) {
+        if (exchangeSchedule != null) {
+            return -1;
+        }
+        for (int i = 0; i < durationPartCount; i++) {
+            if (!isKnownDurationUnit((char) ((ir.getQuick(durationOff + i) >>> 32) & 0xFFFF))) {
+                return -1;
+            }
+        }
+        final int perDayCount = Math.max(1, timeOverrideCount);
+        final boolean isContiguousRange = timeOverrideCount == 0
+                && durationPartCount == 0
+                && dayFilterMask == 0
+                && tzRules == null;
+        long count = 0;
+        int pos = elemOff;
+        for (int i = 0; i < elemCount; i++) {
+            final long word = ir.getQuick(pos);
+            final long tag = word & TAG_MASK;
+            if (tag == TAG_SINGLE_VAR) {
+                if (!hasKnownOffsetUnit(word)) {
+                    return -1;
+                }
+                count += perDayCount;
+                pos++;
+            } else if (tag == TAG_STATIC) {
+                count++;
+                pos += 3;
+            } else {
+                if (!isContiguousRange
+                        || (word & RANGE_BD_BIT) != 0
+                        || !hasKnownOffsetUnit(word)
+                        || !hasKnownOffsetUnit(ir.getQuick(pos + 1))) {
+                    return -1;
+                }
+                count++;
+                pos += 2;
+            }
+            if (count > cap) {
+                return -1;
+            }
+        }
+        return (int) count;
     }
 
     @Override
@@ -281,7 +378,7 @@ public class CompiledTickExpression extends UntypedFunction {
     }
 
     private void applyTimezone(LongList out, int startIndex) {
-        long numericTzOffset = ir.getQuick(1);
+        long numericTzOffset = ir.getQuick(IR_TZ_OFFSET_INDEX);
         int size = out.size();
         if (numericTzOffset != Long.MIN_VALUE) {
             for (int i = startIndex; i < size; i++) {
@@ -403,7 +500,7 @@ public class CompiledTickExpression extends UntypedFunction {
      * Used for per-element timezone entries that are already in UTC.
      */
     private long utcToGlobalLocal(long utc) {
-        long numericTzOffset = ir.getQuick(1);
+        long numericTzOffset = ir.getQuick(IR_TZ_OFFSET_INDEX);
         if (numericTzOffset != Long.MIN_VALUE) {
             return utc + numericTzOffset;
         } else if (tzRules != null) {

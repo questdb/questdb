@@ -39,11 +39,13 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.model.CompiledTickExpression;
 import io.questdb.griffin.model.DateExpressionEvaluator;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -106,13 +108,28 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             if (intervalSearch) {
                 Function rightFn = args.getQuick(1);
                 CharSequence right = rightFn.getStrA(null);
-                if (right != null && containsDateVariable(right)) {
+                if (right != null && DateExpressionEvaluator.containsDateVariable(right, 0, right.length())) {
                     TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
                     CompiledTickExpression compiled = IntervalUtils.compileTickExpr(
                             driver, configuration, right, 0, right.length(), argPositions.getQuick(1));
                     return new EqTimestampCompiledTickExprFunction(args.getQuick(0), compiled);
                 }
-                return new EqTimestampStrConstantFunction(args.getQuick(0), timestampType, right, argPositions.getQuick(1), configuration);
+                final EqTimestampStrConstantFunction func = new EqTimestampStrConstantFunction(
+                        args.getQuick(0),
+                        timestampType,
+                        right,
+                        argPositions.getQuick(1),
+                        configuration
+                );
+                if (func.intervals.size() == 0) {
+                    // The expression holds no instant, e.g. '2024-01-06#workday', where the day
+                    // filter drops the only day, a Saturday. No row matches, NULL included. A
+                    // constant lets the parser fold the enclosing AND, OR and NOT, and lets the
+                    // code generator skip the scan or the filter.
+                    Misc.free(func);
+                    return BooleanConstant.FALSE;
+                }
+                return func;
             }
             return new InTimestampConstFunction(args.getQuick(0), parseDiscreteTimestampValues(timestampType, args, argPositions));
         }
@@ -136,16 +153,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
         // have to copy, args is mutable
         return new InTimestampVarFunction(new ObjList<>(args), timestampType);
-    }
-
-    private static boolean containsDateVariable(CharSequence seq) {
-        int lim = seq.length();
-        for (int i = 0; i < lim - 1; i++) {
-            if (seq.charAt(i) == '$' && DateExpressionEvaluator.isDateVariable(seq, i, lim)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static boolean isIntervalSearch(ObjList<Function> args) {

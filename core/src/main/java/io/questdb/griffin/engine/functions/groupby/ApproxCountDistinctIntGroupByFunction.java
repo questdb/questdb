@@ -129,6 +129,11 @@ public class ApproxCountDistinctIntGroupByFunction extends LongFunction implemen
     }
 
     @Override
+    public boolean hasNonNullEmptyValue() {
+        return true;
+    }
+
+    @Override
     public void initValueIndex(int valueIndex) {
         this.valueIndex = valueIndex;
         this.hllPtrIndex = valueIndex + 1;

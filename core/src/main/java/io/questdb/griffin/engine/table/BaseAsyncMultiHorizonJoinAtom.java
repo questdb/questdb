@@ -195,6 +195,7 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(workerCount * slaveCount);
             for (int s = 0; s < slaveCount; s++) {
                 HorizonJoinSlaveState state = slaveStates.getQuick(s);
+                assert state.getFactory().supportsConcurrentTimeFrameCursor();
                 ownerSlaveTimeFrameCursors.add(state.getFactory().newTimeFrameCursor());
                 ownerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(
                         configuration,
