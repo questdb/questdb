@@ -182,20 +182,23 @@ public final class WindowSpec implements Mutable {
     }
 
     /**
-     * True when the window ORDER BY is a prefix of the query order.
+     * True when the query order delivers the rows of each partition of the window in the window ORDER BY: the query
+     * order starts with columns the window partitions by, in either direction, and goes on with the window ORDER BY.
      */
-    public boolean isQueryOrderPrefix(SortKeys queryOrder) {
+    public boolean isOrderedByQueryOrder(SortKeys queryOrder) {
         final int count = orderByColumnIds.size();
-        if (count == 0 || count > queryOrder.size()) {
+        if (count == 0) {
             return false;
         }
-        for (int i = 0; i < count; i++) {
-            if (orderByColumnIds.getQuick(i) != queryOrder.getColumnIds().getQuick(i)
-                    || orderByDirections.getQuick(i) != queryOrder.getDirections().getQuick(i)) {
+        for (int partitionKeyCount = 0, n = queryOrder.size() - count; partitionKeyCount <= n; partitionKeyCount++) {
+            if (isQueryOrderAt(queryOrder, partitionKeyCount)) {
+                return true;
+            }
+            if (!isPartitionColumn(queryOrder.getColumnIds().getQuick(partitionKeyCount))) {
                 return false;
             }
         }
-        return true;
+        return false;
     }
 
     public boolean isSubsampleKeepFlag() {
@@ -261,5 +264,25 @@ public final class WindowSpec implements Mutable {
     void visitReads(PlanExpressionVisitor visitor) {
         PlanReads.expressions(partitionBy, visitor);
         PlanReads.columnIds(orderByColumnIds, orderByPositions, visitor);
+    }
+
+    private boolean isPartitionColumn(int columnId) {
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            if (partitionBy.getQuick(i) instanceof ColumnExpression column && column.getColumnId() == columnId
+                    && column.isDirectReference() && !column.isCast()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isQueryOrderAt(SortKeys queryOrder, int offset) {
+        for (int i = 0, n = orderByColumnIds.size(); i < n; i++) {
+            if (orderByColumnIds.getQuick(i) != queryOrder.getColumnIds().getQuick(offset + i)
+                    || orderByDirections.getQuick(i) != queryOrder.getDirections().getQuick(offset + i)) {
+                return false;
+            }
+        }
+        return true;
     }
 }

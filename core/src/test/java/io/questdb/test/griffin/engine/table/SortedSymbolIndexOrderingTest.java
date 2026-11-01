@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.table;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -35,6 +36,10 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * Key-ordered index scans must preserve symbol and timestamp order across page frames,
@@ -199,7 +204,7 @@ public class SortedSymbolIndexOrderingTest extends AbstractCairoTest {
             // caches when the test harness builds it - so set them on the context the query will run on.
             sqlExecutionContext.changePageFrameSizes(2, 4);
             try {
-                execute("CREATE TABLE x (s SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("CREATE TABLE x (s SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
                 execute("""
                         INSERT INTO x VALUES
                         ('k2', '2024-01-01T00:00:00.000000Z'),
@@ -236,7 +241,7 @@ public class SortedSymbolIndexOrderingTest extends AbstractCairoTest {
     @Test
     public void testOrderBySymbolSingleFrame() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (s SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (s SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
             execute("""
                     INSERT INTO x VALUES
                     ('k2', '2024-01-01T00:00:00.000000Z'),
@@ -298,6 +303,165 @@ public class SortedSymbolIndexOrderingTest extends AbstractCairoTest {
             final String query = "SELECT s, ts FROM np_values WHERE s IN ('k1', 'k2') ORDER BY s";
             assertQuery(query).assertsPlanContaining("FilterOnValues");
             assertSymbolOrderAscending(query, 600_000);
+        });
+    }
+
+    @Test
+    public void testOrderBySymbolValuesInUtf16OrderSortedOncePerSymbolTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            final String[] values = {"b", null, "B", "", "a\u00e9", "Z", "\uD83D\uDE00", "a", "\u00e9", "aa", "A", "e", "ab", "\uFF5E", "a b"};
+            final StringSink insert = new StringSink();
+            insert.put("INSERT INTO x VALUES ");
+            for (int i = 0; i < values.length; i++) {
+                if (i > 0) {
+                    insert.put(", ");
+                }
+                if (values[i] == null) {
+                    insert.put("(NULL, ");
+                } else {
+                    insert.put("('").put(values[i]).put("', ");
+                }
+                insert.put("'2024-01-01T00:").put(10 + i).put(":00.000000Z')");
+            }
+            execute(insert);
+            // the order of String.compareTo, by UTF-16 code units, with NULL first in ascending order and last in
+            // descending order
+            final List<String> sorted = new ArrayList<>();
+            for (String value : values) {
+                if (value != null) {
+                    sorted.add(value);
+                }
+            }
+            Collections.sort(sorted);
+            final StringSink ascending = new StringSink();
+            final StringSink descending = new StringSink();
+            ascending.put("s\n\n");
+            descending.put("s\n");
+            for (int i = 0, n = sorted.size(); i < n; i++) {
+                ascending.put(sorted.get(i)).put('\n');
+                descending.put(sorted.get(n - 1 - i)).put('\n');
+            }
+            descending.put('\n');
+            final String query = "SELECT s FROM x WHERE ts IN '2024-01-01' ORDER BY s";
+            assertQuery(query).withPlanContaining("SortedSymbolIndex").returns(ascending);
+            assertQuery(query + " DESC").withPlanContaining("SortedSymbolIndex").returns(descending);
+
+            // the queries that read the table through its reader take the order of the symbols that the reader sorted
+            // for the first of them
+            engine.releaseAllReaders();
+            SymbolMapReaderImpl.testKeySorts.set(0);
+            for (int i = 0; i < 3; i++) {
+                assertSymbolOrder(query, ascending);
+            }
+            Assert.assertEquals(1, SymbolMapReaderImpl.testKeySorts.get());
+            // a new symbol merges into the order
+            execute("INSERT INTO x VALUES ('ac', '2024-01-01T00:02:00.000000Z')");
+            sorted.add("ac");
+            Collections.sort(sorted);
+            ascending.clear();
+            ascending.put("s\n\n");
+            for (int i = 0, n = sorted.size(); i < n; i++) {
+                ascending.put(sorted.get(i)).put('\n');
+            }
+            for (int i = 0; i < 3; i++) {
+                assertSymbolOrder(query, ascending);
+            }
+            Assert.assertEquals(2, SymbolMapReaderImpl.testKeySorts.get());
+        });
+    }
+
+    @Test
+    public void testOrderBySymbolValuesAfterTableChanges() throws Exception {
+        for (boolean isWal : new boolean[]{false, true}) {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE x (s SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY" + (isWal ? " WAL" : " BYPASS WAL"));
+                final String query = "SELECT s FROM x WHERE ts IN '2024-01-01' ORDER BY s";
+                execute("INSERT INTO x VALUES ('m', '2024-01-01T01:00:00.000000Z'), ('c', '2024-01-01T02:00:00.000000Z'), ('x', '2024-01-01T03:00:00.000000Z')");
+                drainWalQueue();
+                assertQuery(query).withPlanContaining("SortedSymbolIndex").returns("""
+                        s
+                        c
+                        m
+                        x
+                        """);
+                // the appended symbols merge into the order of the symbols before them
+                execute("INSERT INTO x VALUES ('a', '2024-01-01T04:00:00.000000Z'), ('n', '2024-01-01T05:00:00.000000Z'), ('z', '2024-01-01T06:00:00.000000Z')");
+                drainWalQueue();
+                assertQuery(query).returns("""
+                        s
+                        a
+                        c
+                        m
+                        n
+                        x
+                        z
+                        """);
+                assertQuery(query + " DESC").returns("""
+                        s
+                        z
+                        x
+                        n
+                        m
+                        c
+                        a
+                        """);
+                // TRUNCATE drops the symbols, and the keys of the symbols after it hold other values
+                execute("TRUNCATE TABLE x");
+                drainWalQueue();
+                execute("INSERT INTO x VALUES ('q', '2024-01-01T01:00:00.000000Z'), ('b', '2024-01-01T02:00:00.000000Z'), ('k', '2024-01-01T03:00:00.000000Z')");
+                drainWalQueue();
+                assertQuery(query).returns("""
+                        s
+                        b
+                        k
+                        q
+                        """);
+                // a column added anew in place of a dropped one starts its own symbols
+                execute("ALTER TABLE x DROP COLUMN s");
+                drainWalQueue();
+                execute("ALTER TABLE x ADD COLUMN s SYMBOL INDEX");
+                drainWalQueue();
+                execute("INSERT INTO x (s, ts) VALUES ('y', '2024-01-01T04:00:00.000000Z'), ('d', '2024-01-01T05:00:00.000000Z')");
+                drainWalQueue();
+                assertQuery(query).withPlanContaining("SortedSymbolIndex").returns("""
+                        s
+                        
+                        
+                        
+                        d
+                        y
+                        """);
+                execute("DROP TABLE x");
+            });
+        }
+    }
+
+    @Test
+    public void testOrderBySymbolValuesOfManySymbols() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            // a thousand symbols in a scrambled order, past the runs that the sort of the symbols sorts by insertion
+            execute("""
+                    INSERT INTO x
+                    SELECT ('v' || ((x * 7_919) % 1_000))::SYMBOL, timestamp_sequence('2024-01-01', 1_000_000)
+                    FROM long_sequence(1_000)""");
+            final List<String> sorted = new ArrayList<>();
+            for (int i = 0; i < 1_000; i++) {
+                sorted.add("v" + i);
+            }
+            Collections.sort(sorted);
+            final StringSink ascending = new StringSink();
+            final StringSink descending = new StringSink();
+            ascending.put("s\n");
+            descending.put("s\n");
+            for (int i = 0, n = sorted.size(); i < n; i++) {
+                ascending.put(sorted.get(i)).put('\n');
+                descending.put(sorted.get(n - 1 - i)).put('\n');
+            }
+            final String query = "SELECT s FROM x WHERE ts IN '2024-01-01' ORDER BY s";
+            assertQuery(query).withPlanContaining("SortedSymbolIndex").returns(ascending);
+            assertQuery(query + " DESC").withPlanContaining("SortedSymbolIndex").returns(descending);
         });
     }
 
@@ -386,6 +550,12 @@ public class SortedSymbolIndexOrderingTest extends AbstractCairoTest {
                     k1\t2024-01-01T00:01:00.000000Z\tnull
                     """);
         });
+    }
+
+    private static void assertSymbolOrder(String query, CharSequence expected) throws Exception {
+        try (RecordCursorFactory factory = select(query); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, new StringSink());
+        }
     }
 
     private static void assertSymbolOrderAscending(String query, int expectedRowCount) throws Exception {

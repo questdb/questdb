@@ -23099,6 +23099,60 @@ public class WindowFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWindowStreamsOverRowsOrderedByPartitionKeysThenWindowOrder() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x id, (CASE WHEN x % 11 = 0 THEN NULL ELSE 'k' || (x % 7) END)::SYMBOL s, x * 0.5 v,
+                            timestamp_sequence('2024-01-01', 600_000_000) ts
+                        FROM long_sequence(300)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final String[] functions = {
+                    "row_number() OVER (PARTITION BY s ORDER BY ts DIRECTION)",
+                    "sum(v) OVER (PARTITION BY s ORDER BY ts DIRECTION ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)",
+                    "lag(v) OVER (PARTITION BY s ORDER BY ts DIRECTION)",
+                    "first_value(v) OVER (PARTITION BY s ORDER BY ts DIRECTION)",
+                    "count(*) OVER (PARTITION BY s, id % 2 ORDER BY ts DIRECTION)"
+            };
+            // the rows of each series arrive in the order of the window, whatever the order of the series
+            final String[] orders = {"s, ts", "s DESC, ts", "s, ts DESC", "s DESC, ts DESC"};
+            final StringSink expected = new StringSink();
+            for (int isParquet = 0; isParquet < 2; isParquet++) {
+                if (isParquet == 1) {
+                    execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-03'");
+                }
+                for (String order : orders) {
+                    final String direction = order.endsWith("ts DESC") ? "DESC" : "ASC";
+                    for (String function : functions) {
+                        final String query = "SELECT id, s, v, ts, " + function.replace("DIRECTION", direction) + " w FROM t WHERE ts IN '2024-01-02' ORDER BY " + order;
+                        printSql(query.replace("SELECT id", "SELECT /*+ no_index(t) */ id"), expected);
+                        assertQuery(query)
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .sizeMayVary()
+                                .withPlanContaining("Window\n", "SortedSymbolIndex")
+                                .withPlanNotContaining("CachedWindow")
+                                .returns(expected);
+                    }
+                }
+            }
+            // rows of the same series that arrive out of the window order, or a series that a cast may merge, need the
+            // cached window
+            final String[] cached = {
+                    "SELECT id, s, v, ts, row_number() OVER (PARTITION BY s ORDER BY ts) w FROM t WHERE ts IN '2024-01-02' ORDER BY s, id DESC",
+                    "SELECT id, s, v, ts, row_number() OVER (ORDER BY ts) w FROM t WHERE ts IN '2024-01-02' ORDER BY s, ts",
+                    "SELECT id, s, v, ts, row_number() OVER (PARTITION BY id % 3 ORDER BY ts) w FROM t WHERE ts IN '2024-01-02' ORDER BY s, ts"
+            };
+            for (String query : cached) {
+                printSql(query.replace("SELECT id", "SELECT /*+ no_index(t) */ id"), expected);
+                assertQuery(query).noLeakCheck().sizeMayVary().withPlanContaining("CachedWindow").returns(expected);
+            }
+        });
+    }
+
     private static void normalizeSuffix(List<String> values) {
         int maxLength = 0;
         for (int i = 0, n = values.size(); i < n; i++) {

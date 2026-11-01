@@ -78,7 +78,8 @@ import org.jetbrains.annotations.TestOnly;
  * buffers across columns. Because the cache retains its data/aux peak, each entry is
  * accounted at {@code retainedBytes} - the largest decode it has held - and
  * after every decode {@link #trimToBudget} closes LRU-oldest unpinned
- * entries until the total drops back under the budget. Entries currently
+ * entries until the total drops back under the budget, and the entries under
+ * the buffer cap of the hint. Entries currently
  * bound to a record or to the frame-memory flyweight are skipped during
  * victim selection and trimming, so when every cached entry is pinned the
  * pool creates a new buffer and the budget is temporarily exceeded.
@@ -89,7 +90,9 @@ import org.jetbrains.annotations.TestOnly;
  * {@link ParquetDecodeHint#CYCLIC} cursors get all of it. A CYCLIC cursor
  * reuses and trims the most recently decoded unpinned entries instead of the
  * LRU oldest ones. Hints come in via {@link #of(PageFrameAddressCache, ParquetDecodeHint)}
- * or {@link #setParquetDecodeHint(ParquetDecodeHint)} and default to MONOTONIC.
+ * or {@link #setParquetDecodeHint(ParquetDecodeHint)} and default to MONOTONIC;
+ * {@link #setParquetDecodeHint(ParquetDecodeHint, long)} caps the ceiling further, and the native memory that
+ * the cached entries retain, which the memory tracker measures over each decode.
  * <p>
  * An owner that reads only some columns of every Parquet frame binds them as the pool's
  * projection, see {@link #of(PageFrameAddressCache, ParquetDecodeHint, IntHashSet)}, and the pool
@@ -157,6 +160,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private ParquetBuffers boundForRecordA;
     private ParquetBuffers boundForRecordB;
     private long cachedBytes;
+    // Native bytes that the cached Parquet buffers retain, which the memory tracker measures over each decode: the
+    // decoded columns and the native structs of the buffers, which cachedBytes leaves out.
+    private long cachedNativeBytes;
     // Live native bytes held by retained CoveringBuffers (covered decode buffers).
     // Unlike parquet's cachedBytes this is NOT an eviction budget: covered buffers are
     // query-lifetime and cannot be LRU-evicted mid-query (zero-copy first()/last()
@@ -186,6 +192,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private boolean hasTypeCasts;
     private ParquetBuffers lruHead;
     private ParquetBuffers lruTail;
+    // The native bytes that an owner lets the cached Parquet buffers retain, see setParquetDecodeHint(hint, maxBytes).
+    private long maxNativeBytes = Long.MAX_VALUE;
     // Per-query tracker propagated to each ParquetBuffers' RowGroupBuffers when
     // it is reopened, so decoded parquet column data charges the owning
     // workload's limit. Null leaves decode buffers on global-only accounting
@@ -705,6 +713,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         decodeCount = 0;
         this.projection = projection;
         this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
+        maxNativeBytes = Long.MAX_VALUE;
         Misc.free(parquetMetaDecoder);
         Misc.free(legacyDecoder);
         activeDecoder = null;
@@ -759,6 +768,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         boundForFrameMemory = null;
         bindGeneration++;
         cachedBytes = 0;
+        cachedNativeBytes = 0;
         if (frameMemory != null) {
             frameMemory.clear();
         }
@@ -811,9 +821,20 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     public void setParquetDecodeHint(ParquetDecodeHint hint) {
+        setParquetDecodeHint(hint, Long.MAX_VALUE);
+    }
+
+    /**
+     * Sets the hint as {@link #setParquetDecodeHint(ParquetDecodeHint)} does, and keeps the decoded buffers to no more
+     * than {@code maxBytes}, which an owner passes for the memory that a query memory limit leaves its walk: the bytes
+     * of their decoded columns, and the native memory they retain, which the memory tracker of the pool measures over
+     * each decode.
+     */
+    public void setParquetDecodeHint(ParquetDecodeHint hint, long maxBytes) {
         this.decodeHint = hint;
-        this.effectiveBudgetBytes = hint.applyTo(maxCacheBytes);
-        // A shrink (SCATTERED -> MONOTONIC) can leave cachedBytes above the new ceiling.
+        this.effectiveBudgetBytes = Math.min(hint.applyTo(maxCacheBytes), maxBytes);
+        this.maxNativeBytes = maxBytes;
+        // A shrink (SCATTERED -> MONOTONIC) can leave cachedBytes and the cached buffers above the new ceilings.
         trimToBudget();
     }
 
@@ -894,7 +915,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
     private ParquetBuffers acquireBuffer(int frameIndex, byte usageBit) {
         assert getBound(usageBit) == null : "acquireBuffer requires the prior pin to have been cleared by tryHit";
-        final boolean isFull = cachedBytes >= effectiveBudgetBytes || byFrameIndex.size() >= maxCachedBuffers();
+        final boolean isFull = cachedBytes >= effectiveBudgetBytes || cachedNativeBytes >= maxNativeBytes || byFrameIndex.size() >= maxCachedBuffers();
         for (ParquetBuffers victim = firstVictim(); victim != null; victim = nextVictim(victim)) {
             if (victim.usageFlags != 0) {
                 continue;
@@ -1099,6 +1120,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private void evictAndClose(ParquetBuffers buffers) {
         bindGeneration++;
         cachedBytes -= buffers.retainedBytes;
+        cachedNativeBytes -= buffers.nativeBytes;
         if (buffers.frameIndex >= 0) {
             byFrameIndex.remove(buffers.frameIndex);
         }
@@ -1182,6 +1204,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             nullColumnAddresses.setPos(columnCount);
         }
         return nullColumnAddresses;
+    }
+
+    private long getTrackedBytes() {
+        return memoryTracker != null && isAccountingEnabled() ? memoryTracker.getUsed() : 0;
     }
 
     // Zero-budget pools (per-worker parallel reduce slots, new PageFrameMemoryPool(0L)) never
@@ -1573,7 +1599,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
 
     private void trimToBudget() {
         ParquetBuffers b = firstVictim();
-        while (b != null && cachedBytes > effectiveBudgetBytes) {
+        while (b != null && (cachedBytes > effectiveBudgetBytes || cachedNativeBytes > maxNativeBytes || byFrameIndex.size() > maxCachedBuffers())) {
             final ParquetBuffers next = nextVictim(b);
             if (b.usageFlags == 0) {
                 evictAndClose(b);
@@ -2216,6 +2242,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private int decodedRowLo = -1;
         private int frameIndex = -1;
         private boolean isRowFiltered;
+        // The native bytes the buffers retain, see cachedNativeBytes.
+        private long nativeBytes;
         private ParquetBuffers next;
         private ParquetBuffers prev;
         // Peak decodedBytes since the native buffers were last freed. In-place
@@ -2286,6 +2314,7 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             decodedRowHi = -1;
             decodedRowLo = -1;
             retainedBytes = 0;
+            nativeBytes = 0;
             isRowFiltered = false;
             // releaseParquetBuffers() parks closed shells without unlinking first; drop the
             // LRU links so a pooled shell cannot retain its former neighbours.
@@ -2298,7 +2327,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             releaseDecodeResources();
             clearAddresses();
             if (parquetColumns.size() > 0) {
+                final long trackedBytes = getTrackedBytes();
                 decoder.decodeRowGroup(rowGroupBuffers, parquetColumns, rowGroup, rowLo, rowHi);
+                addNativeBytes(getTrackedBytes() - trackedBytes);
                 retainDecodeResource(decoder);
                 slotCount = (int) (parquetColumns.size() / 2);
                 decodedBytes = isAccountingEnabled() ? rowGroupBuffers.sumChunkBytes(0, slotCount) : 0;
@@ -2326,11 +2357,13 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 return 0;
             }
             final int columnOffset = slotCount;
+            final long trackedBytes = getTrackedBytes();
             if (fillWithNulls) {
                 decoder.decodeRowGroupWithRowFilterFillNulls(rowGroupBuffers, columnOffset, parquetColumns, rowGroup, rowLo, rowHi, filteredRows);
             } else {
                 decoder.decodeRowGroupWithRowFilter(rowGroupBuffers, columnOffset, parquetColumns, rowGroup, rowLo, rowHi, filteredRows);
             }
+            addNativeBytes(getTrackedBytes() - trackedBytes);
             final int extraSlots = (int) (parquetColumns.size() / 2);
             final long extra = isAccountingEnabled() ? rowGroupBuffers.sumChunkBytes(columnOffset, extraSlots) : 0;
             if (extraSlots > 0) {
@@ -2354,7 +2387,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             releaseDecodeResources();
             clearAddresses();
             if (parquetColumns.size() > 0) {
+                final long trackedBytes = getTrackedBytes();
                 decoder.decodeRowGroupWithRowFilterFillNulls(rowGroupBuffers, 0, parquetColumns, rowGroup, rowLo, rowHi, localRowsAddr, localRowCount);
+                addNativeBytes(getTrackedBytes() - trackedBytes);
                 retainDecodeResource(decoder);
                 slotCount = (int) (parquetColumns.size() / 2);
                 decodedBytes = isAccountingEnabled() ? rowGroupBuffers.sumChunkBytes(0, slotCount) : 0;
@@ -2399,6 +2434,11 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             rowGroupBuffers.setMemoryTracker(memoryTracker);
             decodeResources.reopen();
             rowGroupBuffers.reopen();
+        }
+
+        private void addNativeBytes(long bytes) {
+            nativeBytes += bytes;
+            cachedNativeBytes += bytes;
         }
 
         private void clearAddresses() {

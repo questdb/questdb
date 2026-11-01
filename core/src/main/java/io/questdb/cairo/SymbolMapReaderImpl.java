@@ -34,8 +34,10 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Hash;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -48,11 +50,16 @@ import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static io.questdb.cairo.TableUtils.charFileName;
 import static io.questdb.cairo.TableUtils.offsetFileName;
 
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
+    // @TestOnly observability for the sorts of the symbol keys by their values, see copySortedKeysTo().
+    @TestOnly
+    public static final AtomicLong testKeySorts = new AtomicLong();
+    private static final int INSERTION_SORT_THRESHOLD = 16;
     private static final Log LOG = LogFactory.getLog(SymbolMapReaderImpl.class);
     private final ObjList<String> cache = new ObjList<>();
     private final MemoryCMR charMem = Vm.getCMRInstance();
@@ -61,14 +68,22 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     // keyOf() scans candidates through its own view: the caller may pass in the flyweight that
     // valueOf() returned, and a hash collision would otherwise overwrite that input mid-scan
     private final DirectString keyOfView = new DirectString();
+    // The left runs of keys that the sort of the symbol keys merges, see sortKeys().
+    private final DirectIntList mergedKeys = new DirectIntList(0, MemoryTag.NATIVE_TABLE_READER, true);
     private final MemoryCMR offsetMem = Vm.getCMRInstance();
     private final Path path = new Path();
+    // The keys of the first sortedKeyCount symbols in the order of their values, see copySortedKeysTo().
+    private final DirectIntList sortedKeys = new DirectIntList(0, MemoryTag.NATIVE_TABLE_READER, true);
+    // The views of the symbol values that the sort compares, which leave the cache of the symbol values as it is.
+    private final DirectString sortViewA = new DirectString();
+    private final DirectString sortViewB = new DirectString();
     private boolean cached;
     private long columnNameTxn;
     private CairoConfiguration configuration;
     private int maxHash;
     private long maxOffset;
     private boolean nullValue;
+    private int sortedKeyCount;
     private int symbolCapacity;
     private int symbolCount;
     private long symbolTableGeneration;
@@ -90,6 +105,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     public void close() {
         Misc.free(indexReader);
         Misc.free(charMem);
+        Misc.free(sortedKeys);
+        Misc.free(mergedKeys);
+        sortedKeyCount = 0;
         cache.clear();
         long fd = offsetMem.getFd();
         Misc.free(offsetMem);
@@ -105,6 +123,33 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     @TestOnly
     public int getCacheSize() {
         return cache.size();
+    }
+
+    /**
+     * Sorts the keys of the symbols that the reader gained since it sorted them last, merges them into the order it
+     * keeps, and adds the keys in that order to the list. The reader drops the order when an existing key may come to
+     * resolve to another value: when it opens the symbol map anew, see {@link #of}, or its symbol count shrinks. A
+     * table reader serves one query at a time, which reads the order on the thread that owns the cursor; the views of
+     * {@link #newSymbolTableView()} that parallel workers read do not reach it.
+     */
+    @Override
+    public void copySortedKeysTo(IntList keys) {
+        if (sortedKeyCount < symbolCount) {
+            testKeySorts.incrementAndGet();
+            if (sortedKeys.getCapacity() < symbolCount) {
+                sortedKeys.setCapacity(symbolCount);
+            }
+            sortedKeys.setPos(sortedKeyCount);
+            for (int key = sortedKeyCount; key < symbolCount; key++) {
+                sortedKeys.add(key);
+            }
+            sortKeys(sortedKeyCount, symbolCount);
+            mergeKeys(0, sortedKeyCount, symbolCount);
+            sortedKeyCount = symbolCount;
+        }
+        for (int i = 0; i < symbolCount; i++) {
+            keys.add(sortedKeys.get(i));
+        }
     }
 
     @Override
@@ -251,6 +296,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             // so only the backing array survived, and extendAndSet grows that
             // geometrically anyway.
             cache.clear();
+            sortedKeyCount = 0;
             symbolTableGeneration = symbolTableGeneration == Long.MAX_VALUE ? 0 : symbolTableGeneration + 1;
             LOG.debug().$("open [columnName=").$(path.trimTo(plen).concat(columnName).$())
                     .$(", fd=").$(offsetMem.getFd())
@@ -280,6 +326,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             charMem.extend(charSize);
         } else if (symbolCount < this.symbolCount) {
             cache.remove(symbolCount, this.symbolCount - 1);
+            sortedKeyCount = 0;
             this.symbolCount = symbolCount;
             this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
         }
@@ -342,6 +389,69 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         final String symbol = Chars.toString(cs);
         cache.extendAndSet(key, symbol);
         return symbol;
+    }
+
+    private int compareKeys(int keyA, int keyB) {
+        return Chars.compare(valueOf(keyA, sortViewA), valueOf(keyB, sortViewB));
+    }
+
+    private void insertionSortKeys(int lo, int hi) {
+        for (int i = lo + 1; i < hi; i++) {
+            final int key = sortedKeys.get(i);
+            int j = i - 1;
+            while (j >= lo && compareKeys(sortedKeys.get(j), key) > 0) {
+                sortedKeys.set(j + 1, sortedKeys.get(j));
+                j--;
+            }
+            sortedKeys.set(j + 1, key);
+        }
+    }
+
+    /**
+     * Merges the sorted keys from {@code lo} to {@code mid} with the sorted keys from {@code mid} to {@code hi}.
+     */
+    private void mergeKeys(int lo, int mid, int hi) {
+        if (lo == mid || mid == hi || compareKeys(sortedKeys.get(mid - 1), sortedKeys.get(mid)) <= 0) {
+            return;
+        }
+        if (mergedKeys.getCapacity() < mid - lo) {
+            mergedKeys.setCapacity(mid - lo);
+        }
+        mergedKeys.clear();
+        for (int i = lo; i < mid; i++) {
+            mergedKeys.add(sortedKeys.get(i));
+        }
+        int left = 0;
+        int right = mid;
+        int out = lo;
+        final int leftHi = mid - lo;
+        while (left < leftHi && right < hi) {
+            final int rightKey = sortedKeys.get(right);
+            if (compareKeys(rightKey, mergedKeys.get(left)) < 0) {
+                sortedKeys.set(out++, rightKey);
+                right++;
+            } else {
+                sortedKeys.set(out++, mergedKeys.get(left++));
+            }
+        }
+        while (left < leftHi) {
+            sortedKeys.set(out++, mergedKeys.get(left++));
+        }
+    }
+
+    /**
+     * Sorts the keys from {@code lo}, inclusive, to {@code hi}, exclusive, by the values of their symbols: a merge sort,
+     * which compares them O(n log n) times whatever their order.
+     */
+    private void sortKeys(int lo, int hi) {
+        if (hi - lo <= INSERTION_SORT_THRESHOLD) {
+            insertionSortKeys(lo, hi);
+            return;
+        }
+        final int mid = (lo + hi) >>> 1;
+        sortKeys(lo, mid);
+        sortKeys(mid, hi);
+        mergeKeys(lo, mid, hi);
     }
 
     private CharSequence uncachedValue(int key) {

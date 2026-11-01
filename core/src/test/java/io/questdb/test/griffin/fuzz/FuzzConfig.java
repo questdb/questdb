@@ -47,6 +47,7 @@ public final class FuzzConfig {
     public static final String HORIZON_JOIN_PROP = "questdb.fuzz.horizonjoin";
     public static final String LATEST_ON_PROP = "questdb.fuzz.lateston";
     public static final String QUERIES_PROP = "questdb.fuzz.queries";
+    public static final String SET_OPERATION_PROP = "questdb.fuzz.setop";
     public static final String VERIFY_CURSOR_PROP = "questdb.fuzz.verify.cursor";
     public static final String WINDOW_JOIN_PROP = "questdb.fuzz.windowjoin";
     public static final String WINDOW_PROP = "questdb.fuzz.window";
@@ -81,6 +82,7 @@ public final class FuzzConfig {
     private final boolean isHorizonJoinEnabled;
     private final boolean isLatestOnEnabled;
     private final boolean isParallelFaultEnabled;
+    private final boolean isSetOperationEnabled;
     private final boolean isVerifyCursorEnabled;
     private final boolean isWindowEnabled;
     private final boolean isWindowJoinEnabled;
@@ -169,6 +171,10 @@ public final class FuzzConfig {
         // -Dquestdb.fuzz.lateston=false to drop them and give the band back to
         // SIMPLE.
         this.isLatestOnEnabled = Boolean.parseBoolean(System.getProperty(LATEST_ON_PROP, "true"));
+        // Set operations over branches of different column types carve a band out of the SAMPLE BY
+        // range (see QueryGenerator). On by default; pass -Dquestdb.fuzz.setop=false to drop them
+        // and give the band back to SAMPLE BY.
+        this.isSetOperationEnabled = Boolean.parseBoolean(System.getProperty(SET_OPERATION_PROP, "true"));
     }
 
     public String getDumpPath() {
@@ -245,6 +251,10 @@ public final class FuzzConfig {
 
     public boolean isParallelFaultEnabled() {
         return isParallelFaultEnabled;
+    }
+
+    public boolean isSetOperationEnabled() {
+        return isSetOperationEnabled;
     }
 
     public boolean isVerifyCursorEnabled() {

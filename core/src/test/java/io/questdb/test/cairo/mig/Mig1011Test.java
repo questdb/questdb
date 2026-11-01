@@ -192,6 +192,7 @@ public class Mig1011Test extends AbstractCairoTest {
             writeMigrationVersion(MIG1011_VERSION - 1);
             engine.clear();
             EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+            capture.drain();
             capture.assertOnlyOnce("skipping table, _meta is shorter than its header \\[path=\\S+damaged\\S+_meta, size=0\\]");
             Assert.assertEquals(ColumnType.MIGRATION_VERSION, readMigrationVersion());
             assertQuery("SELECT v FROM healthy")
@@ -201,6 +202,39 @@ public class Mig1011Test extends AbstractCairoTest {
                             v
                             42
                             """);
+        });
+    }
+
+    @Test
+    public void testEngineMigrationSkipsTableWithIncompleteTxn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE healthy (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO healthy VALUES (42, '2024-01-01T00:00:00.000000Z')");
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (
+                    Path meta = new Path().of(configuration.getDbRoot()).concat(engine.verifyTableName("healthy")).concat(TableUtils.META_FILE_NAME);
+                    Path damaged = new Path().of(configuration.getDbRoot()).concat("damaged")
+            ) {
+                Assert.assertEquals(0, ff.mkdir(damaged.$(), configuration.getMkDirMode()));
+                final int damagedLen = damaged.size();
+                Assert.assertTrue(ff.copy(meta.$(), damaged.concat(TableUtils.META_FILE_NAME).$()) >= 0);
+                ff.close(TableUtils.openRW(ff, damaged.trimTo(damagedLen).concat(TableUtils.TXN_FILE_NAME).$(), LOG, configuration.getWriterFileOpenOpts()));
+            }
+            for (int i = 0; i < 2; i++) {
+                writeMigrationVersion(MIG1011_VERSION - 1);
+                engine.clear();
+                EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
+                Assert.assertEquals(ColumnType.MIGRATION_VERSION, readMigrationVersion());
+                assertQuery("SELECT v FROM healthy")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                v
+                                42
+                                """);
+            }
+            capture.drain();
+            capture.assertLoggedRE("skipping table, _txn is shorter than its header \\[path=\\S+damaged\\S+_txn, size=0\\]");
         });
     }
 

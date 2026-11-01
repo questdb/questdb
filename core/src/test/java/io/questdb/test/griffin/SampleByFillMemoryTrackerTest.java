@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
@@ -38,6 +39,11 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 /**
  * SQL-level tests that exercise the per-query memory limit through the
@@ -229,6 +235,27 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyedFillOpenBreachStaysReusable() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelGroupByEnabled(false);
+            createSmallTable();
+            for (String fill : new String[]{"NULL", "0", "PREV"}) {
+                assertFillOpenBreachStaysReusable(
+                        "SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(" + fill + ") ALIGN TO FIRST OBSERVATION",
+                        """
+                                k\tsum
+                                0\t275.0
+                                1\t235.0
+                                2\t245.0
+                                3\t255.0
+                                4\t265.0
+                                """
+                );
+            }
+        });
+    }
+
+    @Test
     public void testKeyedFillPrevFailsOnHighCardinality() throws Exception {
         // FILL(PREV) fills above the keyed SAMPLE BY cursor; its maps grow with
         // the distinct key set.
@@ -290,6 +317,12 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
         assertRepeatedRunsReleaseAllocations("SELECT k, first(k::varchar) s FROM tab SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION");
     }
 
+    private static List<String> sortedLines(CharSequence text) {
+        final List<String> lines = new ArrayList<>(Arrays.asList(text.toString().split("\n")));
+        Collections.sort(lines);
+        return lines;
+    }
+
     private void assertBreach(String query, Class<?> expectedFactory) throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setParallelGroupByEnabled(false);
@@ -322,6 +355,30 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private void assertFillOpenBreachStaysReusable(String query, String expected) throws Exception {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+        ) {
+            assertUsesFactory(factory, SampleByFillRecordCursorFactory.class);
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
+            for (int i = 0; i < 5; i++) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail("expected per-query memory breach during cursor open, got cursor: " + cursor);
+                } catch (CairoException e) {
+                    Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                }
+            }
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024L);
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                Assert.assertEquals(sortedLines(expected), sortedLines(sink.toString()));
+            }
+        }
     }
 
     private void assertHitsFastPath(RecordCursorFactory factory) {

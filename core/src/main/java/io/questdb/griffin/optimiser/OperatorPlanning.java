@@ -1100,7 +1100,7 @@ final class OperatorPlanning implements Mutable {
             final boolean isTimestampKey = order.size() == 1
                     && (queryOrder.size() < 2 || (window.getFunctions().getQuick(i).getFunctionFlags() & BoundExpression.ORDERED_INPUT) != 0)
                     && input.getOutput().getColumnIndexById(order.getQuick(0)) == timestampIndex;
-            final boolean isOrderDelivered = isAdviceFollowed && spec.isQueryOrderPrefix(queryOrder)
+            final boolean isOrderDelivered = isAdviceFollowed && spec.isOrderedByQueryOrder(queryOrder)
                     || isTimestampKey && direction == PhysicalProperties.ScanDirection.of(spec.getOrderByDirections().getQuick(0));
             spec.setOrderDelivered(isOrderDelivered);
             isDirectionRead |= isTimestampKey || isOrderDelivered;

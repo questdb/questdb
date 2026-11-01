@@ -55,6 +55,14 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
     // than probing the index once per key.
     @TestOnly
     public static final AtomicLong testDenseScanFrames = new AtomicLong();
+    // @TestOnly observability for the models of a direct read and of a gather that a read ordered by keys runs to choose
+    // between them.
+    @TestOnly
+    public static final AtomicLong testDirectModelRuns = new AtomicLong();
+    // @TestOnly observability for the page frames whose rows of the keys of a window the gather of a read ordered by
+    // keys counts by the index, key by key, before it scans them.
+    @TestOnly
+    public static final AtomicLong testFrameKeyCounts = new AtomicLong();
     // @TestOnly observability for the page frames the cursor opens a row cursor over, which shows whether a read ordered
     // by keys walks the page frames of a key that has no row there.
     @TestOnly

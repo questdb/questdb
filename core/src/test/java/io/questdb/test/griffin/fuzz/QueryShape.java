@@ -40,6 +40,7 @@ public enum QueryShape {
     LATEST_ON,
     POSTING,
     SAMPLE_BY,
+    SET_OPERATION,
     SIMPLE,
     TEMPORAL_JOIN,
     WINDOW,

@@ -123,10 +123,12 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
         if (!pattern.isRuntimeConstant() && !replacement.isRuntimeConstant()) {
             final CharSequence patternStr = pattern.getStrA(null);
             if (patternStr == null) {
+                Misc.freeObjList(args);
                 return VarcharConstant.NULL;
             }
             CharSequence replacementStr = replacement.getStrA(null);
             if (replacementStr == null) {
+                Misc.freeObjList(args);
                 return VarcharConstant.NULL;
             }
             // Optimize for patterns like "^https?://(?:www\.)?([^/]+)/.*$" and replacements like "$1".
@@ -139,6 +141,7 @@ public class RegexpReplaceVarcharFunctionFactory extends RegexpReplaceStrFunctio
             ) {
                 final Matcher matcher = RegexUtils.createMatcher(pattern, patternPos);
                 if (matcher == null) {
+                    Misc.freeObjList(args);
                     return VarcharConstant.NULL;
                 }
                 try {

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.IndexReader;
@@ -32,23 +33,18 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
-import io.questdb.std.CarrierLocal;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
-import io.questdb.std.ObjList;
-
-import java.util.Comparator;
 
 public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFactory {
-    private final static CarrierLocal<SortHelper> TL_SORT_HELPER = new CarrierLocal<>(SortHelper::new);
     private final int columnIndex;
     private final boolean columnOrderDirectionAsc;
     private final ListBasedSymbolIndexRowCursor cursor = new ListBasedSymbolIndexRowCursor();
     private final int indexDirection;
+    // The index keys in key order: the NULL key and the symbols in the order of their values, the NULL key first in
+    // ascending order and last in descending order.
     private final IntList symbolKeys = new IntList();
     private int symbolKeyLimit;
 
@@ -134,38 +130,34 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
         return true;
     }
 
+    /**
+     * Takes the order of the symbols of the column from the symbol map reader of the table, which sorts them by their
+     * values once for every query that reads the table through it, see
+     * {@link SymbolMapReader#copySortedKeysTo(IntList)}. The page frames of the access path come from
+     * the partitions of a table reader, whose symbol tables are its symbol map readers.
+     */
     @Override
     public void prepareCursor(PageFrameCursor pageFrameCursor) {
-        symbolKeys.clear();
-
-        final StaticSymbolTable staticSymbolTable = pageFrameCursor.getSymbolTable(columnIndex);
-        int count = staticSymbolTable.getSymbolCount();
-
-        final SortHelper sortHelper = TL_SORT_HELPER.get();
-        final ObjList<SymbolTableEntry> entries = sortHelper.getEntries();
+        final SymbolMapReader symbolMapReader = (SymbolMapReader) pageFrameCursor.getSymbolTable(columnIndex);
+        final int count = symbolMapReader.getSymbolCount();
         symbolKeyLimit = count + 1;
-
-        sortHelper.fillEntries(symbolKeyLimit);
-
-        for (int i = 0; i < count; i++) {
-            final SymbolTableEntry e = entries.getQuick(i);
-            e.key = TableUtils.toIndexKey(i);
-            e.value = Chars.toString(staticSymbolTable.valueOf(i));
-        }
-
-        // add NULL
-        final SymbolTableEntry e = entries.getQuick(count);
-        e.key = TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL);
-        e.value = null;
-
+        symbolKeys.clear();
         if (columnOrderDirectionAsc) {
-            sortHelper.sort(symbolKeyLimit, sortHelper.ascComparator);
-        } else {
-            sortHelper.sort(symbolKeyLimit, sortHelper.dscComparator);
+            symbolKeys.add(TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL));
         }
-        // populate our list
-        for (int i = 0; i < symbolKeyLimit; i++) {
-            symbolKeys.add(entries.getQuick(i).key);
+        final int symbolLo = symbolKeys.size();
+        symbolMapReader.copySortedKeysTo(symbolKeys);
+        if (columnOrderDirectionAsc) {
+            for (int i = symbolLo, n = symbolLo + count; i < n; i++) {
+                symbolKeys.setQuick(i, TableUtils.toIndexKey(symbolKeys.getQuick(i)));
+            }
+        } else {
+            for (int i = 0, j = count - 1; i <= j; i++, j--) {
+                final int key = symbolKeys.getQuick(i);
+                symbolKeys.setQuick(i, TableUtils.toIndexKey(symbolKeys.getQuick(j)));
+                symbolKeys.setQuick(j, TableUtils.toIndexKey(key));
+            }
+            symbolKeys.add(TableUtils.toIndexKey(SymbolTable.VALUE_IS_NULL));
         }
     }
 
@@ -173,49 +165,6 @@ public class SortedSymbolIndexRowCursorFactory implements KeyOrderedRowCursorFac
     public void toPlan(PlanSink sink) {
         sink.type("Index ").type(IndexReader.nameOf(indexDirection)).type(" scan").meta("on").putColumnName(columnIndex);
         sink.attr("symbolOrder").val(columnOrderDirectionAsc ? "asc" : "desc");
-    }
-
-    private static class SortHelper {
-        private final Comparator<SymbolTableEntry> ascComparator = this::compareAsc;
-        private final Comparator<SymbolTableEntry> dscComparator = this::compareDesc;
-        private final ObjList<SymbolTableEntry> entries = new ObjList<>();
-
-        public void fillEntries(int max) {
-            int size = entries.size();
-            if (max > entries.size()) {
-                while (size++ < max) {
-                    entries.add(new SymbolTableEntry());
-                }
-            }
-        }
-
-        public ObjList<SymbolTableEntry> getEntries() {
-            return entries;
-        }
-
-        public void sort(int max, Comparator<SymbolTableEntry> comparator) {
-            entries.sort(0, max, comparator);
-        }
-
-        private int compareAsc(SymbolTableEntry e1, SymbolTableEntry e2) {
-            return (e1.value == null && e2.value == null) ? 0
-                    : e1.value == null ? -1
-                      : e2.value == null ? 1
-                        : e1.value.compareTo(e2.value);
-        }
-
-        private int compareDesc(SymbolTableEntry e1, SymbolTableEntry e2) {
-            return (e1.value == null && e2.value == null) ? 0
-                    : e1.value == null ? 1
-                      : e2.value == null ? -1
-                        : e2.value.compareTo(e1.value);
-        }
-    }
-
-    // this is a thread-local contraption used for sorting symbol values. We ought to think of something better
-    private static class SymbolTableEntry {
-        private int key;
-        private String value;
     }
 
     private class ListBasedSymbolIndexRowCursor implements RowCursor {

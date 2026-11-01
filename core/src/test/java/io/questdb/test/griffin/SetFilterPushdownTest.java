@@ -74,6 +74,44 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinConjunctsBoundPerBranchLeaveNoFilterAboveTheJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO a SELECT x::INT % 4, timestamp_sequence('2024-01-01', 1_800_000_000L) FROM long_sequence(150)");
+            execute("INSERT INTO b SELECT x::INT % 4, timestamp_sequence('2024-01-01', 1_800_000_000L) FROM long_sequence(150)");
+            final String set = "(SELECT ts v, k id FROM a UNION ALL SELECT ts::TIMESTAMP_NS v1, k id1 FROM b";
+            final String filter = "u.v > '2024-01-02T05:00:00.000000Z'";
+            final String plan = """
+                    SelectedRecord
+                        Hash Join Light
+                          condition: x.k=u.id
+                            Union All
+                                SelectedRecord
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: a
+                                          intervals: [("2024-01-02T05:00:00.000001Z","MAX")]
+                                Filter filter: 2024-01-02T05:00:00.000000000Z<v1
+                                    VirtualRecord
+                                      functions: [ts::timestamp_ns,k]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: b
+                    """;
+            for (String shape : new String[]{" u JOIN b x ON u.id = x.k AND %s", " u JOIN b x ON u.id = x.k WHERE %s"}) {
+                final String query = "SELECT v, id FROM " + set + ")" + String.format(shape, filter);
+                assertQuery(query).noLeakCheck().assertsPlan(plan);
+                assertSqlCursors("SELECT v, id FROM " + set + " LIMIT 1_000_000)" + String.format(shape, filter), query);
+            }
+        });
+    }
+
+    @Test
     public void testLimitAndLatestBranchesFilterAboveTheirBarriers() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_sp_events (ts TIMESTAMP,id INT,k SYMBOL) TIMESTAMP(ts)");

@@ -323,6 +323,9 @@ final class JoinOrdering implements OptimiserPass {
         final ObjList<BoundExpression> residuals = graph.getResiduals();
         for (int i = 0, n = residuals.size(); i < n; i++) {
             final BoundExpression residual = residuals.getQuick(i);
+            if (LogicalPlans.constantTruth(residual) == 1) {
+                continue;
+            }
             int target = lastOrderedInput(residual, join);
             if (target < 0) {
                 target = inputFreeTarget(hasBarriers, originPosition(graph, i, join), last);
