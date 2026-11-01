@@ -1,8 +1,34 @@
+# Hosted macOS/Windows jobs. The Rust library is compiled once per OS by a build job;
+# every test leg of that OS downloads it instead of compiling the crate itself.
 jobs:
-  - job: RunOn
-    displayName: "on"
-    strategy:
-      matrix:
+  - template: rust-build-job.yml
+    parameters:
+      name: RustBuildMac
+      displayName: "mac-rust-build"
+      pool:
+        vmImage: "macOS-15-arm64"
+        name: "Azure Pipelines"
+      artifact: qdbr-native-darwin-aarch64
+      libName: libquestdbr.dylib
+      expectedArch: arm64
+      isHosted: true
+  - template: rust-build-job.yml
+    parameters:
+      name: RustBuildWindows
+      displayName: "windows-rust-build"
+      pool:
+        vmImage: "windows-latest"
+        name: "Azure Pipelines"
+      artifact: qdbr-native-windows-x86-64
+      libName: questdbr.dll
+      expectedArch: x86_64
+      isHosted: true
+  - template: hosted-test-job.yml
+    parameters:
+      name: RunOnMac
+      dependsOn: RustBuildMac
+      prebuiltRustArtifact: qdbr-native-darwin-aarch64
+      legs:
         # macOS legs run on Apple Silicon: the plain macOS-14/15/26 Azure images
         # are Intel x64, and x86-64 macOS is not a supported platform - aarch64 is
         # the only macOS build we ship. Shard layout is unchanged from those legs.
@@ -100,6 +126,12 @@ jobs:
           excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**"
           javadoc_step: ""
           javadoc_profile: ""
+  - template: hosted-test-job.yml
+    parameters:
+      name: RunOnWindows
+      dependsOn: RustBuildWindows
+      prebuiltRustArtifact: qdbr-native-windows-x86-64
+      legs:
         windows-griffin-base:
           WEB_CONSOLE_PROFILE: ""
           imageName: "windows-latest"
@@ -146,7 +178,21 @@ jobs:
           testset: "all"
           includeTests: "**/**Fuzz**"
           # Exclude cairo fuzz tests: run in windows-fuzz1
-          excludeTests: "**/cairo/fuzz/**"
+          # Exclude QWP fuzz tests: run in windows-fuzz3
+          excludeTests: "**/cairo/fuzz/**,**/cutlass/qwp/**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-fuzz3:
+          # QWP fuzz tests, split from windows-fuzz2 in Oct 2026: under the
+          # adaptive commit mode windows-fuzz2 took 73-80 min against the
+          # 90-minute task cap (builds 278773, 278947), ~24 min of it QWP fuzz.
+          WEB_CONSOLE_PROFILE: ""
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.25"
+          testset: "all"
+          includeTests: "**/cutlass/qwp/**/*Fuzz*"
           javadoc_step: ""
           javadoc_profile: ""
         windows-cairo-1:
@@ -163,7 +209,8 @@ jobs:
           # from this group in Sep 2026: cairo-1 had grown to 55 min against the
           # 60-minute job cap (build 267306 timed out ~90s from the end) while
           # cairo-2 sat at 20 min. lv is ~16 min, so the move balances the pair.
-          excludeTests: "**/O3*Test**,**/**Fuzz**,**/cairo/lv/**,**/cairo/mv/**,**/cairo/o3/**"
+          # Exclude cairo/wal: run in windows-cairo-3
+          excludeTests: "**/O3*Test**,**/**Fuzz**,**/cairo/lv/**,**/cairo/mv/**,**/cairo/o3/**,**/cairo/wal/**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-cairo-2:
@@ -177,6 +224,22 @@ jobs:
           # Exclude Fuzz tests: run in windows-fuzz2 (LiveViewFuzzTest included:
           # it is not under cairo/fuzz, so windows-fuzz1 does not claim it)
           excludeTests: "**/**Fuzz**"
+          javadoc_step: ""
+          javadoc_profile: ""
+        windows-cairo-3:
+          # cairo/wal, split from windows-cairo-1 in Oct 2026: under the adaptive
+          # commit mode windows-cairo-1 took 85-90+ min against the 90-minute task
+          # cap (builds 278773, 278947), 30+ min of it cairo/wal.
+          WEB_CONSOLE_PROFILE: ""
+          imageName: "windows-latest"
+          poolName: "Azure Pipelines"
+          os: Windows
+          jdk: "1.25"
+          testset: "all"
+          includeTests: "**/cairo/wal/**"
+          # Exclude O3 tests: run in windows-other-2
+          # Exclude Fuzz tests: run in windows-fuzz2
+          excludeTests: "**/O3*Test**,**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-pgwire:
@@ -202,11 +265,11 @@ jobs:
           jdk: "1.25"
           testset: "all"
           # Exclude griffin: run in windows-griffin-base and windows-griffin-sub
-          # Exclude cairo: run in windows-cairo-1, windows-cairo-2, windows-fuzz1
+          # Exclude cairo: run in windows-cairo-1, windows-cairo-2, windows-cairo-3, windows-fuzz1
           # Exclude compat/cliutil: run in Linux (JavaAndRustLint stage)
           # Exclude pgwire: run in windows-pgwire
           # Exclude cutlass/http, cutlass/qwp, cutlass/text: run in windows-other-2
-          # Exclude Fuzz tests: run in windows-fuzz1 and windows-fuzz2
+          # Exclude Fuzz tests: run in windows-fuzz1, windows-fuzz2 and windows-fuzz3
           # Exclude O3 tests: run in windows-other-2
           excludeTests: "**/griffin/**,**/cairo/**,**/compat/**,**/cliutil/**,**/pgwire/**,**/cutlass/http/**,**/cutlass/qwp/**,**/cutlass/text/**,**/**Fuzz**,**/O3*Test**"
           javadoc_step: ""
@@ -222,7 +285,7 @@ jobs:
           testset: "all"
           # Heavier cutlass groups (http, qwp, text) plus O3 tests; balances wall-clock with windows-other-1
           includeTests: "**/cutlass/http/**,**/cutlass/qwp/**,**/cutlass/text/**,**/O3*Test**"
-          # Exclude Fuzz tests: run in windows-fuzz2
+          # Exclude Fuzz tests: run in windows-fuzz2 (QWP fuzz in windows-fuzz3)
           # Exclude cairo/lv, cairo/o3 and cairo/mv: run in windows-cairo-2.
           # Only cairo/o3 holds O3*Test classes today; the other two keep the
           # invariant so a future O3*Test there cannot run in both groups.
@@ -230,19 +293,3 @@ jobs:
           javadoc_step: ""
           javadoc_profile: ""
 
-    pool:
-      vmImage: $(imageName)
-      name: $(poolName)
-    timeoutInMinutes: 60
-    variables:
-      SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.SOURCE_CODE_CHANGED']]
-      RUST_SOURCE_CODE_CHANGED: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.RUST_SOURCE_CODE_CHANGED']]
-      COVERAGE_DIFF: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.COVERAGE_DIFF']]
-      CODE_COVERAGE_TOOL_OPTION: $[stageDependencies.CheckChanges.CheckChanges.outputs['check_coverage.CODE_COVERAGE_TOOL_OPTION']]
-      DIFF_COVER_THRESHOLD_PCT: 50
-      ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
-      MAVEN_OPTS: "-Xmx2g -XX:+UseParallelGC"
-      # Hosted groups only run core-module tests; compile just core and its deps.
-      TEST_REACTOR_ARGS: "-pl core -am"
-    steps:
-      - template: steps.yml

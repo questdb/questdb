@@ -688,17 +688,13 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
 
                 // auto_flush_interval=3600000 (1h): the default 100ms interval
                 // auto-flush would fire on the next at() after any >=100ms stall
-                // (GC/JIT on a loaded CI agent), injecting a third txn per table.
-                // That would both break the awaitTxn(name, 2) barrier below (it
-                // returns at writerTxn >= 2, before the close-flush txn applies,
-                // so the reader would see a partial table) and degrade the
-                // choreographed shared mid-flush (a premature auto-flush drains
-                // the buffer it is meant to transmit). WS rejects
-                // auto_flush_interval=off outright, so a 1h interval -- orders of
-                // magnitude beyond the test's runtime -- stands in for it. With
-                // that, rows=1000 (> both row counts) and bytes=0, exactly two
-                // non-empty flushes per table are guaranteed: the shared
-                // mid-flush and the close flush.
+                // (GC/JIT on a loaded CI agent) and degrade the choreographed
+                // shared mid-flush (a premature auto-flush drains the buffer it
+                // is meant to transmit). WS rejects auto_flush_interval=off
+                // outright, so a 1h interval -- orders of magnitude beyond the
+                // test's runtime -- stands in for it. With that, rows=1000 (> both
+                // row counts) and bytes=0, exactly two non-empty flushes per table
+                // are guaranteed: the shared mid-flush and the close flush.
                 String config = "ws::addr=127.0.0.1:" + HTTP_PORT + ";auto_flush_interval=3600000;";
                 try (QuestDB db = QuestDB.builder()
                         .fromConfig(config)
@@ -740,11 +736,11 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                         }
                         // close() on each flushes whatever remains.
                     }
-                    // ws ingest is async. With interval auto-flush disabled in the
-                    // config, each table sees exactly two non-empty flushes (the
-                    // shared mid-flush + its close flush); wait for both.
-                    server.awaitTxn("alpha", 2);
-                    server.awaitTxn("beta", 2);
+                    // ws ingest is async, and the server commits a table's two
+                    // flushes as one WAL txn when they arrive in one receive pass,
+                    // so wait for the rows rather than for a txn count.
+                    TestUtils.assertEventually(() -> server.assertSql("SELECT count() FROM alpha", "count\n" + rowsAlpha + "\n"));
+                    TestUtils.assertEventually(() -> server.assertSql("SELECT count() FROM beta", "count\n" + rowsBeta + "\n"));
 
                     // (2) Egress: a dedicated reader thread streams two
                     // different SQLs at once, each on its own borrowed Query handle.
@@ -876,9 +872,11 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                         throw new AssertionError("burst writer failed", firstError.get());
                     }
 
-                    // Each of the 4 burst senders flushes once on close -> 4 WAL
-                    // txns. Wait for all to apply before counting.
-                    server.awaitTxn("el", 4);
+                    // Each burst sender flushes once on close. The pool may hand
+                    // one connection to several borrowers, and the server commits
+                    // their frames as one WAL txn when they arrive in one receive
+                    // pass, so wait for the rows rather than for a txn count.
+                    TestUtils.assertEventually(() -> server.assertSql("SELECT count() FROM el", "count\n" + burst + "\n"));
                     AtomicInteger seen = new AtomicInteger();
                     try (Query q = db.borrowQuery()) {
                         q.sql("SELECT x FROM el").handler(new CollectingHandler() {
@@ -899,7 +897,7 @@ public class QuestDBFacadeE2ETest extends AbstractBootstrapTest {
                                 .longColumn("x", 9_999)
                                 .at(99_999_000_000L, java.time.temporal.ChronoUnit.MICROS);
                     }
-                    server.awaitTxn("el", 5);
+                    TestUtils.assertEventually(() -> server.assertSql("SELECT count() FROM el", "count\n" + (burst + 1) + "\n"));
                 }
             }
         });

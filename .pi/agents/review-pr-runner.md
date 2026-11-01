@@ -22,6 +22,7 @@ and wait for each one.
   the review ends.
 - Write files only to the directory your task names and to the skill's
   temporary directories.
-- Apply the skill's rules for evidence, admission and severity as written.
+- Apply the skill's rules for evidence, admission, severity and risk as
+  written.
   The parent acts on your report as its user would act on a review they ran.
 - Reply with exactly the lines your task asks for.

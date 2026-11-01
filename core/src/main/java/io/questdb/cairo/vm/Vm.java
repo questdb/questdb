@@ -25,6 +25,7 @@
 package io.questdb.cairo.vm;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.vm.api.MemoryCMOR;
@@ -41,6 +42,10 @@ public class Vm {
     public static final int STRING_LENGTH_BYTES = 4;
     public static final byte TRUNCATE_TO_PAGE = 0;
     public static final byte TRUNCATE_TO_POINTER = 1;
+    // Linux errno values; sync_file_range exists only on Linux.
+    private static final int ERRNO_EAGAIN = 11;
+    private static final int ERRNO_EINTR = 4;
+    private static final int ERRNO_ENOMEM = 12;
 
     public static void bestEffortClose(FilesFacade ff, Log log, long fd, long size, byte truncateMode) {
         try {
@@ -73,6 +78,19 @@ public class Vm {
 
     public static long bestEffortTruncate(FilesFacade ff, Log log, long fd, long size) {
         return bestEffortTruncate(ff, log, fd, size, TRUNCATE_TO_PAGE);
+    }
+
+    /**
+     * Checks the errno of a failed writeback kick, {@code sync_file_range(SYNC_FILE_RANGE_WRITE)}, of {@code fd}.
+     * ENOMEM, EAGAIN and EINTR leave the pages dirty, and the drain's wait and the caller's flush write them back
+     * and report any error: the kick ignores them. Any other error can come after the kernel dropped the pages
+     * without recording an error for a later wait or flush (ext4 does this when a block allocation fails for good),
+     * so it is a flush failure, which the engine handles by its commit mode.
+     */
+    public static void checkWritebackKick(FilesFacade ff, long fd, int errno) {
+        if (errno != ERRNO_ENOMEM && errno != ERRNO_EAGAIN && errno != ERRNO_EINTR) {
+            throw CairoException.dataSyncFailureOfFd(ff, fd, errno, "sync_file_range", "could not start writeback");
+        }
     }
 
     public static MemoryCARW getCARWInstance(long pageSize, int maxPages, int memoryTag) {

@@ -205,6 +205,70 @@ public interface CairoConfiguration {
 
     int getCommitMode();
 
+    /**
+     * Minimum interval, in milliseconds, between durable epochs of one table under {@link CommitMode#ADAPTIVE}.
+     * {@code 0} advances the epoch on every apply batch; a negative value disables adaptive epochs, including
+     * the {@link #getAdaptiveEpochMaxRows()} cap, which is a deliberate opt-out: the WAL is then never purged
+     * and recovery replays all of it.
+     * <p>This default (1000 ms) serves embedded configurations and tests; the server default is 60000 ms since
+     * {@link #getAdaptiveEpochMaxRows()} already bounds the backlog under load.
+     *
+     * @return the minimum per-table durable-epoch interval in milliseconds; negative disables epochs
+     */
+    default long getAdaptiveEpochIntervalMs() {
+        return 1000;
+    }
+
+    /**
+     * The maximum rows applied to a table since its last durable epoch before the apply worker advances the
+     * epoch, independent of {@link #getAdaptiveEpochIntervalMs()}. Bounds post-epoch WAL retention and
+     * post-crash recovery-replay lag so the interval can stay long. {@code <= 0} disables the cap.
+     *
+     * @return the per-table un-epoched applied-row cap; {@code <= 0} disables it
+     */
+    default long getAdaptiveEpochMaxRows() {
+        return 5_000_000;
+    }
+
+    /**
+     * The adaptive group-commit window in microseconds ({@code cairo.adaptive.commit.group.window}). Under
+     * {@link CommitMode#ADAPTIVE}, {@code commit0} makes the writer's own segment files durable, then returns
+     * once the shared sequencer record is in the page cache; the sequencer fdatasync is batched across the
+     * commits within the window. {@code localDurableSeqTxn}, the durable-ack frontier, advances only when
+     * that fdatasync completes, so a crash loses only commits whose batch fdatasync had not completed.
+     * <p>{@code 0} fdatasyncs each commit before {@code commit0} returns, at {@code sync} latency; a negative
+     * value counts as {@code 0}. Other modes ignore the setting; the mat-view refresh WAL always fdatasyncs.
+     *
+     * @return the group-commit window in microseconds; {@code 0} commits synchronously
+     */
+    default long getAdaptiveCommitGroupWindowUs() {
+        return 50_000;
+    }
+
+    /**
+     * Whether startup recovery ({@link RecoveryCoordinator}) restores each WAL table that has a save point
+     * from it, before WAL apply replays the transactions after it. When {@code false}, startup refuses a
+     * table that has a save point rather than expose applied state that may be torn; no effect otherwise.
+     * Not a server property: only tests turn it off, to drive the refusal path.
+     *
+     * @return {@code true} to run the adaptive epoch roll-forward on startup
+     */
+    default boolean isAdaptiveRecoveryRollForwardEnabled() {
+        return true;
+    }
+
+    /**
+     * Whether a clean {@link io.questdb.cairo.TableWriter} close flushes a final durable epoch over any
+     * committed tail the last epoch does not cover (ADAPTIVE only). When {@code true} (default), a graceful
+     * close advances the durable epoch to the committed frontier, leaving nothing to roll forward; when
+     * {@code false}, the tail is left for the next boot's idempotent WAL replay. No effect otherwise.
+     *
+     * @return {@code true} to flush a durable epoch on a clean writer close
+     */
+    default boolean isAdaptiveEpochFlushOnClose() {
+        return true;
+    }
+
     int getCompileViewModelPoolCapacity();
 
     @NotNull
@@ -1368,11 +1432,37 @@ public interface CairoConfiguration {
     int getWriterTickRowsCountMod();
 
     /**
+     * Whether the adaptive durable epoch batches its column flushes (start writeback of every column, wait for
+     * it, then one {@code syncfs}) instead of flushing each file with {@code msync(MS_SYNC)}, which is slower
+     * but durable on every filesystem.
+     *
+     * @return {@code true} if the batched adaptive durable-epoch column flush should be used
+     */
+    default boolean isAdaptiveEpochColumnSyncBatched() {
+        return true;
+    }
+
+    /**
      * When true, SQL compilation does not reject UPDATE, ALTER COLUMN TYPE and ADD INDEX on
      * tables whose partition layout (parquet, read-only or cold storage partitions) cannot
      * support them. Such statements then fail when applied, which suspends a WAL table.
      */
     boolean isAllPartitionOperationsAllowed();
+
+    /**
+     * Whether an ADAPTIVE WAL commit drains writeback across its whole segment before taking barriers: starts
+     * every column and {@code _event} file's writeback first ({@code sync_file_range(WRITE)}), then waits on
+     * each ({@code WRITE|WAIT_AFTER}), so the device writes files back concurrently instead of serially inside
+     * each file's own fdatasync.
+     * <p>The pass is advisory and never the barrier: every file still gets its own {@code fdatasync}. Where
+     * the call does nothing (ZFS, see {@link io.questdb.std.FilesFacade#isSyncFileRangeEffective(io.questdb.std.str.Utf8Sequence)})
+     * the commit only loses the speedup.
+     *
+     * @return {@code true} if the drain pass should run
+     */
+    default boolean isWalCommitWritebackDrainEnabled() {
+        return true;
+    }
 
     boolean isCairoMetadataCacheSnapshotOrdered();
 

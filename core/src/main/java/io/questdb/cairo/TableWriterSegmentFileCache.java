@@ -217,6 +217,7 @@ public class TableWriterSegmentFileCache {
                 if (columnType > 0) {
                     int sizeBitsPow2 = ColumnType.getWalDataColumnShl(columnType, columnIndex == timestampIndex);
 
+                    final FilesFacade ff = configuration.getFilesFacade();
                     if (ColumnType.isVarSize(columnType)) {
                         MemoryCMOR auxMem = walColumnMemoryPool.pop();
                         MemoryCMOR dataMem = walColumnMemoryPool.pop();
@@ -236,8 +237,9 @@ public class TableWriterSegmentFileCache {
                                     .$(", walSegment=").$(walSegmentId)
                                     .I$();
                         }
+
                         columnTypeDriver.configureAuxMemOM(
-                                configuration.getFilesFacade(),
+                                ff,
                                 auxMem,
                                 auxFd,
                                 ifile,
@@ -255,8 +257,9 @@ public class TableWriterSegmentFileCache {
                                     .$(", walSegment=").$(walSegmentId)
                                     .I$();
                         }
+
                         columnTypeDriver.configureDataMemOM(
-                                configuration.getFilesFacade(),
+                                ff,
                                 auxMem,
                                 dataMem,
                                 dataFd,
@@ -279,8 +282,9 @@ public class TableWriterSegmentFileCache {
                                     .$(", walSegment=").$(walSegmentId)
                                     .I$();
                         }
+
                         primary.ofOffset(
-                                configuration.getFilesFacade(),
+                                ff,
                                 fd,
                                 false,
                                 dfile,

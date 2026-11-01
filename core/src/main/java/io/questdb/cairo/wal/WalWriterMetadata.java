@@ -25,6 +25,7 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.AbstractRecordMetadata;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
@@ -53,6 +54,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
     private final MemoryMARW metaMem;
     private final IntList readColumnOrder = new IntList();
     private final MemoryMR roMetaMem;
+    private boolean hasUnflushedWrite;
     private long structureVersion = -1;
     private int tableId;
     private TableToken tableToken;
@@ -272,6 +274,27 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                 readColumnOrder,
                 fullSequencerMetadata
         );
+        hasUnflushedWrite = true;
+    }
+
+    /**
+     * Makes the segment _meta durable before the WAL writer sequences a record in its segment, in the modes that
+     * promise durability across a power loss, and does nothing when the file has not changed since its last flush.
+     * The Enterprise uploader reads it to ship every data record of the segment. One flush per segment open or
+     * in-place rewrite, nothing per commit.
+     */
+    void syncBeforeSequencing(int commitMode) {
+        if (hasUnflushedWrite && CommitMode.isPowerLossDurable(commitMode)) {
+            if (commitMode == CommitMode.SYNC) {
+                // MS_SYNC is a range fsync: the file is on the device.
+                metaMem.sync(false);
+            } else {
+                // As for the event files: the ordering barrier puts the file on the medium ahead of the sequencer
+                // record, and the sequencer flush at the commit point is the full device flush.
+                metaMem.flushFile(true);
+            }
+            hasUnflushedWrite = false;
+        }
     }
 
     private static void syncToMetaFile(
@@ -412,9 +435,13 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
 
     protected void clear(boolean truncate, byte truncateMode) {
         reset();
-        if (metaMem != null) {
-            metaMem.close(truncate, truncateMode);
+        // Free roMetaMem even if metaMem.close throws, so a fault on one metadata memory cannot leak the other.
+        try {
+            if (metaMem != null) {
+                metaMem.close(truncate, truncateMode);
+            }
+        } finally {
+            Misc.free(roMetaMem);
         }
-        Misc.free(roMetaMem);
     }
 }

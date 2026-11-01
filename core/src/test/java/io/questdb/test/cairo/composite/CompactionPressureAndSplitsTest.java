@@ -83,6 +83,9 @@ public class CompactionPressureAndSplitsTest extends AbstractCairoTest {
                 prefixRows = tx.getPartitionSize(0);
             }
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MAX_SPLITS, 4);
+            // Under a save point the squash copies a plain target instead of appending to it, which this write
+            // count would see; a save point past the siblings lets it append in place.
+            releaseSavePointHolds("x");
             final long writtenBefore = node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
             appendNextDay();
             Assert.assertEquals(sourceRows + 1,

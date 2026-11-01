@@ -125,6 +125,11 @@ public class CompositePartitionMergeAppendDisabledTest extends AbstractCairoTest
             }
             drainWalQueue();
             Assert.assertFalse("the replace range suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+            // MAKE-PLAIN shortens the day's files, so it waits for a save point past the replace; the commit into
+            // the later day (dropped below) then runs it.
+            releaseSavePointHolds("x");
+            execute("INSERT INTO x (i, ts) VALUES (9_999, '2024-01-02T12:00:00.000000Z')");
+            drainWalQueue();
             Assert.assertFalse("MAKE-PLAIN did not run, the fixture proves nothing", isComposite("2024-01-01"));
             Assert.assertEquals("MAKE-PLAIN did not trim the day", 100, rowsOfDay("2024-01-01"));
             // No surviving row carries v either way, so a top of 100 and a top of 200 read the same - the

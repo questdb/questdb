@@ -332,19 +332,26 @@ qdbr toolchain; the script prints the command when it is missing.
     - Good: `IPv4 filters with < or > no longer return wrong rows. Fixes #NNN`
     - Avoid: `Use unsigned comparison for IPv4 in the JIT backend`
   - Measure effects against the base branch: fixing a bug the PR itself
-    introduced is not an effect.
+    introduced is not an effect. When new commits land, rewrite the bullets
+    from the branch's net effects; never append to the body.
   - Give each regression, tradeoff and breaking change its own bullet, as
     plainly as the gains, and each slowdown its measured size, such as
-    `up to 3x slower`. Don't sell: no superlatives, no bold numbers.
+    `up to 3x slower`. Don't sell: no superlatives, no bold numbers. Known
+    bugs the PR ships with are the exception (below).
   - A change made for speed, or one on a data path, adds its JMH results as a
     table: case, before, after, with the slower cases included.
   - Link tandem PRs on one line.
-  - Nothing else: no test plan, coverage numbers, fuzz seeds, investigation
-    output (probe results, "fails without the fix" evidence, lists of covered
-    shapes or configs, "Not changed" lists), file walkthrough or design
-    narrative. The code and its tests carry those.
-  - When new commits land, rewrite the body for the net effects. Never append
-    to it.
+  - Nothing else: no test plan, coverage numbers, fuzz seeds, file walkthrough,
+    design narrative or investigation output (probe results, "fails without
+    the fix" evidence, lists of covered shapes or configs, "Not changed"
+    lists). The code and its tests carry those.
+- **A PR may ship with known bugs whose risk is low.** `review-pr` rates each
+  bug a change introduces by what a user who hits it loses and how likely
+  users are to hit it (`.pi/agents/risk-assessor.md`); only Critical and High
+  risk hold up the PR. File each Medium or Low risk bug in
+  `questdb/questdb-enterprise` with the labels `bug` and `deferred`, and keep
+  it out of the PR body, comments and every other public place. A tradeoff
+  the PR makes on purpose, such as a measured slowdown, still gets its bullet.
 - Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
   50 chars) and descriptive in plain English.
 - When committing, always include a full long-form description in the commit
@@ -385,9 +392,9 @@ qdbr toolchain; the script prints the command when it is missing.
 
 ### Prerequisites
 
-- Java 11+ (64-bit)
+- Java 11+ (64-bit) with `JAVA_HOME` set
 - Maven 3
-- `JAVA_HOME` environment variable set
+- Rust toolchain (version pinned in `core/rust/qdbr/rust-toolchain.toml`)
 
 ### Building
 
@@ -521,7 +528,7 @@ instead.
 cd core
 cmake -B build/release -DCMAKE_BUILD_TYPE=Release
 cmake --build build/release --config Release
-# Artifacts go to core/src/main/resources/io/questdb/bin/
+# Artifacts go to core/target/classes/io/questdb/bin-local/
 ```
 
 ## Architecture

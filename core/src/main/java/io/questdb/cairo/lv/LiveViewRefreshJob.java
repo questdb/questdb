@@ -6815,6 +6815,35 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Takes the idle save point the WAL purge job asked for: an apply of the live view's own WAL with
+     * nothing to apply, which consumes the request and takes the save point through the apply job's
+     * usual gates. Leaves a view with committed but unapplied WAL to the apply retry, whose apply
+     * consumes the request too. Reports no work, so a request the apply cannot consume (the writer
+     * is busy) does not make the worker spin.
+     */
+    private void takeIdleSavePoint(LiveViewInstance instance) {
+        if (!instance.tryLockForRefresh()) {
+            return;
+        }
+        try {
+            final TableToken token = instance.getLiveViewToken();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            if (instance.isStub()
+                    || instance.isDropped()
+                    || instance.isInvalid()
+                    || instance.isFreezeArmed()
+                    || tracker.getSeqTxn() > tracker.getWriterTxn()) {
+                return;
+            }
+            applyJob.applyWalDirect(token, Job.RUNNING_STATUS);
+        } finally {
+            instance.unlockAfterRefresh();
+            instance.tryCloseIfDropped();
+            instance.tryFreeRuntimeStateIfInvalid();
+        }
+    }
+
+    /**
      * Appends this cycle's staging rows onto the <em>published</em> slot in place, skipping the
      * retained-row copy and index swap the slow path performs. Returns {@code false} when a
      * reader pins that slot, leaving the tier byte-identical to its prior state.
@@ -8357,6 +8386,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (hasPendingLiveViewApply(instance)) {
                 didWork |= retryPendingLiveViewApply(instance);
             }
+            // The WAL purge job asked for an idle save point (WalPurgeJob.requestIdleSavePoint). The
+            // global apply job drops live-view notifications, so this worker, which owns the view's
+            // writer, runs the apply that takes it.
+            if (engine.getTableSequencerAPI().getTxnTracker(instance.getLiveViewToken()).isIdleEpochRequested()) {
+                takeIdleSavePoint(instance);
+            }
             long head = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
             // Timeline recovery runs inside refreshInstance on the first cycle
             // of every ACTIVE view, even when there are no new base commits.
@@ -9165,7 +9200,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     if (flushDue && instance.getRefreshedUpToSeqTxn() > instance.getLastProcessedSeqTxn()) {
                         attempted = true;
                         flushLead(instance, getWindowFactory(instance), instance.getRefreshedUpToSeqTxn(), 0);
-                        instance.setLastFlushTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
+                        // nowUs, not a fresh clock read: see the coupled branch below.
+                        instance.setLastFlushTimeUs(nowUs);
                     }
                 } else {
                     long lastSeqTxn = instance.getLastProcessedSeqTxn();
@@ -9218,7 +9254,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         } else {
                             incrementalRefresh(instance, lastSeqTxn, seqTxn, false);
                         }
-                        instance.setLastFlushTimeUs(engine.getConfiguration().getMicrosecondClock().getTicks());
+                        // Stamp the cadence with nowUs, the instant this cycle read the clock and
+                        // found the flush due, not with a fresh read taken after the drain. A
+                        // fresh read charges the cadence for the drain's own duration, so the interval
+                        // drifts by the work it schedules around. With a clock that jumps during the
+                        // drain and then stands still, a fresh read would also keep
+                        // nowUs - lastFlushUs at 0, and the view would never flush again.
+                        instance.setLastFlushTimeUs(nowUs);
                     }
                 }
                 if (attempted) {

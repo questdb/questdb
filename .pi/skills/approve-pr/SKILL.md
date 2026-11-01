@@ -14,24 +14,25 @@ the review you just produced and posts it as an approving review. Do not
 re-review here — post the existing review.
 
 Actions performed, in order:
-1. Post the review as the PR's review body (this is the "PR comment").
-2. Approve the PR.
-3. Add the `QUEUED FOR MERGE` label.
+1. File the review's Deferred findings as private issues.
+2. Post the review as the PR's review body (this is the "PR comment").
+3. Approve the PR.
+4. Add the `QUEUED FOR MERGE` label.
 
 ## Step 0: Confirm the review actually clears the bar
 
 Only approve if the most recent `review-pr` report in this conversation has a
-verdict of **approve** with ZERO open Critical findings and ZERO open
-correctness / performance / IO / resource findings (per the review-pr
-correctness & performance gate). If any such finding is still open, do NOT
+verdict of **approve** with ZERO open Blocking findings (per the review-pr
+correctness gate). Deferred findings don't block: the PR ships with them, and
+Step 2b files them privately. If a Blocking finding is still open, do NOT
 approve — tell the user the PR does not meet the bar and suggest `reject-pr`.
 
 - If no review report exists in this conversation, STOP and tell the user to run
   `/skill:review-pr` first — do not approve unreviewed code.
-- Post the review verbatim; do not shorten or rewrite it. The one exception:
-  leave out each Adjacent draft about a crash or hang that hostile input
-  triggers, which CLAUDE.md keeps out of public view, and tell the user you
-  did.
+- Post the review verbatim; do not shorten or rewrite it. The exceptions are
+  what CLAUDE.md keeps out of public view: leave out the Deferred section and
+  each Adjacent draft about a crash or hang that hostile input triggers, and
+  tell the user you did.
 
 ## Step 1: Detect the PR
 
@@ -56,7 +57,29 @@ then proceed.
 Write the review body to `/tmp/approve-pr-$PR.md` using the `write` tool (never
 inline it into a shell command — reviews contain backticks, quotes, and `$` that
 break shell quoting). The body is the full verbatim `review-pr` report, minus
-the drafts Step 0 leaves out.
+what Step 0 leaves out.
+
+## Step 2b: File the Deferred findings
+
+Approving ships the PR with its Deferred findings, so file each one first, in
+`questdb/questdb-enterprise` and nowhere else, as review-pr's Deferred section
+describes:
+
+```bash
+gh repo view questdb/questdb-enterprise --json nameWithOwner || echo "NO ACCESS"
+gh label list --repo questdb/questdb-enterprise --search deferred --json name -q '.[].name' | grep -qx deferred \
+  || gh label create deferred --repo questdb/questdb-enterprise \
+       --description "Known bug a PR shipped with after a risk rating"
+gh issue list --repo questdb/questdb-enterprise --state all --search "<key words>" --limit 5
+gh issue create --repo questdb/questdb-enterprise --title "<the draft's Problem line>" \
+  --label bug --label deferred --body-file /tmp/approve-pr-$PR-<ID>.md
+```
+
+Write each body to its file with the `write` tool: the draft, opening with its
+Risk line. Label a missing test `deferred` alone. When an issue already covers
+a draft, record that issue instead of filing another. Without access, print the
+drafts for the user and file nothing. Never mention these issues in the review
+you post.
 
 ## Step 3: Post the approval
 
@@ -75,6 +98,7 @@ Notes:
 ## Step 4: Confirm
 
 Report back in one or two lines:
+- The Deferred issues filed or matched (links), or the drafts printed instead.
 - PR number + title, "approved" posted (or the fallback used).
 - Whether the `QUEUED FOR MERGE` label was added.
 - The PR URL.
