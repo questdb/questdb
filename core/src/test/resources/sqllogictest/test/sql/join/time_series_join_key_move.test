@@ -1,0 +1,158 @@
+# Time-series joins after the join order starts at another table than the FROM table. The FROM
+# table t is CROSS joined with p, and i joins on keys of v and t, so the optimiser moves i.k = t.k
+# onto t, which then waits for i, and the cheapest order starts at p. An ASOF or LT JOIN reads the
+# designated timestamp of the first table that runs, so it must still read t.ts, not p.ts. The keys
+# hold NULLs, which QuestDB matches to NULL in join keys. The expected rows come from DuckDB, with
+# every = of the INNER joins rewritten to IS NOT DISTINCT FROM, and the ASOF keys compared through a
+# sentinel for NULL, as DuckDB ASOF joins do not match NULL keys. ASOF matches t.ts >= q.ts and LT
+# matches t.ts > q.ts. The tables are not partitioned, so they are not WAL tables and inserted rows
+# are visible at once.
+
+statement ok
+DROP TABLE IF EXISTS t
+
+statement ok
+DROP TABLE IF EXISTS p
+
+statement ok
+DROP TABLE IF EXISTS v
+
+statement ok
+DROP TABLE IF EXISTS i
+
+statement ok
+DROP TABLE IF EXISTS q
+
+statement ok
+CREATE TABLE t (rn INT, k INT, px INT, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE p (rn INT, x INT, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE v (rn INT, x INT, y INT, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE i (rn INT, y INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+CREATE TABLE q (rn INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)
+
+statement ok
+INSERT INTO t VALUES (1, 1, 10, '2024-01-01T00:00:10.000000Z'), (2, 2, 20, '2024-01-01T00:00:20.000000Z'), (3, NULL, 30, '2024-01-01T00:00:30.000000Z'), (4, 1, 40, '2024-01-01T00:00:40.000000Z'), (5, 3, 50, '2024-01-01T00:00:50.000000Z'), (6, 2, 60, '2024-01-01T00:01:00.000000Z')
+
+statement ok
+INSERT INTO p VALUES (1, 7, '2024-01-01T00:00:01.000000Z'), (2, 8, '2024-01-01T00:00:02.000000Z'), (3, NULL, '2024-01-01T00:00:03.000000Z')
+
+statement ok
+INSERT INTO v VALUES (1, 7, 70, '2024-01-01T00:00:01.000000Z'), (2, 8, 80, '2024-01-01T00:00:02.000000Z'), (3, NULL, NULL, '2024-01-01T00:00:03.000000Z')
+
+statement ok
+INSERT INTO i VALUES (1, 70, 1, '2024-01-01T00:00:01.000000Z'), (2, 80, 2, '2024-01-01T00:00:02.000000Z'), (3, NULL, NULL, '2024-01-01T00:00:03.000000Z'), (4, 70, 3, '2024-01-01T00:00:04.000000Z')
+
+statement ok
+INSERT INTO q VALUES (1, 1, '2024-01-01T00:00:00.000000Z'), (2, 2, '2024-01-01T00:00:00.500000Z'), (3, NULL, '2024-01-01T00:00:01.500000Z'), (4, 1, '2024-01-01T00:00:09.000000Z'), (5, 2, '2024-01-01T00:00:19.000000Z'), (6, NULL, '2024-01-01T00:00:29.000000Z'), (7, 1, '2024-01-01T00:00:35.000000Z'), (8, 1, '2024-01-01T00:00:40.000000Z'), (9, 3, '2024-01-01T00:00:45.000000Z'), (10, 1, '2024-01-01T00:00:48.000000Z'), (11, 3, '2024-01-01T00:00:55.000000Z'), (12, 2, '2024-01-01T00:00:59.000000Z')
+
+# ASOF JOIN on t.k, after the key moves onto t
+query III rowsort
+SELECT t.rn tr, p.rn pr, q.rn qr FROM t CROSS JOIN p JOIN v ON v.x = p.x JOIN i ON i.y = v.y AND i.k = t.k ASOF JOIN q ON (q.k = t.k)
+----
+1	1	4
+2	2	5
+3	3	6
+4	1	8
+5	1	9
+6	2	12
+
+# ASOF JOIN without a key
+query III rowsort
+SELECT t.rn tr, p.rn pr, q.rn qr FROM t CROSS JOIN p JOIN v ON v.x = p.x JOIN i ON i.y = v.y AND i.k = t.k ASOF JOIN q
+----
+1	1	4
+2	2	5
+3	3	6
+4	1	8
+5	1	10
+6	2	12
+
+# LT JOIN on t.k
+query III rowsort
+SELECT t.rn tr, p.rn pr, q.rn qr FROM t CROSS JOIN p JOIN v ON v.x = p.x JOIN i ON i.y = v.y AND i.k = t.k LT JOIN q ON (q.k = t.k)
+----
+1	1	4
+2	2	5
+3	3	6
+4	1	7
+5	1	9
+6	2	12
+
+# LT JOIN without a key
+query III rowsort
+SELECT t.rn tr, p.rn pr, q.rn qr FROM t CROSS JOIN p JOIN v ON v.x = p.x JOIN i ON i.y = v.y AND i.k = t.k LT JOIN q
+----
+1	1	4
+2	2	5
+3	3	6
+4	1	7
+5	1	10
+6	2	12
+
+# ASOF JOIN keyed on the table whose key moves onto t
+query III rowsort
+SELECT t.rn tr, i.rn ir, q.rn qr FROM t CROSS JOIN p JOIN v ON v.x = p.x JOIN i ON i.y = v.y AND i.k = t.k ASOF JOIN q ON (q.k = i.k)
+----
+1	1	4
+2	2	5
+3	3	6
+4	1	8
+5	4	9
+6	2	12
+
+# the same keys in WHERE
+query III rowsort
+SELECT t.rn tr, p.rn pr, q.rn qr FROM t, p, v, i ASOF JOIN q ON (q.k = t.k) WHERE v.x = p.x AND i.y = v.y AND i.k = t.k
+----
+1	1	4
+2	2	5
+3	3	6
+4	1	8
+5	1	9
+6	2	12
+
+# an ASOF JOIN and an LT JOIN
+query III rowsort
+SELECT t.rn tr, q.rn qr, q2.rn q2r FROM t CROSS JOIN p JOIN v ON v.x = p.x JOIN i ON i.y = v.y AND i.k = t.k ASOF JOIN q ON (q.k = t.k) LT JOIN q q2 ON (q2.k = t.k)
+----
+1	4	4
+2	5	5
+3	6	6
+4	8	7
+5	9	9
+6	12	12
+
+# a filter on the FROM table
+query III rowsort
+SELECT t.rn tr, p.rn pr, q.rn qr FROM t CROSS JOIN p JOIN v ON v.x = p.x JOIN i ON i.y = v.y AND i.k = t.k ASOF JOIN q ON (q.k = t.k) WHERE t.px > 15
+----
+2	2	5
+3	3	6
+4	1	8
+5	1	9
+6	2	12
+
+# an INNER join after the ASOF JOIN
+query III rowsort
+SELECT t.rn tr, q.rn qr, i2.rn i2r FROM t CROSS JOIN p JOIN v ON v.x = p.x JOIN i ON i.y = v.y AND i.k = t.k ASOF JOIN q ON (q.k = t.k) JOIN i i2 ON i2.k = q.k AND i2.y = v.y
+----
+1	4	1
+2	5	2
+3	6	3
+4	8	1
+5	9	4
+6	12	2
+
+# an aggregate over the ASOF JOIN
+query II rowsort
+SELECT count(*) c, sum(q.rn) s FROM t CROSS JOIN p JOIN v ON v.x = p.x JOIN i ON i.y = v.y AND i.k = t.k ASOF JOIN q ON (q.k = t.k)
+----
+6	44

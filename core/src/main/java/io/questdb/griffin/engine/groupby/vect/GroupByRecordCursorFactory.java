@@ -102,6 +102,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final int workerCount;
     private RecordCursorFactory base;
     private ObjList<PageFrameMemoryPool> frameMemoryPools; // per worker pools
+    // set when getSharedCursor() opened the owner state before the primary getCursor() of the same execution
+    private boolean isOwnerOpenedBySharedCursor;
     private long[] pRosti;
     private ObjList<RostiSharedCursor> sharedCursors;
     private ObjList<VectorAggregateFunction> vafList;
@@ -231,28 +233,17 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        aggregateError.clear();
-        oomCounter.set(0);
-        // clear maps
-        for (int i = 0, n = pRosti.length; i < n; i++) {
-            raf.clear(pRosti[i]);
+        if (isOwnerOpenedBySharedCursor) {
+            // A shared consumer opened before this primary in the current execution and already
+            // opened the owner state, which its symbol tables point into. Hand it over as is.
+            isOwnerOpenedBySharedCursor = false;
+            return cursor;
         }
-        // clear state of aggregate functions
-        for (int i = 0, n = vafList.size(); i < n; i++) {
-            vafList.getQuick(i).clear();
-        }
-        final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
-        return cursor.of(
-                base.getMetadata(),
-                pageFrameCursor,
-                executionContext.getMessageBus(),
-                executionContext.getCircuitBreaker(),
-                executionContext.getMemoryTracker()
-        );
+        return openOwner(executionContext);
     }
 
     @Override
-    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) {
+    public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
         if (sharedCursors == null) {
             sharedCursors = new ObjList<>();
         }
@@ -261,6 +252,14 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         if (shared == null) {
             shared = new RostiSharedCursor();
             sharedCursors.extendAndSet(idx, shared);
+        }
+        // The shared cursor serves the symbol tables of the owner's page frame cursor, and its
+        // parent reads them while it opens, possibly before the primary opens (a hash join opens its
+        // build side first). The owner state must therefore exist now: open it here when the primary
+        // has not.
+        if (cursor.frameCursor == null) {
+            openOwner(executionContext);
+            isOwnerOpenedBySharedCursor = true;
         }
         shared.of();
         return shared;
@@ -368,6 +367,27 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             mergedCount = -doneLatch.getCount();
         }
         return reclaimed;
+    }
+
+    private RostiRecordCursor openOwner(SqlExecutionContext executionContext) throws SqlException {
+        aggregateError.clear();
+        oomCounter.set(0);
+        // clear maps
+        for (int i = 0, n = pRosti.length; i < n; i++) {
+            raf.clear(pRosti[i]);
+        }
+        // clear state of aggregate functions
+        for (int i = 0, n = vafList.size(); i < n; i++) {
+            vafList.getQuick(i).clear();
+        }
+        final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
+        return cursor.of(
+                base.getMetadata(),
+                pageFrameCursor,
+                executionContext.getMessageBus(),
+                executionContext.getCircuitBreaker(),
+                executionContext.getMemoryTracker()
+        );
     }
 
     private void resetRostiMemorySize() {

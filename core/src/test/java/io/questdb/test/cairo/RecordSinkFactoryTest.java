@@ -51,6 +51,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.CharSink;
@@ -73,6 +74,19 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             RecordSinkFactory.SINK_TYPE_SINGLE_METHOD,
             RecordSinkFactory.SINK_TYPE_CHUNKED,
             RecordSinkFactory.SINK_TYPE_LOOPING
+    };
+    // NULL, 1970-01-01, one microsecond either side of it, the last and the first TIMESTAMP_NS
+    // microsecond, and two values outside the TIMESTAMP_NS range: 9999-12-31T23:59:59.999999Z and
+    // the largest TIMESTAMP
+    private static final long[] TIMESTAMP_AS_NANOS_VALUES = {
+            Numbers.LONG_NULL,
+            0,
+            1,
+            -1,
+            9_223_372_036_854_775L,
+            -9_223_372_036_854_775L,
+            253_402_300_799_999_999L,
+            Long.MAX_VALUE
     };
 
     @Test
@@ -1263,6 +1277,86 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         }
     }
 
+    @Test
+    public void testTimestampAsNanosValueClasses() {
+        // A join key copier writes a TIMESTAMP column in nanoseconds when the key compares it with a
+        // TIMESTAMP_NS column. NULL must stay NULL: Long.MIN_VALUE * 1000 overflows to 0, the value of
+        // 1970-01-01. Other values convert as before, and a value outside the TIMESTAMP_NS range wraps
+        // instead of failing the query. Column 1 takes two key positions, as a column of two keys does,
+        // and column 2 is not converted.
+        final ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+        columnTypes.add(ColumnType.TIMESTAMP);
+        columnTypes.add(ColumnType.TIMESTAMP);
+        final ListColumnFilter columnFilter = new ListColumnFilter();
+        columnFilter.add(1);
+        columnFilter.add(2);
+        columnFilter.add(1);
+        final BitSet writeTimestampAsNanos = new BitSet();
+        writeTimestampAsNanos.set(0);
+        // a forced chunked copier of three columns is a single-method one, see
+        // testTimestampAsNanosValueClassesAcrossChunks() for the chunked copier
+        for (int sinkType : new int[]{RecordSinkFactory.SINK_TYPE_SINGLE_METHOD, RecordSinkFactory.SINK_TYPE_LOOPING}) {
+            final CairoConfiguration sinkTypeConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public int getCopierType() {
+                    return sinkType;
+                }
+            };
+            final RecordSink sink = RecordSinkFactory.getInstance(
+                    sinkTypeConfiguration,
+                    new BytecodeAssembler(),
+                    columnTypes,
+                    columnFilter,
+                    null,
+                    null,
+                    writeTimestampAsNanos
+            );
+            Assert.assertEquals(sinkType == RecordSinkFactory.SINK_TYPE_LOOPING, sink instanceof io.questdb.cairo.LoopingRecordSink);
+            for (long value : TIMESTAMP_AS_NANOS_VALUES) {
+                final long nanos = value == Numbers.LONG_NULL ? Numbers.LONG_NULL : value * 1000;
+                final LongList written = copyTimestamps(sink, value);
+                final String message = "sinkType=" + sinkType + ", value=" + value;
+                Assert.assertEquals(message, 3, written.size());
+                Assert.assertEquals(message, nanos, written.getQuick(0));
+                Assert.assertEquals(message, value, written.getQuick(1));
+                Assert.assertEquals(message, nanos, written.getQuick(2));
+            }
+        }
+    }
+
+    @Test
+    public void testTimestampAsNanosValueClassesAcrossChunks() {
+        // 600 converted TIMESTAMP columns exceed one generated method, so the copier splits them across
+        // two chunk methods, and each of them must convert and keep NULL
+        final int columnCount = 600;
+        final ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+        final ListColumnFilter columnFilter = new ListColumnFilter();
+        final BitSet writeTimestampAsNanos = new BitSet();
+        for (int i = 0; i < columnCount; i++) {
+            columnTypes.add(ColumnType.TIMESTAMP);
+            columnFilter.add(i + 1);
+            writeTimestampAsNanos.set(i);
+        }
+        final RecordSink sink = RecordSinkFactory.getInstance(
+                configuration,
+                new BytecodeAssembler(),
+                columnTypes,
+                columnFilter,
+                null,
+                null,
+                writeTimestampAsNanos
+        );
+        Assert.assertFalse(sink instanceof io.questdb.cairo.LoopingRecordSink);
+        for (long value : TIMESTAMP_AS_NANOS_VALUES) {
+            final long nanos = value == Numbers.LONG_NULL ? Numbers.LONG_NULL : value * 1000;
+            final LongList written = copyTimestamps(sink, value);
+            Assert.assertEquals(columnCount, written.size());
+            for (int i = 0; i < columnCount; i++) {
+                Assert.assertEquals("column=" + i + ", value=" + value, nanos, written.getQuick(i));
+            }
+        }
+    }
+
     @NotNull
     private static ArrayColumnTypes allArrayColumnTypes() {
         ArrayColumnTypes columnTypes = new ArrayColumnTypes();
@@ -1351,6 +1445,26 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
                 return copierType;
             }
         };
+    }
+
+    // returns the values that the sink writes for a record whose TIMESTAMP columns all hold value
+    private static LongList copyTimestamps(RecordSink sink, long value) {
+        final LongList written = new LongList();
+        sink.copy(
+                new Record() {
+                    @Override
+                    public long getTimestamp(int col) {
+                        return value;
+                    }
+                },
+                new TestRecordSink() {
+                    @Override
+                    public void putTimestamp(long timestamp) {
+                        written.add(timestamp);
+                    }
+                }
+        );
+        return written;
     }
 
     private static void prepareExpectedIndexesAndTypes(

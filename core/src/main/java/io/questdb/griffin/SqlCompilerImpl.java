@@ -600,6 +600,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @TestOnly
+    public long getKeyMoveEdgeReadsForTesting() {
+        return optimiser.getKeyMoveEdgeReadsForTesting();
+    }
+
+    @TestOnly
+    public long getNullRejectionChecksForTesting() {
+        return optimiser.getNullRejectionChecksForTesting();
+    }
+
+    @TestOnly
     public int getWhereClauseParserPoolSizeForTesting() {
         return codeGenerator.getWhereClauseParserPoolSizeForTesting();
     }

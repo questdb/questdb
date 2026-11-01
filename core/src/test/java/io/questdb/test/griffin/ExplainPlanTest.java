@@ -4213,13 +4213,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("create table a ( i int, s1 string)");
             execute("create table b ( i int, s2 string)");
 
+            // b.i < a.i reads the master key a.i, which the join equates with b.i, so the join evaluates it on
+            // b.i; a.s1 = b.s2 reads a master column that is no key and stays after the join
             assertQuery("select s1, s2 from (select a.s1, b.s2, b.i, a.i  from a join b on i) where i < i1 and s1 = s2")
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Filter filter: (b.i<a.i and a.s1=b.s2)
+                                Filter filter: a.s1=b.s2
                                     Hash Join Light
                                       condition: b.i=a.i
+                                      filter: b.i<b.i
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: a
@@ -5887,6 +5890,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 String joinType = joinTypes[i];
                 String factoryType = joinFactoryTypes[i];
                 // RIGHT and FULL OUTER NULL-extend T1, so a T1 predicate stays a post-join filter.
+                // T1.value=1 is false on the NULL row of T1, so a copy of it also filters the scan of T1.
                 boolean isLeftNulled = "RIGHT".equals(joinType) || "FULL".equals(joinType);
                 // The three-input queries below keep the ordinary plan; the two parent-model
                 // ones are two-input joins that the fused hash join GROUP BY takes, except for the
@@ -5898,7 +5902,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 assertQuery("SELECT count(1) " + "FROM tab as T1 " + joinType + " JOIN tab as T2 ON T1.created=T2.created " + "JOIN tab as T3 ON T2.created=T3.created " + "WHERE T1.value=1")
                         .noLeakCheck()
                         .assertsPlan(isLeftNulled
-                                ? "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: T1.value=1\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n"
+                                ? "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        Filter filter: T1.value=1\n" + "            " + factoryType + "\n" + "              condition: T2.created=T1.created\n" + "                Async JIT Filter workers: 1\n" + "                  filter: value=1\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "                Hash\n" + "                    PageFrame\n" + "                        Row forward scan\n" + "                        Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n"
                                 : "Count\n" + "    Hash Join Light\n" + "      condition: T3.created=T2.created\n" + "        " + factoryType + "\n" + "          condition: T2.created=T1.created\n" + "            Async JIT Filter workers: 1\n" + "              filter: value=1\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "            Hash\n" + "                PageFrame\n" + "                    Row forward scan\n" + "                    Frame forward scan on: tab\n" + "        Hash\n" + "            PageFrame\n" + "                Row forward scan\n" + "                Frame forward scan on: tab\n");
 
                 // A RIGHT join preserves T2, so the predicate narrows T2's scan to an interval.

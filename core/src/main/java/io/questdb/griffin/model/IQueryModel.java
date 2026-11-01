@@ -512,11 +512,23 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
      */
     ExpressionNode getLateralCountCoalesceGuard();
 
+    // True for a LEFT join without join keys that may run after the RIGHT and FULL joins with join keys
+    // written after it, see SqlOptimiser.constrainRightAndFullJoinsAfterPrefix(). Run there, it returns a
+    // row that such a join NULL-extends once, with NULL in its own columns, see OuterJoinNullCheck.
+    boolean isMovableAfterOuterJoins();
+
     boolean isNestedModelIsSubQuery();
 
     boolean isOptimisable();
 
     boolean isOrderDescendingByDesignatedTimestampOnly();
+
+    // True for the join that LateralJoinRewriter inserts for the outer references of a LATERAL sub-query
+    // when it keeps that join ahead of a RIGHT/FULL join because an ON clause reads the outer row, and the
+    // level joins no correlated sub-query. The rewriter then checks that a filter drops the rows that each
+    // RIGHT/FULL join after it NULL-extends, so the order as written is exact, see
+    // SqlOptimiser.hasUncheckedLateralOuterRefBeforeRightOrFullJoin().
+    boolean isOuterRefJoinChecked();
 
     boolean isOuterRefWildcardExcluded();
 
@@ -642,6 +654,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     void setModelType(int modelType);
 
+    void setMovableAfterOuterJoins(boolean movableAfterOuterJoins);
+
     void setNestedModel(IQueryModel nestedModel);
 
     void setNestedModelIsSubQuery(boolean nestedModelIsSubQuery);
@@ -657,6 +671,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setOriginatingViewNameExpr(ExpressionNode originatingViewNameExpr);
 
     void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause);
+
+    void setOuterRefJoinChecked(boolean isOuterRefJoinChecked);
 
     void setOuterRefWildcardExcluded(boolean isOuterRefWildcardExcluded);
 

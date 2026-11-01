@@ -204,7 +204,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
                         bwdScanMinGap,
                         bwdScanSwitchFactor,
                         state.getFilter(),
-                        state.getAsOfJoinKeyTypes()
+                        state.getAsOfJoinKeyTypes(),
+                        state.getSharedKeyCheckTemplate()
                 ));
             }
             // Per-worker flat lists use worker-major order so that element at
@@ -221,7 +222,8 @@ public abstract class BaseAsyncMultiHorizonJoinAtom implements StatefulAtom, Per
                             bwdScanMinGap,
                             bwdScanSwitchFactor,
                             state.getPerWorkerFilters() == null ? state.getFilter() : state.getPerWorkerFilters().getQuick(w),
-                            state.getAsOfJoinKeyTypes()
+                            state.getAsOfJoinKeyTypes(),
+                            state.getSharedKeyCheckTemplate()
                     ));
                 }
             }

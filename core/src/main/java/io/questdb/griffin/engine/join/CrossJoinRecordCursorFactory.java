@@ -82,6 +82,12 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         return false;
     }
 
+    // Skips the master rows whose key the INNER hash join that reads this join's rows cannot match, see
+    // SqlCodeGenerator.generateJoins().
+    public void setJoinKeyFilter(JoinKeyFilter filter) {
+        cursor.keyFilterGate.setFilter(filter);
+    }
+
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return masterFactory.supportsUpdateRowId(tableToken);
@@ -90,6 +96,9 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Cross Join");
+        if (cursor.keyFilterGate.hasFilter()) {
+            sink.attr("joinKeyCheck").val(true);
+        }
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -101,17 +110,23 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
     }
 
     private static class CrossJoinRecordCursor extends AbstractJoinCursor {
+        private final JoinKeyFilterGate keyFilterGate = new JoinKeyFilterGate();
         private final JoinRecord record;
         private final RecordCursor.Counter tmpCounter;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean isKnownEmpty;
         private boolean isMasterHasNextPending;
         private boolean isMasterSizeCalculated;
+        private boolean isSlaveEmpty;
         private boolean isSlavePartialSizeCalculated;
         private boolean isSlaveReset;
         private boolean isSlaveSizeCalculated;
         private boolean masterHasNext;
         private long masterSize;
         private long slavePartialSize;
+        // the slave rows of the current master row so far, which JoinKeyFilterGate takes as the slave's row
+        // count once a scan finishes
+        private long slaveRowsInPass;
         private long slaveSize;
 
         public CrossJoinRecordCursor(int columnSplit) {
@@ -122,7 +137,14 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
-            if (!isMasterHasNextPending && !masterHasNext) {
+            if (isKnownEmpty || (!isMasterHasNextPending && !masterHasNext)) {
+                return;
+            }
+            if (keyFilterGate.hasFilter()) {
+                // the master rows that the filter drops do not count, so count the rows themselves
+                while (hasNext()) {
+                    counter.inc();
+                }
                 return;
             }
 
@@ -171,8 +193,10 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         public boolean hasNext() {
             while (true) {
                 if (isMasterHasNextPending) {
-                    masterHasNext = masterCursor.hasNext();
+                    // no master row has a slave row to join with, so the master goes unread
+                    masterHasNext = !isSlaveEmpty && nextMasterRow();
                     isMasterHasNextPending = false;
+                    slaveRowsInPass = 0;
                 }
 
                 if (!masterHasNext) {
@@ -181,12 +205,21 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
 
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (slaveCursor.hasNext()) {
+                    slaveRowsInPass++;
                     return true;
                 }
 
+                if (keyFilterGate.isCountingSlaveRows()) {
+                    keyFilterGate.setSlaveRowCount(slaveRowsInPass);
+                }
                 slaveCursor.toTop();
                 isMasterHasNextPending = true;
             }
+        }
+
+        @Override
+        public boolean isKnownEmpty() {
+            return isKnownEmpty;
         }
 
         @Override
@@ -196,6 +229,9 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
 
         @Override
         public long size() {
+            if (keyFilterGate.hasFilter()) {
+                return -1;
+            }
             long sizeA = masterCursor.size();
             long sizeB = slaveCursor.size();
             if (sizeA == -1 || sizeB == -1) {
@@ -208,6 +244,13 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         @Override
         public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             if (rowCount.get() == 0) {
+                return;
+            }
+            if (keyFilterGate.hasFilter()) {
+                // the master rows that the filter drops do not count, so skip the rows themselves
+                while (rowCount.get() > 0 && hasNext()) {
+                    rowCount.dec();
+                }
                 return;
             }
 
@@ -278,11 +321,27 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
             slavePartialSize = 0;
         }
 
+        private boolean nextMasterRow() {
+            while (masterCursor.hasNext()) {
+                if (!keyFilterGate.isRowDropped(record)) {
+                    return true;
+                }
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            }
+            return false;
+        }
+
         void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
             isMasterHasNextPending = true;
+            // the cursors of EmptyTableRecordCursorFactory and of a false RuntimeConstGateRecordCursorFactory know
+            // that they have no rows, as do the joins that they empty, see RecordCursor.isKnownEmpty()
+            isSlaveEmpty = slaveCursor.isKnownEmpty();
+            isKnownEmpty = isSlaveEmpty || masterCursor.isKnownEmpty();
+            // not the slave's size: a parent may still be opening its other cursors, see JoinKeyFilterGate
+            keyFilterGate.of(slaveCursor);
             this.circuitBreaker = circuitBreaker;
 
             isSlavePartialSizeCalculated = false;

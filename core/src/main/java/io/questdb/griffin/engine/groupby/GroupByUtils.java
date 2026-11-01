@@ -33,6 +33,7 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -631,6 +632,31 @@ public class GroupByUtils {
         } catch (Throwable th) {
             if (th != primary) {
                 primary.addSuppressed(th);
+            }
+        }
+    }
+
+    /**
+     * Binds the key and virtual functions of a shared consumer of a keyed GROUP BY to the symbol
+     * tables of the owner's base cursor. A shared consumer reads the owner's map through its own
+     * copies of the record functions, see {@link #assembleGroupByFunctions}, and a SYMBOL key copy
+     * ({@link MapSymbolColumn}) resolves values and serves symbol tables only after this binding.
+     * Group-by function copies are skipped: they read the owner's map values and inherit the owner's
+     * state, so initializing them would re-run stateful initialization.
+     * <p>
+     * Call it on every execution, after the owner's base cursor of that execution is open: the
+     * symbol tables belong to that cursor.
+     */
+    public static void initSharedKeyFunctions(
+            ObjList<Function> sharedFunctions,
+            SymbolTableSource ownerSymbolTableSource,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        assert ownerSymbolTableSource != null;
+        for (int i = 0, n = sharedFunctions.size(); i < n; i++) {
+            final Function function = sharedFunctions.getQuick(i);
+            if (function != null && !(function instanceof GroupByFunction)) {
+                function.init(ownerSymbolTableSource, executionContext);
             }
         }
     }

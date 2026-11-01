@@ -139,6 +139,10 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
     private static class NestedLoopFullRecordCursor extends AbstractJoinCursor {
         private final Function filter;
         private final JoinSymbolTableSource filterSymbolTableSource;
+        // Holds the indexes of the slave rows that matched at least one master row. The index is the
+        // position of the row in a pass over the slave cursor. A row id does not identify a slave row:
+        // a join record returns the row id of its master row, so all rows joined to one master row share
+        // an id, and a join record with a NULL-extended master side or a UNION record has no row id.
         private final Map matchIdsMap;
         private final FullOuterJoinRecord record;
         private SqlExecutionCircuitBreaker circuitBreaker;
@@ -146,7 +150,8 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
         private boolean isMatch;
         private boolean isOpen;
         private boolean masterHasNext;
-        private Record slaveRecord;
+        // position of the next slave row in the current pass over the slave cursor
+        private long slaveRowIndex;
 
         public NestedLoopFullRecordCursor(int columnSplit, Function filter, Map matchIdsMap, Record masterNullRecord, Record slaveNullRecord) {
             super(columnSplit);
@@ -185,7 +190,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
                     while (slaveCursor.hasNext()) {
                         circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         MapKey keys = matchIdsMap.withKey();
-                        keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
+                        keys.putLong(slaveRowIndex++);
                         if (keys.findValue() == null) {
                             record.hasMaster(false);
                             return true;
@@ -196,9 +201,10 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
 
                 while (slaveCursor.hasNext()) {
                     circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+                    final long rowIndex = slaveRowIndex++;
                     if (filter.getBool(record)) {
                         MapKey keys = matchIdsMap.withKey();
-                        keys.put(slaveRecord, RecordIdSink.RECORD_ID_SINK);
+                        keys.putLong(rowIndex);
                         keys.createValue();
                         isMatch = true;
                         return true;
@@ -213,6 +219,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
 
                 isMatch = false;
                 slaveCursor.toTop();
+                slaveRowIndex = 0;
                 record.hasSlave(true);
                 isMasterHasNextPending = true;
             }
@@ -232,6 +239,7 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
         public void toTop() {
             masterCursor.toTop();
             slaveCursor.toTop();
+            slaveRowIndex = 0;
             filter.toTop();
             isMatch = false;
             isMasterHasNextPending = true;
@@ -249,8 +257,8 @@ public class NestedLoopFullJoinRecordCursorFactory extends AbstractJoinRecordCur
             // cursors last so an init() throw above leaves them unset for the getCursor() catch.
             filterSymbolTableSource.of(masterCursor, slaveCursor);
             filter.init(filterSymbolTableSource, executionContext);
-            this.slaveRecord = slaveCursor.getRecord();
-            record.of(masterCursor.getRecord(), this.slaveRecord);
+            record.of(masterCursor.getRecord(), slaveCursor.getRecord());
+            slaveRowIndex = 0;
             isMasterHasNextPending = true;
             circuitBreaker = executionContext.getCircuitBreaker();
             this.masterCursor = masterCursor;

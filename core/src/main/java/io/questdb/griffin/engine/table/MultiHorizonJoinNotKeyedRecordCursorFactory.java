@@ -170,6 +170,9 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             if (state.getFilter() != null) {
                 sink.attr("slave filter").val(state.getFilter(), state.getFactory());
             }
+            if (state.hasSharedKeyCheck()) {
+                sink.attr("sharedKeyCheck").val(true);
+            }
             sink.child(state.getFactory());
         }
     }
@@ -293,7 +296,8 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                             bwdScanMinGap,
                             bwdScanSwitchFactor,
                             ss.getFilter(),
-                            ss.getAsOfJoinKeyTypes()
+                            ss.getAsOfJoinKeyTypes(),
+                            ss.getSharedKeyCheckTemplate()
                     ));
                 }
                 this.isOpen = false;

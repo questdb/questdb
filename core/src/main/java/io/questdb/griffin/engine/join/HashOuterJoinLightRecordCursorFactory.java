@@ -51,7 +51,7 @@ import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFactory.outerJoinTypeToString;
 
-public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory implements OuterJoinRecordSource {
 
     private final int columnSplit;
     private final int joinType;
@@ -177,6 +177,12 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
             Misc.free(cursor);
             throw e;
         }
+    }
+
+    // The record of the RIGHT or FULL join's cursor, see OuterJoinNullCheck.
+    @Override
+    public @Nullable Record getOuterJoinRecord() {
+        return cursor != null ? cursor.getRecord() : null;
     }
 
     @Override
@@ -379,6 +385,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
 
     private class HashLeftOuterJoinLightRecordCursor extends AbstractHashOuterJoinLightRecordCursor {
         private final OuterJoinRecord record;
+        private boolean isKnownEmpty;
 
         public HashLeftOuterJoinLightRecordCursor(
                 int columnSplit,
@@ -431,8 +438,20 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         }
 
         @Override
+        public boolean isKnownEmpty() {
+            return isKnownEmpty;
+        }
+
+        @Override
         protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
+            // A LEFT join returns no row without a master row, so a master that knows it has none, see
+            // RecordCursor.isKnownEmpty(), empties the join. The hash table then stays empty, and the cursor
+            // leaves the slave unread.
+            isKnownEmpty = masterCursor.isKnownEmpty();
+            if (isKnownEmpty) {
+                isMapBuilt = true;
+            }
             record.of(masterRecord, slaveRecord);
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(slaveCursor.getRecord());

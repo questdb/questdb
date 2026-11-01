@@ -290,9 +290,54 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
             OpenCountingRecordCursorFactory base = new OpenCountingRecordCursorFactory(select("select * from t"));
             try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false), null)) {
                 try (RecordCursor cursor = gate.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue("a parent may skip the rows of the gate", cursor.isKnownEmpty());
                     Assert.assertFalse("false predicate must yield no rows", cursor.hasNext());
                 }
                 Assert.assertEquals("base must not be opened when the predicate is false", 0, base.openCount);
+            }
+        });
+    }
+
+    @Test
+    public void testFalsePredicateGateCloseFreesOpenBase() throws Exception {
+        // The empty cursor of a gate that opens its base holds the base cursor. When the consumer does not close
+        // that cursor, closing the gate does, and the base cursor releases its table reader.
+        assertMemoryLeak(() -> {
+            createTables();
+            OpenCountingRecordCursorFactory base = new OpenCountingRecordCursorFactory(select("select * from t"));
+            RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false), null, true);
+            try {
+                final RecordCursor cursor = gate.getCursor(sqlExecutionContext);
+                Assert.assertFalse(cursor.hasNext());
+                Assert.assertEquals("the open base cursor holds the table reader", 1, engine.getBusyReaderCount());
+            } finally {
+                gate.close();
+            }
+            Assert.assertEquals("closing the gate must close the base cursor", 0, engine.getBusyReaderCount());
+        });
+    }
+
+    @Test
+    public void testFalsePredicateOpensBaseThatHoldsSharedPrimary() throws Exception {
+        // A base that holds a shared primary opens in every execution, also while the predicate is false, so that
+        // a shared cursor outside the base reads the state of the current execution. The gate reads no row of the
+        // base, and the empty cursor that it returns closes the base cursor.
+        assertMemoryLeak(() -> {
+            createTables();
+            OpenCountingRecordCursorFactory base = new OpenCountingRecordCursorFactory(select("select * from t"));
+            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false), null, true)) {
+                for (int execution = 1; execution < 3; execution++) {
+                    try (RecordCursor cursor = gate.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue("a parent may skip the rows of the gate", cursor.isKnownEmpty());
+                        Assert.assertEquals(0, cursor.size());
+                        Assert.assertFalse(cursor.hasNext());
+                        cursor.toTop();
+                        Assert.assertFalse(cursor.hasNext());
+                        Assert.assertEquals("the open base cursor holds the table reader", 1, engine.getBusyReaderCount());
+                    }
+                    Assert.assertEquals("the base must open once per execution", execution, base.openCount);
+                    Assert.assertEquals("the empty cursor must close the base cursor", 0, engine.getBusyReaderCount());
+                }
             }
         });
     }

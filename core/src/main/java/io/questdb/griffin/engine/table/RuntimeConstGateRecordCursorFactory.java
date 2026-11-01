@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
@@ -63,6 +64,13 @@ import org.jetbrains.annotations.Nullable;
  * </ul>
  * The gate owns both the base factory and the filter and frees each exactly once on close,
  * including on the record-cursor false path where the base cursor was never opened.
+ * <p>
+ * A base that holds a place that reads a shared primary, see
+ * {@link io.questdb.griffin.engine.join.SharedPrimary}, has to open in every execution: the place
+ * that reads the cursor of the primary opens and closes the state that the places outside the base
+ * read, see {@link RecordCursorFactory#getSharedCursor(SqlExecutionContext, int)}. Over such a base
+ * the false record-cursor path opens the base cursor, without reading a row of it, and closes it
+ * with the empty cursor that it returns.
  * <p>
  * The gate also preserves the base's page-frame capability: {@link #supportsPageFrameCursor()}
  * reports the base's value, so a parent parallel/vectorized operator (count/sum aggregation,
@@ -95,15 +103,31 @@ import org.jetbrains.annotations.Nullable;
 public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFactory {
     private RecordCursorFactory base;
     private EmptyPageFrameCursor emptyPageFrameCursor;
+    private EmptyRecordCursor emptyRecordCursor;
     private EmptyTablePageFrameCursor emptyTablePageFrameCursor;
     private Function filter;
     private final ExpressionNode filterExpr;
+    private final boolean isBaseOpenRequired;
 
     public RuntimeConstGateRecordCursorFactory(RecordCursorFactory base, Function filter, @Nullable ExpressionNode filterExpr) {
+        this(base, filter, filterExpr, false);
+    }
+
+    /**
+     * @param isBaseOpenRequired whether the false record-cursor path opens the base, because the
+     *                           base holds a place that reads a shared primary, see the class comment
+     */
+    public RuntimeConstGateRecordCursorFactory(
+            RecordCursorFactory base,
+            Function filter,
+            @Nullable ExpressionNode filterExpr,
+            boolean isBaseOpenRequired
+    ) {
         super(base.getMetadata());
         this.base = base;
         this.filter = filter;
         this.filterExpr = filterExpr;
+        this.isBaseOpenRequired = isBaseOpenRequired;
     }
 
     @Override
@@ -122,7 +146,14 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
         // The empty result never iterates and never consults the circuit breaker on its own.
         // Honor cancellation once at open, so a gated-out query still observes a tripped breaker.
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-        return EmptyTableRandomRecordCursor.INSTANCE;
+        if (!isBaseOpenRequired) {
+            return EmptyTableRandomRecordCursor.INSTANCE;
+        }
+        final RecordCursor baseCursor = base.getCursor(executionContext);
+        if (emptyRecordCursor == null) {
+            emptyRecordCursor = new EmptyRecordCursor();
+        }
+        return emptyRecordCursor.of(baseCursor);
     }
 
     @Override
@@ -190,6 +221,7 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public void halfClose() {
         emptyPageFrameCursor = Misc.free(emptyPageFrameCursor);
+        emptyRecordCursor = Misc.free(emptyRecordCursor);
         emptyTablePageFrameCursor = Misc.free(emptyTablePageFrameCursor);
     }
 
@@ -265,6 +297,8 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
     protected void _close() {
         final EmptyPageFrameCursor emptyPageFrameCursor = this.emptyPageFrameCursor;
         this.emptyPageFrameCursor = null;
+        final EmptyRecordCursor emptyRecordCursor = this.emptyRecordCursor;
+        this.emptyRecordCursor = null;
         final EmptyTablePageFrameCursor emptyTablePageFrameCursor = this.emptyTablePageFrameCursor;
         this.emptyTablePageFrameCursor = null;
         final RecordCursorFactory base = this.base;
@@ -273,6 +307,7 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
         this.filter = null;
 
         Throwable failure = Misc.freeBestEffort(null, emptyPageFrameCursor);
+        failure = Misc.freeBestEffort(failure, emptyRecordCursor);
         failure = Misc.freeBestEffort(failure, emptyTablePageFrameCursor);
         failure = Misc.freeBestEffort(failure, base);
         failure = Misc.freeBestEffort(failure, filter);
@@ -359,6 +394,74 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
         }
 
         private EmptyPageFrameCursor of(PageFrameCursor baseCursor) {
+            this.baseCursor = baseCursor;
+            return this;
+        }
+    }
+
+    /**
+     * The gate's false record cursor over a base that has to open in every execution, see the class
+     * comment. It holds the open base cursor, reads none of its rows, and closes it on close. Every
+     * other method acts as {@link EmptyTableRandomRecordCursor} does, which the gate returns over
+     * any other base.
+     */
+    private static final class EmptyRecordCursor implements RecordCursor {
+        private RecordCursor baseCursor;
+
+        @Override
+        public void close() {
+            baseCursor = Misc.free(baseCursor);
+        }
+
+        @Override
+        public Record getRecord() {
+            return EmptyTableRandomRecordCursor.INSTANCE.getRecord();
+        }
+
+        @Override
+        public Record getRecordB() {
+            return EmptyTableRandomRecordCursor.INSTANCE.getRecordB();
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return EmptyTableRandomRecordCursor.INSTANCE.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean hasNext() {
+            return false;
+        }
+
+        @Override
+        public boolean isKnownEmpty() {
+            return true;
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return EmptyTableRandomRecordCursor.INSTANCE.newSymbolTable(columnIndex);
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+        }
+
+        @Override
+        public long size() {
+            return 0;
+        }
+
+        @Override
+        public void toTop() {
+        }
+
+        private EmptyRecordCursor of(RecordCursor baseCursor) {
             this.baseCursor = baseCursor;
             return this;
         }

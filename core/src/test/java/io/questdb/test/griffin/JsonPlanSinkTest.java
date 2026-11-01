@@ -31,10 +31,21 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.std.Decimals;
 import io.questdb.std.Numbers;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 public class JsonPlanSinkTest {
+
+    // see TextPlanSinkTest.testChildFactoryNamesOwnColumns()
+    @Test
+    public void testChildFactoryNamesOwnColumns() {
+        final JsonPlanSink sink = new JsonPlanSink();
+        sink.of(new TextPlanSinkTest.CheckFactory(), null);
+        TestUtils.assertContains(sink.getSink(), "\"check\": \"probe = cursor \"");
+        TestUtils.assertContains(sink.getSink(), "\"filter\": \"x\"");
+        TestUtils.assertContains(sink.getSink(), "\" probe\"");
+    }
 
     @Test
     public void testSink() {

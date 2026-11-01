@@ -26,6 +26,8 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.engine.join.SharedPrimary;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Abstract base class for record cursor factory implementations.
@@ -45,6 +47,9 @@ public abstract class AbstractRecordCursorFactory implements RecordCursorFactory
      * The record metadata.
      */
     private RecordMetadata metadata;
+    // Set while a SharedPrimary owns this factory, see setSharedPrimary(): close() then reports to it that a place
+    // of the factory tree dropped the factory, instead of closing it.
+    private SharedPrimary sharedPrimary;
 
     /**
      * Constructs a new record cursor factory.
@@ -57,6 +62,11 @@ public abstract class AbstractRecordCursorFactory implements RecordCursorFactory
 
     @Override
     public final void close() {
+        final SharedPrimary sharedPrimary = this.sharedPrimary;
+        if (sharedPrimary != null) {
+            sharedPrimary.releaseHome();
+            return;
+        }
         if (!closed) {
             closed = true;
             _close();
@@ -72,6 +82,17 @@ public abstract class AbstractRecordCursorFactory implements RecordCursorFactory
     @Override
     public RecordMetadata getMetadata() {
         return metadata;
+    }
+
+    /**
+     * Hands the factory to the {@link SharedPrimary} that owns it while several places of a factory tree share it,
+     * or, with null, back to the place that holds it. While a SharedPrimary owns the factory, {@link #close()} does
+     * not close it.
+     *
+     * @param sharedPrimary the owner of the factory, or null
+     */
+    public final void setSharedPrimary(@Nullable SharedPrimary sharedPrimary) {
+        this.sharedPrimary = sharedPrimary;
     }
 
     /**
