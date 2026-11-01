@@ -231,6 +231,14 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     @NotNull
     SecurityContext getSecurityContext();
 
+    /**
+     * Returns the Resource Group this session switched to, or null to run in the group assigned
+     * to the login user. Binding another security context clears it.
+     */
+    default @Nullable CharSequence getSessionResourceGroup() {
+        return null;
+    }
+
     int getSharedQueryWorkerCount();
 
     @NotNull
@@ -444,6 +452,14 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isTimestampRequired();
 
+    /**
+     * Returns whether this context serves one client session across statements, so a statement
+     * can change state that later statements of the session see.
+     */
+    default boolean isSessionScoped() {
+        return false;
+    }
+
     default boolean isUninterruptible() {
         return false;
     }
@@ -573,6 +589,10 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     void setRandom(Rnd rnd);
+
+    default void setSessionResourceGroup(@Nullable CharSequence resourceGroup) {
+        throw new UnsupportedOperationException("this execution context has no session");
+    }
 
     /**
      * Sets the reader-pool supervisor for table-reader borrows made through this context.

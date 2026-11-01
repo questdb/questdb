@@ -180,6 +180,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             // do not set random for a new request to avoid copying random from previous request into next one
             // the only time we need to copy random from the state is when we resume request execution
             sqlExecutionContext.with(context.getSecurityContext(), null, null, context.getFd(), circuitBreaker.of(context.getFd()));
+            sqlExecutionContext.setSessionResourceGroup(state.getResourceGroup());
             sqlExecutionContext.initNow();
             if (state.getStatementTimeout() > 0L) {
                 circuitBreaker.setTimeout(state.getStatementTimeout());
