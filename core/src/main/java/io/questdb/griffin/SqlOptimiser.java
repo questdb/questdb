@@ -294,9 +294,15 @@ public class SqlOptimiser implements Mutable {
     private boolean hasOptimiserAndOffsets;
     // True when the execution-order anchors are valid (ordered join models are a full permutation).
     private boolean isNullingExecOrderValid;
+    // True when the projection of a model names no column of a sub-query its FROM clause joins without a
+    // key, see setUnkeyedJoinKeptWhole().
+    private boolean isUnkeyedJoinKeptWhole;
     private OperatorExpression opAnd;
     private OperatorExpression opGeq;
     private OperatorExpression opLt;
+    // The join model the projection of a model propagates to while isUnkeyedJoinKeptWhole holds, and null
+    // otherwise. addTopDownColumn() gives none of its columns to the sub-queries it joins without a key.
+    private IQueryModel projectionJoinHolder;
     private CharSequence tempColumnAlias;
     private IQueryModel tempQueryModel;
 
@@ -428,6 +434,8 @@ public class SqlOptimiser implements Mutable {
         hasNonEquiNullingJoin = false;
         hasOptimiserAndOffsets = false;
         isNullingExecOrderValid = false;
+        isUnkeyedJoinKeptWhole = false;
+        projectionJoinHolder = null;
         nullingAnchorByExecPos.clear();
         nullingAnchorByModelPos.clear();
         nullingExecPosByModel.clear();
@@ -1858,6 +1866,9 @@ public class SqlOptimiser implements Mutable {
                     // in this context we do not have a model that is able to resolve table alias
                     return;
                 }
+                if (model == projectionJoinHolder && SqlUtil.isUnkeyedJoinedSubQuery(model, modelIndex)) {
+                    return;
+                }
 
                 addTopDownColumn0(
                         node,
@@ -1875,6 +1886,9 @@ public class SqlOptimiser implements Mutable {
             final IQueryModel m = joinModels.getQuick(i);
             final QueryColumn column = m.getAliasToColumnMap().get(columnName);
             if (column != null) {
+                if (model == projectionJoinHolder && SqlUtil.isUnkeyedJoinedSubQuery(model, i)) {
+                    break;
+                }
                 switch (m.getSelectModelType()) {
                     case IQueryModel.SELECT_MODEL_NONE:
                         m.addTopDownColumn(queryColumnPool.next().of(columnName, nextLiteral(columnName)), columnName);
@@ -8378,7 +8392,14 @@ public class SqlOptimiser implements Mutable {
         retainGroupByKeysAsTopDownColumns(model);
 
         if (nestedIsFlex && nestedAllowsColumnChange) {
-            emitColumnLiteralsTopDown(model.getColumns(), nested);
+            // a read of a view that needs no column of a sub-query it joins without a key gives the
+            // sub-query none, see setUnkeyedJoinKeptWhole()
+            projectionJoinHolder = isUnkeyedJoinKeptWhole ? nested : null;
+            try {
+                emitColumnLiteralsTopDown(model.getColumns(), nested);
+            } finally {
+                projectionJoinHolder = null;
+            }
 
             // Propagate the explicit timestamp declaration. This runs *after* the projection so
             // that a timestamp the projection already selects keeps its position in the select
@@ -15786,6 +15807,19 @@ public class SqlOptimiser implements Mutable {
 
         // And then generate plan for UPDATE top level QueryModel
         validateUpdateColumns(updateQueryModel, metadata, sqlExecutionContext);
+    }
+
+    /**
+     * Makes optimise() give no column the projection of a query names to a sub-query, CTE or view its FROM
+     * clause joins without a key, such as with a CROSS JOIN, or an ASOF, LT or SPLICE JOIN without ON,
+     * while a join condition, a filter or an ORDER BY still gives it the columns they name. A read of a
+     * view that needs no column of such a sub-query, and neither the timestamp nor the order of the view,
+     * gets a plan that computes every column of it, so the dependencies of the view collect the columns of
+     * such a plan too, see {@code SqlCompilerImpl.collectUnkeyedJoinDependencies()}. Nothing generates the
+     * model.
+     */
+    void setUnkeyedJoinKeptWhole(boolean isUnkeyedJoinKeptWhole) {
+        this.isUnkeyedJoinKeptWhole = isUnkeyedJoinKeptWhole;
     }
 
     void validateUpdateColumns(

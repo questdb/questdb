@@ -175,6 +175,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     };
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
+    // collectUnkeyedJoinDependencies() compiles the SELECT of a view as a sub-query of this read, which needs
+    // neither the timestamp of the view nor the order of its rows
+    private static final String UNKEYED_JOIN_READ_PREFIX = "SELECT count() FROM (";
     // Raised from two places: once on the parsed model, where it has to win over the more general
     // cross-table rejection, and once on the optimised one, for the joins the optimiser itself
     // introduces. Shared so the two cannot drift apart.
@@ -407,6 +410,43 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @Override
+    public void collectUnkeyedJoinDependencies(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) throws SqlException {
+        clear();
+        // The read drops the ORDER BY clauses of the sub-queries that a read of the view that needs no order
+        // drops, and the new line ends a comment the SELECT may end with.
+        final String readSql = UNKEYED_JOIN_READ_PREFIX + viewSql + "\n)";
+        try {
+            lexer.of(readSql);
+            final ExecutionModel model = parser.parse(lexer, executionContext, this);
+            // the caller compiled the same SELECT before
+            assert model.getModelType() == ExecutionModel.QUERY;
+            SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, dependencies, viewWildcardSources);
+            final IQueryModel queryModel;
+            optimiser.setUnkeyedJoinKeptWhole(true);
+            try {
+                // a throw closes the table functions optimise() opened
+                queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
+            } finally {
+                optimiser.setUnkeyedJoinKeptWhole(false);
+            }
+            // Nothing generates the model, so nothing takes over the table functions optimise() opened. The
+            // walk below reads the expressions of the model, not its functions.
+            CairoException.rethrowCleanupFailure(optimiser.freeUnclaimedTableFactories(null));
+            SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources);
+        } catch (SqlException e) {
+            // the position the caller reports is one in the SELECT
+            e.setPosition(Math.max(0, e.getPosition() - UNKEYED_JOIN_READ_PREFIX.length()));
+            throw e;
+        } finally {
+            viewWildcardSources.clear();
+        }
+    }
+
+    @Override
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) throws SqlException {
         clear();
@@ -605,6 +645,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             final IQueryModel queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
             SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources);
+            if (viewWildcardSources.hasUnkeyedJoinedSubQuery()) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    compiler.collectUnkeyedJoinDependencies(viewSql, executionContext, dependencies);
+                }
+            }
             return queryModel;
         } catch (Throwable e) {
             // like compileExecutionModel(): nothing generates the factories optimise() left in flight
@@ -4690,6 +4735,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
                 // the optimised model resolves the columns the view reads, and which wildcards it keeps whole
                 SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources);
+                if (viewWildcardSources.hasUnkeyedJoinedSubQuery()) {
+                    // before generation, which then finds a table that changed meanwhile out of date
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        compiler.collectUnkeyedJoinDependencies(createTableOp.getSelectText(), executionContext, dependencies);
+                    } catch (SqlException e) {
+                        e.setPosition(e.getPosition() + selectTextPosition);
+                        throw e;
+                    }
+                }
                 // Same read-before-generation rule as compileMatViewQuery, and inside the same try for the
                 // same reason: a throw must free the table factories optimise() left in flight.
                 cacheable = queryModel.isCacheable();

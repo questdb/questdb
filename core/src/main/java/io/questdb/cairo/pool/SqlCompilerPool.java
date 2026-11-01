@@ -143,6 +143,15 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         }
 
         @Override
+        public void collectUnkeyedJoinDependencies(
+                CharSequence viewSql,
+                SqlExecutionContext executionContext,
+                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+        ) throws SqlException {
+            delegate.collectUnkeyedJoinDependencies(viewSql, executionContext, dependencies);
+        }
+
+        @Override
         public CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException {
             return delegate.compile(sqlText, ctx);
         }

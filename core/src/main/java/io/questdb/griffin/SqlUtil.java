@@ -51,6 +51,7 @@ import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.AbstractLowerCaseCharSequenceHashSet;
 import io.questdb.std.Chars;
@@ -2396,6 +2397,9 @@ public class SqlUtil {
                     collectTableColumnReads(engine, joinModel, depMap, wildcardSources, isJoinTimestampRequired);
                 }
             }
+            for (int i = 0; i < joinCount && !wildcardSources.hasUnkeyedJoinedSubQuery; i++) {
+                wildcardSources.hasUnkeyedJoinedSubQuery = isUnkeyedJoinedSubQuery(model, i);
+            }
         } else {
             // SqlCodeGenerator.generateQuery0(): a model that orders its rows requires no timestamp
             // of its source
@@ -2729,6 +2733,24 @@ public class SqlUtil {
         throw NumericException.instance();
     }
 
+    // Whether the model at index in the join models of joinHolder is a sub-query, a CTE or a view that no join
+    // condition names a column of, as one a CROSS JOIN, or an ASOF, LT or SPLICE JOIN without ON, joins. A
+    // query above the join that needs none of its columns may give it no top-down columns, and the plan then
+    // computes every column of its SELECT list, see SqlOptimiser.setUnkeyedJoinKeptWhole().
+    static boolean isUnkeyedJoinedSubQuery(@NotNull IQueryModel joinHolder, int index) {
+        final ObjList<IQueryModel> joinModels = joinHolder.getJoinModels();
+        if (joinModels.size() < 2 || joinModels.getQuick(index).getNestedModel() == null) {
+            return false;
+        }
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            final JoinContext joinContext = joinModels.getQuick(i).getJoinContext();
+            if (joinContext != null && (joinContext.aIndexes.contains(index) || joinContext.bIndexes.contains(index))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     static QueryColumn nextColumn(
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<ExpressionNode> sqlNodePool,
@@ -2782,6 +2804,8 @@ public class SqlUtil {
         // timestamp of them, and with the plan requiring one
         private final ObjHashSet<IQueryModel> visitedModels = new ObjHashSet<>();
         private final ObjHashSet<IQueryModel> visitedTimestampModels = new ObjHashSet<>();
+        // whether the optimised SELECT joins a sub-query without a key, see isUnkeyedJoinedSubQuery()
+        private boolean hasUnkeyedJoinedSubQuery;
         // the number of times the walks of optimised SELECTs have reached a model, for the tests of their cost
         private long visitCount;
 
@@ -2792,6 +2816,16 @@ public class SqlUtil {
             sources.clear();
             tableNames.clear();
             clearReads();
+        }
+
+        /**
+         * Returns whether the optimised SELECT the last walk of the columns a view reads walked joins a
+         * sub-query, a CTE or a view without a key, such as with a CROSS JOIN. A read of the view that names
+         * none of its columns may compute every column of it, which the plan of the view's own SELECT may
+         * not read, see {@link SqlCompiler#collectUnkeyedJoinDependencies}.
+         */
+        public boolean hasUnkeyedJoinedSubQuery() {
+            return hasUnkeyedJoinedSubQuery;
         }
 
         @TestOnly
@@ -2821,6 +2855,7 @@ public class SqlUtil {
             scans.clear();
             visitedModels.clear();
             visitedTimestampModels.clear();
+            hasUnkeyedJoinedSubQuery = false;
         }
 
         // Whether the plan scans the source under sourceModel, and the plan reads every column the optimiser
