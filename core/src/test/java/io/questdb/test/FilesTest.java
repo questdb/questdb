@@ -727,6 +727,182 @@ public class FilesTest {
     }
 
     @Test
+    public void testFindPathOfFd() throws Exception {
+        Assume.assumeTrue(Files.isPathLookupSupported());
+        assertMemoryLeak(() -> {
+            final File file = temporaryFolder.newFile("a.d");
+            try (Path path = new Path().of(file.getAbsolutePath())) {
+                final long fd = Files.openRW(path.$());
+                try {
+                    // the OS names a file by its real path: on macOS the temp dir is under /var -> /private/var
+                    Assert.assertEquals(realPath(file), Files.findPathOfFd(fd));
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFindPathOfFdAfterRename() throws Exception {
+        Assume.assumeTrue(Files.isPathLookupSupported());
+        assertMemoryLeak(() -> {
+            final File file = temporaryFolder.newFile("a.d");
+            final File renamed = new File(file.getParentFile(), "b.d");
+            try (
+                    Path path = new Path().of(file.getAbsolutePath());
+                    Path renamedPath = new Path().of(renamed.getAbsolutePath())
+            ) {
+                final long fd = Files.openRW(path.$());
+                try {
+                    Assert.assertEquals(Files.FILES_RENAME_OK, Files.rename(path.$(), renamedPath.$()));
+                    Assert.assertEquals(realPath(renamed), Files.findPathOfFd(fd));
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFindPathOfFdOfDeletedFile() throws Exception {
+        Assume.assumeTrue(Files.isPathLookupSupported());
+        // Windows names a deleted file by where its volume keeps it, which depends on the delete semantics
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            final File file = temporaryFolder.newFile("a.d");
+            final String realPath = realPath(file);
+            try (Path path = new Path().of(file.getAbsolutePath())) {
+                final long fd = Files.openRW(path.$());
+                try {
+                    Assert.assertTrue(Files.remove(path.$()));
+                    // Linux names it by the path it had, macOS by none: it is in no directory
+                    Assert.assertEquals(Os.isLinux() ? realPath : null, Files.findPathOfFd(fd));
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFindPathOfFdOfDirectory() throws Exception {
+        Assume.assumeTrue(Files.isPathLookupSupported());
+        // the directory barriers flush a directory descriptor, and Windows takes none
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            final File dir = temporaryFolder.newFolder("db");
+            try (Path path = new Path().of(dir.getAbsolutePath())) {
+                final long fd = Files.openRO(path.$());
+                try {
+                    Assert.assertEquals(realPath(dir), Files.findPathOfFd(fd));
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFindPathOfFdOfNoFile() {
+        Assert.assertNull(Files.findPathOfFd(-1));
+    }
+
+    @Test
+    public void testFindPathOfFdThroughSoftLink() throws Exception {
+        Assume.assumeTrue(Files.isPathLookupSupported());
+        // a table IN VOLUME is a soft link, and creating one on Windows takes a privilege CI may not have
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            final File volume = temporaryFolder.newFolder("volume");
+            final File link = new File(temporaryFolder.getRoot(), "link");
+            try (
+                    Path volumePath = new Path().of(volume.getAbsolutePath());
+                    Path linkPath = new Path().of(link.getAbsolutePath())
+            ) {
+                Assert.assertEquals(0, Files.softLink(volumePath.$(), linkPath.$()));
+                linkPath.concat("a.d");
+                final long fd = Files.openRW(linkPath.$());
+                try {
+                    // the OS names the file by the link's target
+                    Assert.assertEquals(realPath(volume) + Files.SEPARATOR + "a.d", Files.findPathOfFd(fd));
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFindPathOfMapping() throws Exception {
+        Assume.assumeTrue(Files.isPathLookupSupported());
+        assertMemoryLeak(() -> {
+            final File file = temporaryFolder.newFile("a.d");
+            final long size = 2 * Files.PAGE_SIZE;
+            try (Path path = new Path().of(file.getAbsolutePath())) {
+                final long fd = Files.openRW(path.$());
+                try {
+                    Assert.assertTrue(Files.allocate(fd, size));
+                    final long address = Files.mmap(fd, size, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        final String expected = realPath(file);
+                        // msync names the mapping's first byte, but any byte of it names the file
+                        Assert.assertEquals(expected, Files.findPathOfMapping(address));
+                        Assert.assertEquals(expected, Files.findPathOfMapping(address + Files.PAGE_SIZE + 7));
+                        Assert.assertEquals(expected, Files.findPathOfMapping(address + size - 1));
+                    } finally {
+                        Files.munmap(address, size, MemoryTag.MMAP_DEFAULT);
+                    }
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFindPathOfMappingOfDeletedFile() throws Exception {
+        Assume.assumeTrue(Files.isPathLookupSupported());
+        // Windows does not delete a mapped file
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            final File file = temporaryFolder.newFile("a.d");
+            final String realPath = realPath(file);
+            final long size = Files.PAGE_SIZE;
+            try (Path path = new Path().of(file.getAbsolutePath())) {
+                final long fd = Files.openRW(path.$());
+                try {
+                    Assert.assertTrue(Files.allocate(fd, size));
+                    final long address = Files.mmap(fd, size, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+                    try {
+                        Assert.assertTrue(Files.remove(path.$()));
+                        // Linux names it by the path it had, macOS by none: it is in no directory
+                        Assert.assertEquals(Os.isLinux() ? realPath : null, Files.findPathOfMapping(address));
+                    } finally {
+                        Files.munmap(address, size, MemoryTag.MMAP_DEFAULT);
+                    }
+                } finally {
+                    Files.close(fd);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFindPathOfMappingOfNoFile() throws Exception {
+        assertMemoryLeak(() -> {
+            final long address = Unsafe.malloc(64, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Assert.assertNull(Files.findPathOfMapping(address));
+            } finally {
+                Unsafe.free(address, 64, MemoryTag.NATIVE_DEFAULT);
+            }
+            // above every mapping
+            Assert.assertNull(Files.findPathOfMapping(-1));
+        });
+    }
+
+    @Test
     public void testHardLinkAsciiName() throws Exception {
         assertHardLinkPreservesFileContent("some_column.d");
     }
@@ -1846,6 +2022,10 @@ public class FilesTest {
             Files.close(fd);
             Unsafe.free(buffPtr, buffSize, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private static String realPath(File file) throws IOException {
+        return file.toPath().toRealPath().toString();
     }
 
     private static void testAllocateConcurrent0(FilesFacade ff, String pathName, int index, AtomicInteger errors) {

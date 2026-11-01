@@ -1364,6 +1364,7 @@ dependencies = [
  "seq-macro",
  "serde",
  "tempfile",
+ "windows-sys 0.61.2",
  "zstd 0.14.3",
 ]
 

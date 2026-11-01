@@ -280,7 +280,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             }
             // IN VOLUME OTHER_VOLUME
             putInVolume(config);
-            // DEDUP UPSERT(key1, key2)
+            // DEDUP UPSERT|SKIP KEYS(key1, key2)
             putDedup();
             // placeholder
             putAdditional();
@@ -392,7 +392,7 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
             if (table.hasDedup()) {
                 boolean afterFirst = false;
                 sink.putAscii('\n');
-                sink.putAscii("DEDUP UPSERT KEYS(");
+                sink.putAscii(table.getDedupMode() == TableUtils.DEDUP_MODE_SKIP ? "DEDUP SKIP KEYS(" : "DEDUP UPSERT KEYS(");
                 for (int i = 0, n = table.getColumnCount(); i < n; i++) {
                     final CairoColumn column = table.getColumnQuiet(i);
                     if (column.isDedupKey()) {

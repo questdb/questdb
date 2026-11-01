@@ -321,7 +321,7 @@ public:
         assertm(l_val_offset < this->get_column_var_data_len(), "ERROR: column aux data point beyond var data buffer");
         const uint8_t *l_val_ptr = col_index >= this->get_column_top() ?
                                    this->get_column_var_data<uint8_t>() + l_val_offset
-                                                                       : &this->get_null_value<uint8_t>();
+                                                                       : this->get_null_value_ptr();
 
         const auto r_val_offset = this->get_o3_data<int64_t>()[index_index];
         assertm(r_val_offset < this->get_o3_var_data_len(), "ERROR: column aux data point beyond var data buffer");

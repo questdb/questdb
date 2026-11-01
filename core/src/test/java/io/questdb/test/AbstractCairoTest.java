@@ -1082,9 +1082,10 @@ public abstract class AbstractCairoTest extends AbstractTest {
      * purge job, which is where an enrolled writer sends a directory it could not remove inline; under every
      * other mode it does nothing, and the test asserts what master wrote it to assert. Call it before draining
      * a purge job of your own or asserting that a compaction ran. A fold that only appends needs no save point.
+     * A table without WAL never enrols in ADAPTIVE and takes no save point, so for it this does nothing either.
      */
     protected static void releaseSavePointHolds(CharSequence tableName) {
-        if (engine.getResolvedCommitMode() != CommitMode.ADAPTIVE) {
+        if (engine.getResolvedCommitMode() != CommitMode.ADAPTIVE || !engine.verifyTableName(tableName).isWal()) {
             return;
         }
         try (TableWriter writer = getWriter(tableName)) {

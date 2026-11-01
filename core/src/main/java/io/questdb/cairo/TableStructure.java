@@ -38,6 +38,14 @@ public interface TableStructure {
 
     int getColumnType(int columnIndex);
 
+    /**
+     * Returns the dedup mode of the table, {@link TableUtils#DEDUP_MODE_UPSERT} (default) or
+     * {@link TableUtils#DEDUP_MODE_SKIP}. It applies only when the table has dedup keys.
+     */
+    default int getDedupMode() {
+        return TableUtils.DEDUP_MODE_UPSERT;
+    }
+
     int getIndexBlockCapacity(int columnIndex);
 
     default int getParquetEncodingConfig(int columnIndex) {

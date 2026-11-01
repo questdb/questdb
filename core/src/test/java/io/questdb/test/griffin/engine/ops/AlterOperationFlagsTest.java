@@ -50,6 +50,75 @@ public class AlterOperationFlagsTest {
     private static final long V2_FORMAT_MARKER = 1L << 63;
 
     @Test
+    public void testDedupEnableSkipRoundTrip() throws Exception {
+        // SKIP needs opcode 28 (SET_DEDUP_ENABLE_WITH_MODE): extraInfo carries the dedup mode first,
+        // followed by the writer indexes of the dedup key columns. The WAL sequencer stores the operation
+        // with serializeBody and replays it with deserializeBody, so the payload must round-trip exactly.
+        TestUtils.assertMemoryLeak(() -> {
+            final TableToken tableToken = new TableToken(
+                    "dedup_table", "dedup_table~1", null, 17, true, false, false
+            );
+            final int tableNamePosition = 42;
+            final AlterOperationBuilder builder = new AlterOperationBuilder()
+                    .ofDedupEnable(tableNamePosition, tableToken, TableUtils.DEDUP_MODE_SKIP);
+            builder.setDedupKeyFlag(3);
+            builder.setDedupKeyFlag(0);
+            final AlterOperation src = builder.build();
+            Assert.assertTrue(src.isStructural());
+            try (
+                    MemoryCARW sink1 = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT);
+                    MemoryCARW sink2 = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)
+            ) {
+                src.serializeBody(sink1);
+                final long size1 = sink1.getAppendOffset();
+                Assert.assertEquals(AlterOperation.SET_DEDUP_ENABLE_WITH_MODE, sink1.getShort(0));
+                Assert.assertEquals(tableNamePosition, sink1.getInt(2));
+                Assert.assertEquals("mode and two dedup key indexes", 3, sink1.getInt(6));
+                Assert.assertEquals(TableUtils.DEDUP_MODE_SKIP, sink1.getLong(10));
+                Assert.assertEquals(3, sink1.getLong(18));
+                Assert.assertEquals(0, sink1.getLong(26));
+                Assert.assertEquals("no strings", 0, sink1.getInt(34));
+
+                final AlterOperation dst = new AlterOperation();
+                dst.deserializeBody(sink1, 0L, size1);
+                Assert.assertEquals(AlterOperation.SET_DEDUP_ENABLE_WITH_MODE, dst.getCommand());
+                Assert.assertTrue(dst.isStructural());
+
+                dst.serializeBody(sink2);
+                Assert.assertEquals(size1, sink2.getAppendOffset());
+                for (long i = 0; i < size1; i++) {
+                    Assert.assertEquals("re-serialized payload must match original byte at offset " + i,
+                            sink1.getByte(i), sink2.getByte(i));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testDedupEnableUpsertKeepsLegacyEncoding() throws Exception {
+        // UPSERT keeps opcode 15 (SET_DEDUP_ENABLE) with only the dedup key writer indexes in extraInfo,
+        // the layout that versions predating the dedup mode can apply.
+        TestUtils.assertMemoryLeak(() -> {
+            final TableToken tableToken = new TableToken(
+                    "dedup_table", "dedup_table~1", null, 17, true, false, false
+            );
+            final AlterOperationBuilder builder = new AlterOperationBuilder()
+                    .ofDedupEnable(42, tableToken, TableUtils.DEDUP_MODE_UPSERT);
+            builder.setDedupKeyFlag(3);
+            builder.setDedupKeyFlag(0);
+            final AlterOperation src = builder.build();
+            try (MemoryCARW sink = new MemoryCARWImpl(256, 1, MemoryTag.NATIVE_DEFAULT)) {
+                src.serializeBody(sink);
+                Assert.assertEquals(AlterOperation.SET_DEDUP_ENABLE, sink.getShort(0));
+                Assert.assertEquals("two dedup key indexes", 2, sink.getInt(6));
+                Assert.assertEquals(3, sink.getLong(10));
+                Assert.assertEquals(0, sink.getLong(18));
+                Assert.assertEquals("no strings", 0, sink.getInt(26));
+            }
+        });
+    }
+
+    @Test
     public void testRoundTripAllIndexTypes() {
         for (byte type : new byte[]{
                 IndexType.NONE, IndexType.BITMAP,

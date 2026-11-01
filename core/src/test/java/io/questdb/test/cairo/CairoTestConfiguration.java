@@ -42,10 +42,13 @@ import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.Map;
+import java.util.function.ObjIntConsumer;
 
 public class CairoTestConfiguration extends CairoConfigurationWrapper {
     // Set only when a developer asked for a RAM-disk test root (ram-disk-test-root profile).
@@ -86,6 +89,13 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
         return AbstractCairoTest.staticOverrides.getCircuitBreakerConfiguration() != null
                 ? AbstractCairoTest.staticOverrides.getCircuitBreakerConfiguration()
                 : super.getCircuitBreakerConfiguration();
+    }
+
+    @Override
+    public @Nullable ObjIntConsumer<ColumnPurgeTask> getColumnPurgeTruncateRefusalListener() {
+        return overrides.getColumnPurgeTruncateRefusalListener() != null
+                ? overrides.getColumnPurgeTruncateRefusalListener()
+                : super.getColumnPurgeTruncateRefusalListener();
     }
 
     @Override

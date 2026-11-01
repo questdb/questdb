@@ -462,8 +462,9 @@ flush failure (with the forms `dataSyncFailureOfFd` and `dataSyncFailureOfMappin
 engine that owns the file at once, so a path that later drops, counts or wraps the exception (a task's error counter,
 a job's top-level catch, a wrapper without the cause) cannot lose the stop. The owner is a live engine whose files
 facade is `ff` and whose database, checkpoint, COPY work or volume (`cairo.volumes`) root holds the failed file, which the
-factory looks up on a failure only (Linux: `/proc/self/fd`, `/proc/self/maps`); so two engines on one facade object, a primary and a replica
-in one test JVM, hear only their own failures. Without a path (other systems, a test facade that gives none) or when
+factory looks up on a failure only (Linux reads `/proc/self/fd` and `/proc/self/maps`; macOS asks `fcntl(F_GETPATH)` and
+`proc_pidinfo`, Windows `GetFinalPathNameByHandleW` and `GetMappedFileNameW`); so two engines on one facade object, a primary and a replica
+in one test JVM, hear only their own failures. Without a path (FreeBSD, a test facade that gives none) or when
 no engine holds it, every engine on `ff` hears it, so a stop is never lost. A closed engine, or one whose construction
 failed, is unregistered. Each engine decides by `CairoEngine.isDataSyncFailureFatal`: the flag, and the commit mode
 `LocalDurabilityPolicy.resolveCommitMode` resolves for its role, so an Enterprise replica in `adaptive`, which resolves

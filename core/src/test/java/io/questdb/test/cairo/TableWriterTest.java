@@ -30,6 +30,8 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.EntryUnavailableException;
@@ -3162,6 +3164,85 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollbackRestoresColumnVersionWhenTxnCommitFails() throws Exception {
+        // An O3 commit into a partition that predates column c changes _cv. When the _cv commit lands
+        // and the _txn commit fails, rollback() must restore the _cv the committed _txn references:
+        // otherwise a new reader waits for a _cv version that never comes.
+        final TxnExtendFailingFacade ff = new TxnExtendFailingFacade("nt");
+        // one O3 row into 2024-01-01 and one row into each of 300 new partitions: the partition table
+        // outgrows the first 4 KB of the _txn file, so the _txn commit extends the file, see
+        // TxnExtendFailingFacade
+        final String o3Insert = """
+                INSERT INTO nt
+                SELECT * FROM (SELECT 5 v, '2024-01-01T00:30:00.000000Z'::TIMESTAMP ts, 50 c)
+                UNION ALL
+                SELECT (1000 + x)::INT, '2024-01-02T00:00:00.000000Z'::TIMESTAMP + x * 86_400_000_000L, 1 FROM long_sequence(300)""";
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE nt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO nt VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z'), (3, '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE nt ADD COLUMN c INT");
+            execute("INSERT INTO nt VALUES (4, '2024-01-02T01:00:00.000000Z', 40)");
+            final long columnVersionBefore;
+            final long txnBefore;
+            try (TableReader reader = getReader("nt")) {
+                columnVersionBefore = reader.getTxFile().getColumnVersion();
+                txnBefore = reader.getTxn();
+            }
+            final String rowsBefore = """
+                    v\tts\tc
+                    1\t2024-01-01T00:00:00.000000Z\tnull
+                    2\t2024-01-01T01:00:00.000000Z\tnull
+                    3\t2024-01-02T00:00:00.000000Z\tnull
+                    4\t2024-01-02T01:00:00.000000Z\t40
+                    """;
+
+            ff.isArmed.set(true);
+            assertExceptionNoLeakCheck(o3Insert, -1, "No space left");
+            Assert.assertFalse(ff.isArmed.get());
+            // checked before a reader opens: a reader waits for _cv to match _txn
+            Assert.assertEquals(columnVersionBefore, readColumnVersionFileVersion("nt"));
+
+            engine.releaseInactive();
+            try (TableReader reader = getReader("nt")) {
+                Assert.assertEquals(txnBefore, reader.getTxn());
+                Assert.assertEquals(columnVersionBefore, reader.getTxFile().getColumnVersion());
+                Assert.assertEquals(columnVersionBefore, reader.getColumnVersionReader().getVersion());
+            }
+            assertQuery("SELECT v, ts, c FROM nt")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(rowsBefore);
+
+            execute(o3Insert);
+            try (TableReader reader = getReader("nt")) {
+                Assert.assertEquals(txnBefore + 1, reader.getTxn());
+                // the commit that failed before changes _cv
+                Assert.assertTrue(reader.getTxFile().getColumnVersion() > columnVersionBefore);
+            }
+            assertQuery("SELECT v, ts, c FROM nt WHERE ts < '2024-01-03'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts\tc
+                            1\t2024-01-01T00:00:00.000000Z\tnull
+                            5\t2024-01-01T00:30:00.000000Z\t50
+                            2\t2024-01-01T01:00:00.000000Z\tnull
+                            3\t2024-01-02T00:00:00.000000Z\tnull
+                            4\t2024-01-02T01:00:00.000000Z\t40
+                            """);
+            assertQuery("SELECT count(), min(v), max(v), sum(c) FROM nt WHERE ts >= '2024-01-03'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tmin\tmax\tsum
+                            300\t1001\t1300\t300
+                            """);
+        });
+    }
+
+    @Test
     public void testSetAppendPositionFailureBin2() throws Exception {
         testSetAppendPositionFailure();
     }
@@ -3945,6 +4026,55 @@ public class TableWriterTest extends AbstractCairoTest {
                 TestUtils.assertEquals(something, r.getStrA(0));
                 TestUtils.assertEquals(boring, r.getSymA(1));
             }
+        }
+    }
+
+    @Test
+    public void testWriterOpenRejectsColumnVersionTwoAheadOfTxn() throws Exception {
+        // _cv one version ahead of _txn is an aborted column version change the writer rolls back;
+        // two versions ahead cannot come from one failed transaction: neither area of _cv holds the
+        // version _txn names, and the previous _txn record of a new table is not verified
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE nt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO nt VALUES (1, '2024-01-01T00:00:00.000000Z')");
+            final long txnColumnVersion;
+            final long partitionTimestamp;
+            try (TableReader reader = getReader("nt")) {
+                txnColumnVersion = reader.getTxFile().getColumnVersion();
+                partitionTimestamp = reader.getPartitionTimestampByIndex(0);
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(engine.verifyTableName("nt")).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+                try (ColumnVersionWriter columnVersionWriter = new ColumnVersionWriter(configuration, path.$(), true)) {
+                    columnVersionWriter.upsertColumnTop(partitionTimestamp, 0, 1);
+                    columnVersionWriter.commit();
+                    columnVersionWriter.upsertColumnTop(partitionTimestamp, 0, 2);
+                    columnVersionWriter.commit();
+                }
+            }
+            try (TableWriter ignore = getWriter("nt")) {
+                Assert.fail("the writer must not open");
+            } catch (CairoException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "_cv cannot serve the column version _txn names; refusing to write from the previous transaction: "
+                                + "the previous _txn record is not verified"
+                );
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        ", columnVersion=" + txnColumnVersion + ", cvVersion=" + (txnColumnVersion + 2) + ']'
+                );
+            }
+        });
+    }
+
+    private static long readColumnVersionFileVersion(String tableName) {
+        try (ColumnVersionReader columnVersionReader = new ColumnVersionReader(); Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(engine.verifyTableName(tableName)).concat(TableUtils.COLUMN_VERSION_FILE_NAME);
+            columnVersionReader.ofRO(configuration.getFilesFacade(), path.$());
+            return columnVersionReader.readUnsafe();
         }
     }
 

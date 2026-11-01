@@ -59,6 +59,8 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.SqlException;
@@ -98,6 +100,14 @@ import static org.junit.Assert.*;
 public class CoveringIndexTest extends AbstractCairoTest {
 
     private static final ColumnVersionReader EMPTY_CVR = new ColumnVersionReader();
+    // the first rows of c2 = 'k1' in the table of createReloadTable(): x % 5 = 1 and x % 3 != 0
+    private static final String K1_FIRST_ROWS = """
+            c2\tsym2\tts
+            k1\tS1\t2022-02-26T00:07:00.000000Z
+            k1\tS0\t2022-02-26T01:17:00.000000Z
+            k1\tS5\t2022-02-26T01:52:00.000000Z
+            k1\tS4\t2022-02-26T03:02:00.000000Z
+            """;
 
     @Test
     public void testAddPostingCoveringIndexAcrossManyParquetRowGroupsAllVarSizeWal() throws Exception {
@@ -10630,6 +10640,38 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateTableLikeAfterMetadataReloadAcrossDropAndReAdd() throws Exception {
+        // CREATE TABLE LIKE reads the pooled table metadata, which reloads across both ALTERs
+        for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+            assertMemoryLeak(() -> {
+                createReloadTable(walMode, "POSTING");
+                try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("t"))) {
+                    assertEquals("[2,1]", String.valueOf(metadata.getColumnMetadata(0).getCoveringColumnIndices()));
+                    execute("ALTER TABLE t ALTER COLUMN c2 DROP INDEX");
+                    execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE POSTING");
+                    drainWalQueue();
+                }
+                execute("CREATE TABLE t2 (LIKE t)");
+                // the DDL of t, which has no INCLUDE any more, is the DDL t2 must have
+                printSql("SHOW CREATE TABLE t");
+                final String sourceDdl = sink.toString();
+                TestUtils.assertContains(sourceDdl, "\tc2 SYMBOL INDEX TYPE POSTING,\n");
+                assertFalse(sourceDdl, sourceDdl.contains("INCLUDE"));
+                assertQuery("SHOW CREATE TABLE t2")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(sourceDdl.replace("CREATE TABLE 't' (", "CREATE TABLE 't2' ("));
+                assertQuery("SELECT \"column\", indexType, indexInclude FROM (SHOW COLUMNS FROM t2) WHERE \"column\" = 'c2'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("column\tindexType\tindexInclude\nc2\tPOSTING\t\n");
+                execute("DROP TABLE t2");
+                execute("DROP TABLE t");
+            });
+        }
+    }
+
+    @Test
     public void testCreateTableWithIncludeSyntax() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
@@ -17814,6 +17856,179 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReaderReloadAcrossDropAndSameTypeReAdd() throws Exception {
+        // A reader that reloads across DROP INDEX and ADD INDEX of the same POSTING variant without
+        // INCLUDE reuses the column metadata of c2, which must lose the covering list it had.
+        for (String indexTypeName : new String[]{"POSTING", "POSTING DELTA", "POSTING EF"}) {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                assertMemoryLeak(() -> {
+                    createReloadTable(walMode, indexTypeName);
+                    final byte indexType = IndexType.valueOf(indexTypeName);
+                    assertReaderCovering("c2", indexType, "[2,1]");
+                    // the reader pool keeps the reader that has seen the cover
+                    assertSqlCursors(
+                            "SELECT /*+ no_index */ c2, sym2, ts FROM t WHERE c2 = 'k1'",
+                            "SELECT c2, sym2, ts FROM t WHERE c2 = 'k1'"
+                    );
+                    try (RecordCursorFactory compiledBefore = select("SELECT c2, sym2, ts FROM t WHERE c2 = 'k1'")) {
+                        try (TableReader reader = getReader("t")) {
+                            execute("ALTER TABLE t ALTER COLUMN c2 DROP INDEX");
+                            execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE " + indexTypeName);
+                            drainWalQueue();
+                            reader.reload();
+                            final TableColumnMetadata c2Metadata = reader.getMetadata().getColumnMetadata(0);
+                            assertEquals(indexType, c2Metadata.getIndexType());
+                            assertFalse(c2Metadata.isCovering());
+                            assertNull(c2Metadata.getCoveringColumnIndices());
+                        }
+                        // the factory compiled over the cover refuses to run, so callers recompile it
+                        try (RecordCursor ignore = compiledBefore.getCursor(sqlExecutionContext)) {
+                            fail("the factory compiled before the ALTER must not run");
+                        } catch (TableReferenceOutOfDateException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "cached query plan cannot be used because table schema has changed [table=t");
+                        }
+                    }
+                    // the queries below read through the reloaded reader that the pool hands out again
+                    assertReloadedIndexReadsTable();
+
+                    // a reader that loads the metadata from scratch, as after a restart, agrees
+                    try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, engine.verifyTableName("t"))) {
+                        metadata.loadMetadata();
+                        assertNull(metadata.getColumnMetadata(0).getCoveringColumnIndices());
+                    }
+
+                    // the same reader takes the cover back on the next reload
+                    try (TableReader reader = getReader("t")) {
+                        execute("ALTER TABLE t ALTER COLUMN c2 DROP INDEX");
+                        execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE " + indexTypeName + " INCLUDE (sym2)");
+                        drainWalQueue();
+                        reader.reload();
+                        assertEquals("[2,1]", String.valueOf(reader.getMetadata().getColumnMetadata(0).getCoveringColumnIndices()));
+                    }
+                    assertQuery("SELECT c2, sym2, ts FROM t WHERE c2 = 'k1' LIMIT 4")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .timestamp("ts")
+                            .withPlanContaining("CoveringIndex on: c2")
+                            .returns(K1_FIRST_ROWS);
+                    assertSqlCursors(
+                            "SELECT /*+ no_index */ c2, sym2, ts FROM t WHERE c2 = 'k1'",
+                            "SELECT c2, sym2, ts FROM t WHERE c2 = 'k1'"
+                    );
+                    execute("DROP TABLE t");
+                });
+            }
+        }
+    }
+
+    @Test
+    public void testReaderReloadAcrossTwoDrains() throws Exception {
+        // the reader skips the BITMAP index between the covering POSTING index and the plain one
+        for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+            assertMemoryLeak(() -> {
+                createReloadTable(walMode, "POSTING");
+                try (TableReader reader = getReader("t")) {
+                    execute("ALTER TABLE t ALTER COLUMN c2 DROP INDEX");
+                    execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE BITMAP");
+                    drainWalQueue();
+                    execute("ALTER TABLE t ALTER COLUMN c2 DROP INDEX");
+                    execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE POSTING");
+                    drainWalQueue();
+                    reader.reload();
+                    assertNull(reader.getMetadata().getColumnMetadata(0).getCoveringColumnIndices());
+                }
+                assertReloadedIndexReadsTable();
+
+                // nothing covers sym2 any more: DROP COLUMN goes ahead and the index keeps working
+                execute("ALTER TABLE t DROP COLUMN sym2");
+                drainWalQueue();
+                assertReaderCovering("c2", IndexType.POSTING, "null");
+                assertQuery("SELECT c2, v, ts FROM t WHERE c2 = 'k1' LIMIT 4")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("""
+                                c2\tv\tts
+                                k1\t1\t2022-02-26T00:07:00.000000Z
+                                k1\t11\t2022-02-26T01:17:00.000000Z
+                                k1\t16\t2022-02-26T01:52:00.000000Z
+                                k1\t26\t2022-02-26T03:02:00.000000Z
+                                """);
+                assertSqlCursors(
+                        "SELECT /*+ no_index */ c2, v, ts FROM t WHERE c2 = 'k1'",
+                        "SELECT c2, v, ts FROM t WHERE c2 = 'k1'"
+                );
+                execute("DROP TABLE t");
+            });
+        }
+    }
+
+    @Test
+    public void testReaderReloadEmptyTable() throws Exception {
+        for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+            assertMemoryLeak(() -> {
+                execute("CREATE TABLE t (c2 SYMBOL INDEX TYPE POSTING INCLUDE (sym2), ts TIMESTAMP, sym2 SYMBOL) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+                drainWalQueue();
+                try (TableReader reader = getReader("t")) {
+                    assertEquals("[2,1]", String.valueOf(reader.getMetadata().getColumnMetadata(0).getCoveringColumnIndices()));
+                    execute("ALTER TABLE t ALTER COLUMN c2 DROP INDEX");
+                    execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE POSTING");
+                    drainWalQueue();
+                    reader.reload();
+                    assertFalse(reader.getMetadata().getColumnMetadata(0).isCovering());
+                    assertNull(reader.getMetadata().getColumnMetadata(0).getCoveringColumnIndices());
+                }
+                assertQuery("SELECT c2, sym2, ts FROM t WHERE c2 = 'k1'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .withPlanNotContaining("CoveringIndex")
+                        .returns("c2\tsym2\tts\n");
+                execute("DROP TABLE t");
+            });
+        }
+    }
+
+    @Test
+    public void testReaderReloadKeepsOtherCoveringHost() throws Exception {
+        // c2 and c3 both host a cover; only c2 loses its cover, so the reload clears only its list
+        for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+            assertMemoryLeak(() -> {
+                createReloadTable(walMode, "POSTING");
+                execute("ALTER TABLE t ALTER COLUMN c3 ADD INDEX TYPE POSTING INCLUDE (v)");
+                drainWalQueue();
+                assertReaderCovering("c3", IndexType.POSTING, "[3,1]");
+                try (TableReader reader = getReader("t")) {
+                    execute("ALTER TABLE t ALTER COLUMN c2 DROP INDEX");
+                    execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE POSTING");
+                    drainWalQueue();
+                    reader.reload();
+                    assertNull(reader.getMetadata().getColumnMetadata(0).getCoveringColumnIndices());
+                    assertEquals("[3,1]", String.valueOf(reader.getMetadata().getColumnMetadata(4).getCoveringColumnIndices()));
+                }
+                assertReloadedIndexReadsTable();
+                // c3 = 'm1' holds the rows x % 4 = 1: v = x, ts = 7 min * x
+                assertQuery("SELECT c3, v, ts FROM t WHERE c3 = 'm1' LIMIT 3")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .timestamp("ts")
+                        .withPlanContaining("CoveringIndex on: c3")
+                        .returns("""
+                                c3\tv\tts
+                                m1\t1\t2022-02-26T00:07:00.000000Z
+                                m1\t5\t2022-02-26T00:35:00.000000Z
+                                m1\t9\t2022-02-26T01:03:00.000000Z
+                                """);
+                assertSqlCursors(
+                        "SELECT /*+ no_index */ c3, v, ts FROM t WHERE c3 = 'm1'",
+                        "SELECT c3, v, ts FROM t WHERE c3 = 'm1'"
+                );
+                execute("DROP TABLE t");
+            });
+        }
+    }
+
+    @Test
     public void testReaderStateGetters() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {
@@ -20076,6 +20291,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
      * split. Big enough that a key's postings span several DELTA blocks, which is what lets an
      * interval skip whole blocks.
      */
+    private static void assertReaderCovering(String columnName, byte expectedIndexType, String expectedCovering) {
+        try (TableReader reader = getReader("t")) {
+            final TableColumnMetadata columnMetadata = reader.getMetadata().getColumnMetadata(reader.getMetadata().getColumnIndex(columnName));
+            assertEquals(expectedIndexType, columnMetadata.getIndexType());
+            assertEquals(expectedCovering, String.valueOf(columnMetadata.getCoveringColumnIndices()));
+        }
+    }
+
     private static void createIntervalSidecarTable() throws Exception {
         execute("CREATE TABLE t_interval_sidecar (ts TIMESTAMP, ip4 IPV4, s STRING, b BINARY, sym SYMBOL)"
                 + " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
@@ -20235,6 +20458,27 @@ public class CoveringIndexTest extends AbstractCairoTest {
      * {@code sym} files at all -- neither {@code sym.d} nor {@code sym.pk} -- so the
      * covering reader has to serve it as an empty index with a full column top.
      */
+    /**
+     * t: c2 (NULL in every third row, k0..k4 otherwise) with an {@code indexTypeName} index that
+     * INCLUDEs sym2 (S0..S10) and the auto-included ts, v = x, c3 = m0..m3; 400 rows 7 minutes
+     * apart over two days, the first a parquet partition, the second a native one.
+     */
+    private static void createReloadTable(String walMode, String indexTypeName) throws Exception {
+        execute("CREATE TABLE t (c2 SYMBOL, ts TIMESTAMP, sym2 SYMBOL, v LONG, c3 SYMBOL) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("""
+                INSERT INTO t SELECT
+                    CASE WHEN x % 3 = 0 THEN NULL ELSE 'k' || (x % 5) END,
+                    dateadd('m', x::INT * 7, '2022-02-26T00:00:00Z'::TIMESTAMP),
+                    'S' || (x % 11),
+                    x,
+                    'm' || (x % 4)
+                FROM long_sequence(400)
+                """);
+        execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '2022-02-27'");
+        execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE " + indexTypeName + " INCLUDE (sym2)");
+        drainWalQueue();
+    }
+
     private static void createPartitionPredatingIndexedColumnTable() throws Exception {
         execute("""
                 CREATE TABLE t_np_historic (
@@ -20325,6 +20569,83 @@ public class CoveringIndexTest extends AbstractCairoTest {
             }
             assertNoIndexReaderColumnMappings(counter);
         });
+    }
+
+    /**
+     * Queries over t after c2 lost its cover and kept a POSTING index: no plan covers c2, and the
+     * rows match the INSERT of {@link #createReloadTable} and the queries that skip the index.
+     */
+    private void assertReloadedIndexReadsTable() throws Exception {
+        assertQuery("SELECT c2, sym2, ts FROM t WHERE c2 = 'k1' LIMIT 4")
+                .noLeakCheck()
+                .timestamp("ts")
+                .withPlanNotContaining("CoveringIndex")
+                .returns(K1_FIRST_ROWS);
+        assertSqlCursors(
+                "SELECT /*+ no_index */ c2, sym2, ts FROM t WHERE c2 = 'k1'",
+                "SELECT c2, sym2, ts FROM t WHERE c2 = 'k1'"
+        );
+        assertQuery("SELECT count(*) FROM t WHERE c2 = 'k1'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .withPlanNotContaining("CoveringIndex")
+                .returns("count\n53\n");
+        assertQuery("SELECT c2, sym2, ts FROM t WHERE c2 = NULL LIMIT 3")
+                .noLeakCheck()
+                .timestamp("ts")
+                .withPlanNotContaining("CoveringIndex")
+                .returns("""
+                        c2\tsym2\tts
+                        \tS3\t2022-02-26T00:21:00.000000Z
+                        \tS6\t2022-02-26T00:42:00.000000Z
+                        \tS9\t2022-02-26T01:03:00.000000Z
+                        """);
+        assertQuery("SELECT c2, sym2, ts FROM t WHERE c2 = 'zz'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .withPlanNotContaining("CoveringIndex")
+                .returns("c2\tsym2\tts\n");
+        bindVariableService.clear();
+        bindVariableService.setStr(0, "k1");
+        assertQuery("SELECT c2, sym2, ts FROM t WHERE c2 = $1 LIMIT 4")
+                .noLeakCheck()
+                .timestamp("ts")
+                .withPlanNotContaining("CoveringIndex")
+                .returns(K1_FIRST_ROWS);
+        bindVariableService.clear();
+        assertQuery("SELECT c2, sym2, ts FROM t WHERE c2 = 'k1' ORDER BY ts DESC LIMIT 3")
+                .noLeakCheck()
+                .timestampDesc("ts")
+                .returns("""
+                        c2\tsym2\tts
+                        k1\tS6\t2022-02-27T21:37:00.000000Z
+                        k1\tS1\t2022-02-27T21:02:00.000000Z
+                        k1\tS2\t2022-02-27T19:52:00.000000Z
+                        """);
+        assertSqlCursors(
+                "SELECT /*+ no_index */ c2, sym2, ts FROM t WHERE c2 = 'k1' ORDER BY ts DESC LIMIT 3",
+                "SELECT c2, sym2, ts FROM t WHERE c2 = 'k1' ORDER BY ts DESC LIMIT 3"
+        );
+        assertQuery("SELECT c2, sym2, ts FROM t WHERE c2 = 'k1' LATEST ON ts PARTITION BY c2")
+                .noLeakCheck()
+                .timestamp("ts")
+                .withPlanNotContaining("CoveringIndex")
+                .returns("""
+                        c2\tsym2\tts
+                        k1\tS6\t2022-02-27T21:37:00.000000Z
+                        """);
+        for (String sql : new String[]{
+                "SELECT c2, sym2, ts FROM t WHERE c2 IN ('k1', 'k2')",
+                "SELECT c2, sym2, ts FROM t WHERE c2 IN ('k1', 'k2') LATEST ON ts PARTITION BY c2",
+                "SELECT c2, sym2, ts FROM t WHERE c2 LIKE 'k1%'",
+                "SELECT sym2, count(*) FROM t WHERE c2 = 'k1' GROUP BY sym2 ORDER BY sym2"
+        }) {
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("CoveringIndex");
+            assertSqlCursors(sql.replace("SELECT ", "SELECT /*+ no_index */ "), sql);
+        }
     }
 
     /**
@@ -20548,6 +20869,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
      * fd back to the file name; it first drops that fd from every other slot, so a
      * recycled fd can never charge an mmap to the file that previously held it.
      */
+
     private static final class CoveredColumnMapCounter extends TestFilesFacadeImpl {
         private final AtomicIntegerArray counts;
         private final AtomicLongArray fds;

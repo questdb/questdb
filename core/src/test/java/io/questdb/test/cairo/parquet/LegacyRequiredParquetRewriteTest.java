@@ -24,12 +24,19 @@
 
 package io.questdb.test.cairo.parquet;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.PartitionCompactionScanJob;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -105,6 +112,19 @@ public class LegacyRequiredParquetRewriteTest extends AbstractCairoTest {
             {"n_geo2", "string"}, {"n_geo4", "string"}, {"n_geo8", "string"}, {"n_dec", "string"},
             {"n_bin", "string"}, {"n_arr", "string"},
     };
+
+    // the name txn of the parquet partition, which a compaction bumps
+    private static long parquetPartitionNameTxn(TableToken tableToken) {
+        try (TableReader reader = engine.getReader(tableToken)) {
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getPartitionFormat(i) == PartitionFormat.PARQUET) {
+                    return reader.getTxFile().getPartitionNameTxn(i);
+                }
+            }
+        }
+        Assert.fail("expected a parquet partition");
+        return -1;
+    }
 
     // Reads every value of every row of legacy_all through CursorPrinter and returns the row count.
     // count()/count_distinct only read row counts or single columns and would not catch a per-value
@@ -255,6 +275,117 @@ public class LegacyRequiredParquetRewriteTest extends AbstractCairoTest {
                     .noRandomAccess().expectSize().returns("count\n0\n");
             // The 100 column-top rows of n_bool converted to 0.
             assertQuery("select count() from legacy_all where n_int = null and n_bool = 0")
+                    .noRandomAccess().expectSize().returns("count\n100\n");
+        });
+    }
+
+    @Test
+    public void testAppendRewriteKeepsNoSentinelColumnTops() throws Exception {
+        // n_bool, n_byte, n_short and n_char are Required in the legacy file with footer column top
+        // 100. A row appended after the partition's last row rewrites the partition, re-encoding every
+        // row group (forceFullReencode). Every old row keeps its position, so the rewrite keeps the
+        // tops: rows 1..100 read NULL as in a native table that added the columns after 100 rows,
+        // through the lazy conversion and after CONVERT TO NATIVE.
+        assertMemoryLeak(() -> {
+            loadFixture();
+            final String columns = "ts, n_bool, n_byte, n_short, n_char";
+            execute("CREATE TABLE tw AS (SELECT ts FROM legacy_all ORDER BY ts LIMIT 100) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE tw ADD COLUMN n_bool BOOLEAN");
+            execute("ALTER TABLE tw ADD COLUMN n_byte BYTE");
+            execute("ALTER TABLE tw ADD COLUMN n_short SHORT");
+            execute("ALTER TABLE tw ADD COLUMN n_char CHAR");
+            execute("INSERT INTO tw SELECT " + columns + " FROM legacy_all ORDER BY ts LIMIT 100, 150");
+            drainWalQueue();
+            final long maxTimestamp;
+            try (
+                    RecordCursorFactory factory = select("SELECT max(ts) FROM legacy_all", sqlExecutionContext);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertTrue(cursor.hasNext());
+                maxTimestamp = cursor.getRecord().getTimestamp(0);
+            }
+            for (String t : new String[]{"legacy_all", "tw"}) {
+                execute("INSERT INTO " + t + " (" + columns + ") VALUES (" + (maxTimestamp + 1) + ", true, 7::BYTE, 7::SHORT, 'q')");
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM legacy_all").noRandomAccess().expectSize().returns("count\n151\n");
+
+            for (String t : new String[]{"legacy_all", "tw"}) {
+                execute("ALTER TABLE " + t + " ALTER COLUMN n_bool TYPE INT");
+                execute("ALTER TABLE " + t + " ALTER COLUMN n_byte TYPE INT");
+            }
+            drainWalQueue();
+            final String query = "SELECT " + columns + " FROM $t ORDER BY ts";
+            assertSqlCursors(query.replace("$t", "tw"), query.replace("$t", "legacy_all"));
+            assertQuery("SELECT count() FROM legacy_all WHERE n_bool = NULL AND n_byte = NULL")
+                    .noRandomAccess().expectSize().returns("count\n100\n");
+
+            execute("ALTER TABLE legacy_all CONVERT PARTITION TO NATIVE WHERE ts >= 0");
+            drainWalQueue();
+            for (String t : new String[]{"legacy_all", "tw"}) {
+                execute("ALTER TABLE " + t + " ALTER COLUMN n_short TYPE SYMBOL");
+                execute("ALTER TABLE " + t + " ALTER COLUMN n_char TYPE SYMBOL");
+            }
+            drainWalQueue();
+            assertSqlCursors(query.replace("$t", "tw"), query.replace("$t", "legacy_all"));
+            assertQuery("SELECT count() FROM legacy_all WHERE n_short = NULL AND n_char = NULL")
+                    .noRandomAccess().expectSize().returns("count\n100\n");
+        });
+    }
+
+    @Test
+    public void testCompactionKeepsNoSentinelColumnTops() throws Exception {
+        // n_bool, n_byte, n_short and n_char are Required in the legacy file with footer column top
+        // 100. A row on 2024-01-02 leaves 2024-01-01 idle, DROP COLUMN c_int makes its schema stale,
+        // and the sweep compacts it: the legacy Required columns make it re-encode every row group
+        // (forceFullReencode) into Optional columns. Compaction moves no row, so it keeps the tops:
+        // every other value survives, and rows 1..100 read NULL as in a native table that added the
+        // columns after 100 rows, through the lazy conversion and after CONVERT TO NATIVE.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, "0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+        assertMemoryLeak(() -> {
+            loadFixture();
+            final String columns = "ts, n_bool, n_byte, n_short, n_char";
+            execute("CREATE TABLE tw AS (SELECT ts FROM legacy_all ORDER BY ts LIMIT 100) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE tw ADD COLUMN n_bool BOOLEAN");
+            execute("ALTER TABLE tw ADD COLUMN n_byte BYTE");
+            execute("ALTER TABLE tw ADD COLUMN n_short SHORT");
+            execute("ALTER TABLE tw ADD COLUMN n_char CHAR");
+            execute("INSERT INTO tw SELECT " + columns + " FROM legacy_all ORDER BY ts LIMIT 100, 150");
+            for (String t : new String[]{"legacy_all", "tw"}) {
+                execute("INSERT INTO " + t + " (" + columns + ") VALUES ('2024-01-02T00:00:00.000000Z', true, 7::BYTE, 7::SHORT, 'q')");
+            }
+            execute("ALTER TABLE legacy_all DROP COLUMN c_int");
+            drainWalQueue();
+            execute("CREATE TABLE golden AS (SELECT * FROM legacy_all)");
+            engine.releaseInactive();
+
+            final TableToken tableToken = engine.verifyTableName("legacy_all");
+            final long nameTxnBefore = parquetPartitionNameTxn(tableToken);
+            final Clock twoHoursAhead = () -> configuration.getMicrosecondClock().getTicks() + 2 * Micros.HOUR_MICROS;
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, configuration.getFilesFacade(), twoHoursAhead)) {
+                job.run();
+            }
+            engine.releaseInactive();
+            Assert.assertNotEquals("the sweep should have compacted the partition", nameTxnBefore, parquetPartitionNameTxn(tableToken));
+            assertSqlCursors("SELECT * FROM golden ORDER BY ts", "SELECT * FROM legacy_all ORDER BY ts");
+
+            for (String t : new String[]{"legacy_all", "tw"}) {
+                execute("ALTER TABLE " + t + " ALTER COLUMN n_bool TYPE INT");
+                execute("ALTER TABLE " + t + " ALTER COLUMN n_byte TYPE INT");
+                execute("ALTER TABLE " + t + " ALTER COLUMN n_short TYPE LONG");
+                execute("ALTER TABLE " + t + " ALTER COLUMN n_char TYPE VARCHAR");
+            }
+            drainWalQueue();
+            final String query = "SELECT " + columns + " FROM $t ORDER BY ts";
+            assertSqlCursors(query.replace("$t", "tw"), query.replace("$t", "legacy_all"));
+            assertQuery("SELECT count() FROM legacy_all WHERE n_bool = NULL AND n_byte = NULL AND n_short = NULL AND n_char = NULL")
+                    .noRandomAccess().expectSize().returns("count\n100\n");
+
+            execute("ALTER TABLE legacy_all CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            assertSqlCursors(query.replace("$t", "tw"), query.replace("$t", "legacy_all"));
+            assertQuery("SELECT count() FROM legacy_all WHERE n_bool = NULL AND n_byte = NULL AND n_short = NULL AND n_char = NULL")
                     .noRandomAccess().expectSize().returns("count\n100\n");
         });
     }

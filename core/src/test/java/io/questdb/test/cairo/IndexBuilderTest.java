@@ -57,7 +57,11 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
+import java.util.Arrays;
+import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Pattern;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
@@ -762,6 +766,71 @@ public class IndexBuilderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReindexRemovesStaleCoverFilesOfNameTxnZero() throws Exception {
+        // s is the first column added to the empty table, so its column name txn is 0, and its .pc
+        // files carry the token 0 that txn NONE also writes. An earlier version left a superseded seal
+        // of s, planted here by name. REINDEX removes every sealed file of s before it rebuilds the
+        // index, and the covered values read what the twin, with s in CREATE TABLE, reads.
+        indexType = IndexType.POSTING;
+        ff = TestFilesFacadeImpl.INSTANCE;
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_z (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("ALTER TABLE t_z ADD COLUMN s SYMBOL");
+            execute("CREATE TABLE t_twin (ts TIMESTAMP, price DOUBLE, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            for (String table : new String[]{"t_z", "t_twin"}) {
+                execute("ALTER TABLE " + table + " ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (price)");
+                execute("INSERT INTO " + table + " VALUES " +
+                        "('2024-01-01T00:00:00', 10.0, 'A'), ('2024-01-01T01:00:00', 20.0, 'B'), ('2024-01-01T02:00:00', NULL, 'A'), " +
+                        "('2024-01-02T00:00:00', 40.0, 'A'), ('2024-01-02T01:00:00', 50.0, NULL)");
+            }
+            engine.releaseAllWriters();
+            final File dir = partitionDir("t_z", "2024-01-01");
+            for (String name : new String[]{"s.pc0.0.1.99", "s.pc1.0.99", "s.pv.0.99"}) {
+                Assert.assertTrue(name, new File(dir, name).createNewFile());
+            }
+
+            runReindexSql("REINDEX TABLE t_z LOCK EXCLUSIVE");
+
+            final String[] names = partitionDir("t_z", "2024-01-01").list((_, name) -> name.startsWith("s.p"));
+            Assert.assertNotNull(names);
+            // s.pc0 for price and s.pc1 for ts next to each sealed s.pv.0.<seal>, each s.pc<N>.0.<seal>
+            final TreeSet<String> expected = new TreeSet<>();
+            final TreeSet<String> actual = new TreeSet<>();
+            for (String name : names) {
+                Assert.assertFalse(name, name.endsWith(".99"));
+                if (name.startsWith("s.pv.0.")) {
+                    final String seal = name.substring("s.pv.0.".length());
+                    expected.add("s.pc0.0." + seal);
+                    expected.add("s.pc1.0." + seal);
+                } else if (name.startsWith("s.pc") && !name.startsWith("s.pci")) {
+                    actual.add(name);
+                }
+            }
+            Assert.assertFalse(Arrays.toString(names), expected.isEmpty());
+            Assert.assertEquals(Arrays.toString(names), expected.toString(), actual.toString());
+            for (String sql : new String[]{
+                    "SELECT ts, s, price FROM {t} WHERE s = 'A'",
+                    "SELECT ts, s, price FROM {t} WHERE s IN ('A', 'B')",
+                    "SELECT ts, s, price FROM {t} WHERE s IS NULL"
+            }) {
+                assertSqlCursors(sql.replace("{t}", "t_twin"), sql.replace("{t}", "t_z"));
+            }
+            assertQuery("SELECT ts, price FROM t_z WHERE s = 'A'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s with: ts, price")
+                    .returns("""
+                            ts\tprice
+                            2024-01-01T00:00:00.000000Z\t10.0
+                            2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-02T00:00:00.000000Z\t40.0
+                            """);
+        });
+    }
+
+    @Test
     public void testReindexRejectsNamedParquetPartition() throws Exception {
         // REINDEX of an explicitly named parquet partition is rejected rather than
         // silently destroying an index that cannot be rebuilt from a local .d.
@@ -852,6 +921,18 @@ public class IndexBuilderTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns(expected);
         });
+    }
+
+    /**
+     * The directory of partition {@code partitionName} of {@code tableName}: {@code partitionName}, or
+     * {@code partitionName.<name txn>} once a commit rewrote the partition.
+     */
+    private static File partitionDir(String tableName, String partitionName) {
+        final File tableDir = new File(configuration.getDbRoot().toString(), engine.verifyTableName(tableName).getDirName());
+        final File[] dirs = tableDir.listFiles((_, name) -> name.matches(Pattern.quote(partitionName) + "(\\.[0-9]+)?"));
+        Assert.assertNotNull(dirs);
+        Assert.assertEquals(Arrays.toString(dirs), 1, dirs.length);
+        return dirs[0];
     }
 
     private static void runReindexSql(String query) {
@@ -950,17 +1031,14 @@ public class IndexBuilderTest extends AbstractCairoTest {
             int plen = p.size();
             FilesFacade facade = configuration.getFilesFacade();
             AtomicInteger removed = new AtomicInteger();
-            PostingIndexUtils.scanSealedFiles(facade, p, plen, "sym1", new PostingIndexUtils.SealedFileVisitor() {
+            PostingIndexUtils.scanSealedFiles(facade, p, plen, "sym1", TableUtils.COLUMN_NAME_TXN_NONE, new PostingIndexUtils.SealedFileVisitor() {
                 @Override
-                public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
+                public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
                 }
 
                 @Override
-                public void onValueFile(long postingColumnNameTxn, long sealTxn) {
-                    if (postingColumnNameTxn != TableUtils.COLUMN_NAME_TXN_NONE) {
-                        return;
-                    }
-                    LPSZ pv = PostingIndexUtils.valueFileName(p.trimTo(plen), "sym1", postingColumnNameTxn, sealTxn);
+                public void onValueFile(long sealTxn) {
+                    LPSZ pv = PostingIndexUtils.valueFileName(p.trimTo(plen), "sym1", TableUtils.COLUMN_NAME_TXN_NONE, sealTxn);
                     LOG.info().$("removing ").$(pv).$();
                     Assert.assertTrue(facade.removeQuiet(pv));
                     p.trimTo(plen);

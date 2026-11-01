@@ -185,6 +185,24 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testApplyTransitionClearsCoveringList() throws Exception {
+        // DROP INDEX and ADD INDEX of the same type keep every field the reuse check of the column
+        // compares, so the column metadata of c2 survives the transition and must drop its list
+        assertMemoryLeak(() -> {
+            final TableToken tableToken = createCoveringTable();
+            try (TableReaderMetadata metadata = new TableReaderMetadata(configuration, tableToken)) {
+                metadata.loadMetadata();
+                Assert.assertEquals("[2,1]", String.valueOf(metadata.getColumnMetadata(0).getCoveringColumnIndices()));
+
+                final long metadataVersion = dropIndexAndReAddWithoutInclude(tableToken);
+                Assert.assertTrue(metadata.prepareTransition(metadataVersion));
+                metadata.applyTransition();
+                assertCoveringCleared(metadata);
+            }
+        });
+    }
+
+    @Test
     public void testApplyTransitionFrom() throws Exception {
         assertMemoryLeak(() -> {
             CreateTableTestUtils.createAllTableWithNewTypes(engine, PartitionBy.HOUR, timestampType);
@@ -212,6 +230,28 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 copyMeta.applyTransitionFrom(ogMeta);
 
                 assertEquals(ogMeta, copyMeta);
+            }
+        });
+    }
+
+    @Test
+    public void testApplyTransitionFromClearsCoveringList() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken tableToken = createCoveringTable();
+            try (
+                    TableReaderMetadata ogMeta = new TableReaderMetadata(configuration, tableToken);
+                    TableReaderMetadata copyMeta = new TableReaderMetadata(configuration, tableToken)
+            ) {
+                ogMeta.loadMetadata();
+                copyMeta.loadMetadata();
+                Assert.assertEquals("[2,1]", String.valueOf(copyMeta.getColumnMetadata(0).getCoveringColumnIndices()));
+
+                final long metadataVersion = dropIndexAndReAddWithoutInclude(tableToken);
+                Assert.assertTrue(ogMeta.prepareTransition(metadataVersion));
+                ogMeta.applyTransition();
+                copyMeta.applyTransitionFrom(ogMeta);
+                assertCoveringCleared(copyMeta);
+                assertCoveringCleared(ogMeta);
             }
         });
     }
@@ -563,6 +603,30 @@ public class TableReaderMetadataTest extends AbstractCairoTest {
                 "varchar:" + varcharColumnType + "\n" +
                 "timestamp:" + ColumnType.nameOf(timestampType) + "\n";
         assertThat(expected, (w) -> w.renameColumn("str", "str1"));
+    }
+
+    private static void assertCoveringCleared(TableReaderMetadata metadata) {
+        Assert.assertEquals(IndexType.POSTING, metadata.getColumnIndexType(0));
+        Assert.assertFalse(metadata.getColumnMetadata(0).isCovering());
+        Assert.assertNull(metadata.getColumnMetadata(0).getCoveringColumnIndices());
+    }
+
+    // c2 hosts a POSTING index that covers sym2 and the auto-included ts: covering list [2,1]
+    private static TableToken createCoveringTable() throws Exception {
+        execute("CREATE TABLE t (c2 SYMBOL INDEX TYPE POSTING INCLUDE (sym2), ts TIMESTAMP, sym2 SYMBOL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO t VALUES ('k1', '2022-02-26T00:07:00.000000Z', 'S1'), ('k2', '2022-02-27T00:07:00.000000Z', 'S2')");
+        return engine.verifyTableName("t");
+    }
+
+    // returns the metadata version after the ALTERs, which a fresh load sees without the cover
+    private static long dropIndexAndReAddWithoutInclude(TableToken tableToken) throws Exception {
+        execute("ALTER TABLE t ALTER COLUMN c2 DROP INDEX");
+        execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE POSTING");
+        try (TableReaderMetadata fresh = new TableReaderMetadata(configuration, tableToken)) {
+            fresh.loadMetadata();
+            assertCoveringCleared(fresh);
+            return fresh.getMetadataVersion();
+        }
     }
 
     private static void assertEquals(TableReaderMetadata expected, TableReaderMetadata actual) {
