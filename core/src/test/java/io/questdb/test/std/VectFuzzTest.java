@@ -150,7 +150,7 @@ public class VectFuzzTest {
                                 Assert.assertTrue("double sum, count: 0", Double.isNaN(Vect.sumDouble(ptr, 0)));
                                 Assert.assertTrue("double sum acc, count: 0", Double.isNaN(Vect.sumDoubleAcc(ptr, 0, countPtr)));
                                 Assert.assertTrue("double Kahan sum, count: 0", Double.isNaN(Vect.sumDoubleKahan(ptr, 0)));
-                                Assert.assertTrue("double Neumaier sum, count: 0", Double.isNaN(Vect.sumDoubleNeumaier(ptr, 0)));
+                                Assert.assertTrue("double Neumaier sum, count: 0", Double.isNaN(Vect.sumDoubleNeumaier(ptr, 0, countPtr)));
                                 Assert.assertTrue("double min, count: 0", Double.isNaN(Vect.minDouble(ptr, 0)));
                                 Assert.assertTrue("double max, count: 0", Double.isNaN(Vect.maxDouble(ptr, 0)));
                                 Assert.assertEquals("double count, count: 0", 0, Vect.countDouble(ptr, 0));
@@ -158,7 +158,7 @@ public class VectFuzzTest {
                                 Assert.assertEquals("double sum, count: " + count, 0.0, Vect.sumDouble(ptr, count), 0.001);
                                 Assert.assertEquals("double sum acc, count: " + count, 0.0, Vect.sumDoubleAcc(ptr, count, countPtr), 0.001);
                                 Assert.assertEquals("double Kahan sum, count: " + count, 0.0, Vect.sumDoubleKahan(ptr, count), 0.001);
-                                Assert.assertEquals("double Neumaier sum, count: " + count, 0.0, Vect.sumDoubleNeumaier(ptr, count), 0.001);
+                                Assert.assertEquals("double Neumaier sum, count: " + count, 0.0, Vect.sumDoubleNeumaier(ptr, count, countPtr), 0.001);
                                 Assert.assertEquals("double min, count: " + count, 0.0, Vect.minDouble(ptr, count), 0.001);
                                 Assert.assertEquals("double max, count: " + count, 0.0, Vect.maxDouble(ptr, count), 0.001);
                                 Assert.assertEquals("double count, count: " + count, count, Vect.countDouble(ptr, count));

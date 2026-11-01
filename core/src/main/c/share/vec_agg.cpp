@@ -789,7 +789,8 @@ double SUM_DOUBLE_KAHAN(double *d, int64_t count) {
     return nans < count ? sum : NAN;
 }
 
-double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
+double SUM_DOUBLE_NEUMAIER(double *d, int64_t count, double *pC) {
+    *pC = 0.;
     if (count == 0) {
         return NAN;
     }
@@ -802,13 +803,13 @@ double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
     Vec8d sumVec = 0.;
     Vec8d cVec = 0.;
     Vec8db bVec;
-    Vec8q nancount = 0;
+    Vec8q skippedVec = 0;
     Vec8d tVec;
     for (; d < lim_vec; d += step) {
         _mm_prefetch(d + 63 * step, _MM_HINT_T1);
         inputVec.load(d);
-        bVec = is_nan(inputVec);
-        nancount = if_add(bVec, nancount, 1);
+        bVec = !is_finite(inputVec);
+        skippedVec = if_add(bVec, skippedVec, 1);
         inputVec = select(bVec, 0, inputVec);
         tVec = sumVec + inputVec;
         bVec = abs(sumVec) >= abs(inputVec);
@@ -817,16 +818,31 @@ double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
     }
 
     _mm_prefetch(d, _MM_HINT_T0);
-    double sum = horizontal_add(sumVec);
-    double c = horizontal_add(cVec);
-    int64_t nans = horizontal_add(nancount);
+    double sums[step];
+    double cs[step];
+    sumVec.store(sums);
+    cVec.store(cs);
+    double sum = 0.;
+    double c = 0.;
+    for (int i = 0; i < step; i++) {
+        const double x = sums[i];
+        const double t = sum + x;
+        if (std::abs(sum) >= std::abs(x)) {
+            c += (sum - t) + x;
+        } else {
+            c += (x - t) + sum;
+        }
+        c += cs[i];
+        sum = t;
+    }
+    int64_t skipped = horizontal_add(skippedVec);
     for (; d < lim; d++) {
         double input = *d;
-        if (PREDICT_FALSE(std::isnan(input))) {
-            nans++;
+        if (PREDICT_FALSE(!std::isfinite(input))) {
+            skipped++;
         } else {
             auto t = sum + input;
-            if (abs(sum) >= abs(input)) {
+            if (std::abs(sum) >= std::abs(input)) {
                 c += (sum - t) + input;
             } else {
                 c += (input - t) + sum;
@@ -835,7 +851,8 @@ double SUM_DOUBLE_NEUMAIER(double *d, int64_t count) {
         }
     }
 
-    return nans < count ? sum + c : D_NAN;
+    *pC = c;
+    return skipped < count ? sum : D_NAN;
 }
 
 double MIN_DOUBLE(double *d, int64_t count) {
@@ -906,7 +923,7 @@ DOUBLE_LONG_DISPATCHER(countDouble)
 DOUBLE_DISPATCHER(sumDouble)
 DOUBLE_ACC_DISPATCHER(sumDoubleAcc)
 DOUBLE_DISPATCHER(sumDoubleKahan)
-DOUBLE_DISPATCHER(sumDoubleNeumaier)
+DOUBLE_COMP_DISPATCHER(sumDoubleNeumaier)
 DOUBLE_DISPATCHER(minDouble)
 DOUBLE_DISPATCHER(maxDouble)
 

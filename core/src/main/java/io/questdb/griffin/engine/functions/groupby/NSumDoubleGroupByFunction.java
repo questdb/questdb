@@ -34,7 +34,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Numbers;
-import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -50,27 +50,22 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
 
     @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
-        double batchSum = 0;
-        double batchC = 0;
-        long finiteCount = 0;
-        for (int i = 0; i < rowCount; i++) {
-            final double value = Unsafe.getDouble(dataAddr + ((long) i << 3));
-            if (Numbers.isFinite(value)) {
-                final double t = batchSum + value;
-                batchC += Math.abs(batchSum) >= Math.abs(value) ? (batchSum - t) + value : (value - t) + batchSum;
-                batchSum = t;
-                finiteCount++;
-            }
-        }
-        if (finiteCount > 0) {
-            final long count = mapValue.getLong(valueIndex + 2);
-            if (count > 0) {
-                sum(mapValue, batchSum, batchC, mapValue.getDouble(valueIndex), mapValue.getDouble(valueIndex + 1));
+        if (rowCount > 0) {
+            final long cPtr = mapValue.getAddress(valueIndex + 1);
+            final double prevC = mapValue.getDouble(valueIndex + 1);
+            final double batchSum = Vect.sumDoubleNeumaier(dataAddr, rowCount, cPtr);
+            final double batchC = mapValue.getDouble(valueIndex + 1);
+            if (batchSum == batchSum) {
+                final long count = mapValue.getLong(valueIndex + 2);
+                if (count > 0) {
+                    sum(mapValue, batchSum, batchC, mapValue.getDouble(valueIndex), prevC);
+                } else {
+                    mapValue.putDouble(valueIndex, batchSum);
+                }
+                mapValue.putLong(valueIndex + 2, count + 1);
             } else {
-                mapValue.putDouble(valueIndex, batchSum);
-                mapValue.putDouble(valueIndex + 1, batchC);
+                mapValue.putDouble(valueIndex + 1, prevC);
             }
-            mapValue.putLong(valueIndex + 2, count + finiteCount);
         }
     }
 

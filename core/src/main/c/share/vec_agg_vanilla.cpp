@@ -191,7 +191,8 @@ double sumDoubleKahan_Vanilla(double *d, int64_t count) {
     return hasData ? sum : NAN;
 }
 
-double sumDoubleNeumaier_Vanilla(double *d, int64_t count) {
+double sumDoubleNeumaier_Vanilla(double *d, int64_t count, double *pC) {
+    *pC = 0.;
     if (count == 0) {
         return NAN;
     }
@@ -201,7 +202,7 @@ double sumDoubleNeumaier_Vanilla(double *d, int64_t count) {
     bool hasData = false;
     for (; d < lim; d++) {
         const double input = *d;
-        if (input == input) {
+        if (std::isfinite(input)) {
             double t = sum + input;
             if (std::abs(sum) >= std::abs(input)) {
                 c += (sum - t) + input;
@@ -212,7 +213,8 @@ double sumDoubleNeumaier_Vanilla(double *d, int64_t count) {
             hasData = true;
         }
     }
-    return hasData ? sum + c : NAN;
+    *pC = c;
+    return hasData ? sum : NAN;
 }
 
 double minDouble_Vanilla(double *d, int64_t count) {

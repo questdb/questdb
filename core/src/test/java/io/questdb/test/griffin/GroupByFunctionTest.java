@@ -3028,6 +3028,43 @@ public class GroupByFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVectorNSumDoubleCompensatesAcrossFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-01T00', 1e16), ('2024-01-01T01', 1), ('2024-01-01T02', 1), ('2024-01-01T03', 1),
+                        ('2024-01-01T04', 1), ('2024-01-01T05', 1), ('2024-01-01T06', 1), ('2024-01-01T07', 1),
+                        ('2024-01-01T08', 1 / 0.0), ('2024-01-01T09', -1 / 0.0), ('2024-01-02', -1e16)""");
+            assertQuery("SELECT nsum(d) FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("vectorized: true")
+                    .returns("""
+                            nsum
+                            7.0
+                            """);
+
+            execute("ALTER TABLE x ADD COLUMN k INT");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-03T00', 2, null), ('2024-01-03T01', 1, 1), ('2024-01-03T02', -1e16, 1),
+                        ('2024-01-03T03', 1e16, 1), ('2024-01-03T04', 1 / 0.0, 2), ('2024-01-03T05', 3, 2)""");
+            assertQuery("SELECT k, nsum(d) FROM x ORDER BY k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("GroupBy vectorized: true")
+                    .returns("""
+                            k\tnsum
+                            null\t9.0
+                            1\t1.0
+                            2\t3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testVectorNSumOneDouble() throws Exception {
         assertQuery("select nsum(d) sum from x")
                 .ddl("create table x as " +

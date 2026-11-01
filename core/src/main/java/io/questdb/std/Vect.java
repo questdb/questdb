@@ -575,7 +575,7 @@ public final class Vect {
 
     public static native double sumDoubleKahan(long pDouble, long count);
 
-    public static native double sumDoubleNeumaier(long pDouble, long count);
+    public static native double sumDoubleNeumaier(long pDouble, long count, long pC);
 
     public static native long sumInt(long pInt, long count);
 

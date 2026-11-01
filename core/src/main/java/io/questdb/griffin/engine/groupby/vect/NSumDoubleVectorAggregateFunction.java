@@ -28,6 +28,7 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Rosti;
 import io.questdb.std.Unsafe;
@@ -48,6 +49,7 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     private final KeyValueFunc keyValueFunc;
     private final double[] sum;
     private final int workerCount;
+    private long compensationsAddr;
     private double transientC;
     private long transientCount;
     private double transientSum;
@@ -68,19 +70,21 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
             this.distinctFunc = Rosti::keyedIntDistinct;
             this.keyValueFunc = Rosti::keyedIntNSumDouble;
         }
+        this.compensationsAddr = Unsafe.malloc((long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
     }
 
     @Override
     public void aggregate(long address, long frameRowCount, int workerId) {
         if (address != 0) {
             // Neumaier compensated summation
-            final double x = Vect.sumDoubleNeumaier(address, frameRowCount);
+            final long pC = compensationsAddr + (long) workerId * Misc.CACHE_LINE_SIZE;
+            final double x = Vect.sumDoubleNeumaier(address, frameRowCount, pC);
             if (x == x) {
                 final int sumOffset = workerId * SUM_PADDING;
                 final double sum = this.sum[sumOffset];
                 final double t = sum + x;
-                double c = this.sum[sumOffset + 1];
-                if (Math.abs(sum) >= x) {
+                double c = this.sum[sumOffset + 1] + Unsafe.getDouble(pC);
+                if (Math.abs(sum) >= Math.abs(x)) {
                     c += (sum - t) + x;
                 } else {
                     c += (x - t) + sum;
@@ -105,6 +109,12 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
     public void clear() {
         Arrays.fill(sum, 0);
         Arrays.fill(count, 0);
+    }
+
+    @Override
+    public void close() {
+        compensationsAddr = Unsafe.free(compensationsAddr, (long) workerCount * Misc.CACHE_LINE_SIZE, MemoryTag.NATIVE_FUNC_RSS);
+        super.close();
     }
 
     @Override
@@ -159,13 +169,14 @@ public class NSumDoubleVectorAggregateFunction extends DoubleFunction implements
         long count = 0;
         double c = 0;
         for (int i = 0; i < workerCount; i++) {
-            double x = this.sum[i * SUM_PADDING] + this.sum[i * SUM_PADDING + 1];
-            double t = sum + x;
-            if (Math.abs(sum) >= x) {
+            final double x = this.sum[i * SUM_PADDING];
+            final double t = sum + x;
+            if (Math.abs(sum) >= Math.abs(x)) {
                 c += (sum - t) + x;
             } else {
                 c += (x - t) + sum;
             }
+            c += this.sum[i * SUM_PADDING + 1];
             sum = t;
             count += this.count[i * COUNT_PADDING];
         }
