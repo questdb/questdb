@@ -3370,6 +3370,41 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMatrixMultiplyConstant1dArgs() throws Exception {
+        assertMemoryLeak(() -> {
+            // all arguments are constant, so the function is constant-folded at
+            // parse time, before init() runs; a 1-D argument must still be
+            // promoted to a 2-D matrix on that path
+            assertQuery("SELECT matmul(ARRAY[1.0], ARRAY[[1.0]]) AS product")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("product\n[[1.0]]\n");
+            assertQuery("SELECT matmul(ARRAY[[1.0, 2.0]], ARRAY[1.0, 2.0]) AS product")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("product\n[[5.0]]\n");
+            assertQuery("SELECT matmul(ARRAY[1.0, 2.0], ARRAY[[1.0], [2.0]]) AS product")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("product\n[[5.0]]\n");
+            assertQuery("SELECT matmul(ARRAY[1.0, 2.0], ARRAY[1.0, 2.0]) AS product")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("product\n[[5.0]]\n");
+            assertQuery("SELECT matmul(ARRAY[1.0, 2.0], ARRAY[[1.0, 2.0], [3.0, 4.0]]) AS product")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("product\n[[7.0,10.0]]\n");
+            assertExceptionNoLeakCheck("SELECT matmul(ARRAY[1.0], ARRAY[1.0, 2.0])",
+                    19, "left array row length doesn't match right array column length [leftRowLen=1, rightColLen=2]");
+            assertExceptionNoLeakCheck("SELECT matmul(ARRAY[[[1.0]]], ARRAY[[1.0]])",
+                    19, "left array is not one or two-dimensional");
+            assertExceptionNoLeakCheck("SELECT matmul(ARRAY[[1.0]], ARRAY[[[1.0]]])",
+                    33, "right array is not one or two-dimensional");
+        });
+    }
+
+    @Test
     public void testMatrixMultiplyInvalid() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT " +
