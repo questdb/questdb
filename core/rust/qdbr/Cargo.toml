@@ -30,6 +30,15 @@ rapidhash = "4.4.1"
 zstd = "0.14.3"
 memmap2 = "0.9.11"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_ProcessStatus",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 parquet = "56.2.0"
 arrow = "56.2.0"

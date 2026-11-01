@@ -131,6 +131,14 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, String.valueOf(mergeAppendEnabled));
     }
 
+    @Override
+    public void tearDown() throws Exception {
+        // The engine outlives the test. A test that fails between a failed flush and its restart must not leave
+        // the engine stopped, or every later test of the class fails on it.
+        engine.resetDurabilityFailure();
+        super.tearDown();
+    }
+
     @Test
     public void testAddColumnIndexMidCommitSpillFlushCarriesArmedTxnAtSeal() throws Exception {
         // ALTER TABLE ADD COLUMN ... INDEX TYPE POSTING runs
@@ -12190,7 +12198,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             final Throwable failure = failRecoveryPartitionSwitch(pcSync, false);
             Assert.assertNotNull("the partition switch must fail", failure);
             TestUtils.assertContains(failure.getMessage(), "[test] could not msync");
-            TestUtils.assertContains(failure.getMessage(), "new_col_11.pc0.1." + headSealTxn);
+            if (Files.isPathLookupSupported()) {
+                TestUtils.assertContains(failure.getMessage(), "new_col_11.pc0.1." + headSealTxn);
+            }
             Assert.assertTrue(engine.isDurabilityFailed());
             Assert.assertEquals(1, pcSync.failureCount());
             // the commit failed before the reseal staged its generation
@@ -12232,7 +12242,9 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
             final Throwable failure = failRecoveryPartitionSwitch(pcSync, true);
             Assert.assertNotNull("the partition switch must fail", failure);
             TestUtils.assertContains(failure.getMessage(), "[test] could not msync");
-            TestUtils.assertContains(failure.getMessage(), "new_col_11.pc0.1." + (headSealTxn + 1));
+            if (Files.isPathLookupSupported()) {
+                TestUtils.assertContains(failure.getMessage(), "new_col_11.pc0.1." + (headSealTxn + 1));
+            }
             Assert.assertTrue(engine.isDurabilityFailed());
             Assert.assertEquals(1, pcSync.failureCount());
             Assert.assertTrue(isRecoveryValueFilePresent(headSealTxn + 1));
