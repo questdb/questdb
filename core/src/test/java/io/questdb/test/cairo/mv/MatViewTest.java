@@ -976,7 +976,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_status\trefresh_period_hi\trefresh_base_table_txn\tbase_table_txn\tperiod_length\tperiod_length_unit\trefresh_limit\trefresh_limit_unit
-                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.000000Z\t2024-01-01T01:01:01.000000Z\tvalid\t2024-01-02T00:00:00.000000Z\t1\t1\t24\tHOUR\t2\tMONTH
+                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.000000Z\t2024-01-01T01:01:01.000000Z\tvalid\t2024-01-01T00:00:00.000000Z\t1\t1\t24\tHOUR\t2\tMONTH
                             """);
             assertQuery("price_1h order by sym, ts")
                     .expectSize()
@@ -1237,6 +1237,71 @@ public class MatViewTest extends AbstractCairoTest {
                             gbpusd\t1.321\t2000-01-01T13:00:00.000000Z
                             jpyusd\t103.21\t2000-01-01T12:00:00.000000Z
                             """));
+        });
+    }
+
+    @Test
+    public void testAlterRefreshPeriodSampleByIntervalTimeZone() throws Exception {
+        assertMemoryLeak(() -> {
+            // The local day is the 29th in Berlin (UTC+1) and the 28th in New York (UTC-4).
+            currentMicros = MicrosTimestampDriver.floor("2026-10-28T23:30:00.000000Z");
+            for (String type : new String[]{"TIMESTAMP", "TIMESTAMP_NS"}) {
+                execute("CREATE TABLE base (ts " + type + ", v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                for (String timeZone : new String[]{"Europe/Berlin", "America/New_York"}) {
+                    final String query = "SELECT ts, sum(v) s FROM base SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE '" + timeZone + "'";
+                    final String name = timeZone.substring(timeZone.indexOf('/') + 1).toLowerCase();
+                    execute("CREATE MATERIALIZED VIEW " + name + "_altered AS (" + query + ") PARTITION BY DAY");
+                    execute("ALTER MATERIALIZED VIEW " + name + "_altered SET REFRESH PERIOD (SAMPLE BY INTERVAL)");
+                    execute("CREATE MATERIALIZED VIEW " + name + "_created REFRESH PERIOD (SAMPLE BY INTERVAL) AS (" + query + ") PARTITION BY DAY");
+                }
+                drainWalAndMatViewQueues();
+                assertQuery("SELECT view_name, timer_time_zone, timer_start, period_length, period_length_unit FROM materialized_views() ORDER BY view_name")
+                        .noLeakCheck()
+                        .sizeMayVary()
+                        .returns("""
+                                view_name\ttimer_time_zone\ttimer_start\tperiod_length\tperiod_length_unit
+                                berlin_altered\tEurope/Berlin\t2026-10-29T00:00:00.000000Z\t1\tDAY
+                                berlin_created\tEurope/Berlin\t2026-10-29T00:00:00.000000Z\t1\tDAY
+                                new_york_altered\tAmerica/New_York\t2026-10-28T00:00:00.000000Z\t1\tDAY
+                                new_york_created\tAmerica/New_York\t2026-10-28T00:00:00.000000Z\t1\tDAY
+                                """);
+                execute("DROP ALL");
+            }
+        });
+    }
+
+    @Test
+    public void testAlterRefreshPeriodTooLong() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_price (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW price_long AS SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1000000h");
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW price_long SET REFRESH PERIOD (SAMPLE BY INTERVAL)",
+                    73,
+                    "maximum supported length interval is 24 hours: 1000000h"
+            );
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW price_long SET REFRESH PERIOD (LENGTH 1000000h)",
+                    62,
+                    "maximum supported length interval is 24 hours: 1000000h"
+            );
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW price_long SET REFRESH PERIOD (LENGTH 35791395m)",
+                    62,
+                    "maximum supported length interval is 24 hours: 35791395m"
+            );
+            assertExceptionNoLeakCheck(
+                    "ALTER MATERIALIZED VIEW price_long SET REFRESH PERIOD (LENGTH 1h DELAY 1000000h)",
+                    71,
+                    "delay cannot be equal to or greater than length"
+            );
+            assertQuery("SELECT view_name, refresh_type, period_length FROM materialized_views()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_name\trefresh_type\tperiod_length
+                            price_long\timmediate\t0
+                            """);
         });
     }
 
@@ -3090,6 +3155,79 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewNonDeterministicFunctionPrunedFromSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonDeterministicFunctionBase();
+            execute("CREATE MATERIALIZED VIEW mv1 AS (SELECT ts, max(x) m FROM (SELECT ts, x, now() n FROM t) SAMPLE BY 1d) PARTITION BY DAY");
+            assertQuery("CREATE MATERIALIZED VIEW mv_kept AS (SELECT ts, max(x) m, max(n) n FROM (SELECT ts, x, now() n FROM t) SAMPLE BY 1d) PARTITION BY DAY")
+                    .noLeakCheck()
+                    .fails(87, "non-deterministic function cannot be used in materialized view: now");
+            drainQueues();
+            assertNonDeterministicFunctionPrunedRows("mv1");
+        });
+    }
+
+    @Test
+    public void testCreateMatViewNonDeterministicFunctionPrunedFromView() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonDeterministicFunctionBase();
+            execute("CREATE VIEW v AS (SELECT ts, x, now() n FROM t)");
+            execute("CREATE MATERIALIZED VIEW mv2 AS (SELECT ts, max(x) m FROM v SAMPLE BY 1d) PARTITION BY DAY");
+            assertQuery("CREATE MATERIALIZED VIEW mv_kept AS (SELECT ts, max(x) m, max(n) n FROM v SAMPLE BY 1d) PARTITION BY DAY")
+                    .noLeakCheck()
+                    .fails(51, "non-deterministic function cannot be used in materialized view: now");
+            drainQueues();
+            assertNonDeterministicFunctionPrunedRows("mv2");
+        });
+    }
+
+    @Test
+    public void testCreateMatViewNonDeterministicTableFunctionArgument() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonDeterministicFunctionBase();
+            final String viewSql = "SELECT * FROM generate_series(now(), now(), 1)";
+            execute("CREATE VIEW gv AS (" + viewSql + ")");
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, max(g.generate_series) observed FROM t CROSS JOIN generate_series(now(), now(), 1) g SAMPLE BY 1h",
+                    "now()",
+                    "now"
+            );
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, max(t.x) m FROM t CROSS JOIN generate_series(now(), now(), 1) g SAMPLE BY 1h",
+                    "now()",
+                    "now"
+            );
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, max(g.generate_series) observed FROM t CROSS JOIN generate_series(now_ns(), now_ns(), 1) g SAMPLE BY 1h",
+                    "now_ns()",
+                    "now_ns"
+            );
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, sum(g.x) s FROM t CROSS JOIN long_sequence(now()::LONG % 2 + 1) g SAMPLE BY 1h",
+                    "now()",
+                    "now"
+            );
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT t.ts, max(g.generate_series) observed FROM t CROSS JOIN (SELECT generate_series FROM generate_series(now(), now(), 1)) g SAMPLE BY 1h",
+                    "now()",
+                    "now"
+            );
+            assertNonDeterministicTableFunctionArgument(
+                    "SELECT ts, max(x) m FROM t WHERE x < (SELECT count() FROM generate_series(now(), now(), 1)) SAMPLE BY 1h",
+                    "now()",
+                    "now"
+            );
+            assertQuery("CREATE MATERIALIZED VIEW mv AS (SELECT t.ts, max(g.generate_series) observed FROM t CROSS JOIN gv g SAMPLE BY 1h) PARTITION BY DAY")
+                    .noLeakCheck()
+                    .fails("CREATE MATERIALIZED VIEW mv AS (".length() + viewSql.lastIndexOf("now()"), "non-deterministic function cannot be used in materialized view: now");
+
+            execute("CREATE MATERIALIZED VIEW mv_pruned AS (SELECT t.ts, max(t.x) m FROM t CROSS JOIN (SELECT now() n FROM long_sequence(1)) g SAMPLE BY 1d) PARTITION BY DAY");
+            drainQueues();
+            assertNonDeterministicFunctionPrunedRows("mv_pruned");
+        });
+    }
+
+    @Test
     public void testDedupKeysNoRowsRangeReplace() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -3349,6 +3487,26 @@ public class MatViewTest extends AbstractCairoTest {
         // rowsPerBucket = 100M / 108T ≈ 0.00000093
         // bucketsForRows = 1000000 / 0.00000093 ≈ 1,080,000,000,000
         testEstimateBucketsForRows(100_000_000L, 1, Micros.HOUR_MICROS, 30000, 1070000000000L, 1100000000000L);
+    }
+
+    @Test
+    public void testFloorExclusiveHighMicros() throws Exception {
+        assertMemoryLeak(() -> assertFloorExclusiveHigh(false));
+    }
+
+    @Test
+    public void testFloorExclusiveHighNanos() throws Exception {
+        assertMemoryLeak(() -> assertFloorExclusiveHigh(true));
+    }
+
+    @Test
+    public void testFloorUnshiftedControlMicros() throws Exception {
+        assertMemoryLeak(() -> assertFloorUnshiftedControl(false));
+    }
+
+    @Test
+    public void testFloorUnshiftedControlNanos() throws Exception {
+        assertMemoryLeak(() -> assertFloorUnshiftedControl(true));
     }
 
     @Test
@@ -3667,6 +3825,61 @@ public class MatViewTest extends AbstractCairoTest {
             capture.drain();
             capture.assertLoggedRE(" I .*MatViewStateStoreImpl materialized view state not found, request dropped "
                     + "\\[view=missing_view~1, op=full_refresh\\]");
+        });
+    }
+
+    @Test
+    public void testGroupByTimestampFloorRefresh() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE base (ts #TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                        ('2024-01-01T00:10:00', 'a', 1),
+                        ('2024-01-01T01:10:00', 'b', 2),
+                        ('2024-01-01T03:10:00', 'a', 3),
+                        ('2024-01-02T05:10:00', 'b', 4)
+                    """);
+            drainQueues();
+            final String[] queries = {
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base GROUP BY bucket, sym",
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base GROUP BY 1, 2",
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base GROUP BY timestamp_floor('2h', ts), sym",
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base GROUP BY bucket, sym ORDER BY bucket",
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base",
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base ORDER BY bucket",
+                    "SELECT bucket, sym, c FROM (SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base GROUP BY bucket, sym)"
+            };
+            final int viewCount = 2 * queries.length;
+            for (int i = 0; i < queries.length; i++) {
+                execute("CREATE MATERIALIZED VIEW mv" + (2 * i) + " AS (" + queries[i] + ") PARTITION BY DAY");
+                execute("CREATE MATERIALIZED VIEW mv" + (2 * i + 1) + " AS (" + queries[i] + ") TIMESTAMP(bucket) PARTITION BY DAY");
+            }
+            drainQueues();
+            assertGroupByTimestampFloorViews(viewCount, """
+                    bucket\tsym\tc
+                    2024-01-01T00:00:00.000000Z\ta\t1
+                    2024-01-01T00:00:00.000000Z\tb\t1
+                    2024-01-01T02:00:00.000000Z\ta\t1
+                    2024-01-02T04:00:00.000000Z\tb\t1
+                    """);
+
+            execute("INSERT INTO base VALUES ('2024-01-01T00:20:00', 'a', 5), ('2024-01-03T01:00:00', 'a', 6)");
+            drainQueues();
+            final String refreshed = """
+                    bucket\tsym\tc
+                    2024-01-01T00:00:00.000000Z\ta\t2
+                    2024-01-01T00:00:00.000000Z\tb\t1
+                    2024-01-01T02:00:00.000000Z\ta\t1
+                    2024-01-02T04:00:00.000000Z\tb\t1
+                    2024-01-03T00:00:00.000000Z\ta\t1
+                    """;
+            assertGroupByTimestampFloorViews(viewCount, refreshed);
+
+            for (int i = 0; i < viewCount; i++) {
+                execute("REFRESH MATERIALIZED VIEW mv" + i + " FULL");
+            }
+            drainQueues();
+            assertGroupByTimestampFloorViews(viewCount, refreshed);
         });
     }
 
@@ -8897,6 +9110,127 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByNotKeyed1MNegativeOffset() throws Exception {
+        // A negative OFFSET starts each month at 23:00 on the previous day; the refresh
+        // intervals step one month at a time over that grid.
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 1M ALIGN TO CALENDAR WITH OFFSET '-01:00'";
+            assertMatViewMatchesSampleBy(viewQuery, "2020-12-30T00:00:00.000000Z", 86_400_000_000L, 200, 4);
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed1dOffsetInsideDstWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[][] cases = {
+                    {"Europe/Berlin", "02:30", "2026-03-27T12:00:00.000000Z"},
+                    {"Europe/Berlin", "02:30", "2026-10-23T12:00:00.000000Z"},
+                    {"Europe/Berlin", "02:00", "2026-10-23T12:00:00.000000Z"},
+                    {"America/New_York", "01:30", "2026-10-30T18:00:00.000000Z"},
+                    {"America/New_York", "02:30", "2026-03-06T18:00:00.000000Z"},
+                    {"Australia/Sydney", "02:30", "2026-04-03T06:00:00.000000Z"},
+                    {"Australia/Sydney", "02:30", "2026-10-02T06:00:00.000000Z"}
+            };
+            for (String[] c : cases) {
+                final String viewQuery = "select k, count() c from x SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE '" + c[0] + "' WITH OFFSET '" + c[1] + "'";
+                assertMatViewMatchesSampleBy(viewQuery, c[2], 1_800_000_000L, 200, 5);
+                execute("DROP MATERIALIZED VIEW x_view");
+                execute("DROP TABLE x");
+                execute("DROP TABLE tmp");
+            }
+        });
+    }
+
+    @Test(timeout = 120_000)
+    public void testSampleByNotKeyed1dRefreshAfterDstFallBack() throws Exception {
+        // The inserted row sits on the 1d bucket line right after the repeated hour.
+        assertMemoryLeak(() -> {
+            assertTimestampFloorRefresh(
+                    "SELECT ts, count() c, sum(x) s FROM t SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '03:00'",
+                    "(1, '2024-10-26T12:00:00Z')",
+                    "(2, '2024-10-27T02:00:00Z')",
+                    """
+                            ts\tc\ts
+                            2024-10-26T01:00:00.000000Z\t1\t1
+                            2024-10-27T02:00:00.000000Z\t1\t2
+                            """
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1d', ts, null, '03:00', 'Europe/Berlin') k, count() c, sum(x) s FROM t GROUP BY 1",
+                    "(1, '2024-10-26T12:00:00Z')",
+                    "(2, '2024-10-27T02:00:00Z')",
+                    """
+                            k\tc\ts
+                            2024-10-26T01:00:00.000000Z\t1\t1
+                            2024-10-27T02:00:00.000000Z\t1\t2
+                            """
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT ts, count() c, sum(x) s FROM t SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'America/Santiago'",
+                    "(1, '2024-04-05T12:00:00Z')",
+                    "(2, '2024-04-07T04:00:00Z')",
+                    """
+                            ts\tc\ts
+                            2024-04-05T03:00:00.000000Z\t1\t1
+                            2024-04-07T04:00:00.000000Z\t1\t2
+                            """
+            );
+        });
+    }
+
+    @Test(timeout = 120_000)
+    public void testSampleByNotKeyed1dRefreshBucketLineInsideDstShift() throws Exception {
+        // With OFFSET '02:30' the 1d bucket line falls in the repeated hour of the fall-back and in the gap of the
+        // spring-forward. The last transaction forms its own refresh cluster right after that bucket line.
+        assertMemoryLeak(() -> {
+            final String query = "SELECT ts, count() c, sum(x) s FROM t SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '02:30'";
+            final String[][] cases = {
+                    {
+                            "2024-10-27T00:45:00Z", "2023-10-20T12:00:00Z", "2024-10-27T02:30:00Z",
+                            """
+                            ts\tc\ts
+                            2023-10-20T00:30:00.000000Z\t1\t2
+                            2024-10-27T00:30:00.000000Z\t2\t4
+                            """
+                    },
+                    {
+                            "2024-03-31T00:45:00Z", "2023-03-20T12:00:00Z", "2024-03-31T01:15:00Z",
+                            """
+                            ts\tc\ts
+                            2023-03-20T01:30:00.000000Z\t1\t2
+                            2024-03-30T01:30:00.000000Z\t1\t1
+                            2024-03-31T01:00:00.000000Z\t1\t3
+                            """
+                    }
+            };
+            for (String[] c : cases) {
+                executeWithRewriteTimestamp("CREATE TABLE t (x INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO t VALUES (1, '" + c[0] + "')");
+                drainWalAndMatViewQueues();
+                execute("CREATE MATERIALIZED VIEW mv AS (" + query + ") PARTITION BY DAY");
+                drainWalAndMatViewQueues();
+                execute("INSERT INTO t VALUES (2, '" + c[1] + "')");
+                execute("INSERT INTO t VALUES (3, '" + c[2] + "')");
+                drainWalAndMatViewQueues();
+                final String expected = replaceExpectedTimestamp(c[3]);
+                assertQuery(query).noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(expected);
+                assertQuery("mv").noLeakCheck().timestamp("ts").expectSize().returns(expected);
+                assertFloorViewState("valid");
+                execute("DROP MATERIALIZED VIEW mv");
+                execute("DROP TABLE t");
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByNotKeyed1MNegativeOffsetBerlin() throws Exception {
+        assertMemoryLeak(() -> {
+            final String viewQuery = "select k, count() c from x SAMPLE BY 1M ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '-01:00'";
+            assertMatViewMatchesSampleBy(viewQuery, "2020-12-30T00:00:00.000000Z", 86_400_000_000L, 200, 4);
+        });
+    }
+
+    @Test
     public void testSampleByNotKeyed15mBerlinSpringForward() throws Exception {
         // 15m stride = minimum DST gap. canSkipDstGapCorrection returns true for
         // 15m when (from+offset) % day == 0 (it is here, offset=0).
@@ -8968,6 +9302,54 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final String viewQuery = "select k, count() c from x SAMPLE BY 1w ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'";
             assertMatViewMatchesSampleBy(viewQuery, "2021-03-15T00:00:00.000000Z", 3_600_000_000L, 500, 5);
+        });
+    }
+
+    @Test
+    public void testSampleByOrderedOutput() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE base_price (sym VARCHAR, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            execute("CREATE MATERIALIZED VIEW desc_day AS (SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h ORDER BY ts DESC) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW desc_default AS (SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h ORDER BY ts DESC)");
+            execute("CREATE MATERIALIZED VIEW by_sym AS (SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h ORDER BY sym, price DESC)");
+            execute("CREATE MATERIALIZED VIEW outer_desc AS (SELECT * FROM (SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h) ORDER BY ts DESC) PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW sub_query_desc AS (SELECT sym, last(price) price, ts FROM (SELECT * FROM base_price WHERE price > 0) TIMESTAMP(ts) SAMPLE BY 1h ORDER BY ts DESC) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO base_price VALUES
+                        ('gbpusd', 1.320, '2024-09-10T12:01'),
+                        ('gbpusd', 1.323, '2024-09-10T12:02'),
+                        ('jpyusd', 103.21, '2024-09-10T13:02'),
+                        ('gbpusd', 1.321, '2024-09-10T14:02')
+                    """);
+            drainQueues();
+            assertSampleByOrderedOutputViews("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T13:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T14:00:00.000000Z
+                    """);
+
+            execute("INSERT INTO base_price VALUES ('jpyusd', 103.25, '2024-09-10T13:30'), ('gbpusd', 1.322, '2024-09-11T00:10')");
+            drainQueues();
+            assertSampleByOrderedOutputViews("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    jpyusd\t103.25\t2024-09-10T13:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T14:00:00.000000Z
+                    gbpusd\t1.322\t2024-09-11T00:00:00.000000Z
+                    """);
+            assertQuery("SELECT table_name, designatedTimestamp, partitionBy FROM tables() WHERE table_name <> 'base_price' ORDER BY table_name")
+                    .noLeakCheck()
+                    .returns("""
+                            table_name\tdesignatedTimestamp\tpartitionBy
+                            by_sym\tts\tMONTH
+                            desc_day\tts\tDAY
+                            desc_default\tts\tMONTH
+                            outer_desc\tts\tDAY
+                            sub_query_desc\tts\tDAY
+                            """);
         });
     }
 
@@ -9944,6 +10326,269 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampFloorDstRefreshesExistingBucket() throws Exception {
+        assertMemoryLeak(() -> {
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1d', ts, null, null, 'America/New_York') k, count() c, sum(x) s FROM t GROUP BY 1",
+                    "(1, '2024-03-10T10:00:00Z'), (2, '2024-03-11T02:00:00Z')",
+                    "(3, '2024-03-10T12:00:00Z')",
+                    "k\tc\ts\n2024-03-10T05:00:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1d', ts, null, null, 'Europe/Berlin') k, count() c, sum(x) s FROM t",
+                    "(1, '2024-10-27T10:00:00Z'), (2, '2024-10-27T22:30:00Z')",
+                    "(3, '2024-10-27T12:00:00Z')",
+                    "k\tc\ts\n2024-10-26T22:00:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1h', ts, null, '00:30', 'Europe/Berlin') k, count() c, sum(x) s FROM t GROUP BY 1",
+                    "(1, '2024-03-31T00:40:00Z'), (2, '2024-03-31T01:10:00Z')",
+                    "(3, '2024-03-31T00:50:00Z')",
+                    "k\tc\ts\n2024-03-31T00:30:00.000000Z\t3\t6\n"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampFloorMonthRefreshesExistingBucket() throws Exception {
+        assertMemoryLeak(() -> {
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1M', ts, null, null, 'America/New_York') k, count() c, sum(x) s FROM t GROUP BY 1",
+                    "(1, '2024-02-10T00:00:00Z'), (2, '2024-03-01T02:00:00Z')",
+                    "(3, '2024-02-15T00:00:00Z')",
+                    "k\tc\ts\n2024-02-01T05:00:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor('1M', ts, null, '10:00', null) k, count() c, sum(x) s FROM t",
+                    "(1, '2024-02-10T00:00:00Z'), (2, '2024-03-01T05:00:00Z')",
+                    "(3, '2024-02-15T00:00:00Z')",
+                    "k\tc\ts\n2024-02-01T10:00:00.000000Z\t3\t6\n"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampFloorOffsetRefreshesExistingBucket() throws Exception {
+        assertMemoryLeak(() -> {
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor('1h', ts, null, '00:30', null) k, count() c, sum(x) s FROM t",
+                    "(1, '2024-01-02T10:40:00Z'), (2, '2024-01-02T11:10:00Z')",
+                    "(3, '2024-01-02T10:50:00Z')",
+                    "k\tc\ts\n2024-01-02T10:30:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor('1h', ts::#TYPE, null, '00:30', 'UTC') k, count() c, sum(x) s FROM t ORDER BY k",
+                    "(1, '2024-01-02T10:40:00Z'), (2, '2024-01-02T11:10:00Z')",
+                    "(3, '2024-01-02T10:50:00Z')",
+                    "k\tc\ts\n2024-01-02T10:30:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1h', ts, null, '00:30', null) k, count() c, sum(x) s FROM t GROUP BY 1",
+                    "(1, '2024-01-02T10:40:00Z'), (2, '2024-01-02T11:10:00Z')",
+                    "(3, '2024-01-02T10:50:00Z')",
+                    "k\tc\ts\n2024-01-02T10:30:00.000000Z\t3\t6\n"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampFloorOverNestedSampleByAcrossTimeZones() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[] kolkataDays = {
+                    "SELECT ts, sum(s) s FROM (SELECT ts, sum(x) s FROM t SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata') "
+                            + "SAMPLE BY 1d ALIGN TO CALENDAR WITH OFFSET '18:30'",
+                    "SELECT ts, sum(s) s FROM (SELECT ts, sum(x) s FROM t SAMPLE BY 1h ALIGN TO CALENDAR WITH OFFSET '00:30') "
+                            + "SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata'"
+            };
+            for (String query : kolkataDays) {
+                assertNestedSampleByRefresh(
+                        query,
+                        """
+                                ts\ts
+                                2024-02-29T18:30:00.000000Z\t23
+                                2024-03-01T18:30:00.000000Z\t8
+                                """,
+                        """
+                                ts\ts
+                                2024-02-29T18:30:00.000000Z\t55
+                                2024-03-01T18:30:00.000000Z\t8
+                                """
+                );
+            }
+            assertNestedSampleByRefresh(
+                    "SELECT ts, sum(s) s FROM (SELECT ts, sum(x) s FROM t SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Asia/Kolkata') "
+                            + "SAMPLE BY 1h ALIGN TO CALENDAR WITH OFFSET '00:30'",
+                    """
+                            ts\ts
+                            2024-02-29T23:30:00.000000Z\t1
+                            2024-03-01T00:30:00.000000Z\t16
+                            2024-03-01T04:30:00.000000Z\t2
+                            2024-03-01T11:30:00.000000Z\t4
+                            2024-03-02T00:30:00.000000Z\t8
+                            """,
+                    """
+                            ts\ts
+                            2024-02-29T23:30:00.000000Z\t1
+                            2024-03-01T00:30:00.000000Z\t16
+                            2024-03-01T04:30:00.000000Z\t2
+                            2024-03-01T10:30:00.000000Z\t32
+                            2024-03-01T11:30:00.000000Z\t4
+                            2024-03-02T00:30:00.000000Z\t8
+                            """
+            );
+            // Helsinki shows +03:00 in July, but its sub-day buckets floor on the standard +02:00, at even UTC hours.
+            assertNestedSampleByRefresh(
+                    "SELECT ts, sum(s) s FROM (SELECT ts, sum(x) s FROM t SAMPLE BY 2h ALIGN TO CALENDAR TIME ZONE 'Europe/Helsinki') SAMPLE BY 1d",
+                    "(1, '2024-07-01T00:10:00Z'), (2, '2024-07-01T21:30:00Z'), (4, '2024-07-02T01:00:00Z')",
+                    "(16, '2024-07-01T23:30:00Z')",
+                    """
+                            ts\ts
+                            2024-07-01T00:00:00.000000Z\t19
+                            2024-07-02T00:00:00.000000Z\t4
+                            """,
+                    "(32, '2024-07-02T00:30:00Z')",
+                    """
+                            ts\ts
+                            2024-07-01T00:00:00.000000Z\t19
+                            2024-07-02T00:00:00.000000Z\t36
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampFloorOverNestedSampleByRefreshesExistingBucket() throws Exception {
+        assertMemoryLeak(() -> {
+            assertNestedSampleByRefresh(
+                    "SELECT timestamp_floor('1d', ts) ts, sum(s) s, sum(c) c FROM (SELECT ts, sum(x) s, count() c FROM t SAMPLE BY 1h) ORDER BY ts",
+                    """
+                            ts\ts\tc
+                            2024-03-01T00:00:00.000000Z\t23\t4
+                            2024-03-02T00:00:00.000000Z\t8\t1
+                            """,
+                    """
+                            ts\ts\tc
+                            2024-03-01T00:00:00.000000Z\t55\t5
+                            2024-03-02T00:00:00.000000Z\t8\t1
+                            """
+            );
+            assertNestedSampleByRefresh(
+                    "SELECT timestamp_floor('1d', ts) ts, s FROM (SELECT ts, sum(x) s FROM t SAMPLE BY 1h) ORDER BY ts",
+                    """
+                            ts\ts
+                            2024-03-01T00:00:00.000000Z\t2
+                            2024-03-01T00:00:00.000000Z\t4
+                            2024-03-01T00:00:00.000000Z\t17
+                            2024-03-02T00:00:00.000000Z\t8
+                            """,
+                    """
+                            ts\ts
+                            2024-03-01T00:00:00.000000Z\t2
+                            2024-03-01T00:00:00.000000Z\t4
+                            2024-03-01T00:00:00.000000Z\t17
+                            2024-03-01T00:00:00.000000Z\t32
+                            2024-03-02T00:00:00.000000Z\t8
+                            """
+            );
+            assertNestedSampleByRefresh(
+                    "SELECT timestamp_floor_utc('1d', ts, null, null, 'Europe/Berlin') ts, sum(s) s FROM " +
+                            "(SELECT ts, sum(x) s FROM t SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin') ORDER BY ts",
+                    """
+                            ts\ts
+                            2024-02-29T23:00:00.000000Z\t23
+                            2024-03-01T23:00:00.000000Z\t8
+                            """,
+                    """
+                            ts\ts
+                            2024-02-29T23:00:00.000000Z\t55
+                            2024-03-01T23:00:00.000000Z\t8
+                            """
+            );
+            final String[] dailyGrids = {
+                    "SELECT timestamp_floor('1h', ts) ts, sum(s) s FROM (SELECT ts, sum(x) s FROM t SAMPLE BY 1d) ORDER BY ts",
+                    "SELECT timestamp_floor('1h', ts) ts, sum(s) s FROM (SELECT ts, sum(x) s FROM (SELECT * FROM t WHERE x > 0) SAMPLE BY 1d) ORDER BY ts",
+                    "SELECT ts, sum(s) s FROM (SELECT ts, sum(x) s FROM t SAMPLE BY 1d) SAMPLE BY 1h",
+                    "SELECT timestamp_floor('1d', ts) ts, sum(s) s FROM (SELECT ts, sum(x) s FROM t SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin') ORDER BY ts"
+            };
+            for (String query : dailyGrids) {
+                assertNestedSampleByRefresh(
+                        query,
+                        """
+                                ts\ts
+                                2024-03-01T00:00:00.000000Z\t23
+                                2024-03-02T00:00:00.000000Z\t8
+                                """,
+                        """
+                                ts\ts
+                                2024-03-01T00:00:00.000000Z\t55
+                                2024-03-02T00:00:00.000000Z\t8
+                                """
+                );
+            }
+            assertNestedSampleByRefresh(
+                    "SELECT timestamp_floor('1h', ts) ts, sum(s) s FROM (SELECT ts, sum(x) s FROM t SAMPLE BY 1d ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin') ORDER BY ts",
+                    """
+                            ts\ts
+                            2024-02-29T23:00:00.000000Z\t23
+                            2024-03-01T23:00:00.000000Z\t8
+                            """,
+                    """
+                            ts\ts
+                            2024-02-29T23:00:00.000000Z\t55
+                            2024-03-01T23:00:00.000000Z\t8
+                            """
+            );
+            assertNestedSampleByRefresh(
+                    "SELECT timestamp_floor('1M', ts) ts, sum(s) s FROM (SELECT ts, sum(x) s FROM t SAMPLE BY 1d) ORDER BY ts",
+                    """
+                            ts\ts
+                            2024-03-01T00:00:00.000000Z\t31
+                            """,
+                    """
+                            ts\ts
+                            2024-03-01T00:00:00.000000Z\t63
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampFloorUtcTimeZoneRefreshesExistingBucket() throws Exception {
+        assertMemoryLeak(() -> {
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1d', ts, null, null, 'America/New_York') k, count() c, sum(x) s FROM t GROUP BY 1",
+                    "(1, '2024-01-02T10:00:00Z'), (2, '2024-01-03T02:00:00Z')",
+                    "(3, '2024-01-02T12:00:00Z')",
+                    "k\tc\ts\n2024-01-02T05:00:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1d', ts, null, null, '-05:00') k, count() c, sum(x) s FROM t",
+                    "(1, '2024-01-02T10:00:00Z'), (2, '2024-01-03T02:00:00Z')",
+                    "(3, '2024-01-02T12:00:00Z')",
+                    "k\tc\ts\n2024-01-02T05:00:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1d', ts, null, '02:00', 'Europe/Berlin') k, count() c, sum(x) s FROM t GROUP BY k",
+                    "(1, '2024-01-02T05:00:00Z'), (2, '2024-01-03T00:30:00Z')",
+                    "(3, '2024-01-02T06:00:00Z')",
+                    "k\tc\ts\n2024-01-02T01:00:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1d', ts, null, null, 'America/New_York') ts, count() c, sum(x) s FROM t GROUP BY 1",
+                    "(1, '2024-01-02T10:00:00Z'), (2, '2024-01-03T02:00:00Z')",
+                    "(3, '2024-01-02T12:00:00Z')",
+                    "ts\tc\ts\n2024-01-02T05:00:00.000000Z\t3\t6\n"
+            );
+            assertTimestampFloorRefresh(
+                    "SELECT timestamp_floor_utc('1d', ts, null, null, 'America/New_York') k, count() c, sum(x) s FROM (SELECT ts, x FROM t WHERE x > 0)",
+                    "(1, '2024-01-02T10:00:00Z'), (2, '2024-01-03T02:00:00Z')",
+                    "(3, '2024-01-02T12:00:00Z')",
+                    "k\tc\ts\n2024-01-02T05:00:00.000000Z\t3\t6\n"
+            );
+        });
+    }
+
+    @Test
     public void testTimestampGetsRefreshedOnInvalidation() throws Exception {
         // The base table is renamed, dropped, swapped or has its WAL purged here, so the
         // transaction the composite randomiser commits against it cannot be subtracted back
@@ -10846,6 +11491,203 @@ public class MatViewTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
+    private void assertFloorExclusiveHigh(boolean isNanos) throws Exception {
+        // Recovery needs one query over the widened envelope, not randomized one-day batches.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, 1_000_000);
+        createFloorBase(isNanos);
+        final String fraction = isNanos ? "999999999" : "999999";
+        execute("INSERT INTO t VALUES (49, '2024-03-01T23:59:59." + fraction + "Z')");
+        drainWalAndMatViewQueues();
+        final String query = "SELECT dateadd('" + (isNanos ? 'n' : 'u') + "', 1, last) bucket, c FROM (SELECT timestamp_floor('1d', ts) k, max(ts) last, count() c FROM t)";
+        final String initial = "bucket\tc\n2024-03-02T00:00:00" + (isNanos ? ".000000000Z" : ".000000Z") + "\t49\n";
+        assertQuery(query + " ORDER BY bucket").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(initial);
+        execute("CREATE MATERIALIZED VIEW mv WITH BASE t AS (" + query + ") TIMESTAMP(bucket) PARTITION BY DAY");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("invalid");
+        assertFloorRangeError();
+        assertQuery("SELECT count() FROM mv").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("invalid");
+        execute("ALTER MATERIALIZED VIEW mv RESUME WAL");
+        execute("REFRESH MATERIALIZED VIEW mv FULL");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("invalid");
+        assertFloorRangeError();
+        assertQuery("SELECT count() FROM mv").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
+
+        // Real source data widens the FULL envelope so that every output bucket fits.
+        execute("INSERT INTO t VALUES (99, '2024-03-03T12:00:00Z')");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("invalid");
+        execute("REFRESH MATERIALIZED VIEW mv FULL");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("valid");
+        final String recovered = initial + "2024-03-03T12:00:00" + (isNanos ? ".000000001Z" : ".000001Z") + "\t1\n";
+        assertQuery("SELECT * FROM mv ORDER BY bucket").noLeakCheck().timestamp("bucket").expectSize().returns(recovered);
+
+        // RANGE rounds the high to March 2; rejection must preserve the recovered rows.
+        execute("REFRESH MATERIALIZED VIEW mv RANGE FROM '2024-03-01' TO '2024-03-01T23:59:59." + fraction + "Z'");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("invalid");
+        assertFloorRangeError();
+        assertQuery("SELECT * FROM mv ORDER BY bucket").noLeakCheck().timestamp("bucket").expectSize().returns(recovered);
+    }
+
+    private void assertFloorRangeError() throws Exception {
+        assertQuery("SELECT invalidation_reason LIKE '[-1]: timestamp out of replace range%' has_range_error FROM materialized_views() WHERE view_name = 'mv'")
+                .noLeakCheck().inferRandomAccess().sizeMayVary().returns("has_range_error\ntrue\n");
+    }
+
+    private void assertFloorUnshiftedControl(boolean isNanos) throws Exception {
+        createFloorBase(isNanos);
+        final String suffix = isNanos ? ".000000000Z" : ".000000Z";
+        execute("CREATE MATERIALIZED VIEW mv WITH BASE t AS (SELECT timestamp_floor('1d', ts) bucket, count() c FROM t) PARTITION BY DAY");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("valid");
+        assertQuery("SELECT * FROM mv ORDER BY bucket").noLeakCheck().timestamp("bucket").expectSize()
+                .returns("bucket\tc\n2024-03-01T00:00:00" + suffix + "\t48\n");
+        execute("INSERT INTO t VALUES (99, '2024-03-01T12:00:00Z'), (100, '2024-03-02T12:00:00Z')");
+        drainWalAndMatViewQueues();
+        final String expected = "bucket\tc\n2024-03-01T00:00:00" + suffix + "\t49\n2024-03-02T00:00:00" + suffix + "\t1\n";
+        assertFloorViewState("valid");
+        assertQuery("SELECT * FROM mv ORDER BY bucket").noLeakCheck().timestamp("bucket").expectSize().returns(expected);
+        execute("REFRESH MATERIALIZED VIEW mv FULL");
+        drainWalAndMatViewQueues();
+        assertFloorViewState("valid");
+        assertQuery("SELECT * FROM mv ORDER BY bucket").noLeakCheck().timestamp("bucket").expectSize().returns(expected);
+    }
+
+    private void assertFloorViewState(String status) throws Exception {
+        assertQuery("SELECT suspended, writerTxn = sequencerTxn caught_up FROM wal_tables() WHERE name = 'mv'")
+                .noLeakCheck().inferRandomAccess().sizeMayVary().returns("suspended\tcaught_up\nfalse\ttrue\n");
+        assertQuery("SELECT view_status FROM materialized_views() WHERE view_name = 'mv'")
+                .noLeakCheck().inferRandomAccess().sizeMayVary().returns("view_status\n" + status + "\n");
+    }
+
+    private void assertGroupByTimestampFloorViews(int viewCount, String expected) throws Exception {
+        assertQuery("SELECT view_name, invalidation_reason FROM materialized_views() WHERE view_status <> 'valid'")
+                .noRandomAccess()
+                .noLeakCheck()
+                .returns("view_name\tinvalidation_reason\n");
+        for (int i = 0; i < viewCount; i++) {
+            assertQuery("SELECT bucket, sym, c FROM mv" + i + " ORDER BY bucket, sym")
+                    .timestamp("bucket")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+        }
+    }
+
+    /**
+     * Refreshes a view over a nested SAMPLE BY after a row lands in an existing day at 00:30 and then at 10:30, over a
+     * micros and a nanos base table, and asserts after each refresh that the view holds what {@code query} returns.
+     */
+    private void assertNestedSampleByRefresh(String query, String earlyRowExpected, String lateRowExpected) throws Exception {
+        assertNestedSampleByRefresh(
+                query,
+                "(1, '2024-03-01T00:10:00Z'), (2, '2024-03-01T05:00:00Z'), (4, '2024-03-01T12:00:00Z'), (8, '2024-03-02T01:00:00Z')",
+                "(16, '2024-03-01T00:30:00Z')",
+                earlyRowExpected,
+                "(32, '2024-03-01T10:30:00Z')",
+                lateRowExpected
+        );
+    }
+
+    /**
+     * Refreshes a view over a nested SAMPLE BY after the {@code earlyRow} and then the {@code lateRow} land in the
+     * buckets of {@code rows}, over a micros and a nanos base table, and asserts after each refresh that the view holds
+     * what {@code query} returns.
+     */
+    private void assertNestedSampleByRefresh(
+            String query,
+            String rows,
+            String earlyRow,
+            String earlyRowExpected,
+            String lateRow,
+            String lateRowExpected
+    ) throws Exception {
+        for (String type : new String[]{"TIMESTAMP", "TIMESTAMP_NS"}) {
+            execute("CREATE TABLE t (x INT, ts " + type + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES " + rows);
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (" + query + ") PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO t VALUES " + earlyRow);
+            drainWalAndMatViewQueues();
+            assertNestedSampleByView(query, type, earlyRowExpected);
+            execute("INSERT INTO t VALUES " + lateRow);
+            drainWalAndMatViewQueues();
+            assertNestedSampleByView(query, type, lateRowExpected);
+            execute("DROP MATERIALIZED VIEW mv");
+            execute("DROP TABLE t");
+        }
+    }
+
+    private void assertNestedSampleByView(String query, String type, String expected) throws Exception {
+        final String typed = "TIMESTAMP".equals(type) ? expected : expected.replace(".000000Z", ".000000000Z");
+        assertQuery("SELECT * FROM (" + query + ") ORDER BY 1, 2").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(typed);
+        assertQuery("SELECT * FROM mv ORDER BY 1, 2").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(typed);
+        assertFloorViewState("valid");
+    }
+
+    private void assertNonDeterministicFunctionPrunedRows(String viewName) throws Exception {
+        assertQuery(viewName)
+                .timestamp("ts")
+                .expectSize()
+                .noLeakCheck()
+                .returns(replaceExpectedTimestamp("""
+                        ts\tm
+                        2024-01-01T00:00:00.000000Z\t5
+                        2024-01-02T00:00:00.000000Z\t3
+                        """));
+    }
+
+    private void assertNonDeterministicTableFunctionArgument(String select, String offender, String offenderName) throws Exception {
+        final String prefix = "CREATE MATERIALIZED VIEW mv AS (";
+        assertQuery(prefix + select + ") PARTITION BY DAY")
+                .noLeakCheck()
+                .fails(prefix.length() + select.lastIndexOf(offender), "non-deterministic function cannot be used in materialized view: " + offenderName);
+    }
+
+    private void assertSampleByOrderedOutputViews(String expected) throws Exception {
+        assertQuery("SELECT view_name, invalidation_reason FROM materialized_views() WHERE view_status <> 'valid'")
+                .noRandomAccess()
+                .noLeakCheck()
+                .returns("view_name\tinvalidation_reason\n");
+        final String[] views = {"by_sym", "desc_day", "desc_default", "outer_desc", "sub_query_desc"};
+        for (String view : views) {
+            assertQuery(view)
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+        }
+    }
+
+    /**
+     * Refreshes a view whose bucket, its first column, is spelled by {@code query} after a row lands in an existing
+     * bucket, over a micros and a nanos base table whose type replaces {@code #TYPE}, and asserts that the view holds
+     * what the query returns.
+     */
+    private void assertTimestampFloorRefresh(String query, String initialRows, String insertedRows, String expected) throws Exception {
+        for (String type : new String[]{"TIMESTAMP", "TIMESTAMP_NS"}) {
+            final String typedQuery = query.replace("#TYPE", type);
+            execute("CREATE TABLE t (x INT, ts " + type + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES " + initialRows);
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv AS (" + typedQuery + ") PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            execute("INSERT INTO t VALUES " + insertedRows);
+            drainWalAndMatViewQueues();
+            final String typed = "TIMESTAMP".equals(type) ? expected : expected.replace(".000000Z", ".000000000Z");
+            assertQuery("SELECT * FROM (" + typedQuery + ") ORDER BY 1").noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().returns(typed);
+            assertQuery("mv").noLeakCheck().timestamp(expected.substring(0, expected.indexOf('\t'))).expectSize().returns(typed);
+            assertFloorViewState("valid");
+            execute("DROP MATERIALIZED VIEW mv");
+            execute("DROP TABLE t");
+        }
+    }
+
     private String copySql(int from, int count) {
         return "select * from tmp where n >= " + from + " and n < " + (from + count);
     }
@@ -10855,6 +11697,19 @@ public class MatViewTest extends AbstractCairoTest {
         return "create table " + tableName + " as (" + generateSelectSql(columns, startTs, step, 0, count) + ")" +
                 indexStr +
                 " timestamp(k) partition by DAY WAL";
+    }
+
+    private void createFloorBase(boolean isNanos) throws SqlException {
+        final String type = isNanos ? "TIMESTAMP_NS" : "TIMESTAMP";
+        execute("CREATE TABLE t (v DOUBLE, ts " + type + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO t SELECT x, " + (isNanos ? "timestamp_sequence_ns" : "timestamp_sequence")
+                + "('2024-03-01T00:00:00Z'::" + type + ", " + (isNanos ? "1_800_000_000_000L" : "1_800_000_000L") + ") FROM long_sequence(48)");
+        drainWalAndMatViewQueues();
+    }
+
+    private void createNonDeterministicFunctionBase() throws SqlException {
+        executeWithRewriteTimestamp("CREATE TABLE t (ts #TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO t VALUES ('2024-01-01T01:00:00Z', 1), ('2024-01-01T02:00:00Z', 5), ('2024-01-02T01:00:00Z', 3)");
     }
 
     private void drainQueues() {

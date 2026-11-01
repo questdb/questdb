@@ -56,6 +56,11 @@ public class LeadDecimalFunctionFactory extends AbstractWindowFunctionFactory {
     private static final String SIGNATURE = LeadLagWindowFunctionFactoryHelper.LEAD_NAME + "(ΞV)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return argTypes.getQuick(0);
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

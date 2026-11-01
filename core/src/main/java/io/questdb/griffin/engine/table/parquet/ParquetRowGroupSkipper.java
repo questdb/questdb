@@ -49,7 +49,9 @@ public interface ParquetRowGroupSkipper {
     /**
      * Returns {@code true} when the row group can be skipped entirely based on
      * min/max statistics and bloom filter checks against the supplied filter
-     * list.
+     * list. A filter flagged
+     * {@link io.questdb.griffin.engine.table.ParquetRowGroupFilter#NULL_MATCHING_OP_FLAG}
+     * prunes only a row group whose statistics prove it holds no SQL NULL.
      *
      * @param rowGroupIndex zero-based row group index
      * @param filters       encoded filter descriptors produced by

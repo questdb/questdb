@@ -38,6 +38,23 @@ import io.questdb.std.Transient;
 public class CaseFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        final int n = argTypes.size();
+        final IntList foldedTypes = CaseCommon.foldedTypes();
+        int returnType = -1;
+        for (int i = 1; i < n; i += 2) {
+            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(i), foldedTypes);
+            if (returnType == ColumnType.UNDEFINED) {
+                return ColumnType.UNDEFINED;
+            }
+        }
+        if (n % 2 == 1) {
+            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(n - 1), foldedTypes);
+        }
+        return CaseCommon.getCaseFunctionType(returnType);
+    }
+
+    @Override
     public String getSignature() {
         return "case(V)";
     }
@@ -54,6 +71,7 @@ public class CaseFunctionFactory implements FunctionFactory {
         int returnType = -1;
         final ObjList<Function> vars = new ObjList<>(n);
         final ObjList<Function> argsToPoke = new ObjList<>(n);
+        final IntList foldedTypes = CaseCommon.foldedTypes();
 
         Function elseBranch;
         int elseBranchPosition;
@@ -74,7 +92,7 @@ public class CaseFunctionFactory implements FunctionFactory {
             }
 
             final Function value = args.getQuick(i + 1);
-            returnType = CaseCommon.getCommonType(returnType, value.getType(), argPositions.getQuick(i + 1), "CASE values cannot be bind variables");
+            returnType = CaseCommon.getCommonType(returnType, value.getType(), argPositions.getQuick(i + 1), foldedTypes, "CASE values cannot be bind variables");
 
             vars.add(bool);
             vars.add(value);
@@ -84,7 +102,7 @@ public class CaseFunctionFactory implements FunctionFactory {
         }
 
         if (elseBranch != null) {
-            returnType = CaseCommon.getCommonType(returnType, elseBranch.getType(), elseBranchPosition, "CASE values cannot be bind variables");
+            returnType = CaseCommon.getCommonType(returnType, elseBranch.getType(), elseBranchPosition, foldedTypes, "CASE values cannot be bind variables");
             argsToPoke.add(elseBranch);
         }
 

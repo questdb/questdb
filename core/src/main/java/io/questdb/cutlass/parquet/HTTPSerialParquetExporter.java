@@ -165,7 +165,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
                 message = ce.getFlyweightMessage();
                 errno = ce.getErrno();
             } else {
-                message = e.getMessage();
+                message = Misc.getMessageOrClassName(e);
                 errno = -1;
             }
             LOG.error().$("HTTP parquet export failed [id=").$hexPadded(task.getCopyID()).$(", msg=").$(message).$(']').$();

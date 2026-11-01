@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -35,6 +36,11 @@ import org.jetbrains.annotations.NotNull;
 
 // Based on Welford's algorithm.
 public class VarSampleGroupByFunctionFactory implements FunctionFactory {
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
     @Override
     public String getSignature() {
         return "var_samp(D)";

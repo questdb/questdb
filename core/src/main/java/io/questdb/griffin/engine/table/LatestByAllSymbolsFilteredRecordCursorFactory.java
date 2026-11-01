@@ -89,6 +89,8 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
     protected void _close() {
         final PageFrameRecordCursor cursor = this.cursor;
         this.cursor = null;
+        final Function filter = this.filter;
+        this.filter = null;
         Throwable failure = null;
         try {
             super._close();
@@ -96,8 +98,6 @@ public class LatestByAllSymbolsFilteredRecordCursorFactory extends AbstractTreeS
             failure = th;
         }
         failure = Misc.freeBestEffort(failure, cursor);
-        final Function filter = this.filter;
-        this.filter = null;
         failure = Misc.freeBestEffort(failure, filter);
         CairoException.rethrowCleanupFailure(failure);
     }

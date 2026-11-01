@@ -24,18 +24,32 @@
 
 package io.questdb.test.cairo.security;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlExecutionRequirements;
+import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TableFunctionTestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Materialized and live views refresh detached from any caller, under a context that sees every
@@ -155,6 +169,31 @@ public class CatalogueInMaterializedViewsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCatalogueFromViewIsReportedBeforeCatalogueWithoutSystemAdmin() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            execute("CREATE VIEW v_from AS (SELECT table_name FROM tables())");
+            drainWalAndViewQueues();
+            try (SqlExecutionContext nonAdmin = newContext(new NoSystemAdminSecurityContext())) {
+                for (String from : new String[]{
+                        "FROM visible_t t CROSS JOIN tables() CROSS JOIN v_from",
+                        "FROM visible_t t CROSS JOIN v_from CROSS JOIN tables()"
+                }) {
+                    final String sql = "CREATE MATERIALIZED VIEW mv WITH BASE visible_t AS (SELECT t.ts, count() c " + from
+                            + " SAMPLE BY 1d) PARTITION BY DAY";
+                    assertExceptionNoLeakCheck(
+                            sql,
+                            sql.indexOf("v_from"),
+                            "catalogue function from view v_from cannot be used in materialized view: tables",
+                            nonAdmin
+                    );
+                    Assert.assertNull(from, engine.getTableTokenIfExists("mv"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCatalogueFunctionsRequireSystemAdmin() throws Exception {
         assertMemoryLeak(() -> {
             createObjects();
@@ -184,6 +223,39 @@ public class CatalogueInMaterializedViewsTest extends AbstractCairoTest {
                     execute("DROP MATERIALIZED VIEW mv");
                     drainWalAndMatViewQueues();
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testCatalogueSourceReportedBeforeAdministrativeFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            final AtomicInteger constructions = new AtomicInteger();
+            final AtomicInteger closes = new AtomicInteger();
+            registerAdministrativeFunction(constructions, closes);
+            try {
+                final String sql = "CREATE MATERIALIZED VIEW mv WITH BASE visible_t AS (SELECT ts, count() c FROM visible_t "
+                        + "WHERE admin_flag() AND visible_col < (SELECT count() FROM tables()) SAMPLE BY 1d) PARTITION BY DAY";
+                try (SqlExecutionContext nonAdmin = newContext(new NoSystemAdminSecurityContext())) {
+                    assertExceptionNoLeakCheck(
+                            sql,
+                            sql.indexOf("tables()"),
+                            "catalogue function cannot be used in materialized view without SYSTEM ADMIN: tables",
+                            nonAdmin
+                    );
+                }
+                assertExceptionNoLeakCheck(
+                        sql,
+                        sql.indexOf("admin_flag()"),
+                        "administrative function cannot be used in materialized view: admin_flag",
+                        sqlExecutionContext
+                );
+                Assert.assertNull(engine.getTableTokenIfExists("mv"));
+                Assert.assertTrue(constructions.get() > 0);
+                Assert.assertEquals(constructions.get(), closes.get());
+            } finally {
+                TableFunctionTestUtils.unregister(engine, "admin_flag");
             }
         });
     }
@@ -266,6 +338,38 @@ public class CatalogueInMaterializedViewsTest extends AbstractCairoTest {
                     execute("DROP LIVE VIEW lv");
                     drainWalAndViewQueues();
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testNonDeterministicFunctionReportedBeforeLaterAdministrativeFunction() throws Exception {
+        assertMemoryLeak(() -> {
+            createObjects();
+            final AtomicInteger constructions = new AtomicInteger();
+            final AtomicInteger closes = new AtomicInteger();
+            registerAdministrativeFunction(constructions, closes);
+            try {
+                final String nonDeterministicFirst = "CREATE MATERIALIZED VIEW mv WITH BASE visible_t AS (SELECT ts, count() c "
+                        + "FROM visible_t WHERE visible_col < rnd_int() AND admin_flag() SAMPLE BY 1d) PARTITION BY DAY";
+                assertExceptionNoLeakCheck(
+                        nonDeterministicFirst,
+                        nonDeterministicFirst.indexOf("rnd_int()"),
+                        "non-deterministic function cannot be used in materialized view: rnd_int",
+                        sqlExecutionContext
+                );
+                final String administrativeFirst = "CREATE MATERIALIZED VIEW mv WITH BASE visible_t AS (SELECT ts, count() c "
+                        + "FROM visible_t WHERE admin_flag() AND visible_col < rnd_int() SAMPLE BY 1d) PARTITION BY DAY";
+                assertExceptionNoLeakCheck(
+                        administrativeFirst,
+                        administrativeFirst.indexOf("admin_flag()"),
+                        "administrative function cannot be used in materialized view: admin_flag",
+                        sqlExecutionContext
+                );
+                Assert.assertNull(engine.getTableTokenIfExists("mv"));
+                Assert.assertEquals(constructions.get(), closes.get());
+            } finally {
+                TableFunctionTestUtils.unregister(engine, "admin_flag");
             }
         });
     }
@@ -427,6 +531,50 @@ public class CatalogueInMaterializedViewsTest extends AbstractCairoTest {
 
     private static SqlExecutionContext newContext(SecurityContext securityContext) {
         return new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null);
+    }
+
+    // a function a materialized view may not store, whose instances own native memory until closed
+    private static void registerAdministrativeFunction(AtomicInteger constructions, AtomicInteger closes) throws SqlException {
+        final ObjList<FunctionFactoryDescriptor> descriptors = new ObjList<>();
+        descriptors.add(new FunctionFactoryDescriptor(new FunctionFactory() {
+            @Override
+            public int getExecutionRequirements() {
+                return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
+            }
+
+            @Override
+            public String getSignature() {
+                return "admin_flag()";
+            }
+
+            @Override
+            public Function newInstance(
+                    int position,
+                    ObjList<Function> args,
+                    IntList argPositions,
+                    CairoConfiguration configuration,
+                    SqlExecutionContext executionContext
+            ) {
+                constructions.incrementAndGet();
+                return new BooleanFunction() {
+                    private long address = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+
+                    @Override
+                    public void close() {
+                        closes.incrementAndGet();
+                        if (address != 0) {
+                            address = Unsafe.free(address, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                        }
+                    }
+
+                    @Override
+                    public boolean getBool(Record rec) {
+                        return true;
+                    }
+                };
+            }
+        }));
+        engine.getFunctionFactoryCache().getFactories().put("admin_flag", descriptors);
     }
 
     private void assertMatViewStatus(String viewName, String status, String invalidationReason) throws Exception {

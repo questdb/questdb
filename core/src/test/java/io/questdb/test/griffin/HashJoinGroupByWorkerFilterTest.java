@@ -33,8 +33,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncFilterContext;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
+import io.questdb.griffin.engine.table.ClonedFunction;
 import io.questdb.mp.WorkerPoolMode;
-import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
@@ -44,7 +44,7 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
+import java.util.function.IntFunction;
 
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.fused;
@@ -157,35 +157,28 @@ public class HashJoinGroupByWorkerFilterTest extends AbstractCairoTest {
 
     // Each slot must filter through a function of its own: the owner's and every worker's are
     // distinct objects, none of them thread safe.
-    private static void assertDistinctCopies(String label, Function owner, ObjList<Function> copies) {
+    private static void assertDistinctCopies(String label, Function owner, IntFunction<Function> copies) {
         Assert.assertNotNull(label, owner);
         Assert.assertFalse(label, owner.isThreadSafe());
-        Assert.assertNotNull(label, copies);
-        Assert.assertEquals(label, WORKER_COUNT, copies.size());
         for (int i = 0; i < WORKER_COUNT; i++) {
-            final Function copy = copies.getQuick(i);
+            final Function copy = copies.apply(i);
             Assert.assertNotNull(label, copy);
             Assert.assertNotSame(label, owner, copy);
             Assert.assertSame(label, owner.getClass(), copy.getClass());
             for (int j = 0; j < i; j++) {
-                Assert.assertNotSame(label, copies.getQuick(j), copy);
+                Assert.assertNotSame(label, copies.apply(j), copy);
             }
         }
     }
 
-    // The atom exposes neither the filter context of the build scan nor the ON filter copies.
-    private static void assertWorkerFilterCopies(String label, AsyncHashJoinGroupByAtom atom, boolean isOuter) throws Exception {
-        final AsyncFilterContext buildFilterContext = (AsyncFilterContext) field(atom, "buildFilterContext");
-        final ObjList<Function> scanCopies = new ObjList<>();
-        for (int i = 0; i < WORKER_COUNT; i++) {
-            scanCopies.add(buildFilterContext.getFilter(i));
-        }
-        assertDistinctCopies(label, buildFilterContext.getFilter(-1), scanCopies);
+    private static void assertWorkerFilterCopies(String label, AsyncHashJoinGroupByAtom atom, boolean isOuter) {
+        final AsyncFilterContext buildFilterContext = atom.getBuildFilterContext();
+        assertDistinctCopies(label, buildFilterContext.getFilter(-1), buildFilterContext::getFilter);
+        final ClonedFunction buildOnFilter = atom.getBuildOnFilter();
         if (isOuter) {
-            @SuppressWarnings("unchecked") final ObjList<Function> onCopies = (ObjList<Function>) field(atom, "workerBuildOnFilters");
-            assertDistinctCopies(label, (Function) field(atom, "buildOnFilter"), onCopies);
+            assertDistinctCopies(label, buildOnFilter.getFunction(), buildOnFilter::get);
         } else {
-            Assert.assertNull(label, field(atom, "buildOnFilter"));
+            Assert.assertNull(label, buildOnFilter.getFunction());
         }
     }
 
@@ -217,12 +210,6 @@ public class HashJoinGroupByWorkerFilterTest extends AbstractCairoTest {
                     FROM long_sequence(2_400)
                 )
                 """, context);
-    }
-
-    private static Object field(Object target, String name) throws Exception {
-        final Field field = target.getClass().getDeclaredField(name);
-        field.setAccessible(true);
-        return field.get(target);
     }
 
     private void assertWorkerFilters(@Nullable WorkerPoolMode mode, String[] queries, boolean isOuter) throws Exception {

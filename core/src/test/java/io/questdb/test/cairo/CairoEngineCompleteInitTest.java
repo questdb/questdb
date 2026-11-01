@@ -54,4 +54,17 @@ public class CairoEngineCompleteInitTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testReleaseInactiveBeforeCompleteInit() throws Exception {
+        assertMemoryLeak(() -> {
+            try (CairoEngine e = new CairoEngine(configuration, false)) {
+                e.releaseInactive();
+                Assert.assertNull(e.getSqlCompilerPool());
+                e.completeInit();
+                e.releaseInactive();
+                Assert.assertNotNull(e.getSqlCompilerPool());
+            }
+        });
+    }
 }

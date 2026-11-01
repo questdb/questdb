@@ -60,18 +60,14 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
             frameAddressCache = new PageFrameAddressCache();
             frameMemoryPool = new PageFrameMemoryPool(configuration);
         } catch (Throwable th) {
-            close();
+            closeFrameResources();
             throw th;
         }
     }
 
     @Override
     public void close() {
-        Misc.free(frameMemoryPool);
-        Misc.free(recordA);
-        Misc.free(recordB);
-        Misc.free(frameAddressCache);
-        frameCursor = Misc.free(frameCursor);
+        closeFrameResources();
     }
 
     @TestOnly
@@ -121,8 +117,7 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
 
     @Override
     public void toTop() {
-        frameCount = 0;
-        frameCursor.toTop();
+        toTopFrames();
     }
 
     protected void init(@Nullable MemoryTracker memoryTracker) {
@@ -158,5 +153,22 @@ public abstract class AbstractPageFrameRecordCursor implements PageFrameRecordCu
         recordB.clear();
         frameMemoryPool.releaseParquetBuffers();
         frameCount = 0;
+    }
+
+    /**
+     * Moves the page frame cursor back to its first page frame and numbers the frames from zero again, keeping the
+     * state of the rows the cursor read.
+     */
+    protected final void toTopFrames() {
+        frameCount = 0;
+        frameCursor.toTop();
+    }
+
+    private void closeFrameResources() {
+        Misc.free(frameMemoryPool);
+        Misc.free(recordA);
+        Misc.free(recordB);
+        Misc.free(frameAddressCache);
+        frameCursor = Misc.free(frameCursor);
     }
 }

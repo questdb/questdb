@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.IntervalConstant;
@@ -35,6 +34,7 @@ import io.questdb.griffin.engine.groupby.SimpleTimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.WeekTimestampMicrosSampler;
 import io.questdb.griffin.engine.groupby.YearTimestampMicrosSampler;
+import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
@@ -236,6 +236,14 @@ public class MicrosTimestampDriver implements TimestampDriver {
     }
 
     @Override
+    public long ceilFrom(long timestamp, int timestampType) {
+        if (ColumnType.isTimestampNano(timestampType) && timestamp != Numbers.LONG_NULL) {
+            return -Math.floorDiv(-timestamp, Micros.MICRO_NANOS);
+        }
+        return timestampType == ColumnType.DATE ? fromDate(timestamp) : timestamp;
+    }
+
+    @Override
     public long ceilYYYY(long timestamp) {
         return Micros.ceilYYYY(timestamp);
     }
@@ -255,6 +263,14 @@ public class MicrosTimestampDriver implements TimestampDriver {
             interval.of(lo, hi);
         }
         return interval;
+    }
+
+    @Override
+    public long floorFrom(long timestamp, int timestampType) {
+        if (ColumnType.isTimestampNano(timestampType) && timestamp != Numbers.LONG_NULL) {
+            return Math.floorDiv(timestamp, Micros.MICRO_NANOS);
+        }
+        return timestampType == ColumnType.DATE ? fromDate(timestamp) : timestamp;
     }
 
     @Override
@@ -460,7 +476,7 @@ public class MicrosTimestampDriver implements TimestampDriver {
 
     @Override
     public int getGKKHourInt() {
-        return SqlCodeGenerator.GKK_MICRO_HOUR_INT;
+        return VectorAggregateFunction.GKK_MICRO_HOUR_INT;
     }
 
     @Override
@@ -769,28 +785,30 @@ public class MicrosTimestampDriver implements TimestampDriver {
                     new SimpleTimestampSampler(interval, ColumnType.TIMESTAMP_MICRO);
             case 'T' ->
                 // millis
-                    new SimpleTimestampSampler(Micros.MILLI_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                    new SimpleTimestampSampler(TimestampDriver.samplerBucket(interval, Micros.MILLI_MICROS, position), ColumnType.TIMESTAMP_MICRO);
             case 's' ->
                 // seconds
-                    new SimpleTimestampSampler(Micros.SECOND_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                    new SimpleTimestampSampler(TimestampDriver.samplerBucket(interval, Micros.SECOND_MICROS, position), ColumnType.TIMESTAMP_MICRO);
             case 'm' ->
                 // minutes
-                    new SimpleTimestampSampler(Micros.MINUTE_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                    new SimpleTimestampSampler(TimestampDriver.samplerBucket(interval, Micros.MINUTE_MICROS, position), ColumnType.TIMESTAMP_MICRO);
             case 'h' ->
                 // hours
-                    new SimpleTimestampSampler(Micros.HOUR_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
+                    new SimpleTimestampSampler(TimestampDriver.samplerBucket(interval, Micros.HOUR_MICROS, position), ColumnType.TIMESTAMP_MICRO);
             case 'd' ->
                 // days
-                    new SimpleTimestampSampler(Micros.DAY_MICROS * interval, ColumnType.TIMESTAMP_MICRO);
-            case 'w' ->
+                    new SimpleTimestampSampler(TimestampDriver.samplerBucket(interval, Micros.DAY_MICROS, position), ColumnType.TIMESTAMP_MICRO);
+            case 'w' -> {
                 // weeks
-                    new WeekTimestampMicrosSampler((int) interval);
+                TimestampDriver.samplerBucket(interval, Micros.WEEK_MICROS, position);
+                yield new WeekTimestampMicrosSampler(TimestampDriver.intSamplerInterval(interval, position));
+            }
             case 'M' ->
                 // months
-                    new MonthTimestampMicrosSampler((int) interval);
+                    new MonthTimestampMicrosSampler(TimestampDriver.intSamplerInterval(interval, position));
             case 'y' ->
                 // years
-                    new YearTimestampMicrosSampler((int) interval);
+                    new YearTimestampMicrosSampler(TimestampDriver.intSamplerInterval(interval, position));
             default -> throw SqlException.$(position, "unsupported interval qualifier");
         };
     }

@@ -86,6 +86,12 @@ public interface PlanSink {
 
     PlanSink optAttr(CharSequence name, Plannable value, boolean useBaseMetadata);
 
+    /**
+     * Adds the attribute when {@code value} is not null, resolving its column indexes against {@code factory}, see
+     * {@link #val(Plannable, RecordCursorFactory)}.
+     */
+    PlanSink optAttr(CharSequence name, Plannable value, RecordCursorFactory factory);
+
     PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value, boolean useBaseMetadata);
 
     PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value);

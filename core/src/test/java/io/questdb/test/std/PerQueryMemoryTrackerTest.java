@@ -24,10 +24,26 @@
 
 package io.questdb.test.std;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.SingleRecordSink;
+import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.map.Unordered4Map;
+import io.questdb.cairo.map.Unordered8Map;
+import io.questdb.cairo.map.UnorderedVarcharMap;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.vm.MemoryCARWImpl;
+import io.questdb.griffin.engine.groupby.FastGroupByAllocator;
+import io.questdb.griffin.engine.join.LongChain;
+import io.questdb.griffin.engine.orderby.LongTreeChain;
+import io.questdb.std.DirectLongHashSet;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.DirectLongLongHashMap;
+import io.questdb.std.DirectMultiIntHashSet;
+import io.questdb.std.MemoryPages;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
@@ -41,8 +57,11 @@ import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.BiConsumer;
 
 public class PerQueryMemoryTrackerTest {
 
@@ -138,6 +157,86 @@ public class PerQueryMemoryTrackerTest {
                 Assert.assertEquals(42, t2.getQueryId());
                 Assert.assertEquals(MemoryTrackerWorkload.MAT_VIEW_REFRESH, t2.getWorkload());
                 t2.close();
+            }
+        });
+    }
+
+    @Test
+    public void testContainersChargeTrackerAttachedToHeldMemory() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(0, 0, 0)) {
+                final MemoryTracker t = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
+                final ArrayColumnTypes types = new ArrayColumnTypes();
+                types.add(ColumnType.LONG);
+
+                assertTrackerAttachBalanced(t, new DirectLongLongHashMap(16, 0.5, 0, 0, MemoryTag.NATIVE_DEFAULT), DirectLongLongHashMap::setMemoryTracker);
+                assertTrackerAttachBalanced(t, new MemoryPages(1024, 16), MemoryPages::setMemoryTracker);
+                assertTrackerAttachBalanced(t, new DirectLongHashSet(16), DirectLongHashSet::setMemoryTracker);
+                final DirectMultiIntHashSet intSet = new DirectMultiIntHashSet(1, 16, 0.5, 1, 0);
+                intSet.reopen();
+                assertTrackerAttachBalanced(t, intSet, DirectMultiIntHashSet::setMemoryTracker);
+                final MemoryCARWImpl mem = new MemoryCARWImpl(1024, 16, MemoryTag.NATIVE_DEFAULT);
+                mem.putLong(42);
+                assertTrackerAttachBalanced(t, mem, MemoryCARWImpl::setMemoryTracker);
+                assertTrackerAttachBalanced(t, new OrderedMap(1024, types, types, 16, 0.5, 1), OrderedMap::setMemoryTracker);
+                assertTrackerAttachBalanced(t, new Unordered4Map(ColumnType.INT, types, 16, 0.5, 1), Unordered4Map::setMemoryTracker);
+                assertTrackerAttachBalanced(t, new Unordered8Map(ColumnType.LONG, types, 16, 0.5, 1), Unordered8Map::setMemoryTracker);
+                assertTrackerAttachBalanced(t, new UnorderedVarcharMap(types, 16, 0.5, 1, 1024, 64 * 1024), UnorderedVarcharMap::setMemoryTracker);
+                final SingleRecordSink sink = new SingleRecordSink(1024, MemoryTag.NATIVE_DEFAULT, "test", null);
+                sink.reopen();
+                assertTrackerAttachBalanced(t, sink, SingleRecordSink::setMemoryTracker);
+                assertTrackerAttachBalanced(t, new LongTreeChain(1024, 1024 * 1024, 1024, 1024 * 1024, null, null), LongTreeChain::setMemoryTracker);
+                assertTrackerAttachBalanced(t, new LongChain(1024, 16), LongChain::setMemoryTracker);
+                final FastGroupByAllocator allocator = new FastGroupByAllocator(1024, 1024 * 1024);
+                allocator.malloc(16);
+                assertTrackerAttachBalanced(t, allocator, FastGroupByAllocator::setMemoryTracker);
+                t.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDirectLongListTrackerAttachedAfterAllocation() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(0, 0, 0)) {
+                final MemoryTracker t = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
+                try (DirectLongList list = new DirectLongList(16, MemoryTag.NATIVE_LONG_LIST)) {
+                    list.add(7);
+                    list.setMemoryTracker(t);
+                    Assert.assertEquals(16 * Long.BYTES, t.getUsed());
+                    list.setMemoryTracker(t);
+                    Assert.assertEquals(16 * Long.BYTES, t.getUsed());
+                    for (int i = 0; i < 100; i++) {
+                        list.add(i);
+                    }
+                    Assert.assertEquals(list.getCapacity() * Long.BYTES, t.getUsed());
+                    Assert.assertEquals(7, list.get(0));
+                    Assert.assertEquals(99, list.get(100));
+                }
+                Assert.assertEquals(0, t.getUsed());
+                t.close();
+            }
+        });
+    }
+
+    @Test
+    public void testDirectLongListTrackerAttachBeyondLimitKeepsCharge() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (PerQueryMemoryTrackerProvider provider = newProvider(64, 0, 0)) {
+                final MemoryTracker t = provider.acquire(SEC, 1, MemoryTrackerWorkload.QUERY);
+                try (DirectLongList list = new DirectLongList(16, MemoryTag.NATIVE_LONG_LIST)) {
+                    try {
+                        list.setMemoryTracker(t);
+                        Assert.fail("expected the per-query limit to reject the attach");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                    }
+                    Assert.assertEquals(0, t.getUsed());
+                    list.add(42);
+                }
+                Assert.assertEquals(0, t.getUsed());
+                t.close();
             }
         });
     }
@@ -437,6 +536,18 @@ public class PerQueryMemoryTrackerTest {
             provider.close();
             Assert.assertEquals(0, provider.getPooledCount());
         });
+    }
+
+    private static <T extends Closeable> void assertTrackerAttachBalanced(
+            MemoryTracker tracker,
+            T container,
+            BiConsumer<T, MemoryTracker> attach
+    ) throws IOException {
+        try (container) {
+            attach.accept(container, tracker);
+            Assert.assertTrue("attaching a tracker must charge the memory the container holds", tracker.getUsed() > 0);
+        }
+        Assert.assertEquals(0, tracker.getUsed());
     }
 
     private static PerQueryMemoryTrackerProvider newProvider(long queryLimit, long matViewRefreshLimit, long walApplyLimit) {

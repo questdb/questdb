@@ -1,0 +1,90 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.columns;
+
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.Long256Function;
+import io.questdb.std.Long256;
+import io.questdb.std.str.CharSink;
+
+final class BindableLong256Column extends Long256Function implements BindableColumn {
+    private int columnId;
+    private int columnIndex = -1;
+    private boolean isOpen = true;
+
+    BindableLong256Column(int columnId) {
+        this.columnId = columnId;
+    }
+
+    @Override
+    public void close() {
+        isOpen = false;
+    }
+
+    @Override
+    public int getColumnId() {
+        return columnId;
+    }
+
+    @Override
+    public void getLong256(Record record, CharSink<?> sink) {
+        assert columnIndex >= 0;
+        record.getLong256(columnIndex, sink);
+    }
+
+    @Override
+    public Long256 getLong256A(Record record) {
+        assert columnIndex >= 0;
+        return record.getLong256A(columnIndex);
+    }
+
+    @Override
+    public Long256 getLong256B(Record record) {
+        assert columnIndex >= 0;
+        return record.getLong256B(columnIndex);
+    }
+
+    @Override
+    public boolean isOpen() {
+        return isOpen;
+    }
+
+    @Override
+    public void setColumnId(int columnId) {
+        assert columnIndex == -1 && isOpen;
+        this.columnId = columnId;
+    }
+
+    @Override
+    public void setColumnIndex(int columnIndex) {
+        this.columnIndex = columnIndex;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.putColumnName(columnIndex);
+    }
+}

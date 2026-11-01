@@ -41,6 +41,6 @@ public class FloorDecimalFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return RoundDecimalFunctionFactory.newInstance(args.getQuick(0), args.getQuick(1), RoundingMode.FLOOR);
+        return RoundDecimalFunctionFactory.newInstance(position, args.getQuick(0), args.getQuick(1), RoundingMode.FLOOR);
     }
 }

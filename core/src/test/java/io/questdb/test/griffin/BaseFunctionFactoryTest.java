@@ -27,7 +27,6 @@ package io.questdb.test.griffin;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.*;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.test.AbstractCairoTest;
 import org.jetbrains.annotations.NotNull;
@@ -44,15 +43,20 @@ public class BaseFunctionFactoryTest extends AbstractCairoTest {
         functions.clear();
     }
 
-    protected static ExpressionNode expr(CharSequence expression) throws SqlException {
-        queryModel.clear();
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            return compiler.testParseExpression(expression, queryModel);
-        }
+    protected static Function parseFunction(CharSequence expression, GenericRecordMetadata metadata, FunctionParser functionParser) throws SqlException {
+        return parseFunction(expression, metadata, functionParser, sqlExecutionContext);
     }
 
-    protected static Function parseFunction(CharSequence expression, GenericRecordMetadata metadata, FunctionParser functionParser) throws SqlException {
-        return functionParser.parseFunction(expr(expression), metadata, sqlExecutionContext);
+    protected static Function parseFunction(
+            CharSequence expression,
+            GenericRecordMetadata metadata,
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        queryModel.clear();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            return functionParser.parseFunction(compiler.testParseExpression(expression, queryModel), metadata, executionContext);
+        }
     }
 
     @NotNull

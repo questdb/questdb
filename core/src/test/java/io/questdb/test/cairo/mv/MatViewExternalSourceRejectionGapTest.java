@@ -65,7 +65,7 @@ public class MatViewExternalSourceRejectionGapTest extends AbstractCairoTest {
 
     @Test
     public void testRejectsExternalSourceAsCursorColumn() throws Exception {
-        // read_parquet() in the select list is rewritten (emitCursors) into a cross join over a
+        // read_parquet() in the select list is rewritten (SqlBinder) into a cross join over a
         // select-cursor model compiled to RecordAsAFieldRecordCursorFactory, which hides the leaf.
         assertRejected(
                 null,

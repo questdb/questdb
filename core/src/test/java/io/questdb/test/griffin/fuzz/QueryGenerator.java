@@ -32,6 +32,7 @@ import io.questdb.test.griffin.fuzz.clauses.HorizonJoinClause;
 import io.questdb.test.griffin.fuzz.clauses.LatestOnClause;
 import io.questdb.test.griffin.fuzz.clauses.PostingClause;
 import io.questdb.test.griffin.fuzz.clauses.SampleByClause;
+import io.questdb.test.griffin.fuzz.clauses.SetOperationClause;
 import io.questdb.test.griffin.fuzz.clauses.SimpleClause;
 import io.questdb.test.griffin.fuzz.clauses.TemporalJoinClause;
 import io.questdb.test.griffin.fuzz.clauses.WindowClause;
@@ -43,12 +44,12 @@ import io.questdb.test.griffin.fuzz.expr.BindContext;
  * <p>
  * Shape distribution is roughly: temporal JOIN 15% (when two or more
  * tables exist), posting-index read 15% (when the table has a
- * posting-indexed symbol), SAMPLE BY 20%, GROUP BY 15%, equi-join GROUP BY
- * 5% (when two or more tables exist), and the remaining ~30% split between
- * SIMPLE, LATEST ON and WINDOW. The join, posting and equi-join GROUP BY
- * bands fall through to the generic single-table shapes when their
- * precondition is not met; SAMPLE BY, LATEST ON and WINDOW downgrade to
- * SIMPLE on sources without a designated timestamp.
+ * posting-indexed symbol), SAMPLE BY 15%, set operation 5%, GROUP BY 15%,
+ * equi-join GROUP BY 5% (when two or more tables exist), and the remaining
+ * ~30% split between SIMPLE, LATEST ON and WINDOW. The join, posting and
+ * equi-join GROUP BY bands fall through to the generic single-table shapes
+ * when their precondition is not met; SAMPLE BY, LATEST ON and WINDOW
+ * downgrade to SIMPLE on sources without a designated timestamp.
  * <p>
  * When window fuzzing is enabled ({@code windowEnabled}, on by default), a
  * WINDOW band is carved out of the top of the SIMPLE range ([85, 100)); when
@@ -60,6 +61,10 @@ import io.questdb.test.griffin.fuzz.expr.BindContext;
  * ({@code hashJoinEnabled}, on by default), its band is carved out of the top
  * of the GROUP BY range ([65, 70)), since the shape is a GROUP BY over a join;
  * disabling it gives the band back to GROUP BY without an extra rnd draw.
+ * When set-operation fuzzing is enabled ({@code setOperationEnabled}, on by
+ * default), its band is carved out of the top of the SAMPLE BY range
+ * ([45, 50)); disabling it gives the band back to SAMPLE BY without an extra
+ * rnd draw.
  * <p>
  * For non-join shapes the {@link FuzzSource} is usually a direct
  * reference to a real table, but occasionally wrapped in a subquery or
@@ -87,7 +92,8 @@ public final class QueryGenerator {
             boolean latestOnEnabled,
             boolean horizonJoinEnabled,
             boolean windowJoinEnabled,
-            boolean hashJoinEnabled
+            boolean hashJoinEnabled,
+            boolean setOperationEnabled
     ) {
         int pick = rnd.nextInt(100);
         FuzzTable t = tables.getQuick(rnd.nextInt(tables.size()));
@@ -124,6 +130,13 @@ public final class QueryGenerator {
         if (hashJoinEnabled && pick >= 65 && pick < 70 && tables.size() >= 2) {
             FuzzTable other = pickOtherTable(rnd, tables, t);
             return HashJoinGroupByClause.generate(rnd, t, other, ctx, injectFaultFn).withShape(QueryShape.HASH_JOIN_GROUP_BY);
+        }
+
+        // Set operation: the band [45, 50) of the SAMPLE BY range. Its branches read direct, real
+        // tables of their own draw, so the check comes before pickSource and draws nothing with the
+        // knob off.
+        if (setOperationEnabled && pick >= 45 && pick < 50) {
+            return SetOperationClause.generate(rnd, tables, ctx, injectFaultFn).withShape(QueryShape.SET_OPERATION);
         }
 
         FuzzSource source = pickSource(rnd, t);

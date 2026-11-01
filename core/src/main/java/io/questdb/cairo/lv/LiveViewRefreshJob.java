@@ -1545,31 +1545,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Returns a {@link RecordToRowCopier} for the live view, compiling a fresh one when
-     * the cached one's metadata version is out of sync with the WAL writer.
+     * Returns the {@link RecordToRowCopier} of the live view's compiled plan, generating it
+     * against the view's WAL writer on first use. Throws, as
+     * {@link RecordToRowCopierUtils#generateViewCopier} does, when the view's query no
+     * longer fits the view's columns.
      */
     private RecordToRowCopier ensureCopier(
             LiveViewInstance instance,
             WalWriter walWriter
     ) throws SqlException {
-        long metadataVersion = walWriter.getMetadata().getMetadataVersion();
-        RecordToRowCopier copier = instance.getRecordToRowCopier();
-        if (copier == null || instance.getRecordRowCopierMetadataVersion() != metadataVersion) {
+        final LiveViewCompiledPlan plan = instance.getCompiledPlan();
+        RecordToRowCopier copier = plan.getCopier();
+        if (copier == null) {
             // The view's own schema, which is the output projection's when the SELECT
             // wraps a window function in an expression and the window factory's when it
             // does not. Reading the window factory's here instead would generate a copier
             // for the wrong column count and mis-write every row.
-            final RecordMetadata outMetadata = instance.getCompiledPlan().getOutputMetadata();
+            final RecordMetadata outMetadata = plan.getOutputMetadata();
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                columnFilter.of(outMetadata.getColumnCount());
-                copier = RecordToRowCopierUtils.generateCopier(
+                copier = RecordToRowCopierUtils.generateViewCopier(
                         compiler.getAsm(),
                         outMetadata,
                         walWriter.getMetadata(),
                         columnFilter,
                         engine.getConfiguration()
                 );
-                instance.setRecordToRowCopier(copier, metadataVersion);
+                plan.setCopier(copier);
             }
         }
         return copier;
@@ -9478,6 +9479,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         instance.recordRefreshFailure(nowUs);
+        if (t instanceof CairoException ce && ce.isSchemaMismatch()) {
+            LOG.critical().$("live view query no longer fits its columns, invalidating [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", error=").$safe(ce.getFlyweightMessage()).I$();
+            return Chars.toString(ce.getFlyweightMessage());
+        }
         // A breach of THIS view's configured limit means its working set does not fit the
         // budget the operator set. Retrying re-allocates into the same ceiling and ends at
         // the generic budget message anyway, throwing away the one diagnostic that says why.

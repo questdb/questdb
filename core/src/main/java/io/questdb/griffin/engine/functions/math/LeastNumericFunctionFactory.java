@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
@@ -67,6 +68,11 @@ import org.jetbrains.annotations.Nullable;
 
 public class LeastNumericFunctionFactory implements FunctionFactory {
     private static final FiberLocal<IntHashSet> tlSet = new FiberLocal<>(IntHashSet::new);
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.numericExtreme(argTypes);
+    }
 
     @Override
     public String getSignature() {
@@ -534,13 +540,21 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
             long value = Long.MAX_VALUE;
             boolean foundValidValue = false;
             for (int i = 0; i < n; i++) {
-                final long v = timestampDriver.from(args.getQuick(i).getTimestamp(rec), timestampTypes.getQuick(i));
+                final long v = load(rec, i);
                 if (v != Numbers.LONG_NULL) {
                     foundValidValue = true;
                     value = Math.min(value, v);
                 }
             }
             return foundValidValue ? value : Numbers.LONG_NULL;
+        }
+
+        private long load(Record rec, int index) {
+            final Function arg = args.getQuick(index);
+            final int timestampType = timestampTypes.getQuick(index);
+            return timestampType == ColumnType.UNDEFINED
+                    ? arg.getLong(rec)
+                    : timestampDriver.from(arg.getTimestamp(rec), timestampType);
         }
     }
 }

@@ -426,7 +426,7 @@ public class SqlValidationProcessor implements HttpRequestProcessor, HttpRequest
             errorMessage = ex.getFlyweightMessage();
         } else {
             errorMessagePosition = 0;
-            errorMessage = e.getMessage();
+            errorMessage = Misc.getMessageOrClassName(e);
         }
         sendException(
                 state,

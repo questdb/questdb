@@ -96,6 +96,45 @@ public class ViewDependencyGapAuthorizationTest extends AbstractViewTest {
     }
 
     @Test
+    public void testNestedViewReadsWhatItsInnerViewReadsNow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, k SYMBOL, a LONG, b LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (0, 'k1', 1, 2), (3_600_000_000, 'k1', 3, 4)");
+            execute("CREATE VIEW v2 AS (SELECT k, a FROM x)");
+            execute("CREATE VIEW vo AS (SELECT * FROM v2)");
+            drainWalAndViewQueues();
+            try (SqlExecutionContext denyContext = denyBaseTableSelectContext()) {
+                assertQuery("SELECT * FROM vo").noLeakCheck().withContext(denyContext).expectSize().returns("""
+                        k\ta
+                        k1\t1
+                        k1\t3
+                        """);
+
+                execute("ALTER VIEW v2 AS (SELECT k, b FROM x)");
+                drainWalAndViewQueues();
+                assertQuery("SELECT * FROM v2").noLeakCheck().withContext(denyContext).expectSize().returns("""
+                        k\tb
+                        k1\t2
+                        k1\t4
+                        """);
+                assertQuery("SELECT * FROM vo").noLeakCheck().withContext(denyContext).expectSize().returns("""
+                        k\tb
+                        k1\t2
+                        k1\t4
+                        """);
+
+                execute("CREATE OR REPLACE VIEW v2 AS (SELECT k, a, b FROM x)");
+                drainWalAndViewQueues();
+                assertQuery("SELECT * FROM vo").noLeakCheck().withContext(denyContext).expectSize().returns("""
+                        k\ta\tb
+                        k1\t1\t2
+                        k1\t3\t4
+                        """);
+            }
+        });
+    }
+
+    @Test
     public void testPresentDependencyEntrySuppressesBaseTableSelectCheck() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);

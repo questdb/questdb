@@ -24,26 +24,26 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.Misc;
 
 public interface TernaryFunction extends Function {
 
     @Override
     default void close() {
-        getLeft().close();
-        getCenter().close();
-        getRight().close();
+        final Throwable failure = Misc.freeBestEffort(Misc.freeBestEffort(null, getLeft()), getCenter());
+        CairoException.rethrowCleanupFailure(Misc.freeBestEffort(failure, getRight()));
     }
 
     @Override
     default void cursorClosed() {
-        getLeft().cursorClosed();
-        getCenter().cursorClosed();
-        getRight().cursorClosed();
+        final Throwable failure = Function.cursorClosed(Function.cursorClosed(null, getLeft()), getCenter());
+        CairoException.rethrowCleanupFailure(Function.cursorClosed(failure, getRight()));
     }
 
     Function getCenter();
@@ -73,19 +73,6 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
-    default boolean isEquivalentTo(Function other) {
-        if (other == this) {
-            return true;
-        }
-        if (other instanceof TernaryFunction that) {
-            return getLeft().isEquivalentTo(that.getLeft())
-                    && getCenter().isEquivalentTo(that.getCenter())
-                    && getRight().isEquivalentTo(that.getRight());
-        }
-        return false;
-    }
-
-    @Override
     default boolean isNonDeterministic() {
         return getLeft().isNonDeterministic() || getCenter().isNonDeterministic() || getRight().isNonDeterministic();
     }
@@ -107,15 +94,13 @@ public interface TernaryFunction extends Function {
 
     @Override
     default boolean isRuntimeConstant() {
-        boolean arc = getLeft().isRuntimeConstant();
-        boolean brc = getCenter().isRuntimeConstant();
-        boolean crc = getRight().isRuntimeConstant();
-
-        boolean ac = getLeft().isConstant();
-        boolean bc = getCenter().isConstant();
-        boolean cc = getRight().isConstant();
-
-        return (ac || arc) && (bc || brc) && (cc || crc) && (arc || brc || crc);
+        final boolean arc = getLeft().isRuntimeConstant();
+        final boolean brc = getCenter().isRuntimeConstant();
+        final boolean crc = getRight().isRuntimeConstant();
+        return (arc || brc || crc)
+                && (arc || getLeft().isConstant())
+                && (brc || getCenter().isConstant())
+                && (crc || getRight().isConstant());
     }
 
     @Override

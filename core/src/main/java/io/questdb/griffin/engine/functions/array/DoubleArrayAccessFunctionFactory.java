@@ -51,6 +51,23 @@ import io.questdb.std.Transient;
 public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        int resultNDims = ColumnType.decodeWeakArrayDimensionality(argTypes.getQuick(0));
+        if (resultNDims == -1) {
+            return ColumnType.UNDEFINED;
+        }
+        for (int i = 1, n = argTypes.size(); i < n; i++) {
+            if (isIndexArg(argTypes.getQuick(i))) {
+                resultNDims--;
+            }
+        }
+        if (resultNDims < 0) {
+            return ColumnType.UNDEFINED;
+        }
+        return resultNDims == 0 ? ColumnType.DOUBLE : ColumnType.encodeArrayType(ColumnType.DOUBLE, resultNDims);
+    }
+
+    @Override
     public String getSignature() {
         return "[](D[]LV)";
     }
@@ -190,7 +207,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         for (int i = 1, n = args.size(); i < n; i++) {
             Function arg = args.getQuick(i);
             int argType = arg.getType();
-            if (!isIndexArg(argType) && !ColumnType.isInterval(argType)) {
+            if (!isIndexArg(argType) && argType != ColumnType.INTERVAL_RAW) {
                 throw SqlException.position(argPositions.get(i))
                         .put("invalid type for array access [type=").put(ColumnType.nameOf(argType)).put(']');
             }
@@ -447,7 +464,7 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     Interval range = rangeFn.getInterval(rec);
                     long loLong = range.getLo();
                     long hiLong = range.getHi();
-                    if (loLong == Numbers.INT_NULL || hiLong == Numbers.INT_NULL) {
+                    if (loLong == Numbers.LONG_NULL || hiLong == Numbers.LONG_NULL) {
                         derivedArray.ofNull();
                         return derivedArray;
                     }

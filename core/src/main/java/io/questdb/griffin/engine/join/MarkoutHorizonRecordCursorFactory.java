@@ -128,6 +128,7 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
             slaveRecordArray = new RecordArray(
                     slaveFactory.getMetadata(),
                     slaveRecordSink,
+                    configuration.getSqlHashJoinLightValuePageSize(),
                     configuration.getSqlHashJoinValuePageSize(),
                     configuration.getSqlHashJoinValueMaxPages()
             );
@@ -138,7 +139,8 @@ public class MarkoutHorizonRecordCursorFactory extends AbstractJoinRecordCursorF
                     slaveRecordArray
             );
         } catch (Throwable th) {
-            Misc.free(slaveRecordArray);
+            Misc.free(slaveRecordArray, th);
+            Misc.free(this, th);
             throw th;
         }
     }

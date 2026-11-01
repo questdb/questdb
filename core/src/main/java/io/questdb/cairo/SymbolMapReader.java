@@ -27,12 +27,23 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.IntList;
 
 /**
  * Gets the properties of a symbol map, whether symbols in a table are
  * cached, what the table symbol capacity is, updating the symbol count of a table.
  */
 public interface SymbolMapReader extends StaticSymbolTable {
+
+    /**
+     * Adds the keys of the symbols, 0 to the symbol count, to the list in the order of their values: by UTF-16 code
+     * units, as {@link String#compareTo(String)} orders them. A reader of a table keeps the order it sorted while its
+     * symbols stay the same, for every query that reads the table through it.
+     */
+    default void copySortedKeysTo(IntList keys) {
+        throw new UnsupportedOperationException();
+    }
+
     int getSymbolCapacity();
 
     // Mapped memory to the .o file

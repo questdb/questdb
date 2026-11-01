@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.catalogue;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
@@ -34,6 +35,11 @@ import io.questdb.std.ObjList;
 
 public class PrefixedAgeFunctionFactory implements FunctionFactory {
     private static final Function ZERO_CONST = new LongConstant(0);
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
 
     @Override
     public String getSignature() {

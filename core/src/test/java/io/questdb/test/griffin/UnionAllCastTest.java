@@ -24,8 +24,12 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class UnionAllCastTest extends AbstractCairoTest {
@@ -706,6 +710,50 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalDoubleArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE td (k DECIMAL(10,2))");
+            execute("INSERT INTO td VALUES (1.25m), (null)");
+            execute("CREATE TABLE ta (k DOUBLE[])");
+            execute("INSERT INTO ta VALUES (ARRAY[1.0, 2.0])");
+            assertQuery("SELECT k FROM td UNION ALL SELECT k FROM ta")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            k
+                            1.25
+                            
+                            [1.0,2.0]
+                            """);
+            assertQuery("SELECT k FROM ta UNION ALL SELECT k FROM td")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            k
+                            [1.0,2.0]
+                            1.25
+                            
+                            """);
+            assertQuery("SELECT k FROM td UNION SELECT k FROM ta")
+                    .noRandomAccess()
+                    .returns("""
+                            k
+                            1.25
+                            
+                            [1.0,2.0]
+                            """);
+            assertQuery("SELECT k FROM td EXCEPT SELECT k FROM ta")
+                    .returns("""
+                            k
+                            1.25
+                            
+                            """);
+            assertQuery("SELECT k FROM ta INTERSECT SELECT k FROM td")
+                    .returns("k\n");
+        });
+    }
+
+    @Test
     public void testDecimalNull() throws Exception {
         testUnionAllWithNull(
                 """
@@ -767,6 +815,32 @@ public class UnionAllCastTest extends AbstractCairoTest {
                 "create table y as (select 0::decimal(18, 3) a union select 3::decimal(18, 3) union select 5::decimal(18, 3) union select 9::decimal(18, 3) union select 8::decimal(18, 3))",
                 false
         );
+    }
+
+    @Test
+    public void testDoubleArrayNullToHigherDimensionality() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a1 (k DOUBLE[])");
+            execute("INSERT INTO a1 VALUES (ARRAY[1.0]), (null)");
+            execute("CREATE TABLE a2 (k DOUBLE[][])");
+            execute("INSERT INTO a2 VALUES (ARRAY[[2.0]])");
+            assertQuery("SELECT k FROM a1 UNION ALL SELECT k FROM a2")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            k
+                            [[1.0]]
+                            null
+                            [[2.0]]
+                            """);
+            assertQuery("SELECT k::DOUBLE[][] k FROM a1")
+                    .expectSize()
+                    .returns("""
+                            k
+                            [[1.0]]
+                            null
+                            """);
+        });
     }
 
     @Test
@@ -956,6 +1030,42 @@ public class UnionAllCastTest extends AbstractCairoTest {
                 "create table y as (select cast(rnd_date() as timestamp) b from long_sequence(5))",
                 12
         );
+    }
+
+    @Test
+    public void testEveryValidatedCastIsGenerated() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[] columns = {
+                    "c_bool BOOLEAN", "c_byte BYTE", "c_short SHORT", "c_char CHAR", "c_int INT", "c_long LONG", "c_date DATE",
+                    "c_ts TIMESTAMP", "c_ts_ns TIMESTAMP_NS", "c_float FLOAT", "c_double DOUBLE", "c_str STRING", "c_sym SYMBOL",
+                    "c_long256 LONG256", "c_geo3b GEOHASH(3b)", "c_geo1c GEOHASH(1c)", "c_geo2c GEOHASH(2c)", "c_geo3c GEOHASH(3c)",
+                    "c_geo4c GEOHASH(4c)", "c_geo6c GEOHASH(6c)", "c_geo8c GEOHASH(8c)", "c_geo12c GEOHASH(12c)", "c_bin BINARY",
+                    "c_uuid UUID", "c_ipv4 IPv4", "c_varchar VARCHAR", "c_arr DOUBLE[]", "c_arr2 DOUBLE[][]", "c_dec8 DECIMAL(2,1)",
+                    "c_dec16 DECIMAL(4,2)", "c_dec32 DECIMAL(9,2)", "c_dec64 DECIMAL(18,2)", "c_dec128 DECIMAL(38,2)",
+                    "c_dec256 DECIMAL(76,2)"
+            };
+            final StringBuilder ddl = new StringBuilder("CREATE TABLE t (");
+            final String[] expressions = new String[columns.length + 2];
+            for (int i = 0; i < columns.length; i++) {
+                ddl.append(i > 0 ? ", " : "").append(columns[i]);
+                expressions[i] = columns[i].substring(0, columns[i].indexOf(' '));
+            }
+            execute(ddl.append(')').toString());
+            expressions[columns.length] = "interval(0, 1)";
+            expressions[columns.length + 1] = "null";
+            final String[] operations = {"UNION ALL", "UNION", "EXCEPT", "EXCEPT ALL", "INTERSECT", "INTERSECT ALL"};
+            for (String operation : operations) {
+                for (String left : expressions) {
+                    for (String right : expressions) {
+                        try (RecordCursorFactory ignored = select("SELECT " + left + " k FROM t " + operation + " SELECT " + right + " k FROM t")) {
+                            // the generator built every cast the binder accepted
+                        } catch (SqlException ignore) {
+                            // the binder rejected the cast
+                        }
+                    }
+                }
+            }
+        });
     }
 
     @Test
@@ -1593,6 +1703,44 @@ public class UnionAllCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGeoSameStorageNarrowsToPrefix() throws Exception {
+        // each pair shares a storage width (GEOBYTE, GEOSHORT, GEOINT, GEOLONG) and differs in precision
+        assertMemoryLeak(() -> {
+            final String[][] pairs = {
+                    {"3b", "5b", "##101", "##10111", "101"},
+                    {"2c", "3c", "'sp'", "'spz'", "sp"},
+                    {"4c", "6c", "'sp01'", "'sp01zz'", "sp01"},
+                    {"7c", "12c", "'sp01zzz'", "'sp01zzz12345'", "sp01zzz"},
+            };
+            for (int i = 0; i < pairs.length; i++) {
+                final String[] pair = pairs[i];
+                final String narrow = "narrow" + i;
+                final String wide = "wide" + i;
+                execute("CREATE TABLE " + narrow + " (g GEOHASH(" + pair[0] + "))");
+                execute("INSERT INTO " + narrow + " VALUES (" + pair[2] + ")");
+                execute("CREATE TABLE " + wide + " (g GEOHASH(" + pair[1] + "))");
+                execute("INSERT INTO " + wide + " VALUES (" + pair[3] + ")");
+                final String prefix = pair[4];
+                assertQuery("SELECT g FROM " + narrow + " UNION ALL SELECT g FROM " + wide)
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("g\n" + prefix + "\n" + prefix + "\n");
+                assertQuery("SELECT g FROM " + wide + " UNION ALL SELECT g FROM " + narrow)
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("g\n" + prefix + "\n" + prefix + "\n");
+                assertQuery("SELECT g FROM " + narrow + " UNION SELECT g FROM " + wide)
+                        .noRandomAccess()
+                        .returns("g\n" + prefix + "\n");
+                assertQuery("SELECT g FROM " + narrow + " INTERSECT SELECT g FROM " + wide)
+                        .returns("g\n" + prefix + "\n");
+                assertQuery("SELECT g FROM " + narrow + " EXCEPT SELECT g FROM " + wide)
+                        .returns("g\n");
+            }
+        });
+    }
+
+    @Test
     public void testGeoShortExact() throws Exception {
         // long + geohash overlap via string type
         testUnionAll(
@@ -1638,15 +1786,15 @@ public class UnionAllCastTest extends AbstractCairoTest {
 
     @Test
     public void testGeoShortGeoShort() throws Exception {
-        // long + geohash overlap via string type
+        // the wider branch narrows to the common precision by prefix
         testUnionAll(
                 """
                         a
-                        k0
-                        0c
-                        5f
-                        fg
-                        w5
+                        wh
+                        s2
+                        1c
+                        mm
+                        71
                         9v
                         46
                         jn
@@ -1985,6 +2133,18 @@ public class UnionAllCastTest extends AbstractCairoTest {
                 "create table x as (select rnd_short() a from long_sequence(5))",
                 "create table y as (select rnd_int() b from long_sequence(5))"
         );
+    }
+
+    @Test
+    public void testIntervalVarchar() throws Exception {
+        assertMemoryLeak(() -> assertQuery("SELECT interval(0, 1) k UNION ALL SELECT 'a'::VARCHAR")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        k
+                        ('1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.000Z')
+                        a
+                        """));
     }
 
     @Test
@@ -2817,6 +2977,72 @@ public class UnionAllCastTest extends AbstractCairoTest {
                 "create table x as (select rnd_double() u, rnd_boolean() a, rnd_symbol('a','b') c from long_sequence(5))",
                 "create table y as (select rnd_double() u, rnd_byte() b, rnd_symbol('x','y') c from long_sequence(5))"
         );
+    }
+
+    @Test
+    public void testSymSymChainWidensFromSymbol() throws Exception {
+        // the result type of a UNION chain does not depend on where its two SYMBOL branches sit
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sa (k SYMBOL)");
+            execute("INSERT INTO sa VALUES ('u33d')");
+            execute("CREATE TABLE sb (k SYMBOL)");
+            execute("INSERT INTO sb VALUES ('not-a-geohash')");
+            execute("CREATE TABLE xv (k VARCHAR)");
+            execute("INSERT INTO xv VALUES ('u33f')");
+            execute("CREATE TABLE xa (k DOUBLE[])");
+            execute("INSERT INTO xa VALUES (ARRAY[1.0])");
+            execute("CREATE TABLE xg (k GEOHASH(4c))");
+            execute("INSERT INTO xg VALUES (#u33f)");
+            execute("CREATE TABLE xd (k DECIMAL(10,2))");
+            execute("INSERT INTO xd VALUES (1.25m)");
+            execute("CREATE TABLE xt (k TIMESTAMP)");
+            execute("INSERT INTO xt VALUES ('2024-01-01T00:00:00.000000Z')");
+            final String[][] others = {{"xv", "VARCHAR"}, {"xa", "VARCHAR"}, {"xg", "STRING"}, {"xd", "STRING"}, {"xt", "STRING"}};
+            for (String operation : new String[]{"UNION ALL", "UNION"}) {
+                for (String[] other : others) {
+                    final String x = "SELECT k FROM " + other[0];
+                    final String[] queries = {
+                            "SELECT k FROM sa " + operation + " " + x,
+                            "SELECT k FROM sa " + operation + " SELECT k FROM sb " + operation + " " + x,
+                            x + " " + operation + " SELECT k FROM sa " + operation + " SELECT k FROM sb",
+                            "SELECT k FROM sa " + operation + " " + x + " " + operation + " SELECT k FROM sb",
+                            "SELECT k FROM sa " + operation + " (SELECT k FROM sb " + operation + " " + x + ")",
+                            "(SELECT k FROM sa " + operation + " SELECT k FROM sb) " + operation + " " + x
+                    };
+                    for (String query : queries) {
+                        try (RecordCursorFactory factory = select(query)) {
+                            Assert.assertEquals(query, other[1], ColumnType.nameOf(factory.getMetadata().getColumnType(0)));
+                        }
+                    }
+                }
+            }
+            assertQuery("SELECT k FROM sa UNION ALL SELECT k FROM sb UNION ALL SELECT k FROM xg")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            k
+                            u33d
+                            not-a-geohash
+                            u33f
+                            """);
+            assertQuery("SELECT k FROM sa UNION ALL SELECT k FROM sb UNION ALL SELECT k FROM xd")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            k
+                            u33d
+                            not-a-geohash
+                            1.25
+                            """);
+            assertQuery("SELECT k FROM sa UNION ALL SELECT k FROM xt")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            k
+                            u33d
+                            2024-01-01T00:00:00.000000Z
+                            """);
+        });
     }
 
     @Test

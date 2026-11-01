@@ -28,18 +28,18 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -53,6 +53,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final AsOfJoinIndexedRecordCursor cursor;
+    private final @Nullable Function keyCheck;
     private final int slaveSymbolColumnIndex;
     private final SymbolJoinKeyMapping symbolJoinKeyMapping;
     private final long toleranceInterval;
@@ -65,25 +66,33 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             int columnSplit,
             int slaveSymbolColumnIndex,
             SymbolJoinKeyMapping symbolJoinKeyMapping,
-            JoinContext joinContext,
-            long toleranceInterval
+            Plannable joinContext,
+            long toleranceInterval,
+            @Nullable Function keyCheck
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
+        this.keyCheck = keyCheck;
         this.symbolJoinKeyMapping = symbolJoinKeyMapping;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
+        this.toleranceInterval = toleranceInterval;
         RecordMetadata masterMeta = masterFactory.getMetadata();
         RecordMetadata slaveMeta = slaveFactory.getMetadata();
-        this.cursor = new AsOfJoinIndexedRecordCursor(
-                columnSplit,
-                NullRecordFactory.getInstance(slaveMeta),
-                masterMeta.getTimestampIndex(),
-                masterMeta.getTimestampType(),
-                slaveMeta.getTimestampIndex(),
-                slaveMeta.getTimestampType(),
-                configuration.getSqlAsOfJoinLookAhead()
-        );
-        this.toleranceInterval = toleranceInterval;
+        try {
+            this.cursor = new AsOfJoinIndexedRecordCursor(
+                    columnSplit,
+                    NullRecordFactory.getInstance(slaveMeta),
+                    masterMeta.getTimestampIndex(),
+                    masterMeta.getTimestampType(),
+                    slaveMeta.getTimestampIndex(),
+                    slaveMeta.getTimestampType(),
+                    configuration.getSqlAsOfJoinLookAhead(),
+                    keyCheck
+            );
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override
@@ -100,7 +109,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             // Bind before of(), which reopens the symbol key cache before adopting the cursors.
             cursor.setMemoryTracker(executionContext.getMemoryTracker());
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
-            cursor.of(masterCursor, slaveCursor, executionContext.getCircuitBreaker());
+            cursor.of(masterCursor, slaveCursor, executionContext);
             return cursor;
         } catch (Throwable e) {
             Misc.free(slaveCursor);
@@ -125,6 +134,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Indexed Scan");
         sink.attr("condition").val(joinContext);
+        sink.optAttr("keyCheck", keyCheck, masterFactory);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }
@@ -133,6 +143,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
     protected void _close() {
         Throwable failure = closeJoinOwnersBestEffort();
         failure = Misc.freeBestEffort(failure, symbolJoinKeyMapping);
+        failure = Misc.freeBestEffort(failure, keyCheck);
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -145,9 +156,10 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
                 int masterTimestampType,
                 int slaveTimestampIndex,
                 int slaveTimestampType,
-                int lookahead
+                int lookahead,
+                @Nullable Function keyCheck
         ) {
-            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead);
+            super(columnSplit, nullRecord, masterTimestampIndex, masterTimestampType, slaveTimestampIndex, slaveTimestampType, lookahead, keyCheck);
         }
 
         @Override
@@ -157,10 +169,10 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
         }
 
         @Override
-        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             // Reopen the symbol key cache before super.of() adopts the cursors so an open-time breach frees it exactly once.
             symbolJoinKeyMapping.reopen();
-            super.of(masterCursor, slaveCursor, circuitBreaker);
+            super.of(masterCursor, slaveCursor, executionContext);
             symbolJoinKeyMapping.of(slaveCursor);
         }
 

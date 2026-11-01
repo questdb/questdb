@@ -63,6 +63,11 @@ class SelectedRecordCursor implements RecordCursor {
     }
 
     @Override
+    public void expectLastRows(long rowCount) {
+        baseCursor.expectLastRows(rowCount);
+    }
+
+    @Override
     public void expectLimitedIteration() {
         baseCursor.expectLimitedIteration();
     }
@@ -108,6 +113,11 @@ class SelectedRecordCursor implements RecordCursor {
     @Override
     public void recordAt(Record record, long atRowId) {
         baseCursor.recordAt(((SelectedRecord) record).getBaseRecord(), atRowId);
+    }
+
+    @Override
+    public long remainingMasterRowCount() {
+        return baseCursor.remainingMasterRowCount();
     }
 
     @Override

@@ -59,6 +59,16 @@ public abstract class AbstractDoubleArrayElemFunctionTest extends AbstractCairoT
     }
 
     @Test
+    public void test2dEmptyNonVanillaPlusValid() throws Exception {
+        // transpose() of a zero-row slice is a non-vanilla (2,0) view over a non-empty flat array
+        assertElemWise(
+                "[[1.0],[2.0]]",
+                "transpose(ARRAY[[10.0, 20.0]][1:1])",
+                "ARRAY[[1.0], [2.0]]"
+        );
+    }
+
+    @Test
     public void test2dNanAtGrownPositions() throws Exception {
         assertElemWise(
                 "[[1.0,2.0,null],[3.0,4.0,null],[null,null,null]]",

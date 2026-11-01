@@ -31,16 +31,28 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.TimestampPrecisionUse;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class SecondOfMinuteFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
+
+    @Override
     public String getSignature() {
         return "second(N)";
+    }
+
+    @Override
+    public TimestampPrecisionUse getTimestampPrecisionUse(ExpressionNode call) {
+        return TimestampPrecisionUse.INVARIANT;
     }
 
     @Override

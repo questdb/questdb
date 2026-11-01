@@ -43,16 +43,14 @@ import java.util.concurrent.atomic.AtomicReference;
  * CoveringIndexRecordCursorFactory.getCursor under concurrent queries.
  * <p>
  * Root cause: {@link io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory}
- * keeps a <b>direct reference</b> to {@code IntrinsicModel.keyValueFuncs}, which is a
- * <b>pooled</b> {@link io.questdb.std.ObjList} owned by the compiler's
- * {@link io.questdb.griffin.WhereClauseParser} (an {@code ObjectPool<IntrinsicModel>}).
- * SqlCompilers are pooled and shared across threads/connections. When another thread
- * borrows the same pooled compiler and recompiles, {@code models.next()} calls
- * {@code IntrinsicModel.clear()} -> {@code keyValueFuncs.clear()}, which runs
- * {@code Arrays.fill(buffer, null)} <i>before</i> resetting {@code pos = 0}.
+ * kept a <b>direct reference</b> to a <b>pooled</b> key-function
+ * {@link io.questdb.std.ObjList} owned by the compiler. SqlCompilers are pooled and shared
+ * across threads/connections. When another thread borrowed the same pooled compiler and
+ * recompiled, clearing that list ran {@code Arrays.fill(buffer, null)} <i>before</i> resetting
+ * {@code pos = 0}. {@code ScanFactoryGenerator} now gives each factory its own key list.
  * <p>
- * A concurrent {@code getCursor} on the still-cached factory calls
- * {@code Function.init(keyValueFuncs, ...)} which reads {@code size()} (stale, &gt; 0)
+ * A concurrent {@code getCursor} on the still-cached factory called
+ * {@code Function.init(keys, ...)}, which read {@code size()} (stale, &gt; 0)
  * and then {@code getQuick(i)} (already nulled), producing exactly the reported:
  * <pre>
  * java.lang.NullPointerException: Cannot invoke
@@ -133,8 +131,7 @@ public class PostingIndexConcurrentQueryNpeTest extends AbstractCairoTest {
                         for (int i = 0; i < iterations && firstError.get() == null; i++) {
                             // Mirror PG-wire: compile, RETURN the compiler to the pool,
                             // then execute the cached factory. Another thread reuses the
-                            // same pooled compiler (and its WhereClauseParser
-                            // IntrinsicModel pool), clearing the keyValueFuncs list that
+                            // same pooled compiler, which must not clear any key list
                             // this factory still references -- racing this getCursor().
                             final RecordCursorFactory factory;
                             try (SqlCompiler compiler = engine.getSqlCompiler()) {

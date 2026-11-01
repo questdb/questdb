@@ -46,6 +46,11 @@ public class RndTimestampFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = NAME + "(nni)";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.TIMESTAMP_MICRO;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

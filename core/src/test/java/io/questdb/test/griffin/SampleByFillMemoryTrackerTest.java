@@ -26,15 +26,13 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.groupby.SampleByFillNoneRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.SampleByFillNullRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.SampleByFillPrevRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
-import io.questdb.griffin.engine.groupby.SampleByFillValueRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SampleByInterpolateRecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -42,15 +40,17 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+
 /**
  * SQL-level tests that exercise the per-query memory limit through the
  * tracker-aware keyed SAMPLE BY FILL operators:
  * <ul>
- *     <li>{@link io.questdb.griffin.engine.groupby.SampleByFillValueRecordCursorFactory} /
- *     {@link io.questdb.griffin.engine.groupby.SampleByFillNullRecordCursorFactory} ->
- *     {@code SampleByFillValueRecordCursor} (OrderedMap + GROUP BY allocator),</li>
- *     <li>{@link io.questdb.griffin.engine.groupby.SampleByFillPrevRecordCursorFactory} ->
- *     {@code SampleByFillPrevRecordCursor},</li>
+ *     <li>{@link io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory}, which fills
+ *     the gaps of both SAMPLE BY shapes (keysMap),</li>
  *     <li>{@link io.questdb.griffin.engine.groupby.SampleByFillNoneRecordCursorFactory} ->
  *     {@code SampleByFillNoneRecordCursor},</li>
  *     <li>{@link io.questdb.griffin.engine.groupby.SampleByInterpolateRecordCursorFactory}
@@ -206,10 +206,9 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedFillNullFailsOnHighCardinality() throws Exception {
-        // FILL(NULL) routes through SampleByFillValueRecordCursor; the keyed map
-        // it builds during the key-discovery pass grows with the key set and
-        // trips the per-query limit.
-        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION", SampleByFillNullRecordCursorFactory.class);
+        // FILL(NULL) fills above the keyed SAMPLE BY cursor; the keyed maps grow
+        // with the key set and trip the per-query limit.
+        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION", SampleByFillRecordCursorFactory.class);
     }
 
     @Test
@@ -237,32 +236,37 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedFillOpenBreachStaysReusable() throws Exception {
-        // Null/Value/Prev FILL share AbstractSampleByFillRecordCursorFactory.getCursor(), which
-        // reopens the cursor's map and allocator before taking the base cursor. A tiny limit makes
-        // that reopen breach; the getCursor() catch must free the half-open cursor so the cached
-        // factory stays reusable once the limit is lifted. FillNone has its own getCursor(), so
-        // testKeyedFillNoneOpenBreachDoesNotLeakReader does not exercise this shared path.
         assertMemoryLeak(() -> {
             sqlExecutionContext.setParallelGroupByEnabled(false);
             createSmallTable();
-            assertFillOpenBreachStaysReusable("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION", SampleByFillNullRecordCursorFactory.class);
-            assertFillOpenBreachStaysReusable("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(0) ALIGN TO FIRST OBSERVATION", SampleByFillValueRecordCursorFactory.class);
-            assertFillOpenBreachStaysReusable("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION", SampleByFillPrevRecordCursorFactory.class);
+            for (String fill : new String[]{"NULL", "0", "PREV"}) {
+                assertFillOpenBreachStaysReusable(
+                        "SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(" + fill + ") ALIGN TO FIRST OBSERVATION",
+                        """
+                                k\tsum
+                                0\t275.0
+                                1\t235.0
+                                2\t245.0
+                                3\t255.0
+                                4\t265.0
+                                """
+                );
+            }
         });
     }
 
     @Test
     public void testKeyedFillPrevFailsOnHighCardinality() throws Exception {
-        // FILL(PREV) routes to SampleByFillPrevRecordCursor; its OrderedMap grows
-        // with the distinct key set.
-        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION", SampleByFillPrevRecordCursorFactory.class);
+        // FILL(PREV) fills above the keyed SAMPLE BY cursor; its maps grow with
+        // the distinct key set.
+        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION", SampleByFillRecordCursorFactory.class);
     }
 
     @Test
     public void testKeyedFillValueFailsOnHighCardinality() throws Exception {
-        // FILL(constant) routes to SampleByFillValueRecordCursor; same keyed map
+        // FILL(constant) fills above the keyed SAMPLE BY cursor; same keyed map
         // growth as FILL(NULL).
-        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(0) ALIGN TO FIRST OBSERVATION", SampleByFillValueRecordCursorFactory.class);
+        assertBreach("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(0) ALIGN TO FIRST OBSERVATION", SampleByFillRecordCursorFactory.class);
     }
 
     @Test
@@ -308,6 +312,17 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
         assertRepeatedRunsReleaseAllocations("SELECT k, sum(v) FROM tab SAMPLE BY 1h FILL(LINEAR)");
     }
 
+    @Test
+    public void testRepeatedVarWidthFillPrevCursorRunsReleaseAllocations() throws Exception {
+        assertRepeatedRunsReleaseAllocations("SELECT k, first(k::varchar) s FROM tab SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION");
+    }
+
+    private static List<String> sortedLines(CharSequence text) {
+        final List<String> lines = new ArrayList<>(Arrays.asList(text.toString().split("\n")));
+        Collections.sort(lines);
+        return lines;
+    }
+
     private void assertBreach(String query, Class<?> expectedFactory) throws Exception {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setParallelGroupByEnabled(false);
@@ -342,11 +357,12 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
         });
     }
 
-    private void assertFillOpenBreachStaysReusable(String query, Class<?> expectedFactory) throws Exception {
-        try (SqlCompiler compiler = engine.getSqlCompiler();
-             RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
-            assertUsesFactory(factory, expectedFactory);
-            // Shrink the limit (read live per open) so getCursor()'s cursor reopen breaches.
+    private void assertFillOpenBreachStaysReusable(String query, String expected) throws Exception {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()
+        ) {
+            assertUsesFactory(factory, SampleByFillRecordCursorFactory.class);
             setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64L);
             for (int i = 0; i < 5; i++) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -357,18 +373,12 @@ public class SampleByFillMemoryTrackerTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
                 }
             }
-            // Lift the limit: the factory must reopen cleanly, proving the catch reset cursor state.
             setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024L);
             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                //noinspection StatementWithEmptyBody
-                while (cursor.hasNext()) {
-                    // drain to completion
-                }
+                CursorPrinter.println(cursor, factory.getMetadata(), sink);
+                Assert.assertEquals(sortedLines(expected), sortedLines(sink.toString()));
             }
         }
-        // The reopen breach precedes base.getCursor(), so no reader is taken; the successful
-        // run above must have returned the one it took.
-        Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
     }
 
     private void assertHitsFastPath(RecordCursorFactory factory) {

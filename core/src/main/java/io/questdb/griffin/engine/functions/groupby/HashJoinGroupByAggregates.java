@@ -25,6 +25,9 @@
 package io.questdb.griffin.engine.functions.groupby;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjList;
@@ -38,7 +41,7 @@ import org.jetbrains.annotations.TestOnly;
  * <p>
  * Lookups match exact classes, so a subclass or an aggregate added later keeps the ordinary plan
  * until it is reviewed and registered here. The registry lives in this package because most of the
- * classes it names are package-private. HashJoinGroupByCandidate.isSupportedAggregate() checks the
+ * classes it names are package-private. {@link #isSupportedAggregate(Function)} checks the
  * parallelism and stability of the aggregate and its arguments before it asks the registry.
  */
 public final class HashJoinGroupByAggregates {
@@ -61,6 +64,25 @@ public final class HashJoinGroupByAggregates {
         return new ObjList<>(CLASSES);
     }
 
+    /**
+     * Whether the fused operator computes the aggregate: the aggregate and its arguments evaluate in parallel within
+     * one execution, and the registry names its class for the arity and argument type it has.
+     */
+    public static boolean isSupportedAggregate(Function function) {
+        if (!isParallelSafe(function)) {
+            return false;
+        }
+        final Class<?> type = function.getClass();
+        if (function instanceof UnaryFunction unary) {
+            final Function arg = unary.getArg();
+            return isParallelSafe(arg) && isSupportedUnary(type, arg.getType());
+        }
+        if (function instanceof BinaryFunction binary) {
+            return isParallelSafe(binary.getLeft()) && isParallelSafe(binary.getRight()) && isSupportedBinary(type);
+        }
+        return isSupportedNullary(type);
+    }
+
     public static boolean isSupportedBinary(Class<?> type) {
         return BINARY.contains(type);
     }
@@ -72,6 +94,10 @@ public final class HashJoinGroupByAggregates {
     public static boolean isSupportedUnary(Class<?> type, int argType) {
         final int tag = UNARY.get(type);
         return tag != NO_TYPE && tag == ColumnType.tagOf(argType);
+    }
+
+    private static boolean isParallelSafe(Function function) {
+        return function.supportsParallelism() && function.isStableWithinExecution();
     }
 
     private static void binary(Class<?> type) {

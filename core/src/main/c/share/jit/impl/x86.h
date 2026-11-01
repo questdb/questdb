@@ -569,6 +569,58 @@ namespace questdb::x86 {
         }
     }
 
+    // !int32_lt_gt: true when either operand is NULL.
+    inline Gp int32_not_lt_gt(Compiler &c, const Gp &lhs, const Gp &rhs, bool gt, bool check_null) {
+        if (!check_null) {
+            return int32_le_ge(c, lhs, rhs, !gt, false);
+        }
+        Gp v = c.new_gp32();
+        Gp l = c.new_gp32();
+        Gp r = c.new_gp32();
+        c.xor_(l, l);
+        c.cmp(lhs, INT_NULL);
+        c.sete(l.r8_lo());
+        c.xor_(r, r);
+        c.cmp(rhs, INT_NULL);
+        c.sete(r.r8_lo());
+        c.or_(r, l);
+        c.xor_(v, v);
+        c.cmp(lhs, rhs);
+        if (gt) {
+            c.setle(v.r8_lo());
+        } else {
+            c.setge(v.r8_lo());
+        }
+        c.or_(v, r);
+        return v.as<Gp>();
+    }
+
+    // !int32_le_ge: true when exactly one operand is NULL.
+    inline Gp int32_not_le_ge(Compiler &c, const Gp &lhs, const Gp &rhs, bool ge, bool check_null) {
+        if (!check_null) {
+            return int32_lt_gt(c, lhs, rhs, !ge, false);
+        }
+        Gp v = c.new_gp32();
+        Gp l = c.new_gp32();
+        Gp r = c.new_gp32();
+        c.xor_(l, l);
+        c.cmp(lhs, INT_NULL);
+        c.sete(l.r8_lo());
+        c.xor_(r, r);
+        c.cmp(rhs, INT_NULL);
+        c.sete(r.r8_lo());
+        c.xor_(r, l);
+        c.xor_(v, v);
+        c.cmp(lhs, rhs);
+        if (ge) {
+            c.setl(v.r8_lo());
+        } else {
+            c.setg(v.r8_lo());
+        }
+        c.or_(v, r);
+        return v.as<Gp>();
+    }
+
     inline Gp int32_lt(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         return int32_lt_gt(c, lhs, rhs, false, check_null);
     }
@@ -722,6 +774,66 @@ namespace questdb::x86 {
         }
     }
 
+    // !int64_lt_gt: true when either operand is NULL.
+    inline Gp int64_not_lt_gt(Compiler &c, const Gp &lhs, const Gp &rhs, bool gt, bool check_null) {
+        if (!check_null) {
+            return int64_le_ge(c, lhs, rhs, !gt, false);
+        }
+        Gp v = c.new_gp64();
+        Gp l = c.new_gp64();
+        Gp r = c.new_gp64();
+        Gp n = c.new_gp64();
+
+        c.movabs(n, LONG_NULL);
+        c.xor_(l, l);
+        c.cmp(lhs, n);
+        c.sete(l.r8_lo());
+        c.xor_(r, r);
+        c.cmp(rhs, n);
+        c.sete(r.r8_lo());
+        c.or_(r, l);
+        c.xor_(v, v);
+        c.cmp(lhs, rhs);
+        if (gt) {
+            c.setle(v.r8_lo());
+        } else {
+            c.setge(v.r8_lo());
+        }
+        c.or_(v, r);
+
+        return v.as<Gp>();
+    }
+
+    // !int64_le_ge: true when exactly one operand is NULL.
+    inline Gp int64_not_le_ge(Compiler &c, const Gp &lhs, const Gp &rhs, bool ge, bool check_null) {
+        if (!check_null) {
+            return int64_lt_gt(c, lhs, rhs, !ge, false);
+        }
+        Gp v = c.new_gp64();
+        Gp l = c.new_gp64();
+        Gp r = c.new_gp64();
+        Gp n = c.new_gp64();
+
+        c.movabs(n, LONG_NULL);
+        c.xor_(l, l);
+        c.cmp(lhs, n);
+        c.sete(l.r8_lo());
+        c.xor_(r, r);
+        c.cmp(rhs, n);
+        c.sete(r.r8_lo());
+        c.xor_(r, l);
+        c.xor_(v, v);
+        c.cmp(lhs, rhs);
+        if (ge) {
+            c.setl(v.r8_lo());
+        } else {
+            c.setg(v.r8_lo());
+        }
+        c.or_(v, r);
+
+        return v.as<Gp>();
+    }
+
     inline Gp int64_lt(Compiler &c, const Gp &lhs, const Gp &rhs, bool check_null) {
         return int64_lt_gt(c, lhs, rhs, false, check_null);
     }
@@ -771,6 +883,23 @@ namespace questdb::x86 {
         return r.as<Gp>();
     }
 
+    // !double_lt and !double_le: kNLT and kNLE also answer true when an operand is NaN.
+    inline Gp double_nlt(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp32();
+        c.cmpsd(lhs, rhs, CmpImm::kNLT);
+        c.movd(r, lhs);
+        c.neg(r);
+        return r.as<Gp>();
+    }
+
+    inline Gp double_nle(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp32();
+        c.cmpsd(lhs, rhs, CmpImm::kNLE);
+        c.movd(r, lhs);
+        c.neg(r);
+        return r.as<Gp>();
+    }
+
     inline Gp double_gt(Compiler &c, const Vec &lhs, const Vec &rhs) {
         Gp r = c.new_gp32();
         c.cmpsd(rhs, lhs, CmpImm::kLT);
@@ -815,6 +944,23 @@ namespace questdb::x86 {
     inline Gp float_le(Compiler &c, const Vec &lhs, const Vec &rhs) {
         Gp r = c.new_gp32();
         c.cmpss(lhs, rhs, CmpImm::kLE);
+        c.movd(r, lhs);
+        c.neg(r);
+        return r.as<Gp>();
+    }
+
+    // !float_lt and !float_le: kNLT and kNLE also answer true when an operand is NaN.
+    inline Gp float_nlt(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp32();
+        c.cmpss(lhs, rhs, CmpImm::kNLT);
+        c.movd(r, lhs);
+        c.neg(r);
+        return r.as<Gp>();
+    }
+
+    inline Gp float_nle(Compiler &c, const Vec &lhs, const Vec &rhs) {
+        Gp r = c.new_gp32();
+        c.cmpss(lhs, rhs, CmpImm::kNLE);
         c.movd(r, lhs);
         c.neg(r);
         return r.as<Gp>();

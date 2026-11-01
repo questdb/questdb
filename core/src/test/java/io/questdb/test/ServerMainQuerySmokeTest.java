@@ -413,16 +413,14 @@ public class ServerMainQuerySmokeTest extends AbstractBootstrapTest {
                         QUERY PLAN[VARCHAR]
                         Encode sort light lo: 10
                           keys: [day, key]
-                            VirtualRecord
-                              functions: [day,key,vwap(price, quantity)]
-                                Async Group By workers: 4
-                                  keys: [day,key]
-                                  keyFunctions: [day_of_week(ts)]
-                                  values: [vwap(price,quantity)]
-                                  filter: null
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
+                            Async Group By workers: 4
+                              keys: [day,key]
+                              keyFunctions: [day_of_week(ts)]
+                              values: [vwap(price,quantity)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: tab
                         """,
                 """
                         day[INTEGER],key[VARCHAR],vwap(price, quantity)[DOUBLE]

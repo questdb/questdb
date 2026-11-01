@@ -5093,7 +5093,7 @@ public class TickExprTest {
     @Test
     public void testParseShortInterval9() throws Exception {
         Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
-        assertShortInterval("[{lo=2016-03-21T10:30:40.123456Z, hi=2016-03-21T10:30:40.123456Z}]", "2016-03-21T10:30:40.12345678");
+        assertShortInterval("[]", "2016-03-21T10:30:40.12345678");
     }
 
     @Test

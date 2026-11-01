@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -36,6 +37,11 @@ public class DenseRankFunctionFactory extends AbstractWindowFunctionFactory {
 
     public static final String NAME = "dense_rank";
     private static final String SIGNATURE = NAME + "()";
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
 
     @Override
     public String getSignature() {

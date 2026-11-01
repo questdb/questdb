@@ -47,6 +47,11 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "array_cum_sum";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+    }
+
+    @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[])";
     }
@@ -77,8 +82,8 @@ public class DoubleArrayCumSumFunctionFactory implements FunctionFactory {
 
         @Override
         public void close() {
-            UnaryFunction.super.close();
             Misc.free(array);
+            UnaryFunction.super.close();
         }
 
         @Override

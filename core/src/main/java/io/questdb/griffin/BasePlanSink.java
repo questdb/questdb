@@ -142,6 +142,14 @@ public abstract class BasePlanSink implements PlanSink {
     }
 
     @Override
+    public PlanSink optAttr(CharSequence name, Plannable value, RecordCursorFactory factory) {
+        if (value != null) {
+            attr(name).val(value, factory);
+        }
+        return this;
+    }
+
+    @Override
     public PlanSink optAttr(CharSequence name, ObjList<? extends Plannable> value) {
         if (value != null && value.size() > 0) {
             attr(name).val(value);

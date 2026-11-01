@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.std.IntList;
@@ -46,6 +47,11 @@ public class SumDecimalGroupByFunctionFactory implements FunctionFactory {
             case ColumnType.DECIMAL128 -> new SumDecimal128GroupByFunction(arg, position);
             default -> new SumDecimal256GroupByFunction(arg, position);
         };
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.decimalSum(argTypes.getQuick(0));
     }
 
     @Override

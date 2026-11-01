@@ -125,7 +125,10 @@ public class StableAwareUtf8StringHolder implements Utf8Sequence {
 
     @Override
     public long ptr() {
-        return ptr;
+        if (ptr == 0) {
+            return -1;
+        }
+        return direct ? Unsafe.getLong(ptr + HEADER_SIZE) : ptr + HEADER_SIZE;
     }
 
     public void setAllocator(GroupByAllocator allocator) {

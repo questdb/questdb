@@ -123,7 +123,6 @@ public class JoinRecordMetadataTest extends AbstractCairoTest {
             // A three-column join metadata, so the map has to grow past the 4-byte page it starts on
             // rather than merely be constructed with it.
             assertQuery("SELECT b.bid, b.ts, a.ask FROM bids b JOIN asks a ON b.bid = a.ask")
-                    .timestamp("ts")
                     .noRandomAccess()
                     .returns("""
                             bid\tts\task

@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.window;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -34,6 +35,11 @@ import io.questdb.std.ObjList;
 
 public class CountDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
     public static final CountFunctionFactoryHelper.IsRecordNotNull isRecordNotNull = ((arg, record) -> Numbers.isFinite(arg.getDouble(record)));
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
 
     @Override
     public String getSignature() {

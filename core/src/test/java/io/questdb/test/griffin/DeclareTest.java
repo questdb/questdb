@@ -352,6 +352,30 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareCastTargetVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("DECLARE @t := int SELECT 1 :: @t v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\n1\n");
+            assertQuery("DECLARE @t := float8 SELECT 1 :: @t v, CAST(2 AS @t) w")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("v\tw\n1.0\t2.0\n");
+            assertQuery("DECLARE @x := (SELECT 1) SELECT 1 :: @x")
+                    .fails(37, "type definition is expected");
+            assertQuery("DECLARE @t := 1 + 2 SELECT 1 :: @t")
+                    .fails(32, "type definition is expected");
+            assertQuery("DECLARE @t := int SELECT 1 :: @u")
+                    .fails(30, "tried to use undeclared variable `@u`");
+            assertQuery("DECLARE @t := bogus SELECT CAST(1 AS @t)")
+                    .fails(37, "unsupported cast");
+            assertQuery("DECLARE @t := bogus SELECT 1 :: @t")
+                    .fails(32, "unsupported cast");
+        });
+    }
+
+    @Test
     public void testDeclareCreateAsSelect() throws Exception {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
@@ -565,8 +589,16 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute("create table foo (x int)");
             drainWalQueue();
             String query = "INSERT INTO foo SELECT * FROM (DECLARE @x := 1, @y := 2 SELECT @x + @y as x)";
-            assertModel("insert batch 1000000 into foo select-choose x from (select-virtual [1 + 2 x] 1 + 2 x from (long_sequence(1)))",
-                    query, ExecutionModel.INSERT);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [x]
+                              Project
+                                columns: [3 AS x]
+                                FunctionSource
+                                  columns: [x]
+                            """);
             execute(query);
             drainWalQueue();
             assertQuery("select * from foo")
@@ -620,14 +652,12 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDeclareQuotedNameInFirstDeclaration() throws Exception {
+    public void testDeclareQuotedNameInDeclaredValue() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE q (\"@c\" INT, d INT)");
             execute("INSERT INTO q VALUES (7, 8)");
             drainWalQueue();
-            // A quoted name in a block's first declaration names a column, even when it starts
-            // with @. The expression parser drops the quotes, so the check for undeclared
-            // variables tells "@c" from @c by the text the parse read it from.
+            // A quoted name in a declared value names a column, even when it starts with @.
             assertQuery("DECLARE @col := \"@c\" SELECT @col FROM q")
                     .noLeakCheck()
                     .expectSize()
@@ -653,12 +683,8 @@ public class DeclareTest extends AbstractSqlParserTest {
                     .fails(21, "tried to use undeclared variable `@q`");
             assertQuery("DECLARE @x := (\"@c\", @q) SELECT 1")
                     .fails(21, "tried to use undeclared variable `@q`");
-            // Later declarations and the query read a quoted name that starts with @ as a
-            // variable. The quote check applies to the first declaration alone.
-            assertQuery("DECLARE @x := \"@c\", @y := \"@c\" SELECT @x FROM q")
-                    .fails(26, "tried to use undeclared variable `@c`");
             // A view body, a copy of a declared sub-query and a CTE parsed again for a later
-            // reference each parse from a text of their own, and read the quotes from it.
+            // reference each parse from a text of their own.
             execute("CREATE VIEW v_quoted AS (DECLARE @col := \"@c\" SELECT @col c FROM q)");
             execute("CREATE VIEW v_quoted_copy AS (DECLARE @s := (DECLARE @l := (\"@c\", 1) SELECT d FROM q WHERE 7 IN @l) SELECT * FROM @s UNION ALL SELECT * FROM @s)");
             drainWalAndViewQueues();
@@ -699,6 +725,34 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareQuotedColumnNamedLikeVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE q (\"@c\" INT, d INT)");
+            execute("INSERT INTO q VALUES (7, 8)");
+            assertQuery("DECLARE @c := 1 SELECT \"@c\" FROM q")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("@c\n7\n");
+            assertQuery("DECLARE @x := 7 SELECT \"@c\" FROM q")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("@c\n7\n");
+            assertQuery("DECLARE @x := 1 SELECT q.\"@c\" FROM q")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("@c\n7\n");
+            assertQuery("DECLARE @x := \"@c\", @y := \"@c\" SELECT @x FROM q")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("@c\n7\n");
+            assertQuery("DECLARE @c := 1 SELECT @c FROM q")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("1\n1\n");
+        });
+    }
+
+    @Test
     public void testDeclareReuseVariable() throws Exception {
         assertQuery("declare " +
                 "@ts := '2025-07-02T13:00:00.000000Z', " +
@@ -715,15 +769,35 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
             execute("create table bah (ts timestamp, y int) timestamp(ts) partition by day wal;");
             drainWalQueue();
-            assertModel("select-choose foo.ts ts, foo.x x from (select [ts, x] from foo timestamp (ts) asof join bah timestamp (ts))",
-                    "DECLARE @foo := foo, @bah := bah SELECT foo.ts, foo.x FROM @foo ASOF JOIN @bah", ExecutionModel.QUERY);
+            assertQuery("DECLARE @foo := foo, @bah := bah SELECT foo.ts, foo.x FROM @foo ASOF JOIN @bah")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [foo.ts, foo.x]
+                              Join
+                                Master foo
+                                  Scan
+                                    table: foo
+                                    columns: [ts, x]
+                                ASOF bah
+                                  Scan
+                                    table: bah
+                                    columns: [ts]
+                            """);
         });
     }
 
     @Test
     public void testDeclareSelectCTE() throws Exception {
-        assertModel("select-choose column from (select-virtual [2 + 5 column] 2 + 5 column from (long_sequence(1))) a",
-                "DECLARE @x := 2, @y := 5 WITH a AS (SELECT @x + @y) SELECT * FROM a", ExecutionModel.QUERY);
+        assertQuery("DECLARE @x := 2, @y := 5 WITH a AS (SELECT @x + @y) SELECT * FROM a")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [column]
+                          Project
+                            columns: [7 AS column]
+                            FunctionSource
+                              columns: [x]
+                        """);
     }
 
     @Test
@@ -749,8 +823,18 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-choose symbol from (select-group-by [symbol] symbol, count() count from (select [symbol] from trades timestamp (timestamp)))",
-                    "DECLARE @x := symbol SELECT DISTINCT symbol FROM trades", ExecutionModel.QUERY);
+            assertQuery("DECLARE @x := symbol SELECT DISTINCT symbol FROM trades")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [symbol]
+                              Aggregate
+                                keys: [symbol]
+                                values: []
+                                Scan
+                                  table: trades
+                                  columns: [symbol]
+                            """);
         });
     }
 
@@ -762,14 +846,42 @@ public class DeclareTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareSelectExcept() throws Exception {
-        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) except select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
-                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) EXCEPT (SELECT @a + @b)", ExecutionModel.QUERY);
+        assertQuery("DECLARE @a := 1, @b := 2 (SELECT @a + @b) EXCEPT (SELECT @a + @b)")
+                .assertsLogicalPlan("""
+                        Except
+                          Project
+                            columns: [column]
+                            Project
+                              columns: [3 AS column]
+                              FunctionSource
+                                columns: [x]
+                          Project
+                            columns: [column]
+                            Project
+                              columns: [3 AS column]
+                              FunctionSource
+                                columns: [x]
+                        """);
     }
 
     @Test
     public void testDeclareSelectExceptAll() throws Exception {
-        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) except all select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
-                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) EXCEPT ALL (SELECT @a + @b)", ExecutionModel.QUERY);
+        assertQuery("DECLARE @a := 1, @b := 2 (SELECT @a + @b) EXCEPT ALL (SELECT @a + @b)")
+                .assertsLogicalPlan("""
+                        Except All
+                          Project
+                            columns: [column]
+                            Project
+                              columns: [3 AS column]
+                              FunctionSource
+                                columns: [x]
+                          Project
+                            columns: [column]
+                            Project
+                              columns: [3 AS column]
+                              FunctionSource
+                                columns: [x]
+                        """);
     }
 
     @Test
@@ -806,8 +918,18 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-group-by timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp))",
-                    "DECLARE @x := timestamp, @y := symbol SELECT timestamp, symbol, price FROM trades GROUP BY @x, @y, price", ExecutionModel.QUERY);
+            assertQuery("DECLARE @x := timestamp, @y := symbol SELECT timestamp, symbol, price FROM trades GROUP BY @x, @y, price")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [timestamp, symbol, price]
+                              Aggregate
+                                keys: [timestamp, symbol, price]
+                                values: []
+                                Scan
+                                  table: trades
+                                  columns: [symbol, price, timestamp]
+                            """);
         });
     }
 
@@ -816,8 +938,18 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-group-by timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp))",
-                    "DECLARE @x := 1, @y := 2 SELECT timestamp, symbol, price FROM trades GROUP BY @x, @y, 3", ExecutionModel.QUERY);
+            assertQuery("DECLARE @x := 1, @y := 2 SELECT timestamp, symbol, price FROM trades GROUP BY @x, @y, 3")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [timestamp, symbol, price]
+                              Aggregate
+                                keys: [timestamp, symbol, price]
+                                values: []
+                                Scan
+                                  table: trades
+                                  columns: [symbol, price, timestamp]
+                            """);
         });
     }
 
@@ -829,14 +961,42 @@ public class DeclareTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareSelectIntersect() throws Exception {
-        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) intersect select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
-                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) INTERSECT (SELECT @a + @b)", ExecutionModel.QUERY);
+        assertQuery("DECLARE @a := 1, @b := 2 (SELECT @a + @b) INTERSECT (SELECT @a + @b)")
+                .assertsLogicalPlan("""
+                        Intersect
+                          Project
+                            columns: [column]
+                            Project
+                              columns: [3 AS column]
+                              FunctionSource
+                                columns: [x]
+                          Project
+                            columns: [column]
+                            Project
+                              columns: [3 AS column]
+                              FunctionSource
+                                columns: [x]
+                        """);
     }
 
     @Test
     public void testDeclareSelectIntersectAll() throws Exception {
-        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) intersect all select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
-                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) INTERSECT ALL (SELECT @a + @b)", ExecutionModel.QUERY);
+        assertQuery("DECLARE @a := 1, @b := 2 (SELECT @a + @b) INTERSECT ALL (SELECT @a + @b)")
+                .assertsLogicalPlan("""
+                        Intersect All
+                          Project
+                            columns: [column]
+                            Project
+                              columns: [3 AS column]
+                              FunctionSource
+                                columns: [x]
+                          Project
+                            columns: [column]
+                            Project
+                              columns: [3 AS column]
+                              FunctionSource
+                                columns: [x]
+                        """);
     }
 
     @Test
@@ -845,8 +1005,22 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
             execute("create table bah (ts timestamp, y int) timestamp(ts) partition by day wal;");
             drainWalQueue();
-            assertModel("select-choose foo.ts ts, foo.x x from (select [ts, x] from foo timestamp (ts) join select [y] from bah timestamp (ts) on bah.y = foo.x)",
-                    "DECLARE @x := foo.x, @y := bah.y SELECT foo.ts, foo.x FROM foo JOIN bah on @x = @y", ExecutionModel.QUERY);
+            assertQuery("DECLARE @x := foo.x, @y := bah.y SELECT foo.ts, foo.x FROM foo JOIN bah on @x = @y")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [foo.ts, foo.x]
+                              Join
+                                Master foo
+                                  Scan
+                                    table: foo
+                                    columns: [ts, x]
+                                INNER bah
+                                  keys: [bah.y = foo.x]
+                                  Scan
+                                    table: bah
+                                    columns: [y]
+                            """);
         });
     }
 
@@ -861,8 +1035,18 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp) latest by timestamp)",
-                    "DECLARE @ts := timestamp SELECT * FROM trades LATEST BY @ts;", ExecutionModel.QUERY);
+            assertQuery("DECLARE @ts := timestamp SELECT * FROM trades LATEST BY @ts;")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [symbol, side, price, amount, timestamp]
+                              LatestBy
+                                keys: [timestamp]
+                                timestamp: timestamp
+                                Scan
+                                  table: trades
+                                  columns: [symbol, side, price, amount, timestamp]
+                            """);
         });
     }
 
@@ -871,8 +1055,18 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades latest on timestamp partition by symbol)",
-                    "DECLARE @ts := timestamp, @sym := symbol SELECT * FROM trades LATEST ON @ts PARTITION BY @sym;", ExecutionModel.QUERY);
+            assertQuery("DECLARE @ts := timestamp, @sym := symbol SELECT * FROM trades LATEST ON @ts PARTITION BY @sym;")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [symbol, side, price, amount, timestamp]
+                              LatestBy
+                                keys: [symbol]
+                                timestamp: timestamp
+                                Scan
+                                  table: trades
+                                  columns: [symbol, side, price, amount, timestamp]
+                            """);
         });
     }
 
@@ -881,17 +1075,35 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp)) limit 2,5",
-                    "DECLARE @lo := 2, @hi := 5 SELECT * FROM trades LIMIT @lo, @hi", ExecutionModel.QUERY);
+            assertQuery("DECLARE @lo := 2, @hi := 5 SELECT * FROM trades LIMIT @lo, @hi")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 2
+                              hi: 5
+                              Project
+                                columns: [symbol, side, price, amount, timestamp]
+                                Scan
+                                  table: trades
+                                  columns: [symbol, side, price, amount, timestamp]
+                            """);
         });
     }
 
     @Test
     public void testDeclareSelectMultipleCTEs() throws Exception {
         String query = "DECLARE @x := 2, @y := 5 WITH a AS (SELECT @x + @y as col1), b AS (SELECT (@x - @y) + col1 as col2 FROM a) SELECT * FROM b";
-        assertModel("select-choose col2 from (select-virtual [2 - 5 + col1 col2] 2 - 5 + col1 col2 from (select-virtual [2 + 5 col1] 2 + 5 col1 from (long_sequence(1))) a) b",
-                query
-                , ExecutionModel.QUERY);
+        assertQuery(query)
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [col2]
+                          Project
+                            columns: [-3 + col1 AS col2]
+                            Project
+                              columns: [7 AS col1]
+                              FunctionSource
+                                columns: [x]
+                        """);
         assertQuery(query)
                 .noLeakCheck()
                 .expectSize()
@@ -926,8 +1138,18 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute(TRADES_DATA);
             drainWalQueue();
             String query = "DECLARE @lo := -5, @hi := -2 SELECT * FROM trades LIMIT @lo, @hi";
-            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp)) limit -(5),-(2)",
-                    query, ExecutionModel.QUERY);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: -5
+                              hi: -2
+                              Project
+                                columns: [symbol, side, price, amount, timestamp]
+                                Scan
+                                  table: trades
+                                  columns: [symbol, side, price, amount, timestamp]
+                            """);
             assertQuery(query)
                     .noLeakCheck()
                     .expectSize()
@@ -946,8 +1168,18 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-choose symbol, side, price, amount, timestamp from (select [symbol, side, price, amount, timestamp] from trades timestamp (timestamp)) limit -(2),-(5)",
-                    "DECLARE @lo := 2, @hi := 5 SELECT * FROM trades LIMIT -@lo, -@hi", ExecutionModel.QUERY);
+            assertQuery("DECLARE @lo := 2, @hi := 5 SELECT * FROM trades LIMIT -@lo, -@hi")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: -2
+                              hi: -5
+                              Project
+                                columns: [symbol, side, price, amount, timestamp]
+                                Scan
+                                  table: trades
+                                  columns: [symbol, side, price, amount, timestamp]
+                            """);
         });
     }
 
@@ -956,8 +1188,17 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-choose timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp)) order by timestamp, symbol, price",
-                    "DECLARE @x := timestamp, @y := symbol SELECT timestamp, symbol, price FROM trades ORDER BY @x, @y, price", ExecutionModel.QUERY);
+            assertQuery("DECLARE @x := timestamp, @y := symbol SELECT timestamp, symbol, price FROM trades ORDER BY @x, @y, price")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [timestamp, symbol, price]
+                              Sort
+                                keys: [timestamp, symbol, price]
+                                Scan
+                                  table: trades
+                                  columns: [timestamp, symbol, price]
+                            """);
         });
     }
 
@@ -966,8 +1207,17 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-choose timestamp, symbol, price from (select [timestamp, symbol, price] from trades timestamp (timestamp)) order by timestamp, symbol, price",
-                    "DECLARE @x := 1, @y := 2 SELECT timestamp, symbol, price FROM trades ORDER BY @x, @y, 3", ExecutionModel.QUERY);
+            assertQuery("DECLARE @x := 1, @y := 2 SELECT timestamp, symbol, price FROM trades ORDER BY @x, @y, 3")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [timestamp, symbol, price]
+                              Sort
+                                keys: [timestamp, symbol, price]
+                                Scan
+                                  table: trades
+                                  columns: [timestamp, symbol, price]
+                            """);
         });
     }
 
@@ -992,8 +1242,20 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-group-by timestamp_floor_utc('1h', timestamp, null, '00:00', null) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h) order by timestamp",
-                    "DECLARE @unit := 1h SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit", ExecutionModel.QUERY);
+            assertQuery("DECLARE @unit := 1h SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [timestamp]
+                              Project
+                                columns: [timestamp, symbol, avg]
+                                Aggregate
+                                  keys: [timestamp_floor_utc('1h', timestamp, null, '00:00', null) AS timestamp, symbol]
+                                  values: [avg(price) AS avg]
+                                  Scan
+                                    table: trades
+                                    columns: [symbol, price, timestamp]
+                            """);
         });
     }
 
@@ -1002,8 +1264,19 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-group-by timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp)) sample by 1h",
-                    "DECLARE @unit := 1h SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit ALIGN TO FIRST OBSERVATION", ExecutionModel.QUERY);
+            assertQuery("DECLARE @unit := 1h SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [timestamp, symbol, avg]
+                              SampleBy
+                                period: 1h
+                                keys: [timestamp, symbol]
+                                values: [avg(price) AS avg]
+                                Scan
+                                  table: trades
+                                  columns: [symbol, price, timestamp]
+                            """);
         });
     }
 
@@ -1012,8 +1285,26 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-group-by timestamp_floor_utc('1h', timestamp, '2008-12-28', '00:00', null) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) where timestamp >= '2008-12-28' and timestamp < '2009-01-05' fill(null) from '2008-12-28' to '2009-01-05' stride 1h) order by timestamp",
-                    "DECLARE @unit := 1h, @from := '2008-12-28', @to := '2009-01-05', @fill := null SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit FROM @from TO @to FILL(@fill)", ExecutionModel.QUERY);
+            assertQuery("DECLARE @unit := 1h, @from := '2008-12-28', @to := '2009-01-05', @fill := null SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY @unit FROM @from TO @to FILL(@fill)")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [timestamp]
+                              Project
+                                columns: [timestamp, symbol, avg]
+                                Fill
+                                  values: [null]
+                                  from: '2008-12-28'
+                                  to: '2009-01-05'
+                                  Aggregate
+                                    keys: [timestamp_floor_utc('1h', timestamp, '2008-12-28'::TIMESTAMP, '00:00', null) AS timestamp, symbol]
+                                    values: [avg(price) AS avg]
+                                    Filter
+                                      predicate: and(timestamp >= '2008-12-28'::TIMESTAMP, timestamp < '2009-01-05'::TIMESTAMP)
+                                      Scan
+                                        table: trades
+                                        columns: [symbol, price, timestamp]
+                            """);
         });
     }
 
@@ -1022,8 +1313,20 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-group-by timestamp_floor_utc('1h', timestamp, null, '10:00', null) timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) offset '10:00' stride 1h) order by timestamp",
-                    "DECLARE @offset := '10:00' SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY 1h ALIGN TO CALENDAR WITH OFFSET @offset", ExecutionModel.QUERY);
+            assertQuery("DECLARE @offset := '10:00' SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY 1h ALIGN TO CALENDAR WITH OFFSET @offset")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [timestamp]
+                              Project
+                                columns: [timestamp, symbol, avg]
+                                Aggregate
+                                  keys: [timestamp_floor_utc('1h', timestamp, null, '10:00', null) AS timestamp, symbol]
+                                  values: [avg(price) AS avg]
+                                  Scan
+                                    table: trades
+                                    columns: [symbol, price, timestamp]
+                            """);
         });
     }
 
@@ -1032,27 +1335,60 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-group-by timestamp_floor_utc('1h', timestamp, null, '00:00', 'Antarctica/McMurdo') timestamp, symbol, avg(price) avg from (select [timestamp, symbol, price] from trades timestamp (timestamp) stride 1h) order by timestamp",
-                    "DECLARE @tz := 'Antarctica/McMurdo' SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE @tz", ExecutionModel.QUERY);
+            assertQuery("DECLARE @tz := 'Antarctica/McMurdo' SELECT timestamp, symbol, avg(price) FROM trades SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE @tz")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Sort
+                              keys: [timestamp]
+                              Project
+                                columns: [timestamp, symbol, avg]
+                                Aggregate
+                                  keys: [timestamp_floor_utc('1h', timestamp, null, '00:00', 'Antarctica/McMurdo') AS timestamp, symbol]
+                                  values: [avg(price) AS avg]
+                                  Scan
+                                    table: trades
+                                    columns: [symbol, price, timestamp]
+                            """);
         });
     }
 
     @Test
     public void testDeclareSelectSubQuery() throws Exception {
-        assertModel("select-choose column from (select-virtual [2 + 5 column] 2 + 5 column from (long_sequence(1)))",
-                "DECLARE @x := 2, @y := 5 SELECT * FROM (SELECT @x + @y)", ExecutionModel.QUERY);
+        assertQuery("DECLARE @x := 2, @y := 5 SELECT * FROM (SELECT @x + @y)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [column]
+                          Project
+                            columns: [7 AS column]
+                            FunctionSource
+                              columns: [x]
+                        """);
     }
 
     @Test
     public void testDeclareSelectSubQueryAndShadowedVariable() throws Exception {
-        assertModel("select-choose column from (select-virtual [7 + 5 column] 7 + 5 column from (long_sequence(1)))",
-                "DECLARE @x := 2, @y := 5 SELECT * FROM (DECLARE @x:= 7 SELECT @x + @y)", ExecutionModel.QUERY);
+        assertQuery("DECLARE @x := 2, @y := 5 SELECT * FROM (DECLARE @x:= 7 SELECT @x + @y)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [column]
+                          Project
+                            columns: [12 AS column]
+                            FunctionSource
+                              columns: [x]
+                        """);
     }
 
     @Test
     public void testDeclareSelectSubQueryAndShadowedVariableAndOuterUsage() throws Exception {
-        assertModel("select-virtual 2 - 5 foo, column from (select-virtual [7 + 5 column] 7 + 5 column from (long_sequence(1)))",
-                "DECLARE @x := 2, @y := 5 SELECT @x - @y as foo, * FROM (DECLARE @x:= 7 SELECT @x + @y)", ExecutionModel.QUERY);
+        assertQuery("DECLARE @x := 2, @y := 5 SELECT @x - @y as foo, * FROM (DECLARE @x:= 7 SELECT @x + @y)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [-3 AS foo, column]
+                          Project
+                            columns: [12 AS column]
+                            FunctionSource
+                              columns: [x]
+                        """);
     }
 
     @Test
@@ -1060,33 +1396,78 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("create table foo (ts timestamp, x int) timestamp(ts) partition by day wal;");
             drainWalQueue();
-            assertModel("select-choose ts, x from (select [ts, x] from foo timestamp (ts))",
-                    "DECLARE @table_name := foo, @ts := ts, @x := x, SELECT @ts, @x FROM @table_name", ExecutionModel.QUERY);
+            assertQuery("DECLARE @table_name := foo, @ts := ts, @x := x, SELECT @ts, @x FROM @table_name")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [ts, x]
+                              Scan
+                                table: foo
+                                columns: [ts, x]
+                            """);
         });
     }
 
     @Test
     public void testDeclareSelectUnion() throws Exception {
-        assertModel("select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) union select-choose [column] column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
-                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) UNION (SELECT @a + @b)", ExecutionModel.QUERY);
+        assertQuery("DECLARE @a := 1, @b := 2 (SELECT @a + @b) UNION (SELECT @a + @b)")
+                .assertsLogicalPlan("""
+                        Union
+                          Project
+                            columns: [column]
+                            Project
+                              columns: [3 AS column]
+                              FunctionSource
+                                columns: [x]
+                          Project
+                            columns: [column]
+                            Project
+                              columns: [3 AS column]
+                              FunctionSource
+                                columns: [x]
+                        """);
     }
 
     @Test
     public void testDeclareSelectUnionAll() throws Exception {
-        assertModel("select-choose column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1))) union all select-choose column from (select-virtual [1 + 2 column] 1 + 2 column from (long_sequence(1)))",
-                "DECLARE @a := 1, @b := 2 (SELECT @a + @b) UNION ALL (SELECT @a + @b)", ExecutionModel.QUERY);
+        assertQuery("DECLARE @a := 1, @b := 2 (SELECT @a + @b) UNION ALL (SELECT @a + @b)")
+                .assertsLogicalPlan("""
+                        Union All
+                          Project
+                            columns: [column]
+                            Project
+                              columns: [3 AS column]
+                              FunctionSource
+                                columns: [x]
+                          Project
+                            columns: [column]
+                            Project
+                              columns: [3 AS column]
+                              FunctionSource
+                                columns: [x]
+                        """);
     }
 
     @Test
     public void testDeclareSelectWhere() throws Exception {
-        assertModel("select-virtual 2 + 5 column from (long_sequence(1) where 2 < 5)",
-                "DECLARE @x := 2, @y := 5 SELECT @x + @y FROM long_sequence(1) WHERE @x < @y", ExecutionModel.QUERY);
+        assertQuery("DECLARE @x := 2, @y := 5 SELECT @x + @y FROM long_sequence(1) WHERE @x < @y")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [7 AS column]
+                          FunctionSource
+                            columns: [x]
+                        """);
     }
 
     @Test
     public void testDeclareSelectWhereComplex() throws Exception {
-        assertModel("select-virtual 2::timestamp + 5::timestamp column from (long_sequence(1) where 2::timestamp < 5::timestamp)",
-                "DECLARE @x := 2::timestamp, @y := 5::timestamp SELECT @x + @y FROM long_sequence(1) WHERE @x < @y", ExecutionModel.QUERY);
+        assertQuery("DECLARE @x := 2::timestamp, @y := 5::timestamp SELECT @x + @y FROM long_sequence(1) WHERE @x < @y")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [7::TIMESTAMP AS column]
+                          FunctionSource
+                            columns: [x]
+                        """);
     }
 
     @Test
@@ -1094,8 +1475,18 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(TRADES_DDL);
             drainWalQueue();
-            assertModel("select-group-by timestamp, symbol, max(price) max from (select [timestamp, symbol, price] from trades timestamp (timestamp))",
-                    "DECLARE @max_price := max(price) SELECT timestamp, symbol, @max_price FROM trades", ExecutionModel.QUERY);
+            assertQuery("DECLARE @max_price := max(price) SELECT timestamp, symbol, @max_price FROM trades")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Project
+                              columns: [timestamp, symbol, max]
+                              Aggregate
+                                keys: [timestamp, symbol]
+                                values: [max(price) AS max]
+                                Scan
+                                  table: trades
+                                  columns: [symbol, price, timestamp]
+                            """);
         });
     }
 
@@ -1124,38 +1515,59 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute(AAPL_DDL);
             drainWalQueue();
-            assertModel("select-window timestamp, bid_px_00, " +
-                            "AVG(bid_px_00) avg_5min over (order by timestamp range between '5' minute preceding and current row exclude no others)," +
-                            " COUNT() updates_100ms over (order by timestamp range between '100' millisecond preceding and current row exclude no others)," +
-                            " SUM(bid_sz_00) volume_2sec over (order by timestamp range between '2' second preceding and current row exclude no others)" +
-                            " from (select [timestamp, bid_px_00, bid_sz_00] from AAPL_orderbook timestamp (timestamp) where bid_px_00 > 0) limit 10",
-                    """
-                            DECLARE
-                                @ts := timestamp,
-                                @bid_price := bid_px_00,
-                                @bid_size := bid_sz_00,
-                                @avg_time_range := '5',
-                                @updates_period := '100',
-                                @volume_2sec := '2'
-                            SELECT
-                                @ts,
-                                @bid_price,
-                                AVG(@bid_price) OVER (
-                                    ORDER BY @ts
-                                    RANGE BETWEEN @avg_time_range MINUTE PRECEDING AND CURRENT ROW
-                                ) AS avg_5min,
-                                COUNT(*) OVER (
-                                    ORDER BY @ts
-                                    RANGE BETWEEN @updates_period MILLISECOND PRECEDING AND CURRENT ROW
-                                ) AS updates_100ms,
-                                SUM(@bid_size) OVER (
-                                    ORDER BY @ts
-                                    RANGE BETWEEN @volume_2sec SECOND PRECEDING AND CURRENT ROW
-                                ) AS volume_2sec
-                            FROM AAPL_orderbook
-                            WHERE @bid_price > 0
-                            LIMIT 10;"""
-                    , ExecutionModel.QUERY);
+            String query = """
+                    DECLARE
+                        @ts := timestamp,
+                        @bid_price := bid_px_00,
+                        @bid_size := bid_sz_00,
+                        @avg_time_range := '5',
+                        @updates_period := '100',
+                        @volume_2sec := '2'
+                    SELECT
+                        @ts,
+                        @bid_price,
+                        AVG(@bid_price) OVER (
+                            ORDER BY @ts
+                            RANGE BETWEEN @avg_time_range MINUTE PRECEDING AND CURRENT ROW
+                        ) AS avg_5min,
+                        COUNT(*) OVER (
+                            ORDER BY @ts
+                            RANGE BETWEEN @updates_period MILLISECOND PRECEDING AND CURRENT ROW
+                        ) AS updates_100ms,
+                        SUM(@bid_size) OVER (
+                            ORDER BY @ts
+                            RANGE BETWEEN @volume_2sec SECOND PRECEDING AND CURRENT ROW
+                        ) AS volume_2sec
+                    FROM AAPL_orderbook
+                    WHERE @bid_price > 0
+                    LIMIT 10;""";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 10
+                              Project
+                                columns: [timestamp, bid_px_00, avg_5min, updates_100ms, volume_2sec]
+                                Window
+                                  functions: [avg(bid_px_00) over (partition by [] order by [timestamp] range between 5m preceding and current row) AS avg_5min, count() over (partition by [] order by [timestamp] range between 100T preceding and current row) AS updates_100ms, sum(bid_sz_00) over (partition by [] order by [timestamp] range between 2s preceding and current row) AS volume_2sec]
+                                  Filter
+                                    predicate: bid_px_00 > 0
+                                    Scan
+                                      table: AAPL_orderbook
+                                      columns: [timestamp, bid_px_00, bid_sz_00]
+                            """);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                                Window
+                                  functions: [avg(bid_px_00) over (range between 300000000 preceding and current row),count(null) over (range between 100000 preceding and current row),sum(bid_sz_00) over (range between 2000000 preceding and current row)]
+                                    Async JIT Filter workers: 1
+                                      filter: 0<bid_px_00
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: AAPL_orderbook
+                            """);
         });
     }
 
@@ -1165,23 +1577,31 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute(AAPL_DDL);
             drainWalQueue();
             // Test declared variable in PARTITION BY clause
-            assertModel("select-window timestamp, bid_px_00, " +
-                            "ROW_NUMBER() row_num over (partition by bid_px_00 order by timestamp) " +
-                            "from (select [timestamp, bid_px_00] from AAPL_orderbook timestamp (timestamp)) limit 5",
-                    """
-                            DECLARE
-                                @partition_col := bid_px_00,
-                                @order_col := timestamp
-                            SELECT
-                                @order_col,
-                                @partition_col,
-                                ROW_NUMBER() OVER (
-                                    PARTITION BY @partition_col
-                                    ORDER BY @order_col
-                                ) AS row_num
-                            FROM AAPL_orderbook
-                            LIMIT 5;"""
-                    , ExecutionModel.QUERY);
+            assertQuery("""
+                    DECLARE
+                        @partition_col := bid_px_00,
+                        @order_col := timestamp
+                    SELECT
+                        @order_col,
+                        @partition_col,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY @partition_col
+                            ORDER BY @order_col
+                        ) AS row_num
+                    FROM AAPL_orderbook
+                    LIMIT 5;""")
+                    .noLeakCheck()
+                    .assertsLogicalPlan("""
+                            Limit
+                              lo: 5
+                              Project
+                                columns: [timestamp, bid_px_00, row_num]
+                                Window
+                                  functions: [row_number() over (partition by [bid_px_00] order by [timestamp] range between unbounded preceding and current row) AS row_num]
+                                  Scan
+                                    table: AAPL_orderbook
+                                    columns: [timestamp, bid_px_00]
+                            """);
         });
     }
 
@@ -1228,10 +1648,17 @@ public class DeclareTest extends AbstractSqlParserTest {
             assertQuery("DECLARE @x := (@q, 1) SELECT 1")
                     .fails(15, "tried to use undeclared variable `@q`");
             // A sub-query in the value is a query of its own, which leaves a variable it cannot
-            // resolve to the compiler, as a query outside DECLARE does. The statement compiles the
-            // sub-query even though nothing reads @x, so the variable still fails there.
-            assertQuery("DECLARE @x := (SELECT @q) SELECT 1")
+            // resolve to the compiler, as a query outside DECLARE does. The compiler binds a
+            // declared value where the statement reads it, so the variable fails at that read.
+            assertQuery("DECLARE @x := (SELECT @q) SELECT * FROM @x")
                     .fails(22, "Invalid column: @q");
+            assertQuery("DECLARE @x := (SELECT @q) SELECT 1 v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            1
+                            """);
             // The declarations of an enclosing block reach the query of a nested block, not its
             // declarations: they join the nested block's own only once its DECLARE is parsed.
             assertQuery("DECLARE @x := 5 SELECT * FROM (DECLARE @y := @x SELECT 1 c)")
@@ -1275,9 +1702,9 @@ public class DeclareTest extends AbstractSqlParserTest {
     @Test
     public void testDeclareVariableAsComparisonUnderNot() throws Exception {
         assertMemoryLeak(() -> {
-            // The optimiser folds NOT into a comparison by rewriting the comparison node in place.
-            // Every reference to a variable used to be the declared node itself, so `NOT @f` turned
-            // `@f` into its own negation for the other reference as well.
+            // The optimiser used to fold NOT into a comparison by rewriting the comparison node in
+            // place. Every reference to a variable used to be the declared node itself, so `NOT @f`
+            // turned `@f` into its own negation for the other reference as well.
             assertQuery("DECLARE @f := (1 = 1) SELECT count() FROM long_sequence(3) WHERE NOT @f OR @f")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -1314,12 +1741,41 @@ public class DeclareTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testDeclareSelfReference() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("DECLARE @x := 1, @x := @x + 1 SELECT @x")
+                    .fails(23, "variable cannot reference itself `@x`");
+            assertQuery("DECLARE @x := @x SELECT @x")
+                    .fails(14, "variable cannot reference itself `@x`");
+            assertQuery("DECLARE @x := @x SELECT 1")
+                    .fails(14, "variable cannot reference itself `@x`");
+            assertQuery("DECLARE @x := 1, @y := abs(@Y) SELECT 1")
+                    .fails(27, "variable cannot reference itself `@Y`");
+            assertQuery("DECLARE @x := @y SELECT 1")
+                    .fails(14, "tried to use undeclared variable `@y`");
+        });
+    }
+
+    @Test
     public void testDeclareVariableAsSubQuery() throws Exception {
-        String targetModel = "select-choose y from (select-virtual [1 y] 1 y from (long_sequence(1)))";
-        assertModel(targetModel,
-                "SELECT * FROM (SELECT 1 as y)", ExecutionModel.QUERY);
-        assertModel(targetModel,
-                "DECLARE @x := (SELECT 1 as y) SELECT * FROM @x", ExecutionModel.QUERY);
+        assertQuery("SELECT * FROM (SELECT 1 as y)")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [y]
+                          Project
+                            columns: [1 AS y]
+                            FunctionSource
+                              columns: [x]
+                        """);
+        assertQuery("DECLARE @x := (SELECT 1 as y) SELECT * FROM @x")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [y]
+                          Project
+                            columns: [1 AS y]
+                            FunctionSource
+                              columns: [x]
+                        """);
     }
 
     @Test
@@ -1441,9 +1897,9 @@ public class DeclareTest extends AbstractSqlParserTest {
                             @q := (SELECT count() FROM owned_cursor()),
                             @w := row_number() OVER (PARTITION BY x = @q)
                         """;
-                // The optimiser drops the second window as a duplicate. Code generation takes the
-                // factory of the first read's model, which the compiled query closes, and never
-                // generates the second read's model.
+                // Binding opens a factory for each read of @w. Code generation takes over the ones
+                // the plan reads, which the compiled query closes, and the sweep after generation
+                // closes the rest.
                 assertQuery(declare + "SELECT x, @w a, @w b FROM long_sequence(2)")
                         .noLeakCheck()
                         .noRandomAccess()
@@ -1455,7 +1911,8 @@ public class DeclareTest extends AbstractSqlParserTest {
                                 """);
                 assertEachClosedOnce(factories, 2);
 
-                // the first read sits in a CTE nothing references
+                // The first read sits in a CTE nothing references, which binding never reaches, so only
+                // the second read opens a factory.
                 factories.clear();
                 assertQuery(declare + """
                         WITH c AS (SELECT @w r FROM long_sequence(1))
@@ -1469,9 +1926,14 @@ public class DeclareTest extends AbstractSqlParserTest {
                                 1\t1
                                 2\t2
                                 """);
-                assertEachClosedOnce(factories, 2);
+                assertEachClosedOnce(factories, 1);
 
-                // nothing reads the variable
+                // The next compile borrows the same pooled compiler and clears its binding state. A
+                // reference left behind there must not close a factory a second time.
+                execute("CREATE TABLE other (x LONG)");
+                assertEachClosedOnce(factories, 1);
+
+                // Nothing reads the variable, so binding never reaches its sub-query and opens no factory.
                 factories.clear();
                 assertQuery("DECLARE @q := (SELECT count() FROM owned_cursor()) SELECT 1")
                         .noLeakCheck()
@@ -1480,12 +1942,7 @@ public class DeclareTest extends AbstractSqlParserTest {
                                 1
                                 1
                                 """);
-                assertEachClosedOnce(factories, 1);
-
-                // The next compile borrows the same pooled compiler and clears its optimiser state. A
-                // reference left behind there must not close a factory a second time.
-                execute("CREATE TABLE other (x LONG)");
-                assertEachClosedOnce(factories, 1);
+                Assert.assertEquals(0, factories.size());
             } finally {
                 TableFunctionTestUtils.unregister(engine, functionName);
             }
@@ -1499,16 +1956,16 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute("CREATE TABLE base AS (SELECT (x * 1_000_000)::TIMESTAMP ts, x FROM long_sequence(4)) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE VIEW v_plain AS (SELECT x FROM long_sequence(1))");
             drainWalAndViewQueues();
-            // The optimiser opens the table function of every declared sub-query, read or not, and
+            // Binding opens the table function of every declared sub-query the statement reads, and
             // a compile that fails has to close the ones code generation never took, wherever it
-            // fails. @unread is never read, so no walk from the statement's model reaches it.
+            // fails. @unread is never read, so binding never reaches it and opens nothing for it.
             final String declare = """
                     DECLARE
                         @q := (SELECT x FROM read_parquet('q.parquet') LIMIT 1),
                         @unread := (SELECT x FROM read_parquet('q.parquet'))
                     """;
             for (int i = 0; i < 3; i++) {
-                // the optimiser fails, after it opened both table functions
+                // binding fails
                 assertQuery(declare + "SELECT nonexistent, x = @q b FROM long_sequence(4)")
                         .noLeakCheck()
                         .fails(133, "Invalid column: nonexistent");
@@ -1565,8 +2022,7 @@ public class DeclareTest extends AbstractSqlParserTest {
     public void testDeclareVariableAsSubQueryOverTableFunctionInOtherStatements() throws Exception {
         assertMemoryLeak(() -> {
             createParquetFile();
-            // @q is 3. The second read of @w is a duplicate window column, which the optimiser
-            // drops, so nothing generates the copy of @q that read parsed.
+            // @q is 3. The second read of @w parses a copy of @q of its own.
             final String declare = """
                     DECLARE
                         @q := (SELECT x FROM read_parquet('q.parquet') LIMIT 1),
@@ -1652,8 +2108,8 @@ public class DeclareTest extends AbstractSqlParserTest {
     public void testDeclareVariableAsSubQueryOverTableFunctionNeverRead() throws Exception {
         assertMemoryLeak(() -> {
             createParquetFile();
-            // The optimiser opens the table function of every declared sub-query, and code
-            // generation takes over only the ones something reads.
+            // Binding never reaches a declared sub-query nothing reads, so it opens no table
+            // function for it.
             for (int i = 0; i < 3; i++) {
                 assertQuery("DECLARE @q := (SELECT x FROM read_parquet('q.parquet')) SELECT 1")
                         .noLeakCheck()
@@ -1696,10 +2152,9 @@ public class DeclareTest extends AbstractSqlParserTest {
     public void testDeclareVariableAsSubQueryOverTableFunctionReadInDuplicateWindows() throws Exception {
         assertMemoryLeak(() -> {
             createParquetFile();
-            // Each window read of @q has a model of its own, and the optimiser opens the table
-            // function of each. It then drops a window column identical to an earlier one, and
-            // with it the only reader of that column's model, so code generation never takes
-            // that table function. @q is 3, so x = 3 sits alone in its partition.
+            // Each window read of @q has a model of its own, and binding opens the table function
+            // of each. Code generation takes over the ones the plan reads, and the sweep after it
+            // closes the rest. @q is 3, so x = 3 sits alone in its partition.
             final String declare = """
                     DECLARE
                         @q := (SELECT x FROM read_parquet('q.parquet') LIMIT 1),
@@ -1731,7 +2186,7 @@ public class DeclareTest extends AbstractSqlParserTest {
                         .noRandomAccess()
                         .expectSize()
                         .returns(expected);
-                // three reads, two of them dropped
+                // three reads
                 assertQuery(declare + "SELECT x, @w a, @w b, @w c FROM long_sequence(4)")
                         .noLeakCheck()
                         .noRandomAccess()
@@ -1755,7 +2210,7 @@ public class DeclareTest extends AbstractSqlParserTest {
                                 3\ttrue\t1\t1
                                 4\tfalse\t3\t3
                                 """);
-                // Two windows that differ both stay, and code generation takes both table functions.
+                // two windows that differ
                 assertQuery(declare + """
                         SELECT
                             x,
@@ -1775,9 +2230,8 @@ public class DeclareTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             createParquetFile();
             // The first read in parse order takes the model the declaration parsed. When that
-            // read sits in a CTE nothing references, the optimiser still opens the model's table
-            // function, as it does for every declared sub-query, and code generation never
-            // reaches the CTE. @q is 3.
+            // read sits in a CTE nothing references, binding never reaches the CTE and opens no
+            // table function for that model. @q is 3.
             final String declare = """
                     DECLARE
                         @q := (SELECT x FROM read_parquet('q.parquet') LIMIT 1),
@@ -1824,7 +2278,7 @@ public class DeclareTest extends AbstractSqlParserTest {
                                 4\tfalse
                                 """);
                 // The outer read comes first and takes the declaration's model. The unused CTE,
-                // inside FROM, parses a copy the optimiser never visits.
+                // inside FROM, parses a copy binding never reaches.
                 assertQuery(declare + """
                         SELECT x, @w AS r
                         FROM (WITH c AS (SELECT @w r2 FROM long_sequence(1)) SELECT x FROM long_sequence(4))
@@ -2022,7 +2476,7 @@ public class DeclareTest extends AbstractSqlParserTest {
     public void testDeclareVariableAsSubQueryReadAsSampleByFill() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE k (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            // The optimiser and the code generator read FILL values by their tokens, which a
+            // Binding and the code generator read FILL values by their tokens, which a
             // sub-query does not have.
             final String error = "query is not allowed here";
             assertQuery("DECLARE @f := (SELECT 1) SELECT ts, count() FROM k SAMPLE BY 12h FILL(@f)")
@@ -2074,7 +2528,7 @@ public class DeclareTest extends AbstractSqlParserTest {
                             3\tmax
                             """);
             // coalesce() with three arguments. A FROM read in a CTE takes the model first, so the
-            // read below coalesce() parses the copy and registers it for the optimiser.
+            // read below coalesce() parses the copy and registers it as an expression model.
             assertQuery("""
                     DECLARE @q := (SELECT l FROM k ORDER BY l DESC LIMIT 1)
                     WITH c AS (SELECT * FROM @q UNION ALL SELECT l FROM k)
@@ -2175,9 +2629,9 @@ public class DeclareTest extends AbstractSqlParserTest {
                             3\t2
                             """);
             // Each case below reads four rows, and @q is 3, so the two rows with x = 3 share a
-            // partition. A read that runs a model the optimiser never saw loses the ORDER BY and
-            // yields 1 instead, and two reads that share one model do not both get its one row.
-            // Either changes the output, whereas row_number() over a single row is 1 whatever
+            // partition. A read that ran a model the optimiser never saw used to lose the ORDER BY
+            // and yield 1 instead, and two reads that shared one model did not both get its one
+            // row. Either changes the output, whereas row_number() over a single row is 1 whatever
             // the reads did.
             //
             // A plain read ahead of the window read takes the model, so the window read parses a
@@ -2198,7 +2652,7 @@ public class DeclareTest extends AbstractSqlParserTest {
                             3\ttrue\t2
                             """);
             // A FROM read in a CTE takes the model ahead of the window read, so the window read
-            // parses the copy and registers it for the optimiser.
+            // parses the copy and registers it as an expression model.
             assertQuery("""
                     DECLARE @q := (SELECT x FROM long_sequence(3) ORDER BY x DESC LIMIT 1)
                     WITH c AS (SELECT * FROM @q UNION ALL SELECT x FROM long_sequence(3))
@@ -2537,9 +2991,10 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute("CREATE TABLE k (s SYMBOL, l LONG)");
             execute("INSERT INTO k VALUES ('a', 1), ('b', 2), ('c', 3)");
             drainWalQueue();
-            // The optimiser and the code generator rewrite a model in place for the one place it is
-            // read from, so every read of a declared sub-query needs a model of its own. The reads
-            // used to share the declaration's model, and all but one of them read it wrong.
+            // The parser nests a model in the query that reads it, and binding resolves its names
+            // in that read's scope, so every read of a declared sub-query needs a model of its own.
+            // The reads used to share the declaration's model, and all but one of them read it
+            // wrong.
             assertQuery("DECLARE @x := (SELECT l FROM k WHERE l > 1 ORDER BY l DESC LIMIT 1) SELECT * FROM @x UNION ALL SELECT * FROM @x")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -3317,7 +3772,7 @@ public class DeclareTest extends AbstractSqlParserTest {
                             """);
             assertQuery("DECLARE @q := (SELECT 1.5, 2.5) SELECT column1 FROM @q UNION ALL SELECT column1 FROM @q")
                     .noLeakCheck()
-                    .fails(72, "Invalid column: column1");
+                    .fails(39, "Invalid column: column1");
             // The same holds for a declared sub-query that reads a CTE.
             assertQuery("WITH w AS (SELECT 1.5, 2.5) SELECT * FROM (DECLARE @q := (SELECT * FROM w) SELECT * FROM @q a CROSS JOIN (SELECT * FROM @q) b)")
                     .noLeakCheck()
@@ -3819,14 +4274,28 @@ public class DeclareTest extends AbstractSqlParserTest {
 
     @Test
     public void testDeclareVariableAsSubQueryWithNestedVariable() throws Exception {
-        assertModel("select-choose y from (select-virtual [4 y] 4 y from (long_sequence(1)))",
-                "DECLARE @x := (DECLARE @y := 4 SELECT @y as y) SELECT * FROM @x", ExecutionModel.QUERY);
+        assertQuery("DECLARE @x := (DECLARE @y := 4 SELECT @y as y) SELECT * FROM @x")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [y]
+                          Project
+                            columns: [4 AS y]
+                            FunctionSource
+                              columns: [x]
+                        """);
     }
 
     @Test
     public void testDeclareVariableAsSubQueryWithNestedVariableAndPredeclaredVariable() throws Exception {
-        assertModel("select-choose z from (select-virtual [4 + 5 z] 4 + 5 z from (long_sequence(1)))",
-                "DECLARE @x := 5, @y := (DECLARE @y := 4 SELECT @y + @x as z) SELECT * FROM @y", ExecutionModel.QUERY);
+        assertQuery("DECLARE @x := 5, @y := (DECLARE @y := 4 SELECT @y + @x as z) SELECT * FROM @y")
+                .assertsLogicalPlan("""
+                        Project
+                          columns: [z]
+                          Project
+                            columns: [9 AS z]
+                            FunctionSource
+                              columns: [x]
+                        """);
     }
 
     @Test
@@ -3992,7 +4461,7 @@ public class DeclareTest extends AbstractSqlParserTest {
     public void testDeclareVariableAsWindowFunctionKeepsItsPositions() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            // A window that a function or the optimiser refuses is reported at the part of it the
+            // A window that a function or the compiler refuses is reported at the part of it the
             // refusal names, which a read's copy of the window keeps from the declaration. A copy
             // without the position reported it at 0, and IGNORE NULLS, which a function finds by
             // its position, went unnoticed.
@@ -4119,9 +4588,10 @@ public class DeclareTest extends AbstractSqlParserTest {
                             3\t2
                             4\t2
                             """);
-            // Each read's window points at the read's own function call. The optimiser rewrites
-            // that call in place, qualified columns included. Pointed at the declared call, the
-            // reads shared it, and one read's rewrite of t1.x left the other with an ambiguous x.
+            // Each read's window points at the read's own function call. The optimiser used to
+            // rewrite that call in place, qualified columns included. Pointed at the declared call,
+            // the reads shared it, and one read's rewrite of t1.x left the other with an ambiguous
+            // x.
             execute("CREATE TABLE t1 AS (SELECT x, x * 10 y FROM long_sequence(3))");
             execute("CREATE TABLE t2 AS (SELECT x * 100 x, x y FROM long_sequence(3))");
             assertQuery("DECLARE @w := sum(t1.x) OVER (ORDER BY t1.y) SELECT t1.y, @w a, @w b FROM t1 JOIN t2 ON t1.x = t2.y")
@@ -4139,8 +4609,8 @@ public class DeclareTest extends AbstractSqlParserTest {
     @Test
     public void testDeclareVariableAsWindowFunctionReadingSubQuery() throws Exception {
         assertMemoryLeak(() -> {
-            // @q is 3, so x = 3 sits alone in its partition. The unoptimised sub-query loses its
-            // ORDER BY and yields 1 instead, which puts x = 1 alone.
+            // @q is 3, so x = 3 sits alone in its partition. An unoptimised sub-query used to lose
+            // its ORDER BY and yield 1 instead, which put x = 1 alone.
             final String declare = """
                     DECLARE
                         @q := (SELECT x FROM long_sequence(3) ORDER BY x DESC LIMIT 1),
@@ -4162,7 +4632,7 @@ public class DeclareTest extends AbstractSqlParserTest {
             // Each read of @w reads @q in its window, and each read of @q needs a model of its own.
             // The reads used to share one window, so the read in the unused CTE, second in parse
             // order, wrote its copy of @q into the window of the outer read too. The optimiser
-            // never visits the unused CTE, so the outer window ran the copy unoptimised.
+            // never visited the unused CTE, so the outer window ran the copy unoptimised.
             assertQuery(declare + """
                     SELECT x, @w AS r
                     FROM (WITH c AS (SELECT @w r2 FROM long_sequence(1)) SELECT x FROM long_sequence(4))
@@ -4555,48 +5025,39 @@ public class DeclareTest extends AbstractSqlParserTest {
     @Test
     public void testDeclareVariableWithMalformedSelfReferencingValue() throws Exception {
         assertMemoryLeak(() -> {
-            // A bracketed list after an operator leaves an operand other than the variable on the
-            // left of `:=`. When the value reads its own variable, that operand is the reference:
-            // it has the variable's token, but not its position. The parser used to accept the
-            // declaration and give the variable the rest of the value, such as `2 = 3`.
+            // A bracketed list is a value only as the whole of a declared value or of a member of
+            // one. After an operator, the expression parser refuses it before the declaration
+            // checks the value for its own variable.
             assertQuery("DECLARE @x := @x = (2, 3) SELECT @x")
-                    .fails(26, "unexpected token [@x] - unexpected bind expression");
+                    .fails(19, "value list is not allowed here");
             assertQuery("DECLARE @x := @x + (2, 3) SELECT @x")
-                    .fails(26, "unexpected token [@x] - unexpected bind expression");
+                    .fails(19, "value list is not allowed here");
             assertQuery("DECLARE @X := @x = (2, 3) SELECT @x")
-                    .fails(26, "unexpected token [@X] - unexpected bind expression");
-            // The sub-query used to drop out of the value without notice.
+                    .fails(19, "value list is not allowed here");
             assertQuery("DECLARE @x := -((SELECT 1), @x, 1) SELECT @x")
-                    .fails(35, "unexpected token [@x] - unexpected bind expression");
-            // A sub-query names no type: the cast refuses it while the value parses, before the
-            // value is checked for its own variable.
+                    .fails(15, "value list is not allowed here");
+            // A cast target is a type name, never a bracket.
             assertQuery("DECLARE @x := @x :: (1, (SELECT 1)) SELECT @x")
-                    .fails(25, "query is not allowed here");
+                    .fails(20, "type definition is expected");
             assertQuery("DECLARE @x := 1, @x := @x = (2, 3) SELECT @x")
-                    .fails(35, "unexpected token [@x] - unexpected bind expression");
+                    .fails(28, "value list is not allowed here");
             assertQuery("DECLARE OVERRIDABLE AUDITED @x := @x = (2, 3) SELECT @x")
-                    .fails(46, "unexpected token [@x] - unexpected bind expression");
-            // Substituting @y puts a copy of the reference in the first declaration on the left.
+                    .fails(39, "value list is not allowed here");
             assertQuery("DECLARE @x := @x, @y := @x, @x := @y = (2, 3) SELECT @x")
-                    .fails(46, "unexpected token [@x] - unexpected bind expression");
+                    .fails(14, "variable cannot reference itself `@x`");
             assertQuery("SELECT * FROM (DECLARE @x := @x = (2, 3) SELECT @x)")
-                    .fails(41, "unexpected token [@x] - unexpected bind expression");
+                    .fails(34, "value list is not allowed here");
             assertQuery("WITH c AS (DECLARE @x := @x = (2, 3) SELECT @x) SELECT * FROM c")
-                    .fails(37, "unexpected token [@x] - unexpected bind expression");
+                    .fails(30, "value list is not allowed here");
             assertExceptionNoLeakCheck(
                     "CREATE VIEW v_self AS (DECLARE @x := @x = (2, 3) SELECT @x AS v)",
-                    49,
-                    "unexpected token [@x] - unexpected bind expression"
+                    42,
+                    "value list is not allowed here"
             );
             assertQuery("SELECT * FROM v_self").fails(14, "table does not exist [table=v_self]");
-            // A well-formed value that names its own variable still passes the check.
+            // A well-formed value that names its own variable fails too.
             assertQuery("DECLARE @x := 1, @x := @x + 1 SELECT 1 AS v")
-                    .noLeakCheck()
-                    .expectSize()
-                    .returns("""
-                            v
-                            1
-                            """);
+                    .fails(23, "variable cannot reference itself `@x`");
         });
     }
 
@@ -4604,30 +5065,28 @@ public class DeclareTest extends AbstractSqlParserTest {
     public void testDeclareVariableWithMalformedValueAroundSubQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE k (l LONG)");
-            // A bracketed list compared with `=`, or a bracket after a bind variable, leaves the
-            // parser with an operand other than the variable on the left of `:=`. The declaration
-            // reports that where its value's parse ended, whatever kind of operand took the
-            // variable's place.
+            // A bracketed list compared with `=` is not a value, whatever kind of operand stands on
+            // its left, so the expression parser refuses it.
             assertQuery("DECLARE @x := 1 = (2, 3) SELECT 1")
-                    .fails(25, "unexpected token [@x] - unexpected bind expression");
-            // A sub-query has no token, and the same check failed with a NullPointerException
-            // when one took the variable's place.
+                    .fails(18, "value list is not allowed here");
             assertQuery("DECLARE @x := (SELECT 1) = (2, 3) SELECT 1")
-                    .fails(34, "unexpected token [@x] - unexpected bind expression");
+                    .fails(27, "value list is not allowed here");
             assertQuery("DECLARE @x := (SELECT max(l) FROM k) > (1, 2) SELECT 1")
-                    .fails(46, "unexpected token [@x] - unexpected bind expression");
+                    .fails(39, "value list is not allowed here");
+            assertQuery("DECLARE OVERRIDABLE AUDITED @x := (SELECT 1) = (2, 3) SELECT 1")
+                    .fails(47, "value list is not allowed here");
+            assertQuery("DECLARE @q := (SELECT 1), @x := @q = (2, 3) SELECT 1")
+                    .fails(37, "value list is not allowed here");
+            assertQuery("SELECT * FROM (DECLARE @x := (SELECT 1) = (2, 3) SELECT 1)")
+                    .fails(42, "value list is not allowed here");
+            // A bracket after a bind variable leaves the parser with an operand other than the
+            // variable on the left of `:=`, which the declaration reports where its value's parse
+            // ended. A sub-query has no token, and the check failed with a NullPointerException
+            // when one took the variable's place.
             assertQuery("DECLARE @x := $1 (SELECT @x)")
                     .fails(27, "unexpected token [@x] - unexpected bind expression");
             assertQuery("DECLARE @x := :a (SELECT @x)")
                     .fails(27, "unexpected token [@x] - unexpected bind expression");
-            assertQuery("DECLARE OVERRIDABLE AUDITED @x := (SELECT 1) = (2, 3) SELECT 1")
-                    .fails(54, "unexpected token [@x] - unexpected bind expression");
-            // Substituting a variable whose value is a sub-query puts that sub-query on the left of
-            // `:=` as well.
-            assertQuery("DECLARE @q := (SELECT 1), @x := @q = (2, 3) SELECT 1")
-                    .fails(44, "unexpected token [@x] - unexpected bind expression");
-            assertQuery("SELECT * FROM (DECLARE @x := (SELECT 1) = (2, 3) SELECT 1)")
-                    .fails(49, "unexpected token [@x] - unexpected bind expression");
         });
     }
 
@@ -5283,18 +5742,19 @@ public class DeclareTest extends AbstractSqlParserTest {
             drainWalQueue();
             // An operand that nothing in a list member consumes is a malformed member. The parse of
             // the member keeps only the last operand it builds and used to drop the rest without a
-            // word: a bracketed operand after a bind variable, or the left side of an operator
-            // applied to a bracketed pair, of which the operator takes both members instead.
+            // word, such as a bracketed operand after a bind variable.
             assertQuery("DECLARE @x := (1, $1 (SELECT 1)) SELECT l FROM k WHERE l IN @x")
                     .fails(22, "dangling expression");
             assertQuery("DECLARE @x := (1, $1 (2)) SELECT l FROM k WHERE l IN @x")
                     .fails(22, "dangling expression");
-            assertQuery("DECLARE @x := ((SELECT 1) = (2, 3), 1) SELECT 1")
-                    .fails(16, "dangling expression");
-            assertQuery("DECLARE @x := (1 + (2, 3), 4) SELECT l FROM k WHERE l IN @x")
-                    .fails(15, "dangling expression");
             assertQuery("DECLARE @a := 1, @x := (1, $1 (SELECT 1)) SELECT 1")
                     .fails(31, "dangling expression");
+            // A member is not a list, so the expression parser refuses a bracketed pair inside it
+            // before any operator could take the pair's members.
+            assertQuery("DECLARE @x := ((SELECT 1) = (2, 3), 1) SELECT 1")
+                    .fails(28, "value list is not allowed here");
+            assertQuery("DECLARE @x := (1 + (2, 3), 4) SELECT l FROM k WHERE l IN @x")
+                    .fails(19, "value list is not allowed here");
         });
     }
 
@@ -5304,16 +5764,14 @@ public class DeclareTest extends AbstractSqlParserTest {
             execute("CREATE TABLE k (l LONG)");
             execute("INSERT INTO k VALUES (1), (2), (3)");
             drainWalQueue();
-            // A searched CASE takes one operand more than it has branches, a marker with no text
-            // of its own. A bracketed pair in a branch supplies one operand too many: the CASE
-            // takes the pair's members in place of its own, and the marker is the operand left
-            // over. The marker has no position, so the error points at the member.
+            // A bracketed pair in a branch of a searched CASE is not a value, so the expression
+            // parser refuses it before the CASE could take the pair's members in place of its own.
             assertQuery("DECLARE @x := (1, CASE WHEN true THEN 1 ELSE (2, 3) END) SELECT l FROM k WHERE l IN @x")
-                    .fails(18, "dangling expression");
+                    .fails(45, "value list is not allowed here");
             assertQuery("DECLARE @x := (CASE WHEN (true, false) THEN 1 END, 1) SELECT 1")
-                    .fails(15, "dangling expression");
+                    .fails(25, "value list is not allowed here");
             assertQuery("DECLARE @x := (1, abs(CASE WHEN true THEN (2, 3) END)) SELECT 1")
-                    .fails(18, "dangling expression");
+                    .fails(42, "value list is not allowed here");
             // A well-formed searched CASE leaves nothing over.
             assertQuery("DECLARE @x := (1, CASE WHEN true THEN 2 ELSE 3 END) SELECT l FROM k WHERE l IN @x")
                     .noLeakCheck()

@@ -33,7 +33,6 @@ import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
-import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -611,7 +610,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             long replacementTimestampLo,
             long replacementTimestampHi
     ) {
-        final long recordRowCopierMetadataVersion = walWriter.getMetadata().getMetadataVersion();
         final long refreshFinishTimestampUs = microsecondClock.getTicks();
         final long commitPeriodHi = refreshContext.periodHi != Numbers.LONG_NULL ? refreshContext.periodHi : viewState.getLastPeriodHi();
         if (refreshContext.toBaseTxn == -1) {
@@ -645,7 +643,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             viewState.rangeRefreshSuccess(
                     factory,
                     copier,
-                    recordRowCopierMetadataVersion,
                     refreshFinishTimestampUs,
                     refreshTriggerTimestampUs,
                     commitPeriodHi
@@ -665,7 +662,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             viewState.refreshSuccess(
                     factory,
                     copier,
-                    recordRowCopierMetadataVersion,
                     refreshFinishTimestampUs,
                     refreshTriggerTimestampUs,
                     refreshContext.toBaseTxn,
@@ -1278,17 +1274,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return true;
     }
 
-    private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) throws SqlException {
-        columnFilter.of(factory.getMetadata().getColumnCount());
-        return RecordToRowCopierUtils.generateCopier(
-                compiler.getAsm(),
-                factory.getMetadata(),
-                tableWriter.getMetadata(),
-                columnFilter,
-                configuration
-        );
-    }
-
     /**
      * Returns true if the throwable is a transient, retriable refresh error: a "table busy" error
      * (the reader pool of a table the view SQL reads, or the view's WAL writer pool, exhausted), or
@@ -1503,9 +1488,13 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             final CompiledQuery compiledQuery = compiler.compile(viewSql, refreshSqlExecutionContext);
                             assert compiledQuery.getType() == CompiledQuery.SELECT;
                             factory = compiledQuery.getRecordCursorFactory();
-                            if (copier == null || walWriter.getMetadata().getMetadataVersion() != viewState.getRecordRowCopierMetadataVersion()) {
-                                copier = getRecordToRowCopier(walWriter, factory, compiler);
-                            }
+                            copier = RecordToRowCopierUtils.generateViewCopier(
+                                    compiler.getAsm(),
+                                    factory.getMetadata(),
+                                    walWriter.getMetadata(),
+                                    columnFilter,
+                                    configuration
+                            );
                         } catch (SqlException e) {
                             factory = Misc.free(factory);
                             if (e.isTableBusy()) {
@@ -1525,7 +1514,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                     assert factory != null;
                     assert copier != null;
-                    final int timestampType = factory.getMetadata().getTimestampType();
+                    // The view's timestamp is the query column of the same name, designated or not.
+                    final CharSequence timestampName = walWriter.getMetadata().getColumnName(walWriter.getMetadata().getTimestampIndex());
+                    final int cursorTimestampIndex = factory.getMetadata().getColumnIndexQuiet(timestampName);
+                    final int timestampType = cursorTimestampIndex < 0 ? ColumnType.NULL : factory.getMetadata().getColumnType(cursorTimestampIndex);
                     if (timestampType != walWriter.getMetadata().getTimestampType()) {
                         throw CairoException.nonCritical().put("timestamp type mismatch between materialized view and query [view=")
                                 .put(ColumnType.nameOf(walWriter.getMetadata().getTimestampType()))
@@ -1533,10 +1525,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 .put(ColumnType.nameOf(timestampType))
                                 .put(']');
                     }
-
-                    final CharSequence timestampName = walWriter.getMetadata().getColumnName(walWriter.getMetadata().getTimestampIndex());
-                    final int cursorTimestampIndex = factory.getMetadata().getColumnIndex(timestampName);
-                    assert cursorTimestampIndex > -1;
 
                     long commitTarget = batchSize;
                     long rowCount = 0;
@@ -1597,7 +1585,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             long insertedRows = 0;
                             while (cursor.hasNext()) {
                                 final long timestamp = record.getTimestamp(cursorTimestampIndex);
-                                if (timestamp < replacementTimestampLo || timestamp > replacementTimestampHi) {
+                                if (timestamp < replacementTimestampLo || timestamp >= replacementTimestampHi) {
                                     throw CairoException.nonCritical()
                                             .put("timestamp out of replace range [expected=").ts(driver, replacementTimestampLo)
                                             .put(", ").ts(driver, replacementTimestampHi)
@@ -1704,7 +1692,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     factory = Misc.free(factory);
                     walWriter.rollback();
                     if (i == maxRetries) {
-                        LOG.info().$("base table is under heavy DDL changes, will retry refresh later [view=").$(viewTableToken)
+                        LOG.info().$("base table keeps changing, will retry refresh later [view=").$(viewTableToken)
                                 .$(", totalAttempts=").$(maxRetries)
                                 .$(", msg=").$safe(e.getFlyweightMessage())
                                 .I$();
@@ -1834,7 +1822,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // anchor. Bucket key K covers raw data in [K, K + stride). The iterator
         // boundaries must include the user offset so they align with bucket keys.
         if (CommonUtils.isSubDayUnit(samplingIntervalUnit)) {
-            long stdOff = CommonUtils.getFloorUtcTzOffset(tzRules, 0, samplingIntervalUnit);
+            long stdOff = tzRules.getStandardOffset();
             if (perCluster) {
                 return fixedOffsetIterator.of(
                         sampler,

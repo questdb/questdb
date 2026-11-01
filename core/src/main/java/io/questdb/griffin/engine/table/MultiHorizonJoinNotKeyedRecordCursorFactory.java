@@ -167,9 +167,8 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         sink.child(masterFactory);
         for (int i = 0, n = slaveStates.size(); i < n; i++) {
             final HorizonJoinSlaveState state = slaveStates.getQuick(i);
-            if (state.getFilter() != null) {
-                sink.attr("slave filter").val(state.getFilter(), state.getFactory());
-            }
+            sink.optAttr("keyCheck", state.getKeyCheck(), masterFactory);
+            sink.optAttr("slave filter", state.getFilter(), state.getFactory());
             sink.child(state.getFactory());
         }
     }
@@ -219,7 +218,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         private final ObjList<SymbolTranslatingRecord> symbolTranslatingRecords;
         private final ObjList<HorizonJoinTimeFrameHelper> timeFrameHelpers;
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private int initializedSlaveFilterCount;
+        private int initializedSlaveCount;
         private boolean isExhausted;
         private boolean isOpen;
         private boolean isValueBuilt;
@@ -293,7 +292,8 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                             bwdScanMinGap,
                             bwdScanSwitchFactor,
                             ss.getFilter(),
-                            ss.getAsOfJoinKeyTypes()
+                            ss.getAsOfJoinKeyTypes(),
+                            ss.getKeyCheck()
                     ));
                 }
                 this.isOpen = false;
@@ -329,11 +329,12 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                 } catch (Throwable th) {
                     cleanupFailure = th;
                 }
-                final int count = initializedSlaveFilterCount;
-                initializedSlaveFilterCount = 0;
+                final int count = initializedSlaveCount;
+                initializedSlaveCount = 0;
                 for (int s = 0; s < count; s++) {
                     cleanupFailure = slaveStates.getQuick(s).cursorClosed(cleanupFailure);
                 }
+                cleanupFailure = Function.cursorClosed(cleanupFailure, groupByFunctions);
                 CairoException.rethrowCleanupFailure(cleanupFailure);
             }
         }
@@ -389,10 +390,7 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             // Consult the breaker before iterating, so an empty master still observes cancellation.
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             for (int s = 0; s < slaveCount; s++) {
-                final Function slaveFilter = slaveStates.getQuick(s).getFilter();
-                if (slaveFilter != null) {
-                    slaveFilter.toTop();
-                }
+                slaveStates.getQuick(s).toTop();
                 timeFrameHelpers.getQuick(s).toTop();
                 if (slaveStates.getQuick(s).isKeyed() && asOfJoinMaps.getQuick(s) != null) {
                     asOfJoinMaps.getQuick(s).clear();
@@ -471,11 +469,8 @@ public class MultiHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             this.circuitBreaker = executionContext.getCircuitBreaker();
 
             for (int s = 0; s < slaveCount; s++) {
-                initializedSlaveFilterCount = s + 1;
-                final Function slaveFilter = slaveStates.getQuick(s).getFilter();
-                if (slaveFilter != null) {
-                    slaveFilter.init(slaveCursors.getQuick(s), executionContext);
-                }
+                initializedSlaveCount = s + 1;
+                slaveStates.getQuick(s).init(masterCursor, slaveCursors.getQuick(s), executionContext);
                 timeFrameHelpers.getQuick(s).of(slaveCursors.getQuick(s), executionContext.getMemoryTracker());
                 slaveSymbolSources.setQuick(s, slaveCursors.getQuick(s));
                 final SymbolTranslatingRecord symbolTranslatingRecord = symbolTranslatingRecords.getQuick(s);

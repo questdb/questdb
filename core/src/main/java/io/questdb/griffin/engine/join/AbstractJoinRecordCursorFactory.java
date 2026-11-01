@@ -26,16 +26,19 @@ package io.questdb.griffin.engine.join;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.model.JoinContext;
+import io.questdb.griffin.Plannable;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.TestOnly;
+
+import java.util.function.UnaryOperator;
 
 public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    protected final JoinContext joinContext;
+    protected final Plannable joinContext;
     protected RecordCursorFactory masterFactory;
     protected RecordCursorFactory slaveFactory;
 
-    public AbstractJoinRecordCursorFactory(RecordMetadata metadata, JoinContext joinContext, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
+    public AbstractJoinRecordCursorFactory(RecordMetadata metadata, Plannable joinContext, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
         super(metadata);
         this.joinContext = joinContext;
         this.masterFactory = masterFactory;
@@ -53,6 +56,16 @@ public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCurs
         }
         final RecordCursorFactory slaveFactory = this.slaveFactory;
         return slaveFactory != null && slaveFactory.usesExternalDataSource();
+    }
+
+    @TestOnly
+    public RecordCursorFactory wrapMasterFactory(UnaryOperator<RecordCursorFactory> wrapper) {
+        return masterFactory = wrapper.apply(masterFactory);
+    }
+
+    @TestOnly
+    public RecordCursorFactory wrapSlaveFactory(UnaryOperator<RecordCursorFactory> wrapper) {
+        return slaveFactory = wrapper.apply(slaveFactory);
     }
 
     protected final Throwable closeJoinOwnersBestEffort() {

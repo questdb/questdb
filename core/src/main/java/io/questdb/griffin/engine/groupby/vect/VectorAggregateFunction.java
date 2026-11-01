@@ -30,6 +30,9 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.std.Mutable;
 
 public interface VectorAggregateFunction extends Function, Mutable {
+    int GKK_MICRO_HOUR_INT = 1;
+    int GKK_NANO_HOUR_INT = 2;
+    int GKK_VANILLA_INT = 0;
 
     /**
      * Non-keyed aggregation that doesn't use rosti.

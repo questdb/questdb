@@ -31,23 +31,30 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.fuzz.clauses.GroupByClause;
 import io.questdb.test.griffin.fuzz.clauses.SampleByClause;
+import io.questdb.test.griffin.fuzz.clauses.SetOperationClause;
 import io.questdb.test.griffin.fuzz.expr.ColumnRefExpr;
 import io.questdb.test.griffin.fuzz.expr.ExpressionGenerator;
 import io.questdb.test.griffin.fuzz.expr.FuzzExpr;
 import io.questdb.test.griffin.fuzz.types.BooleanType;
 import io.questdb.test.griffin.fuzz.types.CharType;
 import io.questdb.test.griffin.fuzz.types.ColumnKind;
+import io.questdb.test.griffin.fuzz.types.DateType;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnType;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnTypes;
 import io.questdb.test.griffin.fuzz.types.IPv4Type;
+import io.questdb.test.griffin.fuzz.types.IntKeyType;
 import io.questdb.test.griffin.fuzz.types.IntType;
 import io.questdb.test.griffin.fuzz.types.Long256Type;
+import io.questdb.test.griffin.fuzz.types.LongKeyType;
+import io.questdb.test.griffin.fuzz.types.StringType;
 import io.questdb.test.griffin.fuzz.types.SymbolType;
 import io.questdb.test.griffin.fuzz.types.TimestampType;
 import io.questdb.test.griffin.fuzz.types.UuidType;
+import io.questdb.test.griffin.fuzz.types.VarcharKeyType;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -82,6 +89,12 @@ import java.util.regex.Pattern;
  * and {@link #testIdentifierKeySlotLandsOnARealColumn} on what the expression
  * generator then fills that slot with. A predicate shape the corpus can spell
  * is worth nothing if no generated table or key slot ever reaches it.
+ * <p>
+ * The {@code testSetOperation*} pins cover {@link SetOperationClause}: set
+ * operations whose branches give one column different types -- SYMBOL beside
+ * TIMESTAMP among them, which the set unifies to STRING -- under a WHERE or
+ * JOIN ON over that column, and the fenced form QueryRunner compares each of
+ * them with.
  * <p>
  * The generator is random, so each assertion runs over a large corpus rather
  * than a single draw; the seed is fixed so a failure is reproducible.
@@ -136,6 +149,14 @@ public class FilterShapeCoverageTest {
     // NESTED_COMPARISON.
     private static final String NESTED_ORDERING_COMPARISON =
             "\\((?![^()\\n]*(?: AND | OR ))[^()\\n]+ (?:<=|>=|<|>) [^()\\n]+\\)(?!::)";
+    // The rest of a set-operation branch after its term: the id column, the
+    // table and an optional WHERE, which the lookahead keeps from running on
+    // into the next branch.
+    private static final String SET_BRANCH_REST = " v\\d?, k id\\d? FROM \\w+(?:(?! (?:UNION|EXCEPT|INTERSECT) ).)*";
+    private static final long SET_OPERATION_SEED0 = 0x5eed;
+    private static final long SET_OPERATION_SEED1 = 0x5e7;
+    private static final String SET_OPERATION_CORPUS = generateSetOperationCorpus();
+    private static final String SET_OPERATOR = " (?:UNION|EXCEPT|INTERSECT)(?: ALL)? ";
     // Spellings the fuzz table factory must be able to deal out. Kept in sync
     // with FuzzColumnTypes.SINGLETONS by the deck test below.
     private static final String[] SINGLETON_DDLS = {
@@ -480,6 +501,114 @@ public class FilterShapeCoverageTest {
     }
 
     @Test
+    public void testSetOperationBranchesSelectEveryType() {
+        String[] terms = {
+                "sym", "sym::STRING", "vk", "c_str", "c_char", "c_uuid", "c_ip",
+                "ts", "ts::TIMESTAMP_NS", "ts::DATE", "c_date",
+                "k::BYTE", "k::SHORT", "k", "lk", "k::FLOAT", "lk::DOUBLE", "null"
+        };
+        for (String term : terms) {
+            assertSetOperationCorpusMatches("branch selecting " + term, Pattern.compile("SELECT " + Pattern.quote(term) + " v\\d?, "));
+        }
+    }
+
+    @Test
+    public void testSetOperationCarriesItsFencedForm() {
+        // QueryRunner compares each set operation with its fenced form, so the
+        // fenced form must differ only by the LIMIT before the set's closing
+        // parenthesis, which the set's alias or the CTE's query follows.
+        Rnd rnd = new Rnd(SET_OPERATION_SEED0, SET_OPERATION_SEED1);
+        ObjList<FuzzTable> tables = setOperationTables();
+        Pattern fence = Pattern.compile(" LIMIT 1_000_000\\) (?:u |SELECT )");
+        for (int i = 0; i < CORPUS_SIZE; i++) {
+            GeneratedQuery query = SetOperationClause.generate(rnd, tables, null, false);
+            String message = "query " + i + " [seeds=" + SET_OPERATION_SEED0 + ", " + SET_OPERATION_SEED1 + "]: " + query.sql();
+            Assert.assertNotNull(message, query.fencedSql());
+            Matcher matcher = fence.matcher(query.fencedSql());
+            Assert.assertTrue(message, matcher.find());
+            Assert.assertFalse(message, matcher.find());
+            Assert.assertEquals(message, query.sql(), query.fencedSql().replace(" LIMIT 1_000_000)", ")"));
+        }
+    }
+
+    @Test
+    public void testSetOperationChainsTwoSymbolBranchesAheadOfAnother() {
+        // The UNION of the first two branches carries SYMBOL as STRING, and the
+        // set has to unify the third branch with SYMBOL rather than STRING.
+        // SetOperationClause draws this chain on purpose: 2_389 of the pinned
+        // corpus's 20_000 queries. Random terms alone spell it 7 times, so the
+        // floor of 5% fails a generator that stops drawing it on purpose.
+        assertSetOperationCorpusShare(
+                "UNION chains of two SYMBOL branches ahead of another type",
+                Pattern.compile("SELECT sym" + SET_BRANCH_REST + " UNION(?: ALL)? SELECT sym" + SET_BRANCH_REST
+                        + " UNION(?: ALL)? SELECT (?!sym )")
+        );
+    }
+
+    @Test
+    public void testSetOperationEmitsEveryOperator() {
+        for (String operator : new String[]{"UNION", "UNION ALL", "EXCEPT", "EXCEPT ALL", "INTERSECT", "INTERSECT ALL"}) {
+            assertSetOperationCorpusMatches(operator, Pattern.compile(" " + operator + " SELECT "));
+        }
+    }
+
+    @Test
+    public void testSetOperationFiltersThePromotedColumn() {
+        assertSetOperationCorpusMatches("text comparison against a timestamp prefix",
+                Pattern.compile("\\bv (?:=|!=|<|<=|>|>=) '2024-01-0\\d(?:T\\d\\d)?'"));
+        assertSetOperationCorpusMatches("ordering against a full timestamp",
+                Pattern.compile("\\bv (?:<|<=|>|>=) '2024-01-0\\dT\\d\\d:\\d\\d:00\\.000000Z'"));
+        assertSetOperationCorpusMatches("IN list", Pattern.compile("\\bv (?:NOT )?IN \\("));
+        assertSetOperationCorpusMatches("LIKE", Pattern.compile("\\bv (?:NOT )?LIKE '"));
+        assertSetOperationCorpusMatches("IS NULL", Pattern.compile("\\bv IS (?:NOT )?NULL"));
+        assertSetOperationCorpusMatches("BETWEEN", Pattern.compile("\\bv BETWEEN "));
+        assertSetOperationCorpusMatches("timestamp_floor", Pattern.compile("timestamp_floor\\('[^']+', (?:u\\.)?v\\) = "));
+        assertSetOperationCorpusMatches("hour", Pattern.compile("hour\\((?:u\\.)?v\\) "));
+        assertSetOperationCorpusMatches("time read as a LONG", Pattern.compile("\\bv::LONG (?:=|!=|<|<=|>|>=) \\d"));
+        assertSetOperationCorpusMatches("time read as text", Pattern.compile("\\bv::STRING (?:NOT )?LIKE '"));
+        assertSetOperationCorpusMatches("filter over the promoted column in a CTE",
+                Pattern.compile("^WITH u AS \\(.* FROM u WHERE [^\\n]*\\bv ", Pattern.MULTILINE));
+    }
+
+    @Test
+    public void testSetOperationJoinsOnThePromotedColumn() {
+        assertSetOperationCorpusMatches("set before an INNER JOIN", Pattern.compile("\\) u JOIN \\w+ x ON "));
+        assertSetOperationCorpusMatches("set before a LEFT JOIN", Pattern.compile("\\) u LEFT JOIN \\w+ x ON "));
+        assertSetOperationCorpusMatches("set after an INNER JOIN", Pattern.compile(" x JOIN \\(SELECT "));
+        assertSetOperationCorpusMatches("set after a LEFT JOIN", Pattern.compile(" x LEFT JOIN \\(SELECT "));
+        assertSetOperationCorpusMatches("join keyed on the promoted column", Pattern.compile(" ON u\\.v = x\\.(?:sym|vk)\\b"));
+        assertSetOperationCorpusMatches("ON filter over the promoted column", Pattern.compile(" ON u\\.id = x\\.k AND [^\\n]*\\bu\\.v "));
+    }
+
+    @Test
+    public void testSetOperationLeadsWithTheDesignatedTimestampBesideAnotherPrecision() {
+        // The binder binds a filter over a set column that mixes the designated
+        // timestamp with another precision in each branch, and the optimiser
+        // pushes one into a NULL branch as false; a UNION returns every row
+        // either branch keeps, so it shows any branch filter that means
+        // something else. SetOperationClause draws this lead on purpose: 2_775
+        // of the pinned corpus's 20_000 queries. Random terms alone spell it 405
+        // times, under the floor of 5%.
+        assertSetOperationCorpusShare(
+                "UNION chains led by the designated timestamp beside its TIMESTAMP_NS or DATE cast or NULL",
+                Pattern.compile("SELECT (?:ts" + SET_BRANCH_REST + " UNION(?: ALL)? SELECT (?:ts::TIMESTAMP_NS|ts::DATE|null)"
+                        + "|ts::(?:TIMESTAMP_NS|DATE)" + SET_BRANCH_REST + " UNION(?: ALL)? SELECT ts) v1, ")
+        );
+    }
+
+    @Test
+    public void testSetOperationUnifiesSymbolWithTimestamp() {
+        assertSetOperationCorpusMatches("SYMBOL branch ahead of a TIMESTAMP branch",
+                Pattern.compile("SELECT sym" + SET_BRANCH_REST + SET_OPERATOR + "SELECT ts v\\d, "));
+        assertSetOperationCorpusMatches("TIMESTAMP branch ahead of a SYMBOL branch",
+                Pattern.compile("SELECT ts" + SET_BRANCH_REST + SET_OPERATOR + "SELECT sym v\\d, "));
+        assertSetOperationCorpusMatches("TIMESTAMP branch beside a TIMESTAMP_NS branch",
+                Pattern.compile("SELECT ts" + SET_BRANCH_REST + SET_OPERATOR + "SELECT ts::TIMESTAMP_NS v\\d, "));
+        assertSetOperationCorpusMatches("SHORT branch beside a DOUBLE branch",
+                Pattern.compile("SELECT k::SHORT" + SET_BRANCH_REST + SET_OPERATOR + "SELECT lk::DOUBLE v\\d, "));
+    }
+
+    @Test
     public void testSymbolComparesAgainstNegativeUnquotedNumber() {
         assertCorpusMatches(
                 "SYMBOL against a negative unquoted number",
@@ -499,6 +628,27 @@ public class FilterShapeCoverageTest {
         Assert.assertTrue(
                 "the generator produced no " + what + " in " + CORPUS_SIZE + " predicates",
                 pattern.matcher(corpus).find()
+        );
+    }
+
+    private static void assertSetOperationCorpusMatches(String what, Pattern pattern) {
+        Assert.assertTrue(
+                "the set-operation generator produced no " + what + " in " + CORPUS_SIZE
+                        + " queries [seeds=" + SET_OPERATION_SEED0 + ", " + SET_OPERATION_SEED1 + ']',
+                pattern.matcher(SET_OPERATION_CORPUS).find()
+        );
+    }
+
+    private static void assertSetOperationCorpusShare(String what, Pattern pattern) {
+        Matcher matcher = pattern.matcher(SET_OPERATION_CORPUS);
+        int count = 0;
+        while (matcher.find()) {
+            count++;
+        }
+        Assert.assertTrue(
+                "the set-operation generator produced " + count + ' ' + what + " in " + CORPUS_SIZE
+                        + " queries, want at least 5% [seeds=" + SET_OPERATION_SEED0 + ", " + SET_OPERATION_SEED1 + ']',
+                20L * count >= CORPUS_SIZE
         );
     }
 
@@ -619,6 +769,16 @@ public class FilterShapeCoverageTest {
         return corpus.toString();
     }
 
+    private static String generateSetOperationCorpus() {
+        ObjList<FuzzTable> tables = setOperationTables();
+        Rnd rnd = new Rnd(SET_OPERATION_SEED0, SET_OPERATION_SEED1);
+        StringSink corpus = new StringSink();
+        for (int i = 0; i < CORPUS_SIZE; i++) {
+            corpus.put(SetOperationClause.generate(rnd, tables, null, false).sql()).put('\n');
+        }
+        return corpus.toString();
+    }
+
     /**
      * Matches an ordering comparison over {@code column} that stands as the
      * operand of an outer equality, on either side of it and with the column on
@@ -677,13 +837,11 @@ public class FilterShapeCoverageTest {
      * two-row IPv4 table:
      * <ul>
      *     <li>{@code WHERE c_ip < c_ip} plans as "Empty table".
-     *     {@code WhereClauseParser.analyzeLess} finds
-     *     {@code nodesEqual(lhs, rhs)} on a STRICT operator, sets the model's
-     *     intrinsic value to FALSE, and no filter is compiled at all -- with or
+     *     {@code ScanFactoryGenerator.foldSelfComparisons} folds a STRICT
+     *     self-comparison to FALSE, and no filter is compiled at all -- with or
      *     without a sibling conjunct beside it;</li>
-     *     <li>{@code WHERE c_ip <= c_ip} does reach the compiled filter. The
-     *     non-strict arm records a tautology and leaves the node in the
-     *     residual. So does a self-comparison under an OR, or one nested inside
+     *     <li>{@code WHERE c_ip <= c_ip} does reach the compiled filter: the
+     *     fold leaves a non-strict self-comparison in the residual. So does a self-comparison under an OR, or one nested inside
      *     another comparison.</li>
      * </ul>
      * What every surviving case has in common is that it is constant-valued for
@@ -705,5 +863,26 @@ public class FilterShapeCoverageTest {
                         + "|" + b + " (?:<=|>=|<|>) " + a
                         + ")\\b"
         );
+    }
+
+    // One column of every type SetOperationClause draws a branch term from,
+    // over the four key columns and the designated timestamp every fuzz table
+    // carries.
+    private static ObjList<FuzzTable> setOperationTables() {
+        ObjList<FuzzColumn> columns = new ObjList<>();
+        columns.add(new FuzzColumn("sym", SymbolType.INSTANCE));
+        columns.add(new FuzzColumn("k", IntKeyType.INSTANCE));
+        columns.add(new FuzzColumn("lk", LongKeyType.INSTANCE));
+        columns.add(new FuzzColumn("vk", VarcharKeyType.INSTANCE));
+        columns.add(new FuzzColumn("c_char", CharType.INSTANCE));
+        columns.add(new FuzzColumn("c_date", DateType.INSTANCE));
+        columns.add(new FuzzColumn("c_ip", IPv4Type.INSTANCE));
+        columns.add(new FuzzColumn("c_str", StringType.INSTANCE));
+        columns.add(new FuzzColumn("c_uuid", UuidType.INSTANCE));
+        columns.add(new FuzzColumn("ts", TimestampType.INSTANCE));
+        ObjList<FuzzTable> tables = new ObjList<>();
+        tables.add(new FuzzTable("fuzz_t0", columns, "ts"));
+        tables.add(new FuzzTable("fuzz_t1", columns, "ts"));
+        return tables;
     }
 }

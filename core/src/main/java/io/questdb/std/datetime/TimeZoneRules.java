@@ -26,15 +26,43 @@ package io.questdb.std.datetime;
 
 public interface TimeZoneRules {
 
+    static long firstInstantAtOrAfter(TimeZoneRules rules, long localEpoch) {
+        return localEpoch - rules.getDstGapOffset(localEpoch) - rules.getLocalOffset(localEpoch);
+    }
+
+    static long wallClockHighWater(TimeZoneRules rules, long utcEpoch) {
+        final long offset = rules.getOffset(utcEpoch);
+        final long local = utcEpoch + offset;
+        final long firstOffset = rules.getLocalOffset(local);
+        return firstOffset > offset ? rules.getNextDST(local - firstOffset) + firstOffset - 1 : local;
+    }
+
     /**
      * If the local epoch is a Daylight Saving Transition gap in forward time shift,
      * this method returns the offset of the timestamp to the beginning of the gap.
      */
     long getDstGapOffset(long localEpoch);
 
+    /**
+     * Returns the first instant at which the local wall clock reads the local time or later: the instant of the
+     * local time, its first occurrence when a backward shift repeats it, and the shift itself when a forward
+     * shift skips it.
+     */
+    default long getFirstInstantAtOrAfter(long localEpoch) {
+        return firstInstantAtOrAfter(this, localEpoch);
+    }
+
     long getLocalOffset(long localEpoch);
 
     long getLocalOffset(long localEpoch, int year);
+
+    /**
+     * Returns the greatest common divisor, in the rules' units, of the differences between the UTC offsets by which
+     * {@link #getFirstInstantAtOrAfter} converts a local time with the time of day of {@code localTime} at or after the
+     * instant: every wall-clock offset the zone takes from then on, and, for a forward shift that skips that time of
+     * day, the local time less the shift instant. Zero when one offset converts every such local time.
+     */
+    long getLocalTimeOffsetGcd(long utcEpoch, long localTime);
 
     /**
      * Computes UTC epoch time for the next Daylight Saving Transition.
@@ -56,6 +84,14 @@ public interface TimeZoneRules {
      * "winter time" offset for most timezones.
      */
     long getStandardOffset();
+
+    /**
+     * Returns the latest local wall-clock time shown at or before the instant. During the interval a backward
+     * shift repeats, it is the reading just before the shift.
+     */
+    default long getWallClockHighWater(long utcEpoch) {
+        return wallClockHighWater(this, utcEpoch);
+    }
 
     boolean hasFixedOffset();
 }

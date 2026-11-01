@@ -120,7 +120,9 @@ public class DirectMultiIntHashSet implements Mutable, QuietCloseable, Reopenabl
     }
 
     public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
-        assert memStart == 0 || this.memoryTracker == memoryTracker;
+        if (memoryTracker != this.memoryTracker && memStart != 0) {
+            Unsafe.chargeHeldMemory(allocationSize(capacity), MemoryTag.NATIVE_UNORDERED_MAP, memoryTracker);
+        }
         this.memoryTracker = memoryTracker;
     }
 

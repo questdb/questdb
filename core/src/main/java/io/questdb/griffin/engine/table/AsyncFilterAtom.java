@@ -32,18 +32,19 @@ import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
+import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.MemoryTracker;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -51,18 +52,14 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.LongAdder;
 
-public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Plannable {
+/**
+ * The {@link AsyncFilter} of a parallel filter, with the per-worker locks that hand its clones out, and the columns a
+ * task decodes, or pre-touches, after filtering a frame.
+ */
+public class AsyncFilterAtom extends AsyncFilter implements StatefulAtom, PerWorkerLockOwner, Plannable {
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
     private final IntList columnTypes;
-    private final Function filter;
-    private final IntHashSet filterUsedColumnIndexes;
-    // Shared by the owner, every reducing worker and every work-stealing thread: a thread-safe
-    // filter hands out no slots, so there is no per-thread identity to key stats on. Concurrent
-    // updates are safe, see SelectivityStats.
-    private final SelectivityStats ownerSelectivityStats = new SelectivityStats();
-    private final ObjList<Function> perWorkerFilters;
     private final PerWorkerLocks perWorkerLocks;
-    private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final boolean preTouchEnabled;
     private final double preTouchThreshold;
     private IntHashSet lateMatSkipColumnIndexes;
@@ -71,28 +68,31 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
     // tracker-aware Unsafe overloads to charge allocations to the active workload.
     private MemoryTracker memoryTracker;
 
+    /**
+     * Takes the filter resources, which {@link #close()} frees; frees none of them when it throws. A thread-safe filter
+     * has no clones and hands out no worker slots.
+     */
     public AsyncFilterAtom(
             @NotNull CairoConfiguration configuration,
+            @Nullable CompiledFilter compiledFilter,
+            @Nullable MemoryCARW bindVarMemory,
+            @Nullable ObjList<Function> bindVarFunctions,
             @NotNull Function filter,
             @NotNull IntHashSet filterUsedColumnIndexes,
             @Nullable ObjList<Function> perWorkerFilters,
             @NotNull IntList columnTypes,
             boolean preTouchEnabled
     ) {
-        this.filter = filter;
-        this.filterUsedColumnIndexes = filterUsedColumnIndexes;
-        this.perWorkerFilters = perWorkerFilters;
-        if (perWorkerFilters != null) {
-            final int slotCount = perWorkerFilters.size();
-            perWorkerLocks = new PerWorkerLocks(configuration, slotCount);
-            perWorkerSelectivityStats = new ObjList<>(slotCount);
-            for (int i = 0; i < slotCount; i++) {
-                perWorkerSelectivityStats.extendAndSet(i, new SelectivityStats());
-            }
-        } else {
-            perWorkerLocks = null;
-            perWorkerSelectivityStats = null;
-        }
+        super(
+                compiledFilter,
+                bindVarMemory,
+                bindVarFunctions,
+                filter,
+                filterUsedColumnIndexes,
+                perWorkerFilters,
+                perWorkerFilters != null ? perWorkerFilters.size() : 0
+        );
+        perWorkerLocks = perWorkerFilters != null ? new PerWorkerLocks(configuration, perWorkerFilters.size()) : null;
         this.columnTypes = columnTypes;
         this.preTouchEnabled = preTouchEnabled;
         this.preTouchThreshold = configuration.getSqlParallelFilterPreTouchThreshold();
@@ -100,32 +100,15 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
 
     @Override
     public void clear() {
-        ownerSelectivityStats.clear();
-        Misc.clearObjList(perWorkerSelectivityStats);
+        final Throwable failure = cursorClosed(null);
         memoryTracker = null;
         lateMatSkipColumnIndexes = null;
-    }
-
-    @Override
-    public void close() {
-        final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, perWorkerFilters);
-        CairoException.rethrowCleanupFailure(cleanupFailure);
-    }
-
-    public Function getFilter(int filterId) {
-        if (filterId == -1 || perWorkerFilters == null) {
-            return filter;
-        }
-        return perWorkerFilters.getQuick(filterId);
-    }
-
-    public @Nullable IntHashSet getFilterUsedColumnIndexes() {
-        return filterUsedColumnIndexes;
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public @Nullable IntHashSet getLateMaterializationSkipColumnIndexes() {
         final IntHashSet skipSet = lateMatSkipColumnIndexes;
-        return skipSet != null ? skipSet : filterUsedColumnIndexes;
+        return skipSet != null ? skipSet : getFilterUsedColumnIndexes();
     }
 
     public MemoryTracker getMemoryTracker() {
@@ -138,26 +121,10 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
         return perWorkerLocks;
     }
 
-    public SelectivityStats getSelectivityStats(int slotId) {
-        if (slotId == -1 || perWorkerSelectivityStats == null) {
-            return ownerSelectivityStats;
-        }
-        return perWorkerSelectivityStats.getQuick(slotId);
-    }
-
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         memoryTracker = executionContext.getMemoryTracker();
-        filter.init(symbolTableSource, executionContext);
-        if (perWorkerFilters != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
-            executionContext.setCloneSymbolTables(true);
-            try {
-                Function.init(perWorkerFilters, symbolTableSource, executionContext, filter);
-            } finally {
-                executionContext.setCloneSymbolTables(current);
-            }
-        }
+        initFilters(symbolTableSource, executionContext);
     }
 
     /**
@@ -283,6 +250,7 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
      * rely on the happens-before edge the reduce queue provides after dispatch.
      */
     public void setParentUsedColumns(@Nullable IntHashSet columns) {
+        final IntHashSet filterUsedColumnIndexes = getFilterUsedColumnIndexes();
         if (columns == null || filterUsedColumnIndexes == null) {
             lateMatSkipColumnIndexes = null;
             return;
@@ -297,22 +265,9 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
         lateMatSkipColumnIndexes = skipSet;
     }
 
-    public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame, boolean isCountOnly) {
-        if (!isParquetFrame) {
-            return false;
-        }
-        if (filterUsedColumnIndexes == null || filterUsedColumnIndexes.size() == 0) {
-            return false;
-        }
-        if (isCountOnly) {
-            return true;
-        }
-        return getSelectivityStats(slotId).shouldUseLateMaterialization();
-    }
-
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val(filter);
+        super.toPlan(sink);
         if (preTouchEnabled) {
             sink.val(" [pre-touch]");
         }

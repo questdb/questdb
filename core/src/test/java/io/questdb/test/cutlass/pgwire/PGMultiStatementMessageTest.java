@@ -57,6 +57,7 @@ import java.util.concurrent.BrokenBarrierException;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.cutlass.pgwire.BasePGTest.Mode.EXTENDED_FOR_PREPARED;
 import static io.questdb.test.cutlass.pgwire.BasePGTest.Mode.SIMPLE;
@@ -67,28 +68,48 @@ import static org.junit.Assert.*;
  */
 public class PGMultiStatementMessageTest extends BasePGTest {
     private static final String SCHEMA_CHANGE_TABLE = "schema_change_t";
-    // the schema change hook, inert until a test arms it, see setUpStatic()
+    // the schema change hooks, inert until a test arms them, see setUpStatic()
     private static final AtomicInteger schemaChangesLeft = new AtomicInteger();
+    private static final AtomicReference<String> schemaRecreateSql = new AtomicReference<>();
 
     /**
-     * While {@code schemaChangesLeft} is positive, each open of a reader on
-     * {@code schema_change_t} at a known metadata version adds a column to the table just before
-     * the open and decrements it, as a concurrent ALTER would between the optimiser recording the
-     * version and code generation opening the reader.
+     * Stages the races a statement's compile can lose to a concurrent schema change, on the opens
+     * of a reader on {@code schema_change_t} without a version, which binding makes.
+     * <ul>
+     *     <li>While {@code schemaRecreateSql} is set, the next open drops the table and recreates
+     *     it with that statement just before the open, as a concurrent DROP TABLE and CREATE TABLE
+     *     would between the parser resolving the table name and binding opening the reader.</li>
+     *     <li>While {@code schemaChangesLeft} is positive, each open adds a column to the table
+     *     just after the open and decrements it, as a concurrent ALTER would between binding
+     *     reading the table and code generation checking that the table did not change.</li>
+     * </ul>
      */
     @BeforeClass
     public static void setUpStatic() throws Exception {
         AbstractCairoTest.engineFactory = configuration -> new CairoEngine(configuration) {
             @Override
-            public TableReader getReader(TableToken tableToken, long metadataVersion, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
-                if (metadataVersion > -1
-                        && schemaChangesLeft.get() > 0
-                        && Chars.equals(tableToken.getTableName(), SCHEMA_CHANGE_TABLE)) {
-                    try (TableWriter writer = TestUtils.getWriter(this, SCHEMA_CHANGE_TABLE)) {
-                        writer.addColumn("extra" + schemaChangesLeft.decrementAndGet(), ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+            public TableReader getReader(TableToken tableToken, ResourcePoolSupervisor<TableReader> readerPoolSupervisor) {
+                if (Chars.equals(tableToken.getTableName(), SCHEMA_CHANGE_TABLE)) {
+                    final String recreateSql = schemaRecreateSql.getAndSet(null);
+                    if (recreateSql != null) {
+                        try {
+                            execute("DROP TABLE " + SCHEMA_CHANGE_TABLE, AbstractCairoTest.sqlExecutionContext);
+                            execute(recreateSql, AbstractCairoTest.sqlExecutionContext);
+                        } catch (SqlException e) {
+                            throw new AssertionError("could not recreate " + SCHEMA_CHANGE_TABLE, e);
+                        }
                     }
                 }
-                return super.getReader(tableToken, metadataVersion, readerPoolSupervisor);
+                final TableReader reader = super.getReader(tableToken, readerPoolSupervisor);
+                if (schemaChangesLeft.get() > 0 && Chars.equals(tableToken.getTableName(), SCHEMA_CHANGE_TABLE)) {
+                    try (TableWriter writer = TestUtils.getWriter(this, SCHEMA_CHANGE_TABLE)) {
+                        writer.addColumn("extra" + schemaChangesLeft.decrementAndGet(), ColumnType.INT, AllowAllSecurityContext.INSTANCE);
+                    } catch (Throwable th) {
+                        reader.close();
+                        throw th;
+                    }
+                }
+                return reader;
             }
         };
         AbstractCairoTest.setUpStatic();
@@ -1181,6 +1202,40 @@ public class PGMultiStatementMessageTest extends BasePGTest {
                         SELECT * FROM schema_change_t;
                         """);
                 assertResults(statement, hasResult, data(row(1)), data(row(42, null)));
+            }
+        });
+    }
+
+    @Test
+    public void testSchemaRecreateDuringBindingRetriesSameStatement() throws Exception {
+        // The third statement's binding opens a table that was dropped and recreated after the
+        // parser resolved its name. Binding's retry must re-parse the third statement, not the
+        // block's first one, and bind the new table: the client gets one result per statement,
+        // and the INSERT runs once.
+        assertWithPgServer(CONN_AWARE_SIMPLE, (connection, _, _, _) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("""
+                        CREATE TABLE schema_change_t (x INT);
+                        INSERT INTO schema_change_t VALUES (42);
+                        CREATE TABLE schema_change_log (v INT);
+                        """);
+                schemaRecreateSql.set("CREATE TABLE schema_change_t AS (SELECT 43 x, 7 y FROM long_sequence(1))");
+                try {
+                    final boolean hasResult = statement.execute("""
+                            SELECT 'first' a FROM long_sequence(1);
+                            INSERT INTO schema_change_log VALUES (1);
+                            SELECT * FROM schema_change_t;
+                            """);
+                    assertResults(statement, hasResult, data(row("first")), one(), data(row(43, 7)));
+                    Assert.assertNull(schemaRecreateSql.get());
+                } finally {
+                    schemaRecreateSql.set(null);
+                }
+                final boolean hasResult = statement.execute("""
+                        SELECT * FROM schema_change_log;
+                        SELECT * FROM schema_change_t;
+                        """);
+                assertResults(statement, hasResult, data(row(1)), data(row(43, 7)));
             }
         });
     }

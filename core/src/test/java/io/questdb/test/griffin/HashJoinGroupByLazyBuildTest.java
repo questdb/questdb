@@ -241,11 +241,10 @@ public class HashJoinGroupByLazyBuildTest extends AbstractCairoTest {
                                     + "            Interval forward scan on: lp\n"
                                     + "              intervals: [(\"" + day + "T00:00:00.000000Z\",\"" + nextDay + "T23:59:59.999999Z\")]\n"
                                     + "    Build\n"
-                                    + "        SelectedRecord\n"
-                                    + "            PageFrame\n"
-                                    + "                Row forward scan\n"
-                                    + "                Interval forward scan on: lb\n"
-                                    + "                  intervals: [(\"" + day + "T00:00:00.000000Z\",\"MAX\")]\n");
+                                    + "        PageFrame\n"
+                                    + "            Row forward scan\n"
+                                    + "            Interval forward scan on: lb\n"
+                                    + "              intervals: [(\"" + day + "T00:00:00.000000Z\",\"MAX\")]\n");
                 }
                 // The query itself opens as EXPLAIN does, and fails once it reads the poisoned row.
                 try (RecordCursorFactory factory = engine.select(sql, context)) {

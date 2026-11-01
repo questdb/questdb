@@ -32,8 +32,8 @@ use crate::parquet_meta_err;
 use crate::reader::ParquetMetaReader;
 use crate::row_group::RowGroupBlockBuilder;
 use crate::types::{
-    ColumnFlags, SeqTxn, BLOCK_ALIGNMENT, BLOCK_ALIGNMENT_SHIFT, COLUMN_CHUNK_SIZE,
-    FOOTER_CHECKSUM_SIZE, FOOTER_TRAILER_SIZE, HEADER_CRC_AREA_OFF,
+    ColumnFlags, FooterFeatureFlags, SeqTxn, BLOCK_ALIGNMENT, BLOCK_ALIGNMENT_SHIFT,
+    COLUMN_CHUNK_SIZE, FOOTER_CHECKSUM_SIZE, FOOTER_TRAILER_SIZE, HEADER_CRC_AREA_OFF,
     HEADER_PARQUET_META_FILE_SIZE_OFF,
 };
 
@@ -59,6 +59,7 @@ pub struct ParquetMetaWriter {
     squash_tracker: i64,
     seq_txn: SeqTxn,
     scratchpad: Vec<(u32, Vec<u8>)>,
+    is_written_by_questdb: bool,
 }
 
 impl Default for ParquetMetaWriter {
@@ -78,6 +79,7 @@ impl ParquetMetaWriter {
             squash_tracker: -1,
             seq_txn: SeqTxn::UNSET,
             scratchpad: Vec::new(),
+            is_written_by_questdb: false,
         }
     }
 
@@ -137,6 +139,12 @@ impl ParquetMetaWriter {
     /// recreates the header builder). Passing `-1` omits the section.
     pub fn squash_tracker(&mut self, value: i64) -> &mut Self {
         self.squash_tracker = value;
+        self
+    }
+
+    /// Records in the footer that QuestDB's parquet writer wrote every row group of the file.
+    pub fn written_by_questdb(&mut self, value: bool) -> &mut Self {
+        self.is_written_by_questdb = value;
         self
     }
 
@@ -244,6 +252,7 @@ impl ParquetMetaWriter {
 
         // Write footer.
         let mut fb = FooterBuilder::new(self.parquet_footer_offset, self.parquet_footer_length);
+        fb.feature_flags(footer_flags(self.is_written_by_questdb));
         fb.unused_bytes(self.unused_bytes);
         for &offset in &block_offsets {
             fb.add_row_group_offset(offset)?;
@@ -315,6 +324,14 @@ fn build_bloom_filter_footer_section(
     section
 }
 
+fn footer_flags(is_written_by_questdb: bool) -> FooterFeatureFlags {
+    if is_written_by_questdb {
+        FooterFeatureFlags::new().with_written_by_questdb()
+    } else {
+        FooterFeatureFlags::new()
+    }
+}
+
 // ── ParquetMetaUpdateWriter (update mode) ─────────────────────────────────────
 
 /// Produces bytes to append to an existing `_pm` file for an incremental
@@ -354,6 +371,10 @@ pub struct ParquetMetaUpdateWriter<'a> {
     /// on the next chunk GET.
     scratchpad: Option<Vec<(u32, Vec<u8>)>>,
     prior_scratchpad: Vec<(u32, Vec<u8>)>,
+    /// Caller-set writer identity for the new footer; `None` inherits the prior footer's, which
+    /// describes the same file.
+    is_written_by_questdb: Option<bool>,
+    prior_is_written_by_questdb: bool,
 }
 
 enum RowGroupEntry {
@@ -420,6 +441,7 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         }
 
         let prior_seq_txn = footer.seq_txn();
+        let prior_is_written_by_questdb = footer.feature_flags().is_written_by_questdb();
         let prior_scratchpad: Vec<(u32, Vec<u8>)> = footer
             .scratchpad_entries()
             .map(|(code, content)| (code, content.to_vec()))
@@ -442,11 +464,20 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             prior_seq_txn,
             scratchpad: None,
             prior_scratchpad,
+            is_written_by_questdb: None,
+            prior_is_written_by_questdb,
         })
     }
 
     pub fn unused_bytes(&mut self, unused_bytes: u64) -> &mut Self {
         self.unused_bytes = unused_bytes;
+        self
+    }
+
+    /// Records in the new footer whether QuestDB's parquet writer wrote every row group of the
+    /// file. Without it the new footer keeps the prior footer's answer.
+    pub fn written_by_questdb(&mut self, value: bool) -> &mut Self {
+        self.is_written_by_questdb = Some(value);
         self
     }
 
@@ -686,6 +717,10 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         // walking back derives the old footer location from the trailer
         // at `existing_parquet_meta_file_size - 4`.
         let mut fb = FooterBuilder::new(self.parquet_footer_offset, self.parquet_footer_length);
+        fb.feature_flags(footer_flags(
+            self.is_written_by_questdb
+                .unwrap_or(self.prior_is_written_by_questdb),
+        ));
         fb.unused_bytes(self.unused_bytes);
         fb.prev_parquet_meta_file_size(self.existing_parquet_meta_file_size);
         for &offset in &final_offsets {
@@ -1141,6 +1176,35 @@ mod tests {
         let reader = ParquetMetaReader::from_file_size(&bytes, parquet_meta_file_size).unwrap();
         assert!(!reader.footer_feature_flags().has_seq_txn());
         assert_eq!(reader.seq_txn(), None);
+    }
+
+    #[test]
+    fn update_writer_records_or_inherits_written_by_questdb() {
+        let mut w = ParquetMetaWriter::new();
+        w.add_column("x", 0, 5, ColumnFlags::new(), 0, 0, 0, 0);
+        w.written_by_questdb(true);
+        let (original, existing_size) = w.finish().unwrap();
+        let reader = ParquetMetaReader::from_file_size(&original, existing_size).unwrap();
+        assert!(reader.footer_feature_flags().is_written_by_questdb());
+
+        for (value, expected) in [(None, true), (Some(false), false), (Some(true), true)] {
+            let mut updater = ParquetMetaUpdateWriter::new(&original, existing_size).unwrap();
+            updater.inherit_seq_txn();
+            if let Some(value) = value {
+                updater.written_by_questdb(value);
+            }
+            let (append_bytes, new_size) = updater.finish().unwrap();
+            let mut full = original.clone();
+            full.extend_from_slice(&append_bytes);
+            full[super::HEADER_PARQUET_META_FILE_SIZE_OFF
+                ..super::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+                .copy_from_slice(&new_size.to_le_bytes());
+            let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+            assert_eq!(
+                expected,
+                reader.footer_feature_flags().is_written_by_questdb()
+            );
+        }
     }
 
     #[test]

@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
@@ -38,14 +39,12 @@ public interface BinaryFunction extends Function {
 
     @Override
     default void close() {
-        Misc.free(getLeft());
-        Misc.free(getRight());
+        CairoException.rethrowCleanupFailure(Misc.freeBestEffort(Misc.freeBestEffort(null, getLeft()), getRight()));
     }
 
     @Override
     default void cursorClosed() {
-        getLeft().cursorClosed();
-        getRight().cursorClosed();
+        CairoException.rethrowCleanupFailure(Function.cursorClosed(Function.cursorClosed(null, getLeft()), getRight()));
     }
 
     @Override
@@ -79,17 +78,6 @@ public interface BinaryFunction extends Function {
     }
 
     @Override
-    default boolean isEquivalentTo(Function other) {
-        if (other == this) {
-            return true;
-        }
-        if (other instanceof BinaryFunction that) {
-            return getLeft().isEquivalentTo(that.getLeft()) && getRight().isEquivalentTo(that.getRight());
-        }
-        return false;
-    }
-
-    @Override
     default boolean isNonDeterministic() {
         return getLeft().isNonDeterministic() || getRight().isNonDeterministic();
     }
@@ -116,7 +104,10 @@ public interface BinaryFunction extends Function {
     default boolean isRuntimeConstant() {
         final Function l = getLeft();
         final Function r = getRight();
-        return (l.isConstant() && r.isRuntimeConstant()) || (r.isConstant() && l.isRuntimeConstant()) || (l.isRuntimeConstant() && r.isRuntimeConstant());
+        if (l.isRuntimeConstant()) {
+            return r.isRuntimeConstant() || r.isConstant();
+        }
+        return r.isRuntimeConstant() && l.isConstant();
     }
 
     @Override

@@ -160,8 +160,8 @@ public abstract class AbstractArrayAggDoubleGroupByFunction extends ArrayFunctio
 
     @Override
     public void close() {
-        Misc.free(arg);
         Misc.free(scratch);
+        Misc.free(arg);
     }
 
     @Override

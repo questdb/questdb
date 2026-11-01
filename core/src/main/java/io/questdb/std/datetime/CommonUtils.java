@@ -274,6 +274,32 @@ public class CommonUtils {
     }
 
     /**
+     * Returns the UTC start of the bucket at a local grid line of a {@code timestamp_floor_utc} grid. A sub-day
+     * stride converts with the zone's standard offset. A longer stride starts its bucket at the first instant at
+     * which the local wall clock reads the line or later: the line itself on a normal day, the transition when
+     * the line falls in a spring-forward gap, and its first occurrence when a fall-back repeats it.
+     */
+    public static long floorLocalToUtc(TimeZoneRules tzRules, long localGridLine, char unit) {
+        if (isSubDayUnit(unit)) {
+            return localGridLine - tzRules.getStandardOffset();
+        }
+        return tzRules.getFirstInstantAtOrAfter(localGridLine);
+    }
+
+    /**
+     * Returns the local time a {@code timestamp_floor_utc} grid floors for a UTC timestamp, so that the timestamp
+     * belongs to the latest bucket start, see {@link #floorLocalToUtc}, at or before it. A sub-day stride reads
+     * the zone's standard time. A longer stride reads the latest wall-clock time the zone has shown up to the
+     * timestamp: the interval a fall-back repeats keeps the reading from just before the transition.
+     */
+    public static long floorUtcToLocal(TimeZoneRules tzRules, long utcTimestamp, char unit) {
+        if (isSubDayUnit(unit)) {
+            return utcTimestamp + tzRules.getStandardOffset();
+        }
+        return tzRules.getWallClockHighWater(utcTimestamp);
+    }
+
+    /**
      * Days in a given month. This method expects you to know if month is in leap year.
      *
      * @param m    month from 1 to 12
@@ -282,27 +308,6 @@ public class CommonUtils {
      */
     public static int getDaysPerMonth(int m, boolean leap) {
         return leap & m == 2 ? 29 : DAYS_PER_MONTH[m - 1];
-    }
-
-    /**
-     * Returns the timezone offset to use when converting a UTC timestamp to
-     * local time for floor/round bucket computations. Sub-day units use the
-     * standard (non-DST) offset to keep bucket widths uniform across DST
-     * transitions. Super-day units use the actual offset at the given instant.
-     * <p>
-     * Both {@code timestamp_floor_utc} (SAMPLE BY query path) and the mat view
-     * refresh iterator MUST call this method to ensure bucket boundaries agree.
-     * <p>
-     * Typical usage (zero-allocation, no closures):
-     * <pre>
-     *   long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, utcTs, unit);
-     *   long local = utcTs + tzOff;
-     *   long floored = ... // caller's own floor/round
-     *   long utcResult = CommonUtils.offsetFlooredUtcResult(floored, tzOff, offset, tzRules, unit);
-     * </pre>
-     */
-    public static long getFloorUtcTzOffset(TimeZoneRules tzRules, long utcTimestamp, char unit) {
-        return isSubDayUnit(unit) ? tzRules.getStandardOffset() : tzRules.getOffset(utcTimestamp);
     }
 
     /**
@@ -400,21 +405,6 @@ public class CommonUtils {
 
     public static long nanosToMicros(long nanos) {
         return nanos == Numbers.LONG_NULL ? Numbers.LONG_NULL : nanos / 1000L;
-    }
-
-    /**
-     * Converts a floored local timestamp back to UTC and applies the user
-     * offset. Must be paired with {@link #getFloorUtcTzOffset} — the
-     * {@code tzOff} parameter must come from that method for the same
-     * input timestamp. Pass {@code offset = 0} when the caller's floor
-     * operation already incorporates the offset (e.g. TimestampSampler).
-     */
-    public static long offsetFlooredUtcResult(long flooredLocal, long tzOff, long offset, TimeZoneRules tzRules, char unit) {
-        if (isSubDayUnit(unit)) {
-            return flooredLocal - tzOff + offset;
-        }
-        final long resultTzOff = tzRules.getOffset(flooredLocal - tzOff);
-        return flooredLocal - resultTzOff + offset;
     }
 
     public static void parseDigits(int assertRemainingIndex, int parseIntIndex, int digitCount, BytecodeAssembler asm, int localPos, int pHi, int pInputStr) {

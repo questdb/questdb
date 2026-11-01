@@ -51,12 +51,8 @@ public final class TimestampSamplerFactory {
             throw SqlException.$(position, "expected interval qualifier");
         }
 
-        // look for end of digits (with optional leading sign)
-        int k = -1;
-        int start = 0;
-        boolean atLeastOneDigit = false;
-
         // Handle optional leading sign
+        int start = 0;
         if (cs.charAt(0) == '-' || cs.charAt(0) == '+') {
             start = 1;
             if (len == 1) {
@@ -64,20 +60,12 @@ public final class TimestampSamplerFactory {
             }
         }
 
-        for (int i = start; i < len; i++) {
-            char c = cs.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-            atLeastOneDigit = true;
-        }
-
-        if (!atLeastOneDigit) {
+        final int k = digitRunEnd(cs, start, '9');
+        if (k == start) {
             throw SqlException.$(position, "expected numeric value");
         }
 
-        if (k == -1) {
+        if (k == len) {
             // Allow unitless zero ("0", "+0", "-0") as a special case.
             // Return -1 as a sentinel value; the caller must handle this.
             if (len - start == 1 && cs.charAt(start) == '0') {
@@ -96,7 +84,8 @@ public final class TimestampSamplerFactory {
 
     /**
      * Find the end of the interval token in the input string. The interval token is expected to be a number followed by
-     * a single letter qualifier.
+     * a single letter qualifier. The number may separate its digits with underscores, which
+     * {@link #parsePositiveInterval} validates as {@link Numbers#parseInt} does.
      *
      * @param cs       input string
      * @param position position in SQL text to report error against
@@ -114,31 +103,16 @@ public final class TimestampSamplerFactory {
             throw SqlException.$(position, "expected interval qualifier");
         }
 
-        // look for end of digits
-        int k = -1;
-        boolean allZeros = true;
-        boolean atLeastOneDigit = false;
-        for (int i = 0; i < len; i++) {
-            char c = cs.charAt(i);
-            if (c < '0' || c > '9') {
-                k = i;
-                break;
-            }
-            atLeastOneDigit = true;
-            if (c != '0') {
-                allZeros = false;
-            }
-        }
-
+        final int k = digitRunEnd(cs, 0, '9');
         if (k == 0 && cs.charAt(0) == '-') {
             throw SqlException.$(position, "negative interval is not allowed");
         }
 
-        if (allZeros && atLeastOneDigit) {
+        if (k > 0 && digitRunEnd(cs, 0, '0') == k) {
             throw SqlException.$(position, "zero is not a valid ").put(kind).put(" value");
         }
 
-        if (k == -1) {
+        if (k == len) {
             throw SqlException.$(position + len, "expected interval qualifier");
         }
 
@@ -172,11 +146,32 @@ public final class TimestampSamplerFactory {
      * @throws SqlException when input string is invalid
      */
     public static TimestampSampler getInstance(TimestampDriver driver, CharSequence cs, int position) throws SqlException {
-        int k = findPositiveIntervalEndIndex(cs, position, "sample");
-        assert cs.length() > k;
+        final long stride = parsePeriodStride(cs, position);
+        final int unitIndex = periodUnitIndex(cs);
+        return getSampleByInstance(driver, stride, cs.charAt(unitIndex), position + unitIndex);
+    }
 
-        long n = parsePositiveInterval(cs, k, position, "sample", Numbers.INT_NULL, '?');
-        return getInstance(driver, n, cs.charAt(k), position + k);
+    /**
+     * The sampler of a SAMPLE BY stride, which must be positive, whether a literal or a constant expression spells it,
+     * and must fit the interval the unit's sampler counts in, see {@link TimestampDriver#intSamplerInterval}. A stride
+     * that does not fails at {@code position} with the error a literal stride raises: a negative one, zero, or an
+     * invalid value for NULL or one too large. A literal stride is an INT by its syntax, while a constant expression
+     * may be a LONG.
+     *
+     * @param stride   the stride; {@link Numbers#LONG_NULL} for NULL
+     * @param position position in SQL text to report error against
+     */
+    public static TimestampSampler getSampleByInstance(TimestampDriver driver, long stride, char timeUnit, int position) throws SqlException {
+        if (stride == 0) {
+            throw SqlException.$(position, "zero is not a valid sample value");
+        }
+        if (stride < 0 && stride != Numbers.LONG_NULL) {
+            throw SqlException.$(position, "negative interval is not allowed");
+        }
+        if (stride == Numbers.LONG_NULL) {
+            throw SqlException.$(position, "invalid sample value [value=null]");
+        }
+        return getInstance(driver, stride, timeUnit, position);
     }
 
     /**
@@ -200,6 +195,18 @@ public final class TimestampSamplerFactory {
         } catch (NumericException e) {
             throw SqlException.$(position, "invalid interval value [value=").put(cs).put(']');
         }
+    }
+
+    /**
+     * The stride of the SAMPLE BY period literal {@code cs}, such as 15 for {@code 15m} or 1 for {@code m}: an optional
+     * positive INT followed by the one-letter unit that ends the literal, at {@link #periodUnitIndex}. The stride
+     * must also fit the timestamp range in that unit, which {@link #getSampleByInstance} checks.
+     *
+     * @param position position of the literal in SQL text to report error against
+     */
+    public static long parsePeriodStride(CharSequence cs, int position) throws SqlException {
+        final int unitIndex = findPositiveIntervalEndIndex(cs, position, "sample");
+        return parsePositiveInterval(cs, unitIndex, position, "sample", Numbers.INT_NULL, '?');
     }
 
     /**
@@ -237,5 +244,27 @@ public final class TimestampSamplerFactory {
             ex.put(']');
             throw ex;
         }
+    }
+
+    /**
+     * The index of the one-letter unit that ends the SAMPLE BY period literal {@code cs}; -1 for an empty literal.
+     */
+    public static int periodUnitIndex(CharSequence cs) {
+        return cs.length() - 1;
+    }
+
+    /**
+     * The end, exclusive, of the run of digits from '0' to {@code maxDigit} that starts at {@code lo}, where an
+     * underscore after a digit of the run continues it; {@code lo} when no such digit is at {@code lo}.
+     */
+    private static int digitRunEnd(CharSequence cs, int lo, char maxDigit) {
+        final int len = cs.length();
+        for (int i = lo; i < len; i++) {
+            final char c = cs.charAt(i);
+            if ((c < '0' || c > maxDigit) && (c != '_' || i == lo)) {
+                return i;
+            }
+        }
+        return len;
     }
 }

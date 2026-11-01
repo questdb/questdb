@@ -24,10 +24,13 @@
 
 package io.questdb.griffin.engine.functions.memoization;
 
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * A function that computes its argument once per row and answers every later getter of that
@@ -43,6 +46,40 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
  * type error to notice.
  */
 public interface MemoizerFunction extends UnaryFunction {
+
+    /**
+     * The memoizer of the function's type over the function, or null when its type has none.
+     */
+    static @Nullable MemoizerFunction newInstance(Function function) {
+        return switch (ColumnType.tagOf(function.getType())) {
+            case ColumnType.LONG -> new LongFunctionMemoizer(function);
+            case ColumnType.INT -> new IntFunctionMemoizer(function);
+            case ColumnType.TIMESTAMP -> new TimestampFunctionMemoizer(function);
+            case ColumnType.DOUBLE -> new DoubleFunctionMemoizer(function);
+            case ColumnType.SHORT -> new ShortFunctionMemoizer(function);
+            case ColumnType.BOOLEAN -> new BooleanFunctionMemoizer(function);
+            case ColumnType.BYTE -> new ByteFunctionMemoizer(function);
+            case ColumnType.CHAR -> new CharFunctionMemoizer(function);
+            case ColumnType.DATE -> new DateFunctionMemoizer(function);
+            case ColumnType.FLOAT -> new FloatFunctionMemoizer(function);
+            case ColumnType.IPv4 -> new IPv4FunctionMemoizer(function);
+            case ColumnType.UUID -> new UuidFunctionMemoizer(function);
+            case ColumnType.LONG256 -> new Long256FunctionMemoizer(function);
+            case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32,
+                 ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
+                    new DecimalFunctionMemoizer(function);
+            case ColumnType.ARRAY -> new ArrayFunctionMemoizer(function);
+            case ColumnType.STRING -> new StrFunctionMemoizer(function);
+            case ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE -> new VarcharFunctionMemoizer(function);
+            case ColumnType.SYMBOL -> new SymbolFunctionMemoizer(function);
+            case ColumnType.GEOBYTE, ColumnType.GEOSHORT, ColumnType.GEOINT, ColumnType.GEOLONG ->
+                    new GeoHashFunctionMemoizer(function);
+            case ColumnType.BINARY -> new BinFunctionMemoizer(function);
+            case ColumnType.LONG128 -> new Long128FunctionMemoizer(function);
+            case ColumnType.INTERVAL -> new IntervalFunctionMemoizer(function);
+            default -> null;
+        };
+    }
 
     /**
      * Drops the cached value, so the next getter recomputes it from the record it is handed.

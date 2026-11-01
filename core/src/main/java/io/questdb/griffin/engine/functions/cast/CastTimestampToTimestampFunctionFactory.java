@@ -29,18 +29,41 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
+import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
-public class CastTimestampToTimestampFunctionFactory implements FunctionFactory {
+public class CastTimestampToTimestampFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.castTarget(argTypes);
+    }
 
     @Override
     public String getSignature() {
         return "cast(Nn)";
+    }
+
+    @Override
+    public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
+        return ColumnType.isTimestamp(call.argumentAt(0).getDataType()) ? 0 : -1;
+    }
+
+    @Override
+    public int invertTimestampInterval(FunctionExpression call, Interval io, boolean isTimestampArgMonotonic, ConstantArguments arguments) {
+        return Func.invert(io, call.argumentAt(0).getDataType(), call.argumentAt(1).getDataType());
+    }
+
+    @Override
+    public boolean isIdentity(FunctionExpression call, ConstantArguments arguments) {
+        return call.argumentAt(0).getDataType() == call.argumentAt(1).getDataType();
     }
 
     @Override
@@ -90,9 +113,12 @@ public class CastTimestampToTimestampFunctionFactory implements FunctionFactory 
 
         @Override
         public int invertTimestampInterval(Interval io) {
+            return invert(io, leftTimestampType, getType());
+        }
+
+        static int invert(Interval io, int leftTimestampType, int outType) {
             long lo = io.getLo();
             long hi = io.getHi();
-            final int outType = getType();
             final int soundness;
             if (ColumnType.isTimestampNano(outType) && ColumnType.isTimestampMicro(leftTimestampType)) {
                 // widening micro -> nano is lossless; the bound is resolved at nano precision

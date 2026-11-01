@@ -25,12 +25,14 @@
 package io.questdb.griffin.engine.functions.lt;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.ComparisonFunction;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.std.Chars;
@@ -38,6 +40,11 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class LtStrFunctionFactory implements FunctionFactory {
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
 
     @Override
     public String getSignature() {
@@ -76,7 +83,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
         return new Func(a, b);
     }
 
-    static class ConstOnLeftFunc extends NegatableBooleanFunction implements UnaryFunction {
+    static class ConstOnLeftFunc extends ComparisonFunction implements UnaryFunction {
         private final CharSequence constant;
         private final Function right;
 
@@ -92,11 +99,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Chars.lessThan(
-                    constant,
-                    right.getStrB(rec),
-                    negated
-            );
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -109,7 +112,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val('\'').val(constant).val('\'');
             if (negated) {
                 sink.val(">=");
@@ -118,9 +121,17 @@ public class LtStrFunctionFactory implements FunctionFactory {
             }
             sink.val(right);
         }
+
+        private boolean isMatch(Record rec) {
+            return Chars.lessThan(
+                    constant,
+                    right.getStrB(rec),
+                    negated
+            );
+        }
     }
 
-    static class ConstOnRightFunc extends NegatableBooleanFunction implements UnaryFunction {
+    static class ConstOnRightFunc extends ComparisonFunction implements UnaryFunction {
         private final CharSequence constant;
         private final Function left;
 
@@ -136,11 +147,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Chars.lessThan(
-                    left.getStrB(rec),
-                    constant,
-                    negated
-            );
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -153,7 +160,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(left);
             if (negated) {
                 sink.val(">=");
@@ -162,9 +169,17 @@ public class LtStrFunctionFactory implements FunctionFactory {
             }
             sink.val('\'').val(constant).val('\'');
         }
+
+        private boolean isMatch(Record rec) {
+            return Chars.lessThan(
+                    left.getStrB(rec),
+                    constant,
+                    negated
+            );
+        }
     }
 
-    static class Func extends NegatableBooleanFunction implements BinaryFunction {
+    static class Func extends ComparisonFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
@@ -175,14 +190,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            // important to compare A and B strings in case
-            // these are columns of the same record
-            // records have re-usable character sequences
-            return Chars.lessThan(
-                    left.getStrA(rec),
-                    right.getStrB(rec),
-                    negated
-            );
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -205,7 +213,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(left);
             if (negated) {
                 sink.val(">=");
@@ -213,6 +221,17 @@ public class LtStrFunctionFactory implements FunctionFactory {
                 sink.val('<');
             }
             sink.val(right);
+        }
+
+        private boolean isMatch(Record rec) {
+            // important to compare A and B strings in case
+            // these are columns of the same record
+            // records have re-usable character sequences
+            return Chars.lessThan(
+                    left.getStrA(rec),
+                    right.getStrB(rec),
+                    negated
+            );
         }
     }
 
@@ -229,7 +248,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
      * when the runtime side is also null (QuestDB's {@code NULL = NULL -> true}
      * convention).
      */
-    static final class StrNullSideFunc extends NegatableBooleanFunction implements UnaryFunction {
+    static final class StrNullSideFunc extends ComparisonFunction implements UnaryFunction {
         private final Function arg;
         private final boolean nullOnLeft;
 
@@ -245,7 +264,7 @@ public class LtStrFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return negated && arg.getStrA(rec) == null;
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -258,12 +277,16 @@ public class LtStrFunctionFactory implements FunctionFactory {
         // sets nullOnLeft=true and negated=true, so EXPLAIN reads `null >= s`.
         // The expression is mathematically equivalent.
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             if (nullOnLeft) {
                 sink.val("null").val(getName()).val(arg);
             } else {
                 sink.val(arg).val(getName()).val("null");
             }
+        }
+
+        private boolean isMatch(Record rec) {
+            return negated && arg.getStrA(rec) == null;
         }
     }
 }

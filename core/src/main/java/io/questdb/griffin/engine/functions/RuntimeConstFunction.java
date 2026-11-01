@@ -25,12 +25,15 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.griffin.plan.logical.BoundExpression;
 
 /**
  * Wraps a runtime-constant subtree of a fixed-width scalar type, evaluates it once per cursor in
@@ -47,12 +50,28 @@ import io.questdb.griffin.SqlExecutionContext;
  * function of that type would return. A flat hand-rolled getter table would have to reproduce all
  * of that by hand, which is exactly where a wrong-field read can sneak in.
  * <p>
+ * {@link #wrapTemporalText(Function, int)} reuses the TIMESTAMP and DATE wrappers for runtime-constant text that a
+ * TIMESTAMP or DATE parameter receives, so the text parses once per cursor; {@link #wrapTimestampText} wraps the
+ * text a comparison reads at the precision of its TIMESTAMP operand.
+ * <p>
  * Every subclass is read-only after init(), so it inherits the argument's thread-safety
  * ({@link UnaryFunction#isThreadSafe()}) and a single instance serves every parallel worker.
  * <p>
  * Transparent in plans ({@link #toPlan(PlanSink)} delegates to the argument).
  */
 public interface RuntimeConstFunction extends UnaryFunction {
+
+    /**
+     * True if the function computes its value from the argument functions it holds, as a unary, binary, ternary,
+     * quaternary or multi-argument function.
+     */
+    static boolean isComposite(Function function) {
+        return function instanceof UnaryFunction
+                || function instanceof BinaryFunction
+                || function instanceof TernaryFunction
+                || function instanceof QuaternaryFunction
+                || function instanceof MultiArgFunction;
+    }
 
     /**
      * True if the function is worth folding: runtime constant (but not compile-time constant), of a
@@ -62,13 +81,16 @@ public interface RuntimeConstFunction extends UnaryFunction {
     static boolean isFoldable(Function function) {
         // O(1) gates first; the two recursive predicates (isConstant/isRuntimeConstant walk the whole
         // arg subtree) run last, so a non-composite or non-foldable-type arg never pays for them.
-        return function != null
-                && function.extendedOps() == null
-                && !(function instanceof RuntimeConstFunction)
-                && isComposite(function)
-                && isFoldableType(function.getType())
-                && !function.isConstant()
-                && function.isRuntimeConstant();
+        return isFoldableShape(function) && !function.isConstant() && function.isRuntimeConstant();
+    }
+
+    /**
+     * True if the function is worth folding as {@link #isFoldable(Function)} decides, reading its constness from
+     * {@code functionFlags}, the {@link BoundExpression} flags it was built from.
+     */
+    static boolean isFoldable(Function function, int functionFlags) {
+        return (functionFlags & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) == BoundExpression.RUNTIME_CONSTANT
+                && isFoldableShape(function);
     }
 
     static boolean isFoldableType(int type) {
@@ -138,6 +160,31 @@ public interface RuntimeConstFunction extends UnaryFunction {
         }
     }
 
+    /**
+     * Wraps {@code arg} when it is runtime-constant text that a parameter reads as {@code temporalType}, TIMESTAMP or
+     * DATE, so the text parses once per cursor rather than on every row; returns any other argument as is. Unlike
+     * {@link #isFoldable(Function)}, this wraps a leaf too: a text bind variable caches its text, not the value it
+     * parses to.
+     */
+    static Function wrapTemporalText(Function arg, int temporalType) {
+        if (!ColumnType.isVarcharOrString(arg.getType()) || !arg.isRuntimeConstant()) {
+            return arg;
+        }
+        return temporalType == ColumnType.DATE ? new DateRuntimeConstFunction(arg) : new TimestampRuntimeConstFunction(arg);
+    }
+
+    /**
+     * Wraps runtime-constant text that a comparison reads as a TIMESTAMP of {@code operandType}, the type of the
+     * compared operand, see {@link TimestampTextRuntimeConstFunction}.
+     *
+     * @param position the position of the text, where a conversion error points
+     * @param isCeil   whether {@link TimestampTextRuntimeConstFunction#getTimestamp} serves the first operand value not
+     *                 before the text, as a bound the operand must reach does, rather than the last one not after it
+     */
+    static TimestampTextRuntimeConstFunction wrapTimestampText(Function arg, int operandType, int position, boolean isCeil) {
+        return new TimestampTextRuntimeConstFunction(arg, operandType, position, isCeil);
+    }
+
     // Correctness hinges on this gate: only a composite foldable-type function is ever wrapped, and the
     // wrapper trusts that function's isRuntimeConstant() report - it freezes the value at init() and
     // serves it per row. A composite function that read per-row data while reporting runtime constant
@@ -145,12 +192,12 @@ public interface RuntimeConstFunction extends UnaryFunction {
     // functions (e.g. arithmetic over a column) correctly report isRuntimeConstant()==false. Trivial
     // runtime-constant leaves (bind variables, now()) are deliberately excluded by the composite check:
     // they already cache their value, so wrapping them would only add an indirection.
-    private static boolean isComposite(Function function) {
-        return function instanceof UnaryFunction
-                || function instanceof BinaryFunction
-                || function instanceof TernaryFunction
-                || function instanceof QuaternaryFunction
-                || function instanceof MultiArgFunction;
+    private static boolean isFoldableShape(Function function) {
+        return function != null
+                && function.extendedOps() == null
+                && !(function instanceof RuntimeConstFunction)
+                && isComposite(function)
+                && isFoldableType(function.getType());
     }
 
     @Override
@@ -538,7 +585,7 @@ public interface RuntimeConstFunction extends UnaryFunction {
         private long value;
 
         TimestampRuntimeConstFunction(Function arg) {
-            super(arg.getType());
+            super(ColumnType.getTimestampType(arg.getType()));
             this.arg = arg;
         }
 
@@ -556,6 +603,79 @@ public interface RuntimeConstFunction extends UnaryFunction {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             arg.init(symbolTableSource, executionContext);
             value = arg.getTimestamp(null);
+        }
+    }
+
+    /**
+     * Text a comparison reads as a TIMESTAMP of its operand's type. Each cursor converts the text once, as
+     * {@code FunctionBinder} converts the same text written as a literal in that comparison: at the precision the
+     * text spells ({@link IntervalUtils#parseTimestampText(TimestampDriver, int, CharSequence, int, int)}), which may be
+     * finer than the operand's, then to the operand's precision, rounded up ({@link #getCeil()}) or down
+     * ({@link #getFloor()}). A value of the operand's type therefore never fails for lying outside another
+     * precision's range. Text that spells no timestamp fails with {@code inconvertible value} at the text's position,
+     * naming the operand's type.
+     */
+    final class TimestampTextRuntimeConstFunction extends TimestampFunction implements RuntimeConstFunction {
+        private final Function arg;
+        private final TimestampDriver driver;
+        private final boolean isCeil;
+        private final int position;
+        private long ceil;
+        private long floor;
+        private long value;
+        private int valueType;
+
+        TimestampTextRuntimeConstFunction(Function arg, int operandType, int position, boolean isCeil) {
+            super(operandType);
+            this.arg = arg;
+            this.driver = ColumnType.getTimestampDriver(operandType);
+            this.position = position;
+            this.isCeil = isCeil;
+        }
+
+        @Override
+        public Function getArg() {
+            return arg;
+        }
+
+        /**
+         * The first value of the operand's type that is not before the text; NULL for NULL text.
+         */
+        public long getCeil() {
+            return ceil;
+        }
+
+        /**
+         * The last value of the operand's type that is not after the text; NULL for NULL text.
+         */
+        public long getFloor() {
+            return floor;
+        }
+
+        @Override
+        public long getTimestamp(Record rec) {
+            return isCeil ? ceil : floor;
+        }
+
+        /**
+         * The text's value at the precision it spells, {@link #getValueType()}.
+         */
+        public long getValue() {
+            return value;
+        }
+
+        public int getValueType() {
+            return valueType;
+        }
+
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            arg.init(symbolTableSource, executionContext);
+            final CharSequence text = arg.getStrA(null);
+            valueType = IntervalUtils.timestampTextType(driver, text);
+            value = IntervalUtils.parseTimestampText(driver, valueType, text, arg.getType(), position);
+            ceil = driver.ceilFrom(value, valueType);
+            floor = driver.floorFrom(value, valueType);
         }
     }
 

@@ -27,11 +27,7 @@ package io.questdb.test.griffin.engine.join;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.SqlOptimiser;
 import io.questdb.griffin.engine.functions.test.TestTimestampCounterFactory;
-import io.questdb.griffin.model.QueryColumn;
-import io.questdb.griffin.model.QueryModel;
-import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -43,11 +39,91 @@ import org.junit.Test;
 public class LateralJoinTest extends AbstractCairoTest {
 
     @Test
+    public void testCrossJoinLateralBooleanPredicateErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, flag BOOLEAN)");
+            execute("CREATE TABLE t (v INT)");
+            String sql = "SELECT o.id FROM o CROSS JOIN LATERAL (SELECT v FROM t WHERE %s) d";
+            String invalidAlias = sql.formatted("missing.flag");
+            assertException(invalidAlias, invalidAlias.indexOf("missing.flag"), "Invalid table name or alias");
+            String invalidColumn = sql.formatted("missing");
+            assertException(invalidColumn, invalidColumn.indexOf("missing"), "Invalid column: missing");
+            String localColumn = sql.formatted("t.v");
+            assertException(localColumn, localColumn.lastIndexOf("t.v"), "boolean expression expected");
+            String qualifiedOuterColumn = sql.formatted("o.id");
+            assertException(qualifiedOuterColumn, qualifiedOuterColumn.lastIndexOf("o.id"), "boolean expression expected");
+            String outerColumn = sql.formatted("id");
+            assertException(outerColumn, outerColumn.lastIndexOf("id"), "boolean expression expected");
+        });
+    }
+
+    @Test
+    public void testCrossJoinLateralBooleanPredicateLocalShadow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, flag BOOLEAN)");
+            execute("INSERT INTO o VALUES (1, true), (2, false)");
+            execute("CREATE TABLE t (v INT, flag BOOLEAN)");
+            execute("INSERT INTO t VALUES (10, false), (20, true)");
+            ObjList<String> predicates = new ObjList<>("flag", "t.flag");
+            for (int i = 0; i < predicates.size(); i++) {
+                assertQuery("SELECT o.id, d.v FROM o CROSS JOIN LATERAL (SELECT v FROM t WHERE "
+                        + predicates.getQuick(i) + ") d ORDER BY o.id, d.v")
+                        .noLeakCheck()
+                        .returns("""
+                                id\tv
+                                1\t20
+                                2\t20
+                                """);
+            }
+            execute("CREATE TABLE numbers (v INT, flag INT)");
+            String sql = "SELECT o.id FROM o CROSS JOIN LATERAL (SELECT v FROM numbers WHERE flag) d";
+            assertException(sql, sql.indexOf("flag"), "boolean expression expected");
+        });
+    }
+
+    @Test
+    public void testCrossJoinLateralOuterBooleanPredicate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, flag BOOLEAN)");
+            execute("INSERT INTO o VALUES (1, true), (2, false)");
+            execute("CREATE TABLE t (v INT)");
+            execute("INSERT INTO t VALUES (10), (20)");
+            ObjList<String> predicates = new ObjList<>("o.flag = true", "o.flag", "flag", "(o.flag)");
+            for (int i = 0; i < predicates.size(); i++) {
+                assertQuery("SELECT o.id, d.val FROM o CROSS JOIN LATERAL (SELECT v AS val FROM t WHERE "
+                        + predicates.getQuick(i) + ") d ORDER BY o.id, d.val")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\tval
+                                1\t10
+                                1\t20
+                                """);
+            }
+            assertQuery("SELECT o.id, d.val FROM o CROSS JOIN LATERAL (SELECT v AS val FROM t WHERE NOT o.flag) d ORDER BY o.id, d.val")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tval
+                            2\t10
+                            2\t20
+                            """);
+            assertQuery("SELECT o.id, d.val FROM o LEFT JOIN LATERAL (SELECT v AS val FROM t WHERE o.flag) d ON true ORDER BY o.id, d.val")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tval
+                            1\t10
+                            1\t20
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testCrossJoinLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -86,6 +162,84 @@ public class LateralJoinTest extends AbstractCairoTest {
                 "k\tm\n1\t20\n2\t30\n",
                 "k\tm\n"
         ));
+    }
+
+    @Test
+    public void testCrossLateralScalarCountWrapperNegatedFilterKeepsPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            createT0("(1), (2)");
+            createT2("(1), (1)");
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    CROSS JOIN LATERAL (
+                        SELECT cnt
+                        FROM (SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a) counted
+                        WHERE NOT (cnt < 1)
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [a]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: l1.__qdb_outer_ref__0_a=t0.a
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t0
+                                        Hash
+                                            SelectedRecord
+                                                Filter filter: not (cnt<1)
+                                                    GroupBy vectorized: true workers: 1
+                                                      keys: [x]
+                                                      values: [count(*)]
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: t2
+                            """)
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            """);
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    CROSS JOIN LATERAL (
+                        SELECT cnt
+                        FROM (SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a) counted
+                        WHERE NOT (cnt < 0)
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [a]
+                                VirtualRecord
+                                  functions: [t0.a,coalesce(l1.cnt,0)]
+                                    Hash Left Outer Join Light
+                                      condition: l1.__qdb_outer_ref__0_a=t0.a
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t0
+                                        Hash
+                                            SelectedRecord
+                                                Filter filter: not (cnt<0)
+                                                    GroupBy vectorized: true workers: 1
+                                                      keys: [x]
+                                                      values: [count(*)]
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: t2
+                            """)
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
     }
 
     @Test
@@ -266,6 +420,367 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEliminateOuterRefLiftSelectAliasMatchesWindowSpelling() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, sym SYMBOL, a INT, b INT)");
+            execute("INSERT INTO o VALUES (1, 'x', 100, 1000), (2, 'y', 200, 2000), (3, 'z', 300, 3000)");
+            execute("CREATE TABLE t (sym SYMBOL, v INT)");
+            execute("INSERT INTO t VALUES ('x', 1), ('x', 2), ('y', 3)");
+
+            final String expected = """
+                    id\tv\ta\tc
+                    1\t1\t101\t111
+                    1\t2\t101\t111
+                    2\t3\t201\t211
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, a + 1 AS a, a + 10 AS c FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, l.v, l.a, l.c
+                    FROM o, LATERAL (SELECT v, a + 1 AS a, a + 10 AS c, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym) l
+                    ORDER BY o.id, l.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, l.v, l.a, l.c
+                    FROM o, LATERAL (SELECT v, a + 1 AS a, a + 10 AS c, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym ORDER BY c) l
+                    ORDER BY o.id, l.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+
+            final String expectedLeft = """
+                    id\tv\ta\tc
+                    1\t1\t101\t111
+                    1\t2\t101\t111
+                    2\t3\t201\t211
+                    3\tnull\tnull\tnull
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o LEFT JOIN LATERAL (SELECT v, a + 1 AS a, a + 10 AS c FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .returns(expectedLeft);
+            assertQuery("""
+                    SELECT o.id, l.v, l.a, l.c
+                    FROM o LEFT JOIN LATERAL (SELECT v, a + 1 AS a, a + 10 AS c, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym) l
+                    ORDER BY o.id, l.v
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedLeft);
+
+            final String expectedCast = """
+                    id\tv\ta\tc
+                    1\t1\t100\t110
+                    1\t2\t100\t110
+                    2\t3\t200\t210
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, a::LONG AS a, a + 10 AS c FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedCast);
+            assertQuery("""
+                    SELECT o.id, l.v, l.a, l.c
+                    FROM o, LATERAL (SELECT v, a::LONG AS a, a + 10 AS c, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym) l
+                    ORDER BY o.id, l.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedCast);
+
+            final String expectedChain = """
+                    id\tv\ta\tb\tc
+                    1\t1\t101\t102\t103
+                    1\t2\t101\t102\t103
+                    2\t3\t201\t202\t203
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, a + 1 AS a, a + 1 AS b, b + 1 AS c FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedChain);
+            assertQuery("""
+                    SELECT o.id, l.v, l.a, l.b, l.c
+                    FROM o, LATERAL (SELECT v, a + 1 AS a, a + 1 AS b, b + 1 AS c, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym) l
+                    ORDER BY o.id, l.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedChain);
+
+            final String expectedSameColumn = """
+                    id\tv\tc\tb
+                    1\t1\t1001\t1000
+                    1\t2\t1001\t1000
+                    2\t3\t2001\t2000
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b + 1 AS c, b FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedSameColumn);
+            assertQuery("""
+                    SELECT o.id, l.v, l.c, l.b
+                    FROM o, LATERAL (SELECT v, b + 1 AS c, b, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym) l
+                    ORDER BY o.id, l.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedSameColumn);
+        });
+    }
+
+    @Test
+    public void testEliminateOuterRefLiftSelectAliasReadBySibling() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, sym SYMBOL, a INT, b INT)");
+            execute("INSERT INTO o VALUES (1, 'x', 100, 1000), (2, 'y', 200, 2000), (3, 'z', 300, 3000)");
+            execute("CREATE TABLE t (sym SYMBOL, v INT)");
+            execute("INSERT INTO t VALUES ('x', 1), ('x', 2), ('y', 3)");
+
+            final String expected = """
+                    id\tv\ta\tc
+                    1\t1\t101\t111
+                    1\t2\t101\t111
+                    2\t3\t201\t211
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, a + 1 AS a, a + 10 AS c FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, o.a + 1 AS a, o.a + 11 AS c FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o CROSS JOIN LATERAL (SELECT v, a + 1 AS a, a + 10 AS c FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, a + 1 AS a, a + 10 AS c FROM t WHERE t.sym = o.sym ORDER BY c) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b + 0 AS x, x + 0 AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\tx\ty
+                            1\t1\t1000\t1000
+                            1\t2\t1000\t1000
+                            2\t3\t2000\t2000
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, a + 1 AS a FROM t WHERE t.sym = o.sym AND a > 150) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\ta
+                            2\t3\t201
+                            """);
+        });
+    }
+
+    @Test
+    public void testEliminateOuterRefLiftSelectAliasSwapFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, sym SYMBOL, a INT, b INT)");
+            execute("INSERT INTO o VALUES (1, 'x', 100, 1000), (2, 'y', 200, 2000), (3, 'z', 300, 3000)");
+            execute("CREATE TABLE t (sym SYMBOL, v INT)");
+            execute("INSERT INTO t VALUES ('x', 1), ('x', 2), ('y', 3)");
+
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b AS a, a AS b FROM t WHERE t.sym = o.sym) l")
+                    .fails(44, "Invalid column: b");
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b AS a, a AS b, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym) l")
+                    .fails(44, "Invalid column: b");
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b + 0 AS a, a + 0 AS b FROM t WHERE t.sym = o.sym) l")
+                    .fails(44, "Invalid column: b");
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b + 0 AS a, a + 0 AS b, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym) l")
+                    .fails(44, "Invalid column: b");
+            assertQuery("SELECT o.id, l.* FROM o LEFT JOIN LATERAL (SELECT v, b AS a, a AS b FROM t WHERE t.sym = o.sym) l")
+                    .fails(53, "Invalid column: b");
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT * FROM (SELECT v, b AS a, a AS b FROM t WHERE t.sym = o.sym) WHERE b > 1500) l")
+                    .fails(59, "Invalid column: b");
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b + 1 AS c, v * 2 AS b FROM t WHERE t.sym = o.sym) l")
+                    .fails(44, "Invalid column: b");
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b + 1 AS c, v AS b FROM t WHERE t.sym = o.sym) l")
+                    .fails(44, "Invalid column: b");
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b + 1 AS c, o.b AS b FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\tc\tb
+                            1\t1\t1001\t1000
+                            1\t2\t1001\t1000
+                            2\t3\t2001\t2000
+                            """);
+        });
+    }
+
+    @Test
+    public void testEliminateOuterRefLiftSelectPlainAliasReadBySibling() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, sym SYMBOL, a INT, b INT)");
+            execute("INSERT INTO o VALUES (1, 'x', 100, 1000), (2, 'y', 200, 2000), (3, 'z', 300, 3000)");
+            execute("CREATE TABLE t (sym SYMBOL, v INT)");
+            execute("INSERT INTO t VALUES ('x', 1), ('x', 2), ('y', 3)");
+
+            final String expected = """
+                    id\tv\tx\ty
+                    1\t1\t1000\t1000
+                    1\t2\t1000\t1000
+                    2\t3\t2000\t2000
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b AS x, x AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b AS x, b AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b::LONG AS x, x AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b AS x, x AS y, y AS z FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\tx\ty\tz
+                            1\t1\t1000\t1000\t1000
+                            1\t2\t1000\t1000\t1000
+                            2\t3\t2000\t2000\t2000
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o LEFT JOIN LATERAL (SELECT v, b AS x, x AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\tx\ty
+                            1\t1\t1000\t1000
+                            1\t2\t1000\t1000
+                            2\t3\t2000\t2000
+                            3\tnull\tnull\tnull
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT * FROM (SELECT v, b AS x, x AS y FROM t WHERE t.sym = o.sym) WHERE y > 1500) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\tx\ty
+                            2\t3\t2000\t2000
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.*, m.w
+                    FROM o, LATERAL (SELECT v, b AS x, x AS y FROM t WHERE t.sym = o.sym) l, LATERAL (SELECT l.y + v AS w FROM t WHERE t.v = l.v) m
+                    ORDER BY o.id, l.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\tx\ty\tw
+                            1\t1\t1000\t1000\t1001
+                            1\t2\t1000\t1000\t1002
+                            2\t3\t2000\t2000\t2003
+                            """);
+        });
+    }
+
+    @Test
+    public void testEliminateOuterRefLiftedColumnReadInBody() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, sym SYMBOL, a INT, b INT)");
+            execute("INSERT INTO o VALUES (1, 'x', 100, 1000), (2, 'y', 200, 2000), (3, 'z', 300, 3000)");
+            execute("CREATE TABLE t (sym SYMBOL, v INT)");
+            execute("INSERT INTO t VALUES ('x', 1), ('x', 2), ('y', 3)");
+            execute("CREATE TABLE u (v INT, a INT)");
+            execute("INSERT INTO u VALUES (1, 150), (2, 250)");
+
+            final String expected = """
+                    id\tv\tx
+                    1\t1\t101
+                    1\t2\t102
+                    2\t3\t203
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, a + v AS x FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, a + v AS x FROM t WHERE t.sym = o.sym ORDER BY x DESC) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT * FROM (SELECT v, a + v AS x FROM t WHERE t.sym = o.sym) WHERE x > 150) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\tx
+                            2\t3\t203
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT a + v AS x, count() n FROM t WHERE t.sym = o.sym GROUP BY x) l ORDER BY o.id, l.x")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tx\tn
+                            1\t101\t1
+                            1\t102\t1
+                            2\t203\t1
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, v * 2 AS x, x + a AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\tx\ty
+                            1\t1\t2\t102
+                            1\t2\t4\t104
+                            2\t3\t6\t206
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, b AS x, x + a AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\tx\ty
+                            1\t1\t1000\t1100
+                            1\t2\t1000\t1100
+                            2\t3\t2000\t2200
+                            """);
+
+            final String expectedChained = """
+                    id\tx\tw
+                    1\t101\t102
+                    1\t102\t104
+                    2\t203\t206
+                    """;
+            assertQuery("""
+                    SELECT o.id, l.x, m.w
+                    FROM o, LATERAL (SELECT v, a + v AS x FROM t WHERE t.sym = o.sym) l, LATERAL (SELECT l.x + v AS w FROM t WHERE t.v = l.v) m
+                    ORDER BY o.id, l.x
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedChained);
+            assertQuery("""
+                    SELECT o.id, l.x, l.x + l.v AS w
+                    FROM o, LATERAL (SELECT v, a + v AS x FROM t WHERE t.sym = o.sym) l
+                    ORDER BY o.id, l.x
+                    """)
+                    .noLeakCheck()
+                    .returns(expectedChained);
+            assertQuery("""
+                    SELECT o.id, l.x, m.w
+                    FROM o LEFT JOIN LATERAL (SELECT v, a + v AS x FROM t WHERE t.sym = o.sym) l LEFT JOIN LATERAL (SELECT l.x + v AS w FROM t WHERE t.v = l.v) m
+                    ORDER BY o.id, l.x
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tx\tw
+                            1\t101\t102
+                            1\t102\t104
+                            2\t203\t206
+                            3\tnull\tnull
+                            """);
+            assertQuery("""
+                    SELECT o.id, l.x, m.v
+                    FROM o, LATERAL (SELECT v, a + v AS x FROM t WHERE t.sym = o.sym) l, LATERAL (SELECT v FROM u WHERE u.a < l.x) m
+                    ORDER BY o.id, l.x, m.v
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tx\tv
+                            2\t203\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testEliminateOuterRefNoExtraColumns() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (a INT, b INT, threshold INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -345,20 +860,6 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGeneratedColumnWildcardMetadataLifecycle() {
-        QueryColumn column = new QueryColumn().of("generated", null);
-        Assert.assertFalse(column.isGenerated());
-
-        column.setGenerated(true);
-        column.of("renamed", null);
-        Assert.assertTrue(column.isGenerated());
-
-        column.clear();
-        Assert.assertFalse(column.isGenerated());
-        Assert.assertTrue(column.isIncludeIntoWildcard());
-    }
-
-    @Test
     public void testInnerLateralPlainScalarAggregateRuntimeLimitDropsRows() throws Exception {
         assertMemoryLeak(() -> assertPlainScalarAggregateRuntimeLimit(
                 """
@@ -380,10 +881,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarAggregateJoinBranchOnRejectsRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
+            createT0("(1), (2)");
+            createT1("(1), (2)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 10)");
 
@@ -414,12 +913,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarCountDistinctJoinBranchOnRejectsRowNonPerSide() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1), (2)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.v
@@ -448,12 +944,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarCountDistinctJoinBranchOnRejectsRowPerSide() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1), (2)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.v
@@ -482,12 +975,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarCountJoinBranchOnRejectsRowKeepsBareCount() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1), (2)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.v
@@ -508,7 +998,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .returns("""
                             a\tk\tv
                             1\t1\t1
-                            2\t2\t0
+                            2\tnull\tnull
                             """);
 
             assertQuery("""
@@ -533,7 +1023,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .returns("""
                             a\tk\tv
                             1\t1\t1
-                            2\t2\t0
+                            2\tnull\tnull
                             """);
 
             assertQuery("""
@@ -555,8 +1045,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             a\tk\tv
                             1\t1\t1
                             1\t2\t1
-                            2\t1\t0
-                            2\t2\t0
+                            2\tnull\tnull
                             """);
         });
     }
@@ -564,12 +1053,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarCountJoinBranchOnRejectsRowNonPerSide() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1), (2)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.v
@@ -598,12 +1084,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarCountJoinBranchOnRejectsRowPerSide() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1), (2)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.v
@@ -632,12 +1115,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarCountJoinBranchTrivialOnDoesNotRetainFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1), (2)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.v
@@ -657,7 +1137,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .withPlanContaining(
                             "Hash Left Outer Join Light",
-                            "condition: l2.__qdb_outer_ref__1_a=t1.k"
+                            "condition: __qdb_outer_ref__0_a=__qdb_outer_ref__0_a"
                     )
                     .withPlanNotContaining("filter: true")
                     .returns("""
@@ -683,7 +1163,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .withPlanContaining(
                             "Hash Left Outer Join Light",
-                            "condition: l2.__qdb_outer_ref__2_a=__qdb_count_driver__1.__qdb_count_driver__1_a"
+                            "condition: __qdb_outer_ref__0_a=__qdb_outer_ref__0_a"
                     )
                     .withPlanNotContaining("filter: true")
                     .returns("""
@@ -697,10 +1177,176 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInnerLateralScalarAggregateConstantTrueOnKeepsEmptyRow() throws Exception {
+        assertMemoryLeak(() -> {
+            createT1("(1), (2)");
+            execute("CREATE TABLE t2 (k INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 10), (1, 20)");
+
+            final String expected = """
+                    k\ts
+                    1\t30
+                    2\tnull
+                    """;
+            assertQuery("SELECT t1.k, l.s FROM t1 JOIN LATERAL (SELECT sum(v) AS s FROM t2 WHERE t2.k = t1.k) l ON 1 = 1 ORDER BY t1.k")
+                    .noLeakCheck()
+                    .withPlanContaining("Hash Left Outer Join Light")
+                    .returns(expected);
+            assertQuery("SELECT t1.k, l.s FROM t1 JOIN LATERAL (SELECT sum(v) AS s FROM t2 WHERE t2.k = t1.k) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testInnerLateralSameTypeCastOfOuterColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k LONG)");
+            execute("INSERT INTO o VALUES (1), (2), (3)");
+            assertQuery("SELECT o.k, x.c FROM o CROSS JOIN LATERAL (SELECT CAST(o.k AS LONG) c FROM long_sequence(2)) x ORDER BY o.k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tc
+                            1\t1
+                            1\t1
+                            2\t2
+                            2\t2
+                            3\t3
+                            3\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerLateralScalarPivotKeepsEmptyRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT)");
+            execute("INSERT INTO orders VALUES (1), (2)");
+            execute("CREATE TABLE trades (order_id INT, side SYMBOL, qty DOUBLE)");
+            execute("INSERT INTO trades VALUES (1, 'buy', 10.0), (1, 'sell', 20.0)");
+
+            assertQuery("SELECT * FROM (SELECT side, sum(qty) AS total FROM trades WHERE order_id = 2 GROUP BY side) PIVOT (sum(total) FOR side IN ('buy', 'sell'))")
+                    .expectSize()
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            buy\tsell
+                            null\tnull
+                            """);
+            assertQuery("""
+                    SELECT o.id, t.buy, t.sell
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT * FROM (
+                            SELECT side, sum(qty) AS total
+                            FROM trades
+                            WHERE order_id = o.id
+                            GROUP BY side
+                        ) PIVOT (sum(total) FOR side IN ('buy', 'sell'))
+                    ) t
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tbuy\tsell
+                            1\t10.0\t20.0
+                            2\tnull\tnull
+                            """);
+        });
+    }
+
+    // An ON condition reading the scalar body applies to the values the body takes over no rows (0 for a count,
+    // NULL for a sum, which equals a NULL outer value) unless it drops that row, when the join stays INNER.
+    @Test
+    public void testInnerLateralScalarCountOnReadsRestoredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n LONG, i INT, x LONG)");
+            execute("""
+                    INSERT INTO t1 VALUES
+                    (1, 2, 2, 21), (1, 0, 0, NULL), (2, 1, 1, 20), (3, 0, 0, NULL), (3, 1, 1, 1), (NULL, 1, 1, NULL), (4, 0, 0, 5)
+                    """);
+            execute("CREATE TABLE t2 (k INT, v LONG)");
+            execute("INSERT INTO t2 VALUES (1, 10), (1, 11), (2, 20), (NULL, 7), (0, 1)");
+
+            final String matchingCounts = """
+                    k\tn\tc
+                    null\t1\t1
+                    1\t2\t2
+                    2\t1\t1
+                    3\t0\t0
+                    4\t0\t0
+                    """;
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k) l ON l.c = t1.n ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns(matchingCounts);
+            assertQuery("SELECT t1.k, t1.i n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k) l ON l.c = t1.i::LONG ORDER BY t1.k, t1.i")
+                    .noLeakCheck()
+                    .returns(matchingCounts);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k) l ON l.c = t1.n AND t1.n < 2 ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tn\tc
+                            null\t1\t1
+                            2\t1\t1
+                            3\t0\t0
+                            4\t0\t0
+                            """);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k) l ON l.c = t1.n ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tn\tc
+                            null\t1\t1
+                            1\t0\tnull
+                            1\t2\t2
+                            2\t1\t1
+                            3\t0\t0
+                            3\t1\tnull
+                            4\t0\t0
+                            """);
+            assertQuery("SELECT t1.k, t1.x, l.s FROM t1 JOIN LATERAL (SELECT sum(v) s FROM t2 WHERE t2.k = t1.k) l ON l.s = t1.x ORDER BY t1.k, t1.x")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx\ts
+                            1\t21\t21
+                            2\t20\t20
+                            3\tnull\tnull
+                            """);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k) l ON l.c > 0")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: l.__qdb_outer_ref__0_k=t1.k
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t1
+                                    Hash
+                                        SelectedRecord
+                                            Filter filter: 0<c
+                                                GroupBy vectorized: true workers: 1
+                                                  keys: [k]
+                                                  values: [count(*)]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                            """);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k) l ON l.c > 0 ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tn\tc
+                            null\t1\t1
+                            1\t0\t2
+                            1\t2\t2
+                            2\t1\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testInnerLateralScalarCountOnRejectsRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
+            createT1("(1), (2)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1)");
 
@@ -725,8 +1371,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testInnerLateralScalarCountRuntimeLimitDropsRows() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
+            createT1("(1), (2)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1)");
 
@@ -1076,12 +1721,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralChainLimitPerSideShapePerOuterRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t0 (k INT, x INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (1, 11), (1, 12), (2, 20)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             // a global LIMIT 2 would keep two rows TOTAL; per outer row it keeps
             // two rows for k=1, one for k=2, and LEFT preserves k=3
@@ -1113,59 +1756,1347 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // Chain LIMITs on the per-side-eligible shape follow the general-path
-    // contracts: provably negative values and outer-column references over a
-    // scalar count are rejected, for LEFT and INNER laterals alike.
+    // Chain LIMITs on the per-side-eligible shape follow the general-path contracts:
+    // a negative constant LIMIT and an outer-column LIMIT over a scalar count apply per
+    // outer row, for LEFT and INNER laterals alike.
     @Test
-    public void testLateralChainLimitPerSideShapeRejections() throws Exception {
+    public void testLateralChainLimitPerSideShape() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (k INT, n INT)");
             execute("INSERT INTO t1 VALUES (1, 1), (2, 1), (3, 1)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
-            String negativeLeft = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
-                    + " LIMIT -1) l ON true";
-            assertException(negativeLeft, negativeLeft.indexOf("-1"),
-                    "negative LIMIT is not supported in a correlated lateral sub-query");
-
-            String negativeInner = "SELECT t1.k, l.x FROM t1 JOIN LATERAL "
-                    + "(SELECT t2.k x FROM t2 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
-                    + " LIMIT -1) l ON true";
-            assertException(negativeInner, negativeInner.indexOf("-1"),
-                    "negative LIMIT is not supported in a correlated lateral sub-query");
-
-            String outerColumn = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT count() c FROM t2 "
-                    + " JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k "
-                    + " LIMIT t1.n) l ON true";
-            assertException(outerColumn, outerColumn.indexOf("t1.n"),
-                    "LIMIT referencing an outer column is not supported over a scalar count");
+            final String counts = """
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """;
+            assertQuery("""
+                    SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL (
+                        SELECT count() c FROM t2
+                        JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k
+                        LIMIT -1
+                    ) l ON true ORDER BY t1.k
+                    """)
+                    .noLeakCheck()
+                    .returns(counts);
+            assertQuery("""
+                    SELECT t1.k, l.x FROM t1 JOIN LATERAL (
+                        SELECT t2.k x FROM t2
+                        JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k
+                        LIMIT -1
+                    ) l ON true ORDER BY t1.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx
+                            1\t1
+                            2\t2
+                            """);
+            assertQuery("""
+                    SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL (
+                        SELECT count() c FROM t2
+                        JOIN (SELECT k FROM t3 WHERE t3.k = t1.k) s ON s.k = t2.k
+                        LIMIT t1.n
+                    ) l ON true ORDER BY t1.k
+                    """)
+                    .noLeakCheck()
+                    .returns(counts);
         });
     }
 
-    // Exercises the model-replacement flag transfer directly via a @TestOnly accessor.
-    // The same regression is also covered black-box by the LATERAL-count assertQuery
-    // tests; this pins the unit-level contract of replaceAndTransferDependents.
+    // The LIMIT reads o.k through the inner key it equals, also for the t2 rows with k = 0 that no outer row has,
+    // where o.k - 1 would be negative; the step rejects a negative LIMIT per outer row only.
     @Test
-    public void testLateralCountModelReplacementLifecycle() {
-        QueryModel oldModel = QueryModel.FACTORY.newInstance();
-        QueryModel newModel = QueryModel.FACTORY.newInstance();
-        oldModel.setLateralCountCoalesceRequired(true);
-        QueryColumn template = new QueryColumn().of("cnt", null);
-        oldModel.addLateralCountTemplate(template);
+    public void testLateralExceptIntersectOverDifferentOuterColumnTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            createSetOperationTables();
+            final String equality = """
+                    SELECT id, s FROM ol o, LATERAL (
+                        SELECT s FROM a WHERE a.x = o.k
+                        %s
+                        SELECT s FROM b WHERE b.y = o.id
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(equality.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tq
+                            3\tr
+                            """);
+            assertQuery(equality.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            1\tp
+                            3\tp
+                            3\tq
+                            """);
+            assertQuery(equality.formatted("UNION"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            2\tq
+                            2\tr
+                            3\tp
+                            3\tq
+                            3\tr
+                            """);
+            final String nonEquality = """
+                    SELECT id, s, x FROM ol o, LATERAL (
+                        SELECT s, x FROM a WHERE a.x <= o.k
+                        %s
+                        SELECT s, y::INT FROM b WHERE b.y <= o.id
+                    ) ORDER BY id, s, x
+                    """;
+            assertQuery(nonEquality.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts\tx
+                            2\tq\t2
+                            3\tq\t2
+                            3\tr\t3
+                            """);
+            assertQuery(nonEquality.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts\tx
+                            1\tp\t1
+                            2\tp\t1
+                            3\tp\t1
+                            3\tp\t3
+                            3\tq\t3
+                            """);
+            assertQuery(nonEquality.formatted("UNION ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts\tx
+                            1\tp\t1
+                            1\tp\t1
+                            1\tp\t1
+                            2\tp\t1
+                            2\tp\t1
+                            2\tp\t1
+                            2\tq\t2
+                            2\tr\t2
+                            3\tp\t1
+                            3\tp\t1
+                            3\tp\t1
+                            3\tp\t3
+                            3\tp\t3
+                            3\tq\t2
+                            3\tq\t3
+                            3\tq\t3
+                            3\tr\t2
+                            3\tr\t3
+                            4\tp\t1
+                            4\tp\t3
+                            4\tq\t3
+                            4\tr\t2
+                            """);
+        });
+    }
 
-        Assert.assertSame(newModel, SqlOptimiser.replaceAndTransferDependentsForTesting(oldModel, newModel));
-        Assert.assertTrue(newModel.isLateralCountCoalesceRequired());
-        Assert.assertFalse(oldModel.isLateralCountCoalesceRequired());
-        Assert.assertEquals(1, newModel.getLateralCountTemplates().size());
-        Assert.assertSame(template, newModel.getLateralCountTemplates().getQuick(0));
-        Assert.assertEquals(0, oldModel.getLateralCountTemplates().size());
+    @Test
+    public void testLateralExceptIntersectOverDifferentOuterColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            createSetOperationTables();
+            final String differentColumns = """
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT s FROM a WHERE a.x = o.k
+                        %s
+                        SELECT s FROM b WHERE b.y = o.id
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(differentColumns.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tq
+                            3\tr
+                            """);
+            assertQuery(differentColumns.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tq
+                            3\tr
+                            """);
+            assertQuery(differentColumns.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            3\tp
+                            3\tq
+                            """);
+            assertQuery(differentColumns.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            1\tp
+                            3\tp
+                            3\tq
+                            """);
+            assertQuery(differentColumns.formatted("UNION"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            2\tq
+                            2\tr
+                            3\tp
+                            3\tq
+                            3\tr
+                            """);
+            assertQuery(differentColumns.formatted("UNION ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            1\tp
+                            1\tp
+                            2\tq
+                            2\tr
+                            3\tp
+                            3\tp
+                            3\tq
+                            3\tq
+                            3\tr
+                            """);
+            final String nonEquality = """
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT s FROM a WHERE a.x <= o.k
+                        %s
+                        SELECT s FROM b WHERE b.y <= o.id
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(nonEquality.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tq
+                            """);
+            assertQuery(nonEquality.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tq
+                            """);
+            assertQuery(nonEquality.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            2\tp
+                            3\tp
+                            3\tq
+                            3\tr
+                            """);
+            assertQuery(nonEquality.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            1\tp
+                            2\tp
+                            2\tp
+                            3\tp
+                            3\tp
+                            3\tp
+                            3\tq
+                            3\tq
+                            3\tr
+                            """);
+            final String mixed = """
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT s FROM a WHERE a.x = o.k
+                        %s
+                        SELECT s FROM b WHERE b.y >= o.id
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(mixed.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            3\tr
+                            """);
+            assertQuery(mixed.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            2\tq
+                            3\tp
+                            3\tq
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralExceptIntersectOverThreeBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            createSetOperationTables();
+            final String correlated = """
+                    SELECT id, s FROM ol o, LATERAL (
+                        SELECT s FROM a WHERE a.x = o.k
+                        %1$s
+                        SELECT s FROM b WHERE b.y = o.id
+                        %1$s
+                        SELECT s FROM c WHERE c.z <= o.k
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(correlated.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tq
+                            """);
+            assertQuery(correlated.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tq
+                            """);
+            assertQuery(correlated.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            3\tp
+                            3\tq
+                            """);
+            assertQuery(correlated.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            3\tp
+                            3\tq
+                            """);
+            final String middleUncorrelated = """
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT s FROM a WHERE a.x <= o.k
+                        %1$s
+                        SELECT s FROM b
+                        %1$s
+                        SELECT s FROM c WHERE c.z = o.id
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(middleUncorrelated.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tp
+                            3\tq
+                            """);
+            assertQuery(middleUncorrelated.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tp
+                            2\tp
+                            3\tq
+                            3\tq
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralExceptIntersectWithUncorrelatedBranch() throws Exception {
+        assertMemoryLeak(() -> {
+            createSetOperationTables();
+            final String leftUncorrelated = """
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT s FROM a
+                        %s
+                        SELECT s FROM b WHERE b.y = o.id
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(leftUncorrelated.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tq
+                            1\tr
+                            2\tp
+                            2\tq
+                            3\tr
+                            4\tp
+                            4\tq
+                            4\tr
+                            """);
+            assertQuery(leftUncorrelated.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tq
+                            1\tq
+                            1\tr
+                            2\tp
+                            2\tp
+                            2\tp
+                            2\tq
+                            2\tq
+                            3\tr
+                            4\tp
+                            4\tp
+                            4\tp
+                            4\tq
+                            4\tq
+                            4\tr
+                            """);
+            assertQuery(leftUncorrelated.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            2\tr
+                            3\tp
+                            3\tq
+                            """);
+            assertQuery(leftUncorrelated.formatted("UNION"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            1\tq
+                            1\tr
+                            2\tp
+                            2\tq
+                            2\tr
+                            3\tp
+                            3\tq
+                            3\tr
+                            4\tp
+                            4\tq
+                            4\tr
+                            """);
+            final String rightUncorrelated = """
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT s FROM a WHERE a.x = o.k
+                        %s
+                        SELECT s FROM b
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(rightUncorrelated.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            """);
+            assertQuery(rightUncorrelated.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            1\tp
+                            2\tq
+                            3\tp
+                            3\tq
+                            3\tr
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralIntersectDomainReadByJoinedBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            createSetOperationTables();
+            final String joined = """
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT t.s FROM (
+                            SELECT s FROM a WHERE a.x <= o.k
+                            %s
+                            SELECT s FROM b WHERE b.y <= o.id
+                        ) t
+                        JOIN (SELECT s s2 FROM c WHERE c.z <= o.id) u ON u.s2 = t.s
+                    ) ORDER BY id, s
+                    """;
+            assertQuery(joined.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tp
+                            3\tp
+                            3\tq
+                            3\tr
+                            """);
+            assertQuery(joined.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            2\tp
+                            2\tp
+                            3\tp
+                            3\tp
+                            3\tp
+                            3\tq
+                            3\tq
+                            3\tr
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralSetOperationJoinsJointDomain() throws Exception {
+        assertMemoryLeak(() -> {
+            createSetOperationTables();
+            assertQuery("""
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT s FROM a WHERE a.x = o.k
+                        EXCEPT
+                        SELECT s FROM b WHERE b.y = o.id
+                    ) ORDER BY id, s
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [id, s]
+                                SelectedRecord
+                                    Hash Join
+                                      condition: _xQdbA1.__qdb_outer_ref__0_k=o.k and _xQdbA1.__qdb_outer_ref__0_id=o.id
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                                        Hash
+                                            Except
+                                                SelectedRecord
+                                                    Hash Join Light
+                                                      condition: __qdb_outer_ref__0_k=x
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: a
+                                                        Hash
+                                                            Async Group By workers: 1
+                                                              keys: [__qdb_outer_ref__0_k,__qdb_outer_ref__0_id]
+                                                              filter: null
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: o
+                                                Hash
+                                                    SelectedRecord
+                                                        Hash Join Light
+                                                          condition: __qdb_outer_ref__0_id=y
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: b
+                                                            Hash
+                                                                SelectedRecord
+                                                                    (Shared)
+                                                                        Async Group By workers: 1
+                                                                          keys: [__qdb_outer_ref__0_k,__qdb_outer_ref__0_id]
+                                                                          filter: null
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: o
+                            """)
+                    .returns("""
+                            id\ts
+                            2\tq
+                            3\tr
+                            """);
+            assertQuery("""
+                    SELECT id, s FROM o, LATERAL (
+                        SELECT s FROM a WHERE a.x <= o.k
+                        UNION ALL
+                        SELECT s FROM b WHERE b.y <= o.id
+                    ) ORDER BY id, s
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [id, s]
+                                SelectedRecord
+                                    Hash Join
+                                      condition: _xQdbA1.__qdb_outer_ref__0_k=o.k and _xQdbA1.__qdb_outer_ref__0_id=o.id
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                                        Hash
+                                            UnionSymbolCast
+                                              functions: [s::symbol,__qdb_outer_ref__0_k,__qdb_outer_ref__0_id]
+                                                Union All
+                                                    SelectedRecord
+                                                        Hash Join Light
+                                                          condition: __qdb_outer_ref__0_k=__qdb_outer_ref__0_k
+                                                            SelectedRecord
+                                                                Filter filter: __qdb_outer_ref__0.__qdb_outer_ref__0_k>=x
+                                                                    Cross Join
+                                                                        PageFrame
+                                                                            Row forward scan
+                                                                            Frame forward scan on: a
+                                                                        GroupBy vectorized: true workers: 1
+                                                                          keys: [k]
+                                                                          values: [count(*)]
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: o
+                                                            Hash
+                                                                Async Group By workers: 1
+                                                                  keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_k]
+                                                                  filter: null
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: o
+                                                    SelectedRecord
+                                                        Hash Join Light
+                                                          condition: __qdb_outer_ref__0_id=__qdb_outer_ref__0_id
+                                                            SelectedRecord
+                                                                Filter filter: __qdb_outer_ref__0_2.__qdb_outer_ref__0_id>=y
+                                                                    Cross Join
+                                                                        PageFrame
+                                                                            Row forward scan
+                                                                            Frame forward scan on: b
+                                                                        GroupBy vectorized: true workers: 1
+                                                                          keys: [id]
+                                                                          values: [count(*)]
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: o
+                                                            Hash
+                                                                SelectedRecord
+                                                                    (Shared)
+                                                                        Async Group By workers: 1
+                                                                          keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_k]
+                                                                          filter: null
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: o
+                            """)
+                    .returns("""
+                            id\ts
+                            1\tp
+                            1\tp
+                            1\tp
+                            2\tp
+                            2\tp
+                            2\tp
+                            2\tq
+                            2\tr
+                            3\tp
+                            3\tp
+                            3\tp
+                            3\tp
+                            3\tp
+                            3\tq
+                            3\tq
+                            3\tq
+                            3\tr
+                            3\tr
+                            4\tp
+                            4\tp
+                            4\tq
+                            4\tr
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralSetOperationCountBranchesNonEquality() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountSetOperationTables();
+            final String nonEquality = """
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT count() c FROM a WHERE a.x > o.k
+                        %s
+                        SELECT count() c FROM b WHERE b.y < o.id
+                    ) ORDER BY o.id, c
+                    """;
+            assertQuery(nonEquality.formatted("UNION ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t0
+                            1\t2
+                            2\t1
+                            2\t1
+                            3\t0
+                            3\t1
+                            4\t0
+                            4\t3
+                            5\t0
+                            5\t4
+                            """);
+            assertQuery(nonEquality.formatted("UNION"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t0
+                            1\t2
+                            2\t1
+                            3\t0
+                            3\t1
+                            4\t0
+                            4\t3
+                            5\t0
+                            5\t4
+                            """);
+            assertQuery(nonEquality.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            3\t0
+                            4\t0
+                            5\t0
+                            """);
+            assertQuery(nonEquality.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            3\t0
+                            4\t0
+                            5\t0
+                            """);
+            assertQuery(nonEquality.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            2\t1
+                            """);
+            assertQuery(nonEquality.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            2\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralSetOperationCountBranchesNullComparisons() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT)");
+            execute("INSERT INTO o VALUES (1, 1), (NULL, 2), (3, NULL), (2, 3), (NULL, NULL), (4, 0)");
+            execute("CREATE TABLE a (s SYMBOL, x INT)");
+            execute("INSERT INTO a VALUES ('p', 1), ('q', NULL), ('r', 3), ('p', 2)");
+            execute("CREATE TABLE b (s SYMBOL, y INT)");
+            execute("INSERT INTO b VALUES ('p', 1), ('q', NULL), ('r', 2), ('q', 3)");
+            final String nullComparisons = """
+                    SELECT o.id, o.k, c FROM o, LATERAL (
+                        SELECT count() c FROM a WHERE a.x <= o.k
+                        %s
+                        SELECT count() c FROM b WHERE b.y >= o.id
+                    ) ORDER BY o.id, o.k, c
+                    """;
+            assertQuery(nullComparisons.formatted("UNION ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tk\tc
+                            null\tnull\t1
+                            null\tnull\t1
+                            null\t2\t1
+                            null\t2\t2
+                            1\t1\t1
+                            1\t1\t3
+                            2\t3\t2
+                            2\t3\t3
+                            3\tnull\t1
+                            3\tnull\t1
+                            4\t0\t0
+                            4\t0\t0
+                            """);
+            assertQuery(nullComparisons.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tk\tc
+                            null\tnull\t1
+                            3\tnull\t1
+                            4\t0\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralSetOperationCountBranchesOverDifferentOuterColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountSetOperationTables();
+            final String differentColumns = """
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k
+                        %s
+                        SELECT count() c FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c
+                    """;
+            assertQuery(differentColumns.formatted("UNION ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [id, c]
+                                SelectedRecord
+                                    Hash Join
+                                      condition: _xQdbA1.__qdb_outer_ref__0_k=o.k and _xQdbA1.__qdb_outer_ref__0_id=o.id
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                                        Hash
+                                            Union All
+                                                VirtualRecord
+                                                  functions: [coalesce(c,0),__qdb_outer_ref__0.__qdb_outer_ref__0_k,__qdb_outer_ref__0.__qdb_outer_ref__0_id]
+                                                    Hash Left Outer Join Light
+                                                      condition: __qdb_outer_ref__0_k=__qdb_outer_ref__0_k
+                                                        Async Group By workers: 1
+                                                          keys: [__qdb_outer_ref__0_k,__qdb_outer_ref__0_id]
+                                                          filter: null
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: o
+                                                        Hash
+                                                            SelectedRecord
+                                                                GroupBy vectorized: true workers: 1
+                                                                  keys: [x]
+                                                                  values: [count(*)]
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: a
+                                                SelectedRecord
+                                                    VirtualRecord
+                                                      functions: [coalesce(c,0),__qdb_outer_ref__0_1.__qdb_outer_ref__0_id,__qdb_outer_ref__0_1.__qdb_outer_ref__0_k]
+                                                        Hash Left Outer Join Light
+                                                          condition: __qdb_outer_ref__0_id=__qdb_outer_ref__0_id
+                                                            SelectedRecord
+                                                                (Shared)
+                                                                    Async Group By workers: 1
+                                                                      keys: [__qdb_outer_ref__0_k,__qdb_outer_ref__0_id]
+                                                                      filter: null
+                                                                        PageFrame
+                                                                            Row forward scan
+                                                                            Frame forward scan on: o
+                                                            Hash
+                                                                SelectedRecord
+                                                                    GroupBy vectorized: true workers: 1
+                                                                      keys: [y]
+                                                                      values: [count(*)]
+                                                                        PageFrame
+                                                                            Row forward scan
+                                                                            Frame forward scan on: b
+                            """)
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t2
+                            2\t0
+                            2\t1
+                            3\t1
+                            3\t2
+                            4\t0
+                            4\t1
+                            5\t0
+                            5\t0
+                            """);
+            assertQuery(differentColumns.formatted("UNION"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t2
+                            2\t0
+                            2\t1
+                            3\t1
+                            3\t2
+                            4\t0
+                            4\t1
+                            5\t0
+                            """);
+            assertQuery(differentColumns.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            2\t1
+                            3\t1
+                            4\t0
+                            """);
+            assertQuery(differentColumns.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            2\t1
+                            3\t1
+                            4\t0
+                            """);
+            assertQuery(differentColumns.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            5\t0
+                            """);
+            assertQuery(differentColumns.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            5\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralSetOperationCountBranchesOverSameOuterColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountSetOperationTables();
+            final String sameColumn = """
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k
+                        %s
+                        SELECT count() c FROM b WHERE b.y = o.k
+                    ) ORDER BY o.id, c
+                    """;
+            assertQuery(sameColumn.formatted("UNION ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t0
+                            1\t2
+                            2\t1
+                            2\t1
+                            3\t0
+                            3\t1
+                            4\t0
+                            4\t0
+                            5\t0
+                            5\t0
+                            """);
+            assertQuery(sameColumn.formatted("UNION"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t0
+                            1\t2
+                            2\t1
+                            3\t0
+                            3\t1
+                            4\t0
+                            5\t0
+                            """);
+            assertQuery(sameColumn.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            3\t1
+                            """);
+            assertQuery(sameColumn.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            3\t1
+                            """);
+            assertQuery(sameColumn.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            2\t1
+                            4\t0
+                            5\t0
+                            """);
+            assertQuery(sameColumn.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            2\t1
+                            4\t0
+                            5\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralSetOperationCountBranchesUnderConsumers() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountSetOperationTables();
+            assertQuery("""
+                    SELECT o.id, c FROM o CROSS JOIN LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k
+                        UNION ALL
+                        SELECT count() c FROM b WHERE b.y = o.id
+                        UNION ALL
+                        SELECT count() c FROM b WHERE b.y = o.k
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t0
+                            1\t1
+                            1\t2
+                            2\t0
+                            2\t1
+                            2\t1
+                            3\t0
+                            3\t1
+                            3\t2
+                            4\t0
+                            4\t0
+                            4\t1
+                            5\t0
+                            5\t0
+                            5\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, d FROM o CROSS JOIN LATERAL (
+                        SELECT c * 10 d FROM (
+                            SELECT count() c FROM a WHERE a.x = o.k
+                            UNION ALL
+                            SELECT count() c FROM b WHERE b.y = o.id
+                        )
+                    ) ORDER BY o.id, d
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\td
+                            1\t10
+                            1\t20
+                            2\t0
+                            2\t10
+                            3\t10
+                            3\t20
+                            4\t0
+                            4\t10
+                            5\t0
+                            5\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o CROSS JOIN LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k
+                        UNION ALL
+                        SELECT count() c FROM b WHERE b.y = o.id
+                    ) l WHERE c = 0 ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            2\t0
+                            4\t0
+                            5\t0
+                            5\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o CROSS JOIN LATERAL (
+                        (SELECT count() c FROM a WHERE a.x = o.k LIMIT 1)
+                        UNION ALL
+                        SELECT count() c FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t2
+                            2\t0
+                            2\t1
+                            3\t1
+                            3\t2
+                            4\t0
+                            4\t1
+                            5\t0
+                            5\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o CROSS JOIN LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k AND a.v = o.id
+                        UNION ALL
+                        SELECT count() c FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t1
+                            2\t0
+                            2\t0
+                            3\t0
+                            3\t2
+                            4\t0
+                            4\t1
+                            5\t0
+                            5\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralSetOperationEmptyInputAggregateBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountSetOperationTables();
+            assertQuery("""
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT count(v) c FROM a WHERE a.x = o.k
+                        UNION ALL
+                        SELECT sum(w) c FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t7
+                            2\tnull
+                            2\t1
+                            3\t0
+                            3\t17
+                            4\t0
+                            4\t3
+                            5\tnull
+                            5\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT min(v) c FROM a WHERE a.x = o.k
+                        UNION ALL
+                        SELECT count() + 1 c FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t2
+                            2\t1
+                            2\t5
+                            3\tnull
+                            3\t3
+                            4\tnull
+                            4\t2
+                            5\tnull
+                            5\t1
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT coalesce(sum(v), -1) c FROM a WHERE a.x = o.k
+                        UNION
+                        SELECT count(w) c FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            2\t0
+                            2\t5
+                            3\t-1
+                            3\t2
+                            4\t-1
+                            4\t1
+                            5\t-1
+                            5\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, c, n FROM o, LATERAL (
+                        SELECT count() c, min(v) n FROM a WHERE a.x = o.k
+                        UNION ALL
+                        SELECT count() c, sum(w) n FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c, n
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc\tn
+                            1\t1\t7
+                            1\t2\t1
+                            2\t0\tnull
+                            2\t1\t5
+                            3\t1\tnull
+                            3\t2\t17
+                            4\t0\tnull
+                            4\t1\t3
+                            5\t0\tnull
+                            5\t0\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralSetOperationMixedCountAndRowBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountSetOperationTables();
+            final String rowsAndCount = """
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT w - 3 c FROM b WHERE b.y = o.id
+                        %s
+                        SELECT count() c FROM a WHERE a.x = o.k
+                    ) ORDER BY o.id, c
+                    """;
+            assertQuery(rowsAndCount.formatted("UNION ALL"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            1\t4
+                            2\t1
+                            3\t1
+                            3\t5
+                            3\t6
+                            4\t0
+                            4\t0
+                            5\t0
+                            """);
+            assertQuery(rowsAndCount.formatted("UNION"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            1\t4
+                            2\t1
+                            3\t1
+                            3\t5
+                            3\t6
+                            4\t0
+                            5\t0
+                            """);
+            assertQuery(rowsAndCount.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t4
+                            3\t5
+                            3\t6
+                            """);
+            assertQuery(rowsAndCount.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            4\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k
+                        UNION ALL
+                        SELECT w c FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            1\t7
+                            2\t1
+                            3\t1
+                            3\t8
+                            3\t9
+                            4\t0
+                            4\t3
+                            5\t0
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k
+                        UNION ALL
+                        SELECT 42 c FROM long_sequence(1)
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            1\t42
+                            2\t1
+                            2\t42
+                            3\t1
+                            3\t42
+                            4\t0
+                            4\t42
+                            5\t0
+                            5\t42
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o, LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k GROUP BY a.v
+                        UNION ALL
+                        SELECT count() c FROM b WHERE b.y = o.id
+                    ) ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t1
+                            1\t1
+                            2\t0
+                            2\t1
+                            3\t1
+                            3\t2
+                            4\t1
+                            5\t0
+                            """);
+        });
     }
 
     @Test
@@ -1198,9 +3129,8 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     @Test
     public void testLateralLatestOnSampleByFillNoneLeavesRowsUnfilled() throws Exception {
-        // FILL(NONE) under the same LATEST ON fallback: the group-by output carries the
-        // bucket node, so the ownership check passes, and the NONE token then skips the
-        // fill as it does outside LATERAL. No gap row, no fill node.
+        // FILL(NONE) under the same LATEST ON ranking: SampleByBinder plans no fill for
+        // NONE, as outside LATERAL. No gap row, no fill node.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z')");
@@ -1226,10 +3156,9 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     @Test
     public void testLateralLatestOnSampleByFillNullKeepsGapRows() throws Exception {
-        // LATEST ON with a non-equality correlation takes LateralJoinRewriter's row_number
-        // fallback, which inserts a filter model and a window model between the SAMPLE BY
-        // select and the table model that holds the fill. The group-by must still own the
-        // fill, otherwise every gap row disappears.
+        // LATEST ON with a non-equality correlation becomes a per-outer-row row_number
+        // ranking (CorrelatedChainRewriter), a window and a filter below the SAMPLE BY.
+        // The fill SampleByBinder planned above the aggregate must keep every gap row.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z')");
@@ -1285,10 +3214,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralLatestOnSampleByFillUnderOuterGroupBy() throws Exception {
         // An outer GROUP BY over the lateral join must still see the inner gap row
-        // (3 rows for id 1, not 2). The fill-holding model sits under join model x, so
-        // generateFill's nested-model walk from the outer group-by never reaches it;
-        // this test pins that the fill survives under an outer aggregate. The outer
-        // GROUP BY ownership shapes are pinned by the SampleByFill*Test classes.
+        // (3 rows for id 1, not 2): the fill belongs to the lateral body's query block
+        // and survives under an outer aggregate. The SampleByFill*Test classes pin the
+        // outer GROUP BY shapes.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z')");
@@ -1381,28 +3309,288 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // QuestDB's negative LIMIT means "last |N| rows", which compensateLimit cannot
-    // express (it emits `__lateral_rn <= limit`, a contradiction for N < 0). It used
-    // to silently empty the lateral body; it must now be rejected.
     @Test
-    public void testLateralNegativeLimitRejected() throws Exception {
+    public void testLateralLimitDescendingBindVariableBoundsMatchOracle() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createLimitOracleTables();
+            final String secondAndThird = """
+                    k\tv
+                    null\t8
+                    1\t11
+                    1\t12
+                    2\t21
+                    """;
+            final String firstThree = """
+                    k\tv
+                    null\t7
+                    null\t8
+                    1\t10
+                    1\t11
+                    1\t12
+                    2\t20
+                    2\t21
+                    3\t30
+                    """;
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(limitBounds("descending bounds", secondAndThird, 3, 1));
+            cases.add(limitBounds("ascending bounds", secondAndThird, 1, 3));
+            cases.add(limitBounds("equal bounds", "k\tv\n", 2, 2));
+            cases.add(limitBounds("descending bounds down to zero", firstThree, 3, 0));
+            cases.add(limitBounds("NULL first bound", firstThree, Numbers.LONG_NULL, 3));
+            cases.add(limitBounds("NULL second bound", "k\tv\n", 3, Numbers.LONG_NULL));
+            cases.add(limitBounds("NULL bounds", "k\tv\n", Numbers.LONG_NULL, Numbers.LONG_NULL));
+            cases.add(limitBounds("descending bounds again", secondAndThird, 3, 1));
+            assertLateralBodyMatchesOracle("SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT :lo, :hi", cases);
+
+            final ObjList<BindVarTuple> constantFirstCases = new ObjList<>();
+            constantFirstCases.add(limitBounds("second bound below the first", secondAndThird, 0, 1));
+            constantFirstCases.add(limitBounds("second bound above the first", "k\tv\n1\t13\n", 0, 5));
+            constantFirstCases.add(limitBounds("NULL second bound", "k\tv\n", 0, Numbers.LONG_NULL));
+            assertLateralBodyMatchesOracle("SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT 3, :hi", constantFirstCases);
+
+            bindVariableService.setLong("lo", 3);
+            bindVariableService.setLong("hi", 1);
+            assertQuery("SELECT t1.k, l.v FROM t1 JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT :lo, :hi) l ON true")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Filter filter: (least[LONG]([coalesce(:lo::long,0L),:hi::long])<__lateral_rn"
+                            + " and greatest[LONG]([coalesce(:lo::long,0L),:hi::long])>=__lateral_rn)");
+        });
+    }
+
+    @Test
+    public void testLateralLimitDescendingConstantBoundsMatchOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            createLimitOracleTables();
+            final String secondAndThird = """
+                    k\tv
+                    null\t8
+                    1\t11
+                    1\t12
+                    2\t21
+                    """;
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT 3, 1", secondAndThird);
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT 1, 3", secondAndThird);
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT 2, 2", "k\tv\n");
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT 3, 0", """
+                    k\tv
+                    null\t7
+                    null\t8
+                    1\t10
+                    1\t11
+                    1\t12
+                    2\t20
+                    2\t21
+                    3\t30
+                    """);
+            assertQuery("SELECT t1.k, l.v FROM t1 JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT 3, 1) l ON true")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Filter filter: (1L<__lateral_rn and 3L>=__lateral_rn)");
+        });
+    }
+
+    @Test
+    public void testLateralLimitDescendingOuterColumnBoundsMatchOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            createLimitOracleTables();
+            assertLateralBodyMatchesOracle("SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT t1.k + 1, 1", """
+                    k\tv
+                    null\t7
+                    1\t11
+                    2\t21
+                    """);
+            assertLateralBodyMatchesOracle("SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT 3, t1.k - 1", """
+                    k\tv
+                    1\t10
+                    1\t11
+                    1\t12
+                    2\t21
+                    """);
+            assertLateralBodyMatchesOracle("SELECT count() v FROM t2 WHERE t2.k = t1.k LIMIT 1, t1.k - 1", """
+                    k\tv
+                    1\t4
+                    """);
+        });
+    }
+
+    @Test
+    public void testLateralLimitDescendingScalarBoundsMatchOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            createLimitOracleTables();
+            final String counts = """
+                    k\tv
+                    null\t2
+                    1\t4
+                    2\t2
+                    3\t1
+                    4\t0
+                    """;
+            final String maxima = """
+                    k\tv
+                    null\t8
+                    1\t13
+                    2\t21
+                    3\t30
+                    4\tnull
+                    """;
+            assertLateralScalarBodyMatchesOracle("SELECT count() v FROM t2 WHERE t2.k = t1.k LIMIT 1, 0", counts);
+            assertLateralScalarBodyMatchesOracle("SELECT max(v) v FROM t2 WHERE t2.k = t1.k LIMIT 1, 0", maxima);
+            assertLateralScalarBodyMatchesOracle("SELECT c * 2 v FROM (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT 1, 0)", """
+                    k\tv
+                    null\t4
+                    1\t8
+                    2\t4
+                    3\t2
+                    4\t0
+                    """);
+            assertLateralScalarBodyMatchesOracle("SELECT count() v FROM t2 WHERE t2.k = t1.k LIMIT 3, 1", "k\tv\n");
+            assertLateralScalarBodyMatchesOracle("SELECT count() v FROM t2 WHERE t2.k = t1.k LIMIT 2, 2", "k\tv\n");
+            assertLateralScalarBodyMatchesOracle("SELECT count() v FROM t2 WHERE t2.k = t1.k LIMIT 1, 3", "k\tv\n");
+
+            final ObjList<BindVarTuple> cases = new ObjList<>();
+            cases.add(limitBounds("descending bounds down to zero", counts, 1, 0));
+            cases.add(limitBounds("descending bounds", "k\tv\n", 3, 1));
+            cases.add(limitBounds("ascending bounds", counts, 0, 1));
+            cases.add(limitBounds("NULL second bound", "k\tv\n", 1, Numbers.LONG_NULL));
+            cases.add(limitBounds("NULL bounds", "k\tv\n", Numbers.LONG_NULL, Numbers.LONG_NULL));
+            cases.add(limitBounds("descending bounds down to zero again", counts, 3, 0));
+            assertLateralBodyMatchesOracle("SELECT count() v FROM t2 WHERE t2.k = t1.k LIMIT :lo, :hi", cases);
+
+            final ObjList<BindVarTuple> lateralCases = new ObjList<>();
+            lateralCases.add(limitBounds("NULL first bound reads 0", counts, Numbers.LONG_NULL, 1));
+            lateralCases.add(limitBounds("NULL first bound reads 0 up to 0", "k\tv\n", Numbers.LONG_NULL, 0));
+            lateralCases.add(BindVarTuple.fails("negative second bound", "negative LIMIT is not supported in a correlated lateral sub-query [limit=-1]",
+                    bindVariableService -> {
+                        bindVariableService.setLong("lo", 1);
+                        bindVariableService.setLong("hi", -1);
+                    }));
+            lateralCases.add(BindVarTuple.fails("negative first bound", "negative LIMIT is not supported in a correlated lateral sub-query [limit=-1]",
+                    bindVariableService -> {
+                        bindVariableService.setLong("lo", -1);
+                        bindVariableService.setLong("hi", 0);
+                    }));
+            assertQuery(lateralBodyQuery("SELECT count() v FROM t2 WHERE t2.k = t1.k LIMIT :lo, :hi")).noLeakCheck().assertBinds(lateralCases);
+        });
+    }
+
+    @Test
+    public void testLateralLimitNullFirstBoundMatchesOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            createLimitOracleTables();
+            final String firstThree = """
+                    k\tv
+                    null\t7
+                    null\t8
+                    1\t10
+                    1\t11
+                    1\t13
+                    2\t20
+                    2\t21
+                    3\t30
+                    """;
+            bindVariableService.setLong("lo", Numbers.LONG_NULL);
+            bindVariableService.setLong("hi", 3);
+            for (String limit : new String[]{"LIMIT NULL::LONG, 3", "LIMIT :lo, :hi"}) {
+                final String body = "SELECT v FROM t2 WHERE t2.k = t1.k " + limit;
+                assertQuery(lateralBodyQuery(body)).noLeakCheck().expectSize().returns(firstThree);
+                assertQuery(lateralBodyOracle(body)).noLeakCheck().sizeMayVary().returns(firstThree);
+            }
+        });
+    }
+
+    @Test
+    public void testLateralLimitNullSecondBoundMatchesOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            createLimitOracleTables();
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT -2, NULL::LONG", """
+                    k\tv
+                    1\t10
+                    1\t11
+                    """);
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT 3, NULL::LONG", "k\tv\n");
+            assertLateralScalarBodyMatchesOracle("SELECT count() v FROM t2 WHERE t2.k = t1.k LIMIT -1, NULL::LONG", "k\tv\n");
+        });
+    }
+
+    @Test
+    public void testLateralLimitOuterColumnCheckedPerOuterRow() throws Exception {
+        assertMemoryLeak(() -> {
+            createT1("(1), (2), (3), (NULL), (4)");
+            execute("CREATE TABLE t2 (k INT, v INT)");
+            execute("INSERT INTO t2 VALUES (1, 10), (1, 11), (2, 20), (2, 21), (3, 30), (0, 1), (0, 2), (NULL, 7)");
+
+            final String cross = "SELECT t1.k, l.v FROM t1 CROSS JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT t1.k - 1) l ORDER BY t1.k, l.v";
+            final String left = "SELECT t1.k, l.v FROM t1 LEFT JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT t1.k - 1) l ON true ORDER BY t1.k, l.v";
+            assertQuery(cross)
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            null\t7
+                            2\t20
+                            3\t30
+                            """);
+            assertQuery(left)
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            null\t7
+                            1\tnull
+                            2\t20
+                            3\t30
+                            4\tnull
+                            """);
+            assertQuery("SELECT t1.k, l.v FROM t1 CROSS JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT t1.k - 1) l")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: l.__qdb_outer_ref__0_k=t1.k
+                                    Async Filter workers: 1
+                                      filter: __lateral_limit(k-1,0L)>=0
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t1
+                                    Hash
+                                        SelectedRecord
+                                            Filter filter: coalesce(k-1,9223372036854775807L)>=__lateral_rn
+                                                CachedWindowLight
+                                                  orderedFunctions: [[v] => [row_number() over (partition by [k])]]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                            """);
+
+            execute("INSERT INTO t1 VALUES (0)");
+            assertQuery(cross).noLeakCheck().failsWith("negative LIMIT is not supported in a correlated lateral sub-query [limit=-1]");
+            assertQuery(left).noLeakCheck().failsWith("negative LIMIT is not supported in a correlated lateral sub-query [limit=-1]");
+        });
+    }
+
+    // A negative LIMIT keeps the last rows of each outer row's body; over a scalar count
+    // it keeps the single row. An uncorrelated body and a non-lateral LIMIT apply it as is.
+    @Test
+    public void testLateralNegativeLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
-            // scalar-count body
-            assertException("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                            + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true",
-                    93, "negative LIMIT is not supported in a correlated lateral sub-query");
-            // plain row body - same defect, no count involved
-            assertException("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
-                            + "(SELECT t2.k x FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true",
-                    90, "negative LIMIT is not supported in a correlated lateral sub-query");
-            // an UNCORRELATED body is not decorrelated, so negative LIMIT still works
-            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT t2.k x FROM t2 LIMIT -1) l ON true ORDER BY t1.k")
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\t2
+                            2\t1
+                            3\t0
+                            """);
+            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL (SELECT t2.k x FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tx
+                            1\t1
+                            2\t2
+                            3\tnull
+                            """);
+            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL (SELECT t2.k x FROM t2 LIMIT -1) l ON true ORDER BY t1.k")
                     .noLeakCheck()
                     .returns("""
                             k\tx
@@ -1410,11 +3598,194 @@ public class LateralJoinTest extends AbstractCairoTest {
                             2\t2
                             3\t2
                             """);
-            // a non-lateral negative LIMIT is untouched
             assertQuery("SELECT k FROM t2 LIMIT -1").noLeakCheck().expectSize().returns("""
                     k
                     2
                     """);
+        });
+    }
+
+    // Every case keeps, per outer row, the rows the same body keeps for the outer value as a
+    // literal; the outer key 4 has no inner rows and the NULL key matches the NULL inner rows.
+    @Test
+    public void testLateralNegativeLimitMatchesOracle() throws Exception {
+        assertMemoryLeak(() -> {
+            createT1("(1), (2), (3), (NULL), (4)");
+            execute("CREATE TABLE t2 (k INT, v INT)");
+            execute("""
+                    INSERT INTO t2 VALUES
+                    (1, 10), (1, 13), (1, 11), (1, 12), (2, 21), (2, 20), (3, 30), (NULL, 7), (NULL, 8)
+                    """);
+
+            assertQuery("SELECT t1.k, l.v FROM t1 JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT -2) l ON true")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: l.__qdb_outer_ref__0_k=t1.k
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t1
+                                    Hash
+                                        SelectedRecord
+                                            Filter filter: -2L<__lateral_rn-__lateral_count
+                                                CachedWindowLight
+                                                  orderedFunctions: [[v] => [row_number() over (partition by [k])]]
+                                                  unorderedFunctions: [count(*) over (partition by [k])]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                            """);
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT -2", """
+                    k\tv
+                    null\t7
+                    null\t8
+                    1\t12
+                    1\t13
+                    2\t20
+                    2\t21
+                    3\t30
+                    """);
+            final String lastButOne = """
+                    k\tv
+                    null\t7
+                    1\t11
+                    1\t12
+                    2\t20
+                    """;
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT -3, -1", lastButOne);
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT -1, -3", lastButOne);
+            final String innerRows = """
+                    k\tv
+                    1\t11
+                    1\t12
+                    """;
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT 1, -1", innerRows);
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT -0", "k\tv\n");
+            assertLateralLimitMatchesOracle("ORDER BY v LIMIT -100", """
+                    k\tv
+                    null\t7
+                    null\t8
+                    1\t10
+                    1\t11
+                    1\t12
+                    1\t13
+                    2\t20
+                    2\t21
+                    3\t30
+                    """);
+            assertLateralLimitMatchesOracle("LIMIT -2", """
+                    k\tv
+                    null\t7
+                    null\t8
+                    1\t11
+                    1\t12
+                    2\t20
+                    2\t21
+                    3\t30
+                    """);
+
+            bindVariableService.setLong("lo", 1);
+            assertQuery("SELECT t1.k, l.v FROM t1 JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT :lo, -1) l ON true ORDER BY t1.k, l.v")
+                    .noLeakCheck()
+                    .returns(innerRows);
+            assertQuery("SELECT t1.k, l.v FROM t1 LEFT JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k ORDER BY v LIMIT -3, -1) l ON true ORDER BY t1.k, l.v")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            null\t7
+                            1\t11
+                            1\t12
+                            2\t20
+                            3\tnull
+                            4\tnull
+                            """);
+            assertQuery("SELECT t1.k, l.v FROM t1 LEFT JOIN LATERAL (SELECT v FROM t2 WHERE t2.k = t1.k LIMIT -2) l ON true ORDER BY t1.k, l.v")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tv
+                            null\t7
+                            null\t8
+                            1\t11
+                            1\t12
+                            2\t20
+                            2\t21
+                            3\t30
+                            4\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralNegativeLimitRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n INT)");
+            execute("INSERT INTO t1 VALUES (1, 0)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1)");
+
+            final String negativePositive = "SELECT t1.k, l.x FROM t1 JOIN LATERAL (SELECT k x FROM t2 WHERE t2.k = t1.k LIMIT -1, 2) l ON true";
+            assertException(negativePositive, negativePositive.indexOf("-1"), "LIMIT <negative>, <positive> is not allowed");
+            final String countNegativePositive = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1, 2) l ON true";
+            assertException(countNegativePositive, countNegativePositive.indexOf("-1"), "LIMIT <negative>, <positive> is not allowed");
+            final String nonConstantUpper = "SELECT t1.k, l.x FROM t1 JOIN LATERAL (SELECT k x FROM t2 WHERE t2.k = t1.k LIMIT -2, t1.n) l ON true";
+            assertException(nonConstantUpper, nonConstantUpper.indexOf("t1.n"),
+                    "negative LIMIT with a non-constant upper bound is not supported in a correlated lateral sub-query");
+        });
+    }
+
+    // The single row of a scalar count over N = 1 rows: LIMIT -1 keeps it, with 0 where
+    // nothing matches, and LIMIT -2, -1 drops it. The step guard folds to a constant and
+    // the body ranks nothing.
+    @Test
+    public void testLateralNegativeLimitScalarCount() throws Exception {
+        assertMemoryLeak(() -> {
+            createT1("(1), (2), (3)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2)");
+
+            final String counts = """
+                    k\tc
+                    1\t2
+                    2\t1
+                    3\t0
+                    """;
+            assertQuery("SELECT t1.k, l.c FROM t1 CROSS JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1) l ORDER BY t1.k")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [k]
+                                VirtualRecord
+                                  functions: [t1.k,coalesce(l.c,0)]
+                                    Hash Left Outer Join Light
+                                      condition: l.__qdb_outer_ref__0_k=t1.k
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t1
+                                        Hash
+                                            SelectedRecord
+                                                GroupBy vectorized: true workers: 1
+                                                  keys: [k]
+                                                  values: [count(*)]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                            """)
+                    .returns(counts);
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns(counts);
+            assertQuery("SELECT t1.k, l.c FROM t1 CROSS JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -2, -1) l ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("k\tc\n");
+            assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -2, -1) l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\tnull
+                            2\tnull
+                            3\tnull
+                            """);
         });
     }
 
@@ -1435,8 +3806,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountBelowAggregateLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
@@ -1494,12 +3864,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountBelowAggregateLimitPerSideShape() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM ("
@@ -1530,8 +3898,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountBindVariableLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
@@ -1571,8 +3938,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountBindVariableLimitCachedPlan() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
@@ -1626,8 +3992,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountBindVariableLimitNegativeRejected() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
             execute("CREATE TABLE t3 (k INT, v INT)");
@@ -1650,8 +4015,8 @@ public class LateralJoinTest extends AbstractCairoTest {
                     bindVariableService -> bindVariableService.setLong("lim", 1)
             ));
             countCases.add(BindVarTuple.ok(
-                    "null limit keeps dropping the aggregate row",
-                    "k\tc\n1\tnull\n2\tnull\n3\tnull\n",
+                    "null limit keeps the aggregate row",
+                    "k\tc\n1\t2\n2\t1\n3\t0\n",
                     bindVariableService -> bindVariableService.setLong("lim", Numbers.LONG_NULL)
             ));
 
@@ -1690,8 +4055,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountBindVariableLimitOuterWhere() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
@@ -1727,12 +4091,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountChainBindVarLimitPerSideShape() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM t2 "
@@ -1800,12 +4162,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountChainTwoSidedBindVarLimitPerSideShape() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM t2 "
@@ -1850,12 +4210,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountJoinBranchBindVarLimitPerSide() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM t2 "
@@ -1888,12 +4246,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountJoinBranchTwoSidedBindVarLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
+            createT1("(1), (2)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (1), (2)");
+            createT3("(1), (1), (2)");
 
             String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM t2 "
@@ -1914,12 +4270,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountLeftJoinBranchBindVarLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM t2 "
@@ -1945,9 +4299,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // The pinned contract in testLateralScalarCountOuterColumnLimitRejected: only a
-    // LIMIT over the scalar count itself is rejected. The same LIMIT on a NON-count
-    // join branch inside the body must stay supported.
+    // An outer-column LIMIT on a NON-count join branch inside a scalar count body limits
+    // the branch per outer row.
     @Test
     public void testLateralScalarCountNonCountBranchOuterColumnLimitSupported() throws Exception {
         assertMemoryLeak(() -> {
@@ -1955,8 +4308,7 @@ public class LateralJoinTest extends AbstractCairoTest {
             execute("INSERT INTO t1 VALUES (1,1), (2,1), (3,1)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             assertQuery("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM t2 "
@@ -1978,8 +4330,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountNonLiteralPositiveLimitKeepsCoalesce() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
@@ -2024,7 +4375,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             k\tv
                             1\t4
                             2\t3
-                            3\tnull
+                            3\t2
                             4\tnull
                             """);
 
@@ -2048,6 +4399,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             k\tv
                             1\t4
                             2\t3
+                            3\t2
                             """);
 
             assertQuery("""
@@ -2070,34 +4422,208 @@ public class LateralJoinTest extends AbstractCairoTest {
                             k\tv
                             1\t4
                             2\t3
+                            3\t2
                             """);
         });
     }
 
-    // A LIMIT reading an outer column cannot be guarded: the guard is evaluated in the
-    // outer projection, where the body-local rewrite of that reference does not resolve.
     @Test
-    public void testLateralScalarCountOuterColumnLimitRejected() throws Exception {
+    public void testLateralScalarCountExpressionOuterColumnLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (k INT, n INT)");
-            execute("INSERT INTO t1 VALUES (1,2), (2,2), (3,2)");
+            execute("INSERT INTO t1 VALUES (1, 2), (2, 1), (3, 1), (4, 0)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2), (4)");
+
+            final String bareBody = "SELECT count(*) + 2 AS v FROM t2 WHERE t2.k = t1.k LIMIT t1.n";
+            final String wrappedBody = "SELECT v FROM (SELECT count(*) + 2 AS v FROM t2 WHERE t2.k = t1.k) counted LIMIT t1.n";
+            final String leftExpected = """
+                    k\tv
+                    1\t4
+                    2\t3
+                    3\t2
+                    4\tnull
+                    """;
+            final String crossExpected = """
+                    k\tv
+                    1\t4
+                    2\t3
+                    3\t2
+                    """;
+            assertQuery("SELECT t1.k, l.v FROM t1 LEFT JOIN LATERAL (" + bareBody + ") l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns(leftExpected);
+            assertQuery("SELECT t1.k, l.v FROM t1 LEFT JOIN LATERAL (" + wrappedBody + ") l ON true ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns(leftExpected);
+            assertQuery("SELECT t1.k, l.v FROM t1 CROSS JOIN LATERAL (" + bareBody + ") l ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns(crossExpected);
+            assertQuery("SELECT t1.k, l.v FROM t1 CROSS JOIN LATERAL (" + wrappedBody + ") l ORDER BY t1.k")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(crossExpected);
+        });
+    }
+
+    // A LIMIT reading an outer column over a scalar count: the count's row exists for an
+    // outer row when its LIMIT keeps rank 1 (a NULL LIMIT keeps it), and reads 0 where
+    // nothing matches. t2 holds k = 0 rows no outer row has, whose LIMIT t1.k - 1 would be
+    // negative; the step guard evaluates the LIMIT per outer row only.
+    @Test
+    public void testLateralScalarCountOuterColumnLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n INT)");
+            execute("INSERT INTO t1 VALUES (1, 0), (1, 1), (2, 2), (2, NULL), (3, 1), (3, 0), (NULL, 1)");
+            execute("CREATE TABLE t2 (k INT)");
+            execute("INSERT INTO t2 VALUES (1), (1), (2), (0), (0), (NULL)");
+
+            final String keptRows = """
+                    k\tn\tc
+                    null\t1\t1
+                    1\t1\t2
+                    2\tnull\t1
+                    2\t2\t1
+                    3\t1\t0
+                    """;
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 CROSS JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns(keptRows);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ON true ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns(keptRows);
+            final String leftRows = """
+                    k\tn\tc
+                    null\t1\t1
+                    1\t0\tnull
+                    1\t1\t2
+                    2\tnull\t1
+                    2\t2\t1
+                    3\t0\tnull
+                    3\t1\t0
+                    """;
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ON true ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns(leftRows);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 LEFT JOIN LATERAL (SELECT c FROM (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) x) l ON true ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns(leftRows);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ON l.c < 2 ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tn\tc
+                            null\t1\t1
+                            1\t0\tnull
+                            1\t1\tnull
+                            2\tnull\t1
+                            2\t2\t1
+                            3\t0\tnull
+                            3\t1\t0
+                            """);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() + 1 c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ON true ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tn\tc
+                            null\t1\t2
+                            1\t0\tnull
+                            1\t1\t3
+                            2\tnull\t2
+                            2\t2\t2
+                            3\t0\tnull
+                            3\t1\t1
+                            """);
+
+            final String leftKeyRows = """
+                    k\tn\tc
+                    null\t1\t1
+                    1\t0\tnull
+                    1\t1\tnull
+                    2\tnull\t1
+                    2\t2\t1
+                    3\t0\t0
+                    3\t1\t0
+                    """;
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 LEFT JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.k - 1) l ON true ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [k, n]
+                                VirtualRecord
+                                  functions: [t1.k,t1.n,case([__lateral_limit(t1.k-1,9223372036854775807L)>=1,coalesce(l.c,0),null])]
+                                    Hash Left Outer Join Light
+                                      condition: l.__qdb_outer_ref__0_k=t1.k
+                                      filter: true
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t1
+                                        Hash
+                                            SelectedRecord
+                                                GroupBy vectorized: true workers: 1
+                                                  keys: [k]
+                                                  values: [count(*)]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t2
+                            """)
+                    .returns(leftKeyRows);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 LEFT JOIN LATERAL (SELECT c FROM (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.k - 1) x) l ON true ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns(leftKeyRows);
+            final String crossKeyRows = """
+                    k\tn\tc
+                    null\t1\t1
+                    2\tnull\t1
+                    2\t2\t1
+                    3\t0\t0
+                    3\t1\t0
+                    """;
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 CROSS JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.k - 1) l ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .returns(crossKeyRows);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 CROSS JOIN LATERAL (SELECT c FROM (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.k - 1) x) l ORDER BY t1.k, t1.n")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(crossKeyRows);
+            assertQuery("SELECT t1.k, t1.n, l.x FROM t1 LEFT JOIN LATERAL (SELECT t2.k x FROM t2 WHERE t2.k = t1.k ORDER BY t2.k LIMIT t1.n) l ON true ORDER BY t1.k, t1.n, l.x")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tn\tx
+                            null\t1\tnull
+                            1\t0\tnull
+                            1\t1\t1
+                            2\tnull\t2
+                            2\t2\t2
+                            3\t0\tnull
+                            3\t1\tnull
+                            """);
+        });
+    }
+
+    // An INNER LATERAL keyed on the count joins the count's row before its LIMIT applies: a
+    // LIMIT that drops the row drops the outer row even where the key matches.
+    @Test
+    public void testLateralScalarCountOuterColumnLimitKeyedInner() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t1 (k INT, n LONG)");
+            execute("INSERT INTO t1 VALUES (1, 2), (2, 1)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
-            assertException("SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
-                            + "(SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT t1.n) l ON true",
-                    93, "LIMIT referencing an outer column is not supported over a scalar count");
-
-            // the same LIMIT over a NON-count body stays supported
-            assertQuery("SELECT t1.k, l.x FROM t1 LEFT JOIN LATERAL "
-                    + "(SELECT t2.k x FROM t2 WHERE t2.k = t1.k ORDER BY t2.k LIMIT t1.n) l ON true ORDER BY t1.k, l.x")
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT 2 - t1.n) l ON l.c = t1.n ORDER BY t1.k")
                     .noLeakCheck()
                     .returns("""
-                            k\tx
-                            1\t1
-                            1\t1
-                            2\t2
-                            3\tnull
+                            k\tn\tc
+                            2\t1\t1
+                            """);
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT 0) l ON l.c = t1.n ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("k\tn\tc\n");
+            assertQuery("SELECT t1.k, t1.n, l.c FROM t1 JOIN LATERAL (SELECT count() c FROM t2 WHERE t2.k = t1.k LIMIT -1) l ON l.c = t1.n ORDER BY t1.k")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tn\tc
+                            1\t2\t2
+                            2\t1\t1
                             """);
         });
     }
@@ -2108,12 +4634,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountOwnLimitWithJoinBranchLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
 
             String sql = "SELECT t1.k, l.c FROM t1 LEFT JOIN LATERAL "
                     + "(SELECT count() c FROM t2 "
@@ -2141,13 +4665,113 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // A step after the lateral reads the count before the projection over the join: through its key, its ON
+    // condition, a WHERE that becomes its key or as an outer column of its own body. The count reads 0 for the outer
+    // rows NULL and 7, which nothing matches, so they join the q row with n = 0.
+    @Test
+    public void testLateralScalarCountReadByLaterStep() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (ok INT)");
+            execute("INSERT INTO o VALUES (1), (2), (3), (NULL), (7)");
+            execute("CREATE TABLE i (k INT)");
+            execute("INSERT INTO i VALUES (1), (1), (2), (3), (5)");
+            execute("CREATE TABLE q (n LONG, qk INT)");
+            execute("INSERT INTO q VALUES (0, 7), (1, 1), (2, 2), (9, 9)");
+
+            final String matched = """
+                    ok\tc\tqk
+                    null\t0\t7
+                    1\t2\t2
+                    2\t1\t1
+                    3\t1\t1
+                    7\t0\t7
+                    """;
+            assertQuery("SELECT o.ok, b.c, q.qk FROM o CROSS JOIN LATERAL (SELECT count() c FROM i WHERE k = o.ok) b JOIN q ON q.n = b.c ORDER BY 1, 3")
+                    .noLeakCheck()
+                    .returns(matched);
+            assertQuery("SELECT o.ok, b.c, q.qk FROM o CROSS JOIN LATERAL (SELECT count() c FROM i WHERE k = o.ok) b CROSS JOIN q WHERE q.n = b.c ORDER BY 1, 3")
+                    .noLeakCheck()
+                    .returns(matched);
+            assertQuery("SELECT o.ok, b.c, z.qk FROM o CROSS JOIN LATERAL (SELECT count() c FROM i WHERE k = o.ok) b CROSS JOIN LATERAL (SELECT qk FROM q WHERE q.n = b.c) z ORDER BY 1, 3")
+                    .noLeakCheck()
+                    .returns(matched);
+            assertQuery("SELECT o.ok, b.c, q.qk FROM o CROSS JOIN LATERAL (SELECT count() c FROM i WHERE k = o.ok) b LEFT JOIN q ON q.n = b.c AND q.qk > 1 ORDER BY 1, 3")
+                    .noLeakCheck()
+                    .returns("""
+                            ok\tc\tqk
+                            null\t0\t7
+                            1\t2\t2
+                            2\t1\tnull
+                            3\t1\tnull
+                            7\t0\t7
+                            """);
+            assertQuery("SELECT o.ok, b.c, q.qk FROM o CROSS JOIN LATERAL (SELECT count() c FROM i WHERE k = o.ok) b LEFT JOIN q ON q.n <= b.c AND q.qk = 7 ORDER BY 1, 3")
+                    .noLeakCheck()
+                    .returns("""
+                            ok\tc\tqk
+                            null\t0\t7
+                            1\t2\t7
+                            2\t1\t7
+                            3\t1\t7
+                            7\t0\t7
+                            """);
+            assertQuery("SELECT o.ok, b.c, q.qk FROM o CROSS JOIN LATERAL (SELECT count() c FROM i WHERE k = o.ok) b JOIN q ON q.n < b.c + 1 ORDER BY 1, 3")
+                    .noLeakCheck()
+                    .returns("""
+                            ok\tc\tqk
+                            null\t0\t7
+                            1\t2\t1
+                            1\t2\t2
+                            1\t2\t7
+                            2\t1\t1
+                            2\t1\t7
+                            3\t1\t1
+                            3\t1\t7
+                            7\t0\t7
+                            """);
+
+            assertQuery("SELECT o.ok, b.c, q.qk FROM o CROSS JOIN LATERAL (SELECT count() c FROM i WHERE k = o.ok) b JOIN q ON q.qk = o.ok")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            VirtualRecord
+                              functions: [o.ok,coalesce(b.c,0),q.qk]
+                                Hash Join Light
+                                  condition: q.qk=o.ok
+                                    Hash Left Outer Join Light
+                                      condition: b.__qdb_outer_ref__0_ok=o.ok
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                                        Hash
+                                            SelectedRecord
+                                                GroupBy vectorized: true workers: 1
+                                                  keys: [k]
+                                                  values: [count(*)]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: i
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: q
+                            """);
+            assertQuery("SELECT o.ok, b.c, q.qk FROM o CROSS JOIN LATERAL (SELECT count() c FROM i WHERE k = o.ok) b JOIN q ON q.qk = o.ok ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("""
+                            ok\tc\tqk
+                            1\t2\t1
+                            2\t1\t2
+                            7\t0\t7
+                            """);
+        });
+    }
+
     // A limit that provably removes the single aggregate row must NOT be
     // compensated - NULL fill is the correct answer there.
     @Test
     public void testLateralScalarCountRowDroppingLimitYieldsNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
 
@@ -2171,12 +4795,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralScalarCountTwoJoinBranchesBindVarLimitsPerSide() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2), (3)");
+            createT1("(1), (2), (3)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1), (1), (2)");
-            execute("CREATE TABLE t3 (k INT)");
-            execute("INSERT INTO t3 VALUES (1), (2), (3)");
+            createT3("(1), (2), (3)");
             execute("CREATE TABLE t4 (k INT)");
             execute("INSERT INTO t4 VALUES (1), (2), (3)");
 
@@ -2215,13 +4837,68 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testLateralScalarExpressionsOverNoRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("""
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 10, '2024-01-01T00:10:00.000000Z'),
+                    (1, 20, '2024-01-01T00:20:00.000000Z'),
+                    (2, 30, '2024-01-01T01:10:00.000000Z')
+                    """);
+            final String body = """
+                    SELECT coalesce(sum(qty), -1) s, coalesce(max(qty), 0) mx, CASE WHEN sum(qty) IS NULL THEN 'none' ELSE 'some' END tag,
+                        sum(qty) + 1 inc, count() + coalesce(min(qty), 100) cm
+                    FROM trades WHERE order_id = o.id""";
+            final String expected = """
+                    id\ts\tmx\ttag\tinc\tcm
+                    1\t30\t20\tsome\t31\t12
+                    2\t30\t30\tsome\t31\t31
+                    3\t-1\t0\tnone\tnull\t100
+                    """;
+            for (String join : new String[]{"CROSS JOIN LATERAL (" + body + ")", "LEFT JOIN LATERAL (" + body + ")", "CROSS JOIN LATERAL (" + body + " LIMIT 1)",
+                    "CROSS JOIN LATERAL (" + body + " LIMIT o.id)"}) {
+                assertQuery("SELECT o.id, sub.s, sub.mx, sub.tag, sub.inc, sub.cm FROM orders o " + join + " sub ORDER BY o.id")
+                        .noLeakCheck()
+                        .returns(expected);
+            }
+            assertQuery("SELECT o.id, sub.s, sub.mx, sub.tag, sub.inc, sub.cm FROM orders o LEFT JOIN LATERAL (" + body + ") sub ON sub.s < 0 ORDER BY o.id")
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts\tmx\ttag\tinc\tcm
+                            1\tnull\tnull\t\tnull\tnull
+                            2\tnull\tnull\t\tnull\tnull
+                            3\t-1\t0\tnone\tnull\t100
+                            """);
+            for (String join : new String[]{"CROSS", "LEFT"}) {
+                assertQuery("SELECT o.id, sub.s, sub.n, sub.mx FROM orders o " + join + " JOIN LATERAL ("
+                        + "SELECT x.s, y.n, y.mx FROM (SELECT coalesce(sum(qty), -1) s FROM trades WHERE order_id = o.id) x "
+                        + "CROSS JOIN (SELECT count() n, coalesce(max(qty), 0) mx FROM trades WHERE order_id = o.id) y"
+                        + ") sub ORDER BY o.id")
+                        .noLeakCheck()
+                        .expectSize(join.equals("CROSS"))
+                        .returns("""
+                                id\ts\tn\tmx
+                                1\t30\t2\t20
+                                2\t30\t1\t30
+                                3\t-1\t0\t0
+                                """);
+            }
+        });
+    }
+
     // Test LATERAL keyword as standalone (LATERAL (subquery) alias — no JOIN keyword)
     @Test
     public void testLateralStandalone() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -2247,9 +4924,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralUnsupportedJoinType() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z')");
             execute("INSERT INTO trades VALUES (1, 1, '2024-01-01T00:30:00.000000Z')");
 
             assertQuery("""
@@ -2352,10 +5028,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLateralWithUnionAllBuckets() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z'),
@@ -2585,10 +5259,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralApproxCountDistinctZeroOnNoMatch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE fills (order_id INT, venue_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -2622,12 +5294,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLeftLateralCoalesceSumBodyNotCompensated() throws Exception {
+    public void testLeftLateralCoalesceSumBodyCompensated() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -2639,8 +5309,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 30, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            // only zero-on-empty aggregates are compensated; a null-absorbing wrapper over
-            // sum() is not, so the unmatched row keeps NULL rather than coalesce(NULL, 0) = 0
             assertQuery("""
                     SELECT o.id, sub.s
                     FROM orders o
@@ -2654,7 +5322,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id\ts
                             1\t30
                             2\t30
-                            3\tnull
+                            3\t0
                             """);
         });
     }
@@ -2662,10 +5330,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmetic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -2736,11 +5402,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticAggregateOverInnerLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE t1 (k INT)");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -2781,10 +5445,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticBindVariable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -2840,10 +5502,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticConstantColumnCompensated() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -2872,10 +5532,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticDistinctConsumer() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -2951,10 +5609,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticFilteredByParent() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3005,10 +5661,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticGroupByOrderByQualified() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3103,10 +5757,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticImplicitKeyNotCompensated() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -3166,10 +5818,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticInCte() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3206,10 +5856,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticMixedAggregates() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3262,11 +5910,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticMultipleJoins() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE fills (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3303,10 +5949,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticNegativeGuards() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3380,10 +6024,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticNestedBodyDoesNotExplode() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -3396,13 +6038,12 @@ public class LateralJoinTest extends AbstractCairoTest {
             for (int i = 1; i <= 24; i++) {
                 body.insert(0, "SELECT v" + (i - 1) + " + v" + (i - 1) + " AS v" + i + " FROM (").append(')');
             }
-            // the template budget degrades to uncompensated NULL instead of expanding 2^24 nodes
             assertQuery("SELECT o.id, sub.v24 FROM orders o LEFT JOIN LATERAL (" + body + ") sub ORDER BY o.id")
                     .noLeakCheck()
                     .returns("""
                             id\tv24
                             1\t16777216
-                            2\tnull
+                            2\t0
                             """);
         });
     }
@@ -3410,8 +6051,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticOnRejectsRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
+            createT1("(1), (2)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1)");
 
@@ -3434,15 +6074,11 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // Known limitation: compensation does not reach a column referenced only in
-    // ORDER BY, so the unmatched row sorts as NULL (first) instead of as 10.
     @Test
     public void testLeftLateralCountArithmeticOrderByOnlyNotCompensated() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3467,9 +6103,9 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             id
-                            3
                             1
                             2
+                            3
                             """);
         });
     }
@@ -3477,10 +6113,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticOuterRef() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3515,10 +6149,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticRenamed() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3573,10 +6205,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticRepeatedLeaf() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3641,10 +6271,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticSumWithOuterRef() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3679,10 +6307,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticUnaliased() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3717,10 +6343,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticUnionConsumer() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3874,10 +6498,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticWhereMixedTerms() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -3980,10 +6602,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticWhereOnlyRef() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4017,10 +6637,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticWhereUnqualified() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4054,10 +6672,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticWildcard() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -4085,10 +6701,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticWildcardRenamed() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4147,10 +6761,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticWrapped() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4187,10 +6799,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountArithmeticWrappedSubqueryWhere() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4290,10 +6900,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountCase() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4328,10 +6936,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountCoalesceWrapped() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4364,10 +6970,82 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftLateralCountCompensationRepeatedCursor() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("""
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '1970-01-01T00:00:00.000001Z'),
+                    (1, '1970-01-01T00:00:00.000002Z'),
+                    (2, '1970-01-01T00:00:00.000003Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, sub.later AND NOT sub.later AS never, sub.later OR NOT sub.later AS always, sub.later
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT count()::timestamp > (SELECT min(ts) FROM trades) AS later
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tnever\talways\tlater
+                            1\tfalse\ttrue\ttrue
+                            2\tfalse\ttrue\tfalse
+                            3\tfalse\ttrue\tfalse
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralCountCompensationRepeatedDescriptions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("""
+                    (1, '2024-01-01T00:00:00.000000Z'),
+                    (2, '2024-01-01T01:00:00.000000Z'),
+                    (3, '2024-01-01T02:00:00.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, '2024-01-01T00:10:00.000000Z'),
+                    (1, '2024-01-01T00:20:00.000000Z'),
+                    (2, '2024-01-01T01:10:00.000000Z')
+                    """);
+
+            bindVariableService.setLong("bonus", 10);
+            assertQuery("""
+                    SELECT o.id, sub.v * sub.v + sub.v AS w
+                    FROM orders o
+                    LEFT JOIN LATERAL (
+                        SELECT (count() + :bonus + (2 * 3))::DECIMAL(10, 2) AS v
+                        FROM trades
+                        WHERE order_id = o.id
+                    ) sub
+                    ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tw
+                            1\t342.0000
+                            2\t306.0000
+                            3\t272.0000
+                            """);
+        });
+    }
+
+    @Test
     public void testLeftLateralCountDistinctAndApproxCountDistinctOnRejectsRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1), (2)");
+            createT1("(1), (2)");
             execute("CREATE TABLE t2 (k INT)");
             execute("INSERT INTO t2 VALUES (1)");
 
@@ -4410,10 +7088,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountDistinctArithmetic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE fills (order_id INT, venue_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4450,10 +7126,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountDistinctZeroOnNoMatch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE fills (order_id INT, venue_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4507,12 +7181,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountMarkerAliasCollision() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.*
@@ -4657,10 +7328,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testLeftLateralCountQuotedDottedAlias() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4931,12 +7600,214 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testLeftLateralUnionCountBodyNotCompensated() throws Exception {
+    public void testLeftLateralExceptIntersectOverDifferentOuterColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createSetOperationTables();
+            final String equality = """
+                    SELECT id, s FROM o LEFT JOIN LATERAL (
+                        SELECT s FROM a WHERE a.x = o.k
+                        %s
+                        SELECT s FROM b WHERE b.y = o.id
+                    ) t ON true ORDER BY id, s
+                    """;
+            assertQuery(equality.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts
+                            1\t
+                            2\tq
+                            3\tr
+                            4\t
+                            """);
+            assertQuery(equality.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            1\tp
+                            2\t
+                            3\tp
+                            3\tq
+                            4\t
+                            """);
+            final String nonEquality = """
+                    SELECT id, s FROM ol o LEFT JOIN LATERAL (
+                        SELECT s FROM a WHERE a.x <= o.k
+                        %s
+                        SELECT s FROM b WHERE b.y > o.id
+                    ) t ON true ORDER BY id, s
+                    """;
+            assertQuery(nonEquality.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts
+                            1\t
+                            2\t
+                            3\tp
+                            3\tp
+                            3\tp
+                            3\tq
+                            3\tq
+                            3\tr
+                            4\t
+                            """);
+            assertQuery(nonEquality.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts
+                            1\tp
+                            2\tp
+                            2\tq
+                            3\t
+                            4\t
+                            """);
+            final String threeBranches = """
+                    SELECT id, s FROM o LEFT JOIN LATERAL (
+                        SELECT s FROM a WHERE a.x = o.k
+                        %1$s
+                        SELECT s FROM b WHERE b.y = o.id
+                        %1$s
+                        SELECT s FROM c WHERE c.z <= o.id
+                    ) t ON true ORDER BY id, s
+                    """;
+            assertQuery(threeBranches.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts
+                            1\t
+                            2\tq
+                            3\t
+                            4\t
+                            """);
+            assertQuery(threeBranches.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts
+                            1\t
+                            2\t
+                            3\tp
+                            3\tq
+                            4\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralSetOperationCountBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountSetOperationTables();
+            final String equality = """
+                    SELECT o.id, c FROM o LEFT JOIN LATERAL (
+                        SELECT count() c FROM a WHERE a.x = o.k
+                        %s
+                        SELECT count() c FROM b WHERE b.y = o.id
+                    ) l ORDER BY o.id, c
+                    """;
+            assertQuery(equality.formatted("UNION ALL"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t2
+                            2\t0
+                            2\t1
+                            3\t1
+                            3\t2
+                            4\t0
+                            4\t1
+                            5\t0
+                            5\t0
+                            """);
+            assertQuery(equality.formatted("EXCEPT"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            2\t1
+                            3\t1
+                            4\t0
+                            5\tnull
+                            """);
+            assertQuery(equality.formatted("INTERSECT"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\tnull
+                            2\tnull
+                            3\tnull
+                            4\tnull
+                            5\t0
+                            """);
+            final String nonEquality = """
+                    SELECT o.id, c FROM o LEFT JOIN LATERAL (
+                        SELECT count() c FROM a WHERE a.x > o.k
+                        %s
+                        SELECT count() c FROM b WHERE b.y < o.id
+                    ) l ORDER BY o.id, c
+                    """;
+            assertQuery(nonEquality.formatted("UNION"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t0
+                            1\t2
+                            2\t1
+                            3\t0
+                            3\t1
+                            4\t0
+                            4\t3
+                            5\t0
+                            5\t4
+                            """);
+            assertQuery(nonEquality.formatted("EXCEPT ALL"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t2
+                            2\tnull
+                            3\t0
+                            4\t0
+                            5\t0
+                            """);
+            assertQuery(nonEquality.formatted("INTERSECT ALL"))
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\tnull
+                            2\t1
+                            3\tnull
+                            4\tnull
+                            5\tnull
+                            """);
+            assertQuery("""
+                    SELECT o.id, c FROM o LEFT JOIN LATERAL (
+                        SELECT sum(v) c FROM a WHERE a.x = o.k
+                        UNION ALL
+                        SELECT sum(w) c FROM b WHERE b.y = o.id
+                    ) l ORDER BY o.id, c
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc
+                            1\t1
+                            1\t7
+                            2\tnull
+                            2\t5
+                            3\tnull
+                            3\t17
+                            4\tnull
+                            4\t3
+                            5\tnull
+                            5\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralUnionCountBranchKeepsZeroCount() throws Exception {
+        assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -4948,8 +7819,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, '2024-01-01T01:10:00.000000Z')
                     """);
 
-            // a correlated empty UNION-ALL branch defeats the zero-rejection proof, so the
-            // count body is not admitted for compensation and the unmatched row keeps NULL
             assertQuery("""
                     SELECT o.id, sub.c
                     FROM orders o
@@ -4965,20 +7834,16 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id\tc
                             1\t2
                             2\t1
-                            3\tnull
+                            3\t0
                             """);
         });
     }
 
-    // Window functions have no meaningful zero-on-empty value; template extraction
-    // must reject them and keep the uncompensated NULL on unmatched rows.
     @Test
     public void testLeftLateralWindowFunctionBodyNotCompensated() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -5009,7 +7874,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id\twcnt
                             1\t1
                             2\t1
-                            3\tnull
+                            3\t1
                             """);
 
             assertQuery("""
@@ -5031,7 +7896,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                             id\twv
                             1\t3
                             2\t2
-                            3\tnull
+                            3\t1
                             """);
         });
     }
@@ -5039,11 +7904,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountAliasLessCollision() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (cnt INT)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -5088,12 +7951,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountAliasLessSurfaces() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -5179,10 +8039,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountAsSecondJoinModel() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -5210,10 +8068,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountAsSecondJoinModelOuterRefExpression() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (3)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (3)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.val
@@ -5241,12 +8097,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountBranchArithmetic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.*
@@ -5274,12 +8127,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountBranchDistinctProjection() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -5307,10 +8157,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountBranchMultipleSourceCounts() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 10), (1, NULL)");
 
@@ -5367,10 +8215,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountBranchProjectionWildcardAliasCollisions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 10)");
 
@@ -5454,12 +8300,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountBranchProjectionWildcardAliasLessWrapper() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -5488,10 +8331,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountBranchProjectionWildcardDottedSourceIdentity() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 10)");
 
@@ -5524,10 +8365,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountBranchProjectionWildcardInputAliasBoundary() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
             execute("CREATE TABLE t2 (x INT, v INT, cnt INT)");
             execute("INSERT INTO t2 VALUES (1, 10, 99)");
 
@@ -5560,12 +8399,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountBranchProjectionWrapper() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -5685,12 +8521,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountCorrelatedBranchesAligned() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(7)");
+            createT2("(1)");
             execute("CREATE TABLE t3 (x INT, v INT)");
             execute("INSERT INTO t3 VALUES (1, 10), (2, 20)");
 
@@ -5723,8 +8556,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 11), (2, 22), (2, 22)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (7)");
+            createT1("(7)");
             execute("CREATE TABLE t2 (x INT, y INT)");
             execute("INSERT INTO t2 VALUES (1, 11)");
             execute("CREATE TABLE t3 (x INT, y INT, v INT)");
@@ -5845,12 +8677,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountDataSourceAliasCollision() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(7)");
+            createT2("(1)");
             execute("CREATE TABLE t3 (v INT)");
             execute("INSERT INTO t3 VALUES (9)");
 
@@ -5905,8 +8734,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountDirectBodyAliasProjection() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 10)");
 
@@ -5995,8 +8823,7 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountDirectBodyCardinality() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, NULL)");
 
@@ -6138,14 +8965,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountDirectBodyExactSourceExpressions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE u (cnt INT)");
             execute("INSERT INTO u VALUES (NULL)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, NULL)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (10)");
+            createT1("(10)");
             execute("CREATE TABLE empty_t1 (k INT)");
 
             assertQuery("""
@@ -6390,10 +9215,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountDirectBodyMixedWildcardExpressions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.*, l1.cnt + 1 AS cnt_plus_one
@@ -6457,8 +9280,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T00:01:00.000000Z')
                     """);
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
             execute("CREATE TABLE q (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO q VALUES
@@ -6496,8 +9318,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T00:01:00.000000Z')
                     """);
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
             execute("CREATE TABLE q (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO q VALUES
@@ -6534,12 +9355,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         // allocator skips to __qdb_count_driver__2, whose derived key collides
         // with a physical sibling column __qdb_count_driver__2_a
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (k INT, __qdb_count_driver__2_a INT)");
             execute("INSERT INTO t1 VALUES (7, 70)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.w, l1.cnt
@@ -6570,12 +9389,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         // T7: two correlated scalar-count branches share one driver whose key
         // name collides with a physical sibling column
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (__qdb_count_driver__1_a INT)");
             execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
             execute("CREATE TABLE t3 (y INT)");
             execute("INSERT INTO t3 VALUES (2)");
 
@@ -6644,12 +9461,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         // driver key must not make the rewritten join criteria ambiguous;
         // the column is not projected inside the lateral body
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (__qdb_count_driver__1_a INT)");
             execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -6700,12 +9515,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         // key is projected under a user alias, so basename matching would
         // silently redirect the join key to the user column
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (__qdb_count_driver__1_a INT)");
             execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.v, l1.cnt
@@ -6734,12 +9547,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testNestedLateralLeftCountDriverKeyQuotedColumnCollision() throws Exception {
         // T10: quoted creation and quoted references of the colliding column
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (\"__qdb_count_driver__1_a\" INT)");
             execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.v, l1.cnt
@@ -6767,12 +9578,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         // T9: upper-case physical column; case-insensitive basename matching
         // would capture it even though the spelling differs in case
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (\"__QDB_COUNT_DRIVER__1_A\" INT)");
             execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.v, l1.cnt
@@ -6802,12 +9611,9 @@ public class LateralJoinTest extends AbstractCairoTest {
         // inserted generated key must dedupe and the deduped alias must chain
         // upward into the final alignment criteria
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(7)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.v, l1.cnt
@@ -6860,11 +9666,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountEmptyDrivingRelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (k INT)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -6909,12 +9713,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountInternalAliasWildcardVisibility() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(7)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.*
@@ -6976,12 +9777,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountLimitBody() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2), (3)");
+            createT0("(1), (2), (3)");
             execute("CREATE TABLE t1 (k INT, cnt INT)");
             execute("INSERT INTO t1 VALUES (1, null), (2, 7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt, l1.c2
@@ -7032,12 +9831,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountLimitCardinality() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(7)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.*
@@ -7166,11 +9962,10 @@ public class LateralJoinTest extends AbstractCairoTest {
                             2\tnull\tnull
                             """);
 
-            // LIMIT reading an outer column (t0.a) cannot be guarded: the guard is
-            // evaluated in the outer projection, which does not carry that column.
-            // Answering NULL unconditionally would be wrong whenever the window keeps
-            // the row (a = 0 gives LIMIT 0,1, where a no-match outer row must yield 0).
-            assertException("""
+            // A LIMIT reading an outer column (t0.a) keeps the count's row only where it
+            // keeps rank 1: never for LIMIT a, a + 1 with a > 0, and for LIMIT 2 - a, 3 - a
+            // only at a = 2, where nothing matches and the count reads 0.
+            assertQuery("""
                     SELECT t0.a, l1.k, l1.cnt
                     FROM t0
                     LEFT JOIN LATERAL (
@@ -7184,7 +9979,34 @@ public class LateralJoinTest extends AbstractCairoTest {
                         ) l2
                     ) l1
                     ORDER BY t0.a
-                    """, 202, "LIMIT referencing an outer column is not supported over a scalar count");
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tcnt
+                            1\tnull\tnull
+                            2\tnull\tnull
+                            """);
+            assertQuery("""
+                    SELECT t0.a, l1.k, l1.cnt
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT t1.k, l2.cnt
+                        FROM t1
+                        CROSS JOIN LATERAL (
+                            SELECT count(*) AS cnt
+                            FROM t2
+                            WHERE t2.x = t0.a
+                            LIMIT 2 - t0.a, 3 - t0.a
+                        ) l2
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a\tk\tcnt
+                            1\tnull\tnull
+                            2\t7\t0
+                            """);
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.cnt
@@ -7216,12 +10038,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountMultipleDrivingRows() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (10), (20)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(10), (20)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.k, l1.cnt
@@ -7275,12 +10094,10 @@ public class LateralJoinTest extends AbstractCairoTest {
         // hardens the wrapper insertion, while in-branch bare outer-ref
         // references remain HEAD-pre-existing behavior (S1/C1 scope ruling)
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (__qdb_outer_ref__0_a INT)");
             execute("INSERT INTO t1 VALUES (7)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.v, l1.cnt
@@ -7308,14 +10125,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountOuterRefThreeLevels() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
             execute("CREATE TABLE t1b (m INT)");
             execute("INSERT INTO t1b VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.val
@@ -7350,12 +10164,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountOuterRefTwoLevels() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.val
@@ -7385,11 +10196,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountOuterRefTwoLevelsEmptyMiddle() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
+            createT0("(1), (2)");
             execute("CREATE TABLE t1 (k INT)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.val
@@ -7417,12 +10226,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountOuterRefTwoLevelsNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (NULL)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(NULL)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.val
@@ -7451,12 +10257,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountOuterRefTwoLevelsWildcard() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.*
@@ -7486,12 +10289,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountQualifiedWildcardAliasCollisions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (NULL)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(NULL)");
+            createT2("(1)");
             execute("CREATE TABLE t3 (k INT, cnt INT)");
             execute("INSERT INTO t3 VALUES (NULL, NULL)");
 
@@ -7595,12 +10395,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountQualifiedWildcardExcludes() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (NULL)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(NULL)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -7664,12 +10461,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountQualifiedWildcardRepeatedProjection() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt AS c1, l1.cnt AS c2
@@ -7695,12 +10489,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountQualifiedWildcardSurfaces() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -7745,12 +10536,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountQuotedDottedAlias() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT0("(1), (2)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, l1."c.dot"
@@ -7784,10 +10572,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, t0.b, l1.cnt
@@ -7818,10 +10604,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, t0.b, l1.c2
@@ -7845,17 +10629,15 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // Same shape as testNestedLateralLeftCountSkipLevelQualified, but the
-    // innermost correlated reference to t0.a is unqualified, so the rewriter
-    // must recognize it through its lateralDepth tag.
+    // innermost correlated reference to t0.a is unqualified, so LateralBinder
+    // must resolve it to the right outer scope.
     @Test
     public void testNestedLateralLeftCountSkipLevelUnqualified() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, t0.b, l1.cnt
@@ -7884,10 +10666,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperFilterConjunctionDropsZeroRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             // cnt >= 0 holds at 0 but cnt > 1 does not, and FALSE AND TRUE is FALSE
             assertQuery("""
@@ -7925,10 +10705,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperFilterDisjunctionCoversZero() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -7956,10 +10734,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperFilterInequalityDropsZeroRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -7987,10 +10763,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperFilterKeepsZeroRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -8018,10 +10792,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperFilterLowerBoundAcceptsWholeDomain() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             // count() is non-negative, so cnt > -1 cannot reject anything
             assertQuery("""
@@ -8050,10 +10822,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperFilterTautology() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -8081,10 +10851,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperGroupByCountOutput() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             // GROUP BY above the aggregate groups the single zero row by its own
             // value: one group in, one group out. The row survives.
@@ -8114,10 +10882,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperJoinKeepsZeroRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             // count body as the FIRST join model. The companion shape with the
             // operands swapped is asserted by
@@ -8158,10 +10924,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperNegatedFilterLifted() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -8189,10 +10953,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperNonTotalFilterLifted() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             // cnt < 2 accepts the zero row but rejects a count of 2
             assertQuery("""
@@ -8223,10 +10985,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperNonTotalFilterLiftedBindVarLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             String sql = """
                     SELECT t0.a, l1.cnt
@@ -8274,10 +11034,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperNonTotalFilterNotLiftedWhenBodyHasOtherColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt, l1.tag
@@ -8304,10 +11062,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperUnionAllEmptyBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             // the second branch is provably empty for every outer row, so the union
             // contributes exactly the first branch: one row per outer row.
@@ -8344,10 +11100,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testNestedLateralLeftCountWrapperWildcardFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t0 (a INT)");
-            execute("INSERT INTO t0 VALUES (1), (2)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT0("(1), (2)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, l1.cnt
@@ -8380,10 +11134,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, t0.b, l1.cnt
@@ -8411,10 +11163,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1)");
+            createT1("(1)");
+            createT2("(1)");
 
             assertQuery("""
                     SELECT t0.a, t0.b, l1.val
@@ -8442,10 +11192,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
-            execute("CREATE TABLE t2 (x INT)");
-            execute("INSERT INTO t2 VALUES (1), (1)");
+            createT1("(1)");
+            createT2("(1), (1)");
 
             assertQuery("""
                     SELECT t0.a, t0.b, l1.cnt
@@ -8471,13 +11219,127 @@ public class LateralJoinTest extends AbstractCairoTest {
     // Adjacent pin: nested CROSS lateral sum with a skip-level unqualified
     // correlated ref. Every outer row matches, so no compensation fires; the
     // decorrelated aggregate must still evaluate per outer row.
+    // The innermost body's LIMIT reads g.m, an outer column two levels up; the rows match the same query with
+    // g.m substituted as a literal per row of g.
+    @Test
+    public void testNestedLateralLimitReadsOuterColumnTwoLevelsUp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g (id INT, m INT)");
+            execute("INSERT INTO g VALUES (1, 1), (2, 2), (3, 0)");
+            execute("CREATE TABLE p (ok INT)");
+            execute("INSERT INTO p VALUES (1), (1), (2), (3), (NULL), (4)");
+            execute("CREATE TABLE t (k INT, v LONG)");
+            execute("INSERT INTO t VALUES (1, 10), (1, 11), (2, 20), (2, 21), (NULL, 7), (0, 1)");
+
+            final String innerRows = """
+                    id\tok\tv
+                    1\tnull\t7
+                    1\t1\t10
+                    1\t1\t10
+                    1\t2\t20
+                    2\tnull\t7
+                    2\t1\t10
+                    2\t1\t10
+                    2\t1\t11
+                    2\t1\t11
+                    2\t2\t20
+                    2\t2\t21
+                    """;
+            final String cross = """
+                    SELECT g.id, x.ok, x.v FROM g CROSS JOIN LATERAL (
+                        SELECT p.ok, s.v FROM p CROSS JOIN LATERAL (SELECT v FROM t WHERE t.k = p.ok ORDER BY v LIMIT g.m) s
+                    ) x ORDER BY 1, 2, 3
+                    """;
+            assertQuery(cross).noLeakCheck().expectSize().returns(innerRows);
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT 1 id, p.ok, s.v FROM p CROSS JOIN LATERAL (SELECT v FROM t WHERE t.k = p.ok ORDER BY v LIMIT 1) s
+                        UNION ALL
+                        SELECT 2 id, p.ok, s.v FROM p CROSS JOIN LATERAL (SELECT v FROM t WHERE t.k = p.ok ORDER BY v LIMIT 2) s
+                        UNION ALL
+                        SELECT 3 id, p.ok, s.v FROM p CROSS JOIN LATERAL (SELECT v FROM t WHERE t.k = p.ok ORDER BY v LIMIT 0) s
+                    ) ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .returns(innerRows);
+
+            final String leftRows = """
+                    id\tok\tv
+                    1\tnull\t7
+                    1\t1\t10
+                    1\t1\t10
+                    1\t2\t20
+                    1\t3\tnull
+                    1\t4\tnull
+                    2\tnull\t7
+                    2\t1\t10
+                    2\t1\t10
+                    2\t1\t11
+                    2\t1\t11
+                    2\t2\t20
+                    2\t2\t21
+                    2\t3\tnull
+                    2\t4\tnull
+                    3\tnull\tnull
+                    3\t1\tnull
+                    3\t1\tnull
+                    3\t2\tnull
+                    3\t3\tnull
+                    3\t4\tnull
+                    """;
+            final String left = """
+                    SELECT g.id, x.ok, x.v FROM g LEFT JOIN LATERAL (
+                        SELECT p.ok, s.v FROM p LEFT JOIN LATERAL (SELECT v FROM t WHERE t.k = p.ok ORDER BY v LIMIT g.m) s ON true
+                    ) x ON true ORDER BY 1, 2, 3
+                    """;
+            assertQuery(left).noLeakCheck().returns(leftRows);
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT 1 id, p.ok, s.v FROM p LEFT JOIN LATERAL (SELECT v FROM t WHERE t.k = p.ok ORDER BY v LIMIT 1) s ON true
+                        UNION ALL
+                        SELECT 2 id, p.ok, s.v FROM p LEFT JOIN LATERAL (SELECT v FROM t WHERE t.k = p.ok ORDER BY v LIMIT 2) s ON true
+                        UNION ALL
+                        SELECT 3 id, p.ok, s.v FROM p LEFT JOIN LATERAL (SELECT v FROM t WHERE t.k = p.ok ORDER BY v LIMIT 0) s ON true
+                    ) ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .returns(leftRows);
+
+            assertQuery("""
+                    SELECT g.id, x.ok, x.c FROM g CROSS JOIN LATERAL (
+                        SELECT p.ok, s.c FROM p CROSS JOIN LATERAL (SELECT count() c FROM t WHERE t.k = p.ok LIMIT g.m) s
+                    ) x ORDER BY 1, 2, 3
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tok\tc
+                            1\tnull\t1
+                            1\t1\t2
+                            1\t1\t2
+                            1\t2\t2
+                            1\t3\t0
+                            1\t4\t0
+                            2\tnull\t1
+                            2\t1\t2
+                            2\t1\t2
+                            2\t2\t2
+                            2\t3\t0
+                            2\t4\t0
+                            """);
+
+            execute("INSERT INTO g VALUES (4, -1)");
+            assertQuery(cross).noLeakCheck().failsWith("negative LIMIT is not supported in a correlated lateral sub-query [limit=-1]");
+            assertQuery(left).noLeakCheck().failsWith("negative LIMIT is not supported in a correlated lateral sub-query [limit=-1]");
+        });
+    }
+
     @Test
     public void testNestedLateralSkipLevelAggregate() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (2, 20)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
+            createT1("(1)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 100), (1, 200), (2, 300)");
 
@@ -8510,8 +11372,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t0 (a INT, b INT)");
             execute("INSERT INTO t0 VALUES (1, 10), (2, 20), (3, 30)");
-            execute("CREATE TABLE t1 (k INT)");
-            execute("INSERT INTO t1 VALUES (1)");
+            createT1("(1)");
             execute("CREATE TABLE t2 (x INT, v INT)");
             execute("INSERT INTO t2 VALUES (1, 100), (2, 200), (3, 300)");
 
@@ -8539,58 +11400,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOuterRefWildcardExcludedModelLifecycle() {
-        QueryModel model = QueryModel.FACTORY.newInstance();
-        QueryModelWrapper wrapper = new QueryModelWrapper();
-        wrapper.setDelegate(model);
-
-        Assert.assertFalse(model.isLateralCountCoalesceRequired());
-        Assert.assertFalse(model.isOuterRefWildcardExcluded());
-        Assert.assertFalse(wrapper.isLateralCountCoalesceRequired());
-        Assert.assertFalse(wrapper.isOuterRefWildcardExcluded());
-        model.setLateralCountCoalesceRequired(true);
-        model.setOuterRefWildcardExcluded(true);
-        Assert.assertTrue(model.isLateralCountCoalesceRequired());
-        Assert.assertTrue(model.isOuterRefWildcardExcluded());
-        Assert.assertTrue(wrapper.isLateralCountCoalesceRequired());
-        Assert.assertTrue(wrapper.isOuterRefWildcardExcluded());
-        try {
-            wrapper.setLateralCountCoalesceRequired(false);
-            Assert.fail("QueryModelWrapper must remain read-only");
-        } catch (UnsupportedOperationException ignored) {
-        }
-        try {
-            wrapper.setOuterRefWildcardExcluded(false);
-            Assert.fail("QueryModelWrapper must remain read-only");
-        } catch (UnsupportedOperationException ignored) {
-        }
-
-        QueryColumn template = new QueryColumn().of("cnt", null);
-        try {
-            wrapper.addLateralCountTemplate(template);
-            Assert.fail("QueryModelWrapper must remain read-only");
-        } catch (UnsupportedOperationException ignored) {
-        }
-        model.addLateralCountTemplate(template);
-        Assert.assertEquals(1, model.getLateralCountTemplates().size());
-        Assert.assertSame(template, wrapper.getLateralCountTemplates().getQuick(0));
-
-        model.clear();
-        Assert.assertFalse(model.isLateralCountCoalesceRequired());
-        Assert.assertFalse(model.isOuterRefWildcardExcluded());
-        Assert.assertFalse(wrapper.isLateralCountCoalesceRequired());
-        Assert.assertFalse(wrapper.isOuterRefWildcardExcluded());
-        Assert.assertEquals(0, wrapper.getLateralCountTemplates().size());
-    }
-
-    @Test
     public void testPerSidePushInnerBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE base_data (order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -8599,8 +11412,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (1, 'A', '2024-01-01T00:05:00.000000Z'),
                     (2, 'B', '2024-01-01T01:05:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -8634,11 +11446,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testPerSidePushIntermediateLayerProjection() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE base_data (order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -8647,8 +11456,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (1, 'A', '2024-01-01T00:05:00.000000Z'),
                     (2, 'B', '2024-01-01T01:05:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -8728,12 +11536,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testPerSidePushMultipleBranches() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE base_data (order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE returns (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -8742,8 +11547,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (1, 'A', '2024-01-01T00:05:00.000000Z'),
                     (2, 'B', '2024-01-01T01:05:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -8896,10 +11700,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testScalarCountBodyPreservesCrossLateralRows() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, venue SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -8952,6 +11754,430 @@ public class LateralJoinTest extends AbstractCairoTest {
                             1\t2024-01-01T00:10:00.000000Z
                             2\t
                             """);
+        });
+    }
+
+    @Test
+    public void testScalarAggregateWrappersPreserveCarriers() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k INT)");
+            execute("INSERT INTO o VALUES (1), (1), (2), (3)");
+            execute("CREATE TABLE i (k INT, v INT)");
+
+            for (boolean hasRows : new boolean[]{false, true}) {
+                if (hasRows) {
+                    execute("INSERT INTO i VALUES (1, 10), (1, null), (3, null)");
+                }
+                for (boolean isLeft : new boolean[]{false, true}) {
+                    assertQuery("SELECT o.k, l.c, l.s FROM o " + (isLeft ? "LEFT" : "CROSS") + " JOIN LATERAL ("
+                            + "SELECT DISTINCT count(*) + count(v) + coalesce(sum(v), 0) c, sum(v) s "
+                            + "FROM i WHERE i.k = o.k ORDER BY c DESC) l" + (isLeft ? " ON true" : "") + " ORDER BY o.k")
+                            .noLeakCheck()
+                            .returns(hasRows ? """
+                                    k\tc\ts
+                                    1\t13\t10
+                                    1\t13\t10
+                                    2\t0\tnull
+                                    3\t1\tnull
+                                    """ : """
+                                    k\tc\ts
+                                    1\t0\tnull
+                                    1\t0\tnull
+                                    2\t0\tnull
+                                    3\t0\tnull
+                                    """);
+                    assertQuery("SELECT o.k, l.s FROM o " + (isLeft ? "LEFT" : "CROSS") + " JOIN LATERAL ("
+                            + "SELECT DISTINCT sum(v) s FROM i WHERE i.k = o.k ORDER BY s) l"
+                            + (isLeft ? " ON true" : "") + " ORDER BY o.k")
+                            .noLeakCheck()
+                            .returns(hasRows ? """
+                                    k\ts
+                                    1\t10
+                                    1\t10
+                                    2\tnull
+                                    3\tnull
+                                    """ : """
+                                    k\ts
+                                    1\tnull
+                                    1\tnull
+                                    2\tnull
+                                    3\tnull
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScalarCountWrappersKeepFiltersAndLimits() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k INT)");
+            execute("INSERT INTO o VALUES (1), (2)");
+            execute("CREATE TABLE i (k INT)");
+            execute("INSERT INTO i VALUES (1)");
+
+            for (boolean isLeft : new boolean[]{false, true}) {
+                final String join = "SELECT o.k, l.c FROM o " + (isLeft ? "LEFT" : "CROSS") + " JOIN LATERAL (";
+                final String tail = ") l" + (isLeft ? " ON true" : "") + " ORDER BY o.k";
+                final String scalar = "SELECT DISTINCT count(*) c FROM i WHERE i.k = o.k ORDER BY c";
+                for (int lo = 0; lo < 2; lo++) {
+                    for (int hi = 0; hi < 3; hi++) {
+                        assertQuery(join + scalar + " LIMIT " + lo + "," + hi + tail)
+                                .noLeakCheck()
+                                .returns(Math.min(lo, hi) == 0 && Math.max(lo, hi) > 0 ? """
+                                        k\tc
+                                        1\t1
+                                        2\t0
+                                        """ : isLeft ? """
+                                        k\tc
+                                        1\tnull
+                                        2\tnull
+                                        """ : "k\tc\n");
+                    }
+                }
+                assertQuery(join + "SELECT c FROM (" + scalar + ") WHERE c > 0" + tail)
+                        .noLeakCheck()
+                        .returns(isLeft ? """
+                                k\tc
+                                1\t1
+                                2\tnull
+                                """ : """
+                                k\tc
+                                1\t1
+                                """);
+            }
+            assertQuery("""
+                    SELECT o.k, l.c FROM o
+                    LEFT JOIN LATERAL (
+                        SELECT DISTINCT count(*) c FROM i WHERE i.k = o.k ORDER BY c
+                    ) l ON o.k = 1
+                    ORDER BY o.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\t1
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testScalarComputedOuterCrossJoinPreservesEmptyInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (k INT)");
+            execute("INSERT INTO outer_t VALUES (1), (2)");
+            execute("CREATE TABLE inner_t (k INT)");
+            execute("INSERT INTO inner_t VALUES (1)");
+
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery("""
+                        SELECT o.k, s.z, s.n FROM outer_t o
+                        CROSS JOIN LATERAL (SELECT o.k + 1 z, count() n FROM inner_t i WHERE i.k = o.k) s
+                        ORDER BY o.k
+                        """)
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tz\tn
+                                1\t2\t1
+                                2\t3\t0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testScalarComputedOuterDecimalOrderBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (k INT, d DECIMAL(18, 2))");
+            execute("INSERT INTO outer_t VALUES (1, 1.25m), (2, null), (3, 2.50m)");
+            execute("CREATE TABLE inner_t (k INT)");
+            execute("INSERT INTO inner_t VALUES (1)");
+
+            final ObjList<String> projections = new ObjList<>();
+            projections.add("count() n");
+            projections.add("o.k + 1 z, count() n");
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (int j = 0; j < projections.size(); j++) {
+                    assertQuery("SELECT o.k, s.n FROM outer_t o CROSS JOIN LATERAL (SELECT "
+                            + projections.getQuick(j) + " FROM inner_t i WHERE i.k = o.k ORDER BY o.d + 1m) s ORDER BY o.k")
+                            .noLeakCheck()
+                            .expectSize(isFullFat)
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    k\tn
+                                    1\t1
+                                    2\t0
+                                    3\t0
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScalarComputedOuterExplicitGroupAndDistinctStayEmpty() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (k INT)");
+            execute("INSERT INTO outer_t VALUES (1), (2)");
+            execute("CREATE TABLE inner_t (k INT)");
+            execute("INSERT INTO inner_t VALUES (1)");
+
+            final ObjList<String> bodies = new ObjList<>();
+            bodies.add("SELECT o.k + 1 z, count() n FROM inner_t i WHERE i.k = o.k GROUP BY o.k + 1");
+            bodies.add("SELECT o.k + 1 z, count() n FROM inner_t i WHERE i.k = o.k GROUP BY z");
+            bodies.add("SELECT o.k + 1 z, count() n FROM inner_t i WHERE i.k = o.k GROUP BY 1");
+            bodies.add("SELECT DISTINCT o.k + 1 z FROM inner_t i WHERE i.k = o.k");
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (boolean isLeft : new boolean[]{false, true}) {
+                    for (int j = 0; j < bodies.size(); j++) {
+                        assertQuery("SELECT o.k, s.z FROM outer_t o " + (isLeft ? "LEFT" : "CROSS")
+                                + " JOIN LATERAL (" + bodies.getQuick(j) + ") s"
+                                + (isLeft ? " ON true" : "") + " ORDER BY o.k")
+                                .noLeakCheck()
+                                .expectSize(isFullFat && !isLeft)
+                                .fullFatJoins(isFullFat)
+                                .returns("k\tz\n1\t2\n" + (isLeft ? "2\tnull\n" : ""));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScalarComputedOuterLeftJoinPreservesEmptyInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (k INT)");
+            execute("INSERT INTO outer_t VALUES (1), (2)");
+            execute("CREATE TABLE inner_t (k INT)");
+            execute("INSERT INTO inner_t VALUES (1)");
+
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery("""
+                        SELECT o.k, s.z, s.n FROM outer_t o
+                        LEFT JOIN LATERAL (SELECT o.k + 1 z, count() n FROM inner_t i WHERE i.k = o.k) s ON true
+                        ORDER BY o.k
+                        """)
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tz\tn
+                                1\t2\t1
+                                2\t3\t0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testScalarComputedOuterNullableAndFoldedInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (id INT, k INT, txt STRING)");
+            execute("INSERT INTO outer_t VALUES (1, 1, 'a'), (2, 2, null), (3, null, 'c')");
+            execute("CREATE TABLE inner_t (k INT)");
+
+            final ObjList<String> orders = new ObjList<>();
+            orders.add("typeof(i.k) || o.txt || 'x'");
+            orders.add("count() + coalesce(sum(i.k), 0) + coalesce(o.k, 10)");
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (boolean isLeft : new boolean[]{false, true}) {
+                    for (int j = 0; j < orders.size(); j++) {
+                        assertQuery("SELECT o.id, s.z, s.fallback, s.folded, s.n, s.total FROM outer_t o "
+                                + (isLeft ? "LEFT" : "CROSS") + " JOIN LATERAL ("
+                                + "SELECT o.k + 1 z, (coalesce(o.k, 10) + 1)::LONG fallback, "
+                                + "typeof(i.k) || o.txt folded, count() n, sum(i.k) total "
+                                + "FROM inner_t i WHERE i.k = o.k ORDER BY " + orders.getQuick(j) + ") s"
+                                + (isLeft ? " ON true" : "") + " ORDER BY o.id")
+                                .noLeakCheck()
+                                .expectSize(isFullFat && !isLeft)
+                                .fullFatJoins(isFullFat)
+                                .returns("""
+                                        id\tz\tfallback\tfolded\tn\ttotal
+                                        1\t2\t2\tINTa\t0\tnull
+                                        2\t3\t3\tINT\t0\tnull
+                                        3\tnull\t11\tINTc\t0\tnull
+                                        """);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScalarComputedOuterOnRejectsRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (k INT)");
+            execute("INSERT INTO outer_t VALUES (1), (2), (3)");
+            execute("CREATE TABLE inner_t (k INT)");
+            execute("INSERT INTO inner_t VALUES (1), (2), (2)");
+
+            final ObjList<String> projections = new ObjList<>();
+            projections.add("o.k + 1 z, count() n");
+            projections.add("count() n, o.k + 1 z");
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (int j = 0; j < projections.size(); j++) {
+                    assertQuery("SELECT o.k, s.z + s.z doubled, coalesce(s.z, -1) fallback, s.z again, s.n "
+                            + "FROM outer_t o LEFT JOIN LATERAL (SELECT " + projections.getQuick(j)
+                            + " FROM inner_t i WHERE i.k = o.k) s ON s.n = 0 ORDER BY o.k")
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    k\tdoubled\tfallback\tagain\tn
+                                    1\tnull\t-1\tnull\tnull
+                                    2\tnull\t-1\tnull\tnull
+                                    3\t8\t4\t4\t0
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScalarComputedOuterTwoDependencies() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (k INT, j INT)");
+            execute("INSERT INTO outer_t VALUES (1, 10), (1, 20), (2, null)");
+            execute("CREATE TABLE inner_t (k INT)");
+            execute("INSERT INTO inner_t VALUES (1)");
+
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (boolean isEmpty : new boolean[]{false, true}) {
+                    assertQuery("SELECT o.k, o.j, s.z, s.n FROM outer_t o CROSS JOIN LATERAL ("
+                            + "SELECT o.k + coalesce(o.j, 30) z, count() n FROM inner_t i WHERE "
+                            + (isEmpty ? "i.k < 0" : "i.k = o.k") + ") s ORDER BY o.k, o.j")
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .returns("k\tj\tz\tn\n1\t10\t11\t" + (isEmpty ? 0 : 1)
+                                    + "\n1\t20\t21\t" + (isEmpty ? 0 : 1) + "\n2\tnull\t32\t0\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScalarCountOnDoesNotRewriteInsertedGuards() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k INT)");
+            execute("INSERT INTO o VALUES (1), (2)");
+            execute("CREATE TABLE i (k INT)");
+            execute("INSERT INTO i VALUES (1), (2)");
+
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery("""
+                        SELECT o.k, s.z FROM o
+                        LEFT JOIN LATERAL (SELECT o.k z, count() n FROM i WHERE i.k = o.k) s
+                        ON s.n = 0 ORDER BY o.k
+                        """)
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tz
+                                1\tnull
+                                2\tnull
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testScalarCountOnGuardedExpressions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k INT)");
+            execute("INSERT INTO o VALUES (1), (2)");
+            execute("CREATE TABLE i (k INT)");
+            execute("INSERT INTO i VALUES (1), (2)");
+
+            final ObjList<String> projections = new ObjList<>();
+            projections.add("o.k z, count() n");
+            projections.add("count() n, o.k z");
+            projections.add("99 z, count() n");
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (int j = 0; j < projections.size(); j++) {
+                    assertQuery("SELECT o.k, s.z + s.z doubled, coalesce(s.z, -1) fallback, s.z again, s.n "
+                            + "FROM o LEFT JOIN LATERAL (SELECT " + projections.getQuick(j)
+                            + " FROM i WHERE i.k = o.k) s ON s.n = 0 ORDER BY o.k")
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .returns("""
+                                    k\tdoubled\tfallback\tagain\tn
+                                    1\tnull\t-1\tnull\tnull
+                                    2\tnull\t-1\tnull\tnull
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScalarCountOnGuardedMixedInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k INT)");
+            execute("INSERT INTO o VALUES (1), (2), (3)");
+            execute("CREATE TABLE i (k INT)");
+            execute("INSERT INTO i VALUES (1), (2), (2)");
+
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                assertQuery("""
+                        SELECT o.k, s.z, s.n FROM o
+                        LEFT JOIN LATERAL (SELECT o.k z, count() n FROM i WHERE i.k = o.k) s
+                        ON s.n <> 1 ORDER BY o.k
+                        """)
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tz\tn
+                                1\tnull\tnull
+                                2\t2\t2
+                                3\t3\t0
+                                """);
+                assertQuery("""
+                        SELECT o.k, s.z, s.n FROM o
+                        LEFT JOIN LATERAL (SELECT o.k z, count() n FROM i WHERE i.k = o.k GROUP BY o.k) s
+                        ON s.n <> 1 ORDER BY o.k
+                        """)
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFat)
+                        .returns("""
+                                k\tz\tn
+                                1\tnull\tnull
+                                2\t2\t2
+                                3\tnull\tnull
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testScalarCountWrappersPreserveEmptyInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k INT)");
+            execute("INSERT INTO o VALUES (1), (2)");
+            execute("CREATE TABLE i (k INT)");
+            execute("INSERT INTO i VALUES (1)");
+
+            final ObjList<String> bodies = new ObjList<>();
+            bodies.add("SELECT count(*) c FROM i WHERE i.k = o.k");
+            bodies.add("SELECT count(*) c FROM i WHERE i.k = o.k LIMIT 1");
+            bodies.add("SELECT DISTINCT count(*) c FROM i WHERE i.k = o.k");
+            bodies.add("SELECT count(*) c FROM i WHERE i.k = o.k ORDER BY c");
+            bodies.add("SELECT DISTINCT count(*) c FROM i WHERE i.k = o.k ORDER BY c");
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (boolean isLeft : new boolean[]{false, true}) {
+                    for (int j = 0; j < bodies.size(); j++) {
+                        assertQuery("SELECT o.k, l.c FROM o " + (isLeft ? "LEFT" : "CROSS")
+                                + " JOIN LATERAL (" + bodies.getQuick(j) + ") l"
+                                + (isLeft ? " ON true" : "") + " ORDER BY o.k")
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFat)
+                                .returns("""
+                                        k\tc
+                                        1\t1
+                                        2\t0
+                                        """);
+                    }
+                }
+            }
         });
     }
 
@@ -9038,10 +12264,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT04GroupByCountLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -9181,10 +12405,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT08DistinctInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -9217,10 +12439,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT09UnionAll() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("INSERT INTO trades_a VALUES (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'), (2, 2, 20.0, '2024-01-01T01:10:00.000000Z')");
             execute("INSERT INTO trades_b VALUES (1, 1, 30.0, '2024-01-01T00:20:00.000000Z'), (2, 2, 40.0, '2024-01-01T01:20:00.000000Z')");
 
@@ -9250,10 +12471,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT100LeftCountInExpression() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -9288,16 +12507,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT100RightJoinBranchInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z')
                     """);
@@ -9337,16 +12552,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT100bFullOuterJoinBranchInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z')
                     """);
@@ -9385,17 +12596,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT100cMixedLeftRightJoinBranchesInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE discounts (order_id INT, disc DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -9672,15 +12879,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT103ReplaceColumnRefBinaryExpr() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -9705,10 +12908,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT103bReplaceColumnRefMultiArgFunction() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, qty DOUBLE, qty2 DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -9739,15 +12940,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT103cReplaceColumnRefNestedExpr() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -9825,16 +13022,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT106LeftJoinCorrelatedOnSemantics() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -9871,16 +13064,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT106bRightJoinCorrelatedOnSemantics() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z')
                     """);
             // Adjustments for both orders
@@ -9920,16 +13109,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT106cFullOuterJoinCorrelatedOnSemantics() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z')
                     """);
@@ -9967,16 +13152,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT106dRightJoinSubqueryBranchCorrelatedOn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, active INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z')
                     """);
             execute("""
@@ -10014,15 +13195,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testT106eLeftJoinNonEqCorrelatedOn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE bonuses (trade_order_id INT, bonus DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 15.0, '2024-01-01T00:00:00.000000Z'),
                     (2, 5.0, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -10061,16 +13240,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT107CorrelatedJoinAboveDataSourceLevel() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -10082,7 +13257,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // The join with adjustments is at the SELECT level (above trades),
-            // not at the data source level where terminateHere runs.
+            // not at the data source level.
             assertQuery("""
                     SELECT o.id, sub.qty, sub.adj
                     FROM orders o
@@ -10108,16 +13283,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT108aTerminateNonCorrelatedUnionBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE returns (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -10153,14 +13324,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testT108bTerminateDeepCorrelation() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 15.0, '2024-01-01T00:00:00.000000Z'),
                     (2, 5.0, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -10190,10 +13359,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT108cWhereCorrelatedOverNonCorrelatedSubquery() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -10279,11 +13446,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT10Intersect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -10378,16 +13543,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT110OuterAliasSaveStackTwoBranches() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE fees (order_id INT, fee DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -10423,17 +13584,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT110bOuterAliasSaveStackThreeBranches() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE fees (order_id INT, fee DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE discounts (order_id INT, disc DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -10519,15 +13676,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT111LatestByPartitionByCorrelationColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z'),
@@ -10535,7 +13688,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """);
 
             // PARTITION BY order_id is the same as the correlation column
-            // compensateLatestBy should detect it's already present and skip adding
+            // LateralBinder should detect it's already present and skip adding
             assertQuery("""
                     SELECT o.id, sub.qty
                     FROM orders o
@@ -10560,11 +13713,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT112CorrelatedSubqueryJoinBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, tag_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE tags (id INT, order_id INT, label STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -10633,14 +13784,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testT114CaseExprWithOuterRef() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, lo DOUBLE, hi DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 10.0, 20.0, '2024-01-01T00:00:00.000000Z'),
                     (2, 25.0, 35.0, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 5.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 15.0, '2024-01-01T00:20:00.000000Z'),
                     (1, 25.0, '2024-01-01T00:30:00.000000Z'),
@@ -10682,16 +13831,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT115LeftLateralCountInCoalesce() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -10725,19 +13870,17 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // T116: Window function with correlated PARTITION BY inside lateral
-    // Triggers hasCorrelatedExprAtDepth window expression args path
+    // Triggers LateralBinder.hasCorrelatedColumns window expression args path
     @Test
     public void testT116WindowFunctionCorrelatedPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, category SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'A', '2024-01-01T00:00:00.000000Z'),
                     (2, 'B', '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -10770,10 +13913,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT11InnerJoinInLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE products (id INT, order_id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE prices (id INT, product_id INT, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO products VALUES
                     (1, 1, 'Widget', '2024-01-01T00:10:00.000000Z'),
@@ -10810,9 +13952,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT12LatestByInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 'A', 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -10925,10 +14066,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT15EmptyResultLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -10952,10 +14091,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT17LimitAndWindowLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -10998,10 +14135,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT18NullJoinKeyInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (null, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -11031,10 +14166,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT19NullJoinKeyLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (null, '2024-01-01T01:00:00.000000Z'),
                     (2, '2024-01-01T02:00:00.000000Z')
@@ -11066,10 +14199,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT20UncorrelatedLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -11202,13 +14333,12 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T23: SAMPLE BY (rewritten to GROUP BY), INNER — decorrelation after rewriteSampleBy
+    // T23: SAMPLE BY (rewritten to GROUP BY), INNER — decorrelation after SampleByBinder.bindSampleBy
     @Test
     public void testT23SampleByInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -11245,9 +14375,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT23bKeyedSampleByInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 'A', 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -11288,11 +14417,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT23cUnion() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -11335,9 +14462,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT25MultiLevelSubquery() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -11441,9 +14567,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28PivotInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 'buy', 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -11479,10 +14604,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28bPivotInsideLateralLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -11521,10 +14644,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28c2SampleByCountLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -11564,10 +14685,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28cSampleByLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -11605,9 +14724,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28dSampleByAlignToFirstObservation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 10.0, '2024-01-01T00:05:00.000000Z'),
@@ -11642,9 +14760,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28eSampleByFillLinear() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 10.0, '2024-01-01T00:00:00.000000Z'),
@@ -11684,8 +14801,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T28f: ORDER BY + LIMIT over a body that selects one column twice. compensateLimit() places
-    // row_number() in that projection, ordered by the duplicated column.
+    // T28f: ORDER BY + LIMIT over a body that selects one column twice; the correlated LIMIT ranks the rows of that
+    // projection by the duplicated column.
     @Test
     public void testT28fLimitWithDuplicatedColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -11754,13 +14871,197 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T28f: SAMPLE BY + LIMIT — combined wrappers: rewriteSampleBy then compensateLimit
+    @Test
+    public void testT28fSampleByFillWithLimitStreamsWindow() throws Exception {
+        assertMemoryLeak(() -> {
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z'), (3, '2024-01-01T02:00:00.000000Z')");
+            execute("CREATE TABLE trades (id INT, order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 1, 'buy', 10.0, '2024-01-01T00:10:00.000000Z'),
+                    (2, 1, 'sell', 20.0, '2024-01-01T00:40:00.000000Z'),
+                    (3, 1, 'buy', 30.0, '2024-01-01T01:10:00.000000Z'),
+                    (4, 2, 'buy', 100.0, '2024-01-01T01:05:00.000000Z'),
+                    (5, 2, 'sell', 200.0, '2024-01-01T01:35:00.000000Z')
+                    """);
+
+            assertQuery("""
+                    SELECT o.id, t.ts, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m FILL(NULL)
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [id, ts]
+                                SelectedRecord
+                                    Hash Join
+                                      condition: t.__qdb_outer_ref__0_id=o.id
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: orders
+                                        Hash
+                                            Filter filter: 2L>=__lateral_rn
+                                                Window
+                                                  functions: [row_number() over (partition by [__qdb_outer_ref__0_id])]
+                                                    SelectedRecord
+                                                        Sample By Fill
+                                                          stride: '30m'
+                                                          fill: null
+                                                            Encode sort light
+                                                              keys: [ts]
+                                                                Async Group By workers: 1
+                                                                  keys: [ts,__qdb_outer_ref__0_id]
+                                                                  keyFunctions: [timestamp_floor_utc('30m',ts)]
+                                                                  values: [sum(qty)]
+                                                                  filter: null
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            id\tts\ttotal
+                            1\t2024-01-01T00:00:00.000000Z\t10.0
+                            1\t2024-01-01T00:30:00.000000Z\t20.0
+                            2\t2024-01-01T00:00:00.000000Z\tnull
+                            2\t2024-01-01T00:30:00.000000Z\tnull
+                            """);
+
+            final String copyPlan = """
+                    Encode sort
+                      keys: [id, ts]
+                        SelectedRecord
+                            Hash Join
+                              condition: t.__qdb_outer_ref__0_id=o.id
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: orders
+                                Hash
+                                    Filter filter: 2L>=__lateral_rn
+                                        Window
+                                          functions: [row_number() over (partition by [__qdb_outer_ref__0_id])]
+                                            SelectedRecord
+                                                Sample By Fill
+                                                  stride: '30m'
+                                                  fill: null
+                                                    Encode sort light
+                                                      keys: [ts2]
+                                                        Async Group By workers: 1
+                                                          keys: [ts2,__qdb_outer_ref__0_id]
+                                                          keyFunctions: [timestamp_floor_utc('30m',ts)]
+                                                          values: [sum(qty)]
+                                                          filter: null
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: trades
+                    """;
+            final String copyResult = """
+                    id\tts\tts2\ttotal
+                    1\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t10.0
+                    1\t2024-01-01T00:30:00.000000Z\t2024-01-01T00:30:00.000000Z\t20.0
+                    2\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\tnull
+                    2\t2024-01-01T00:30:00.000000Z\t2024-01-01T00:30:00.000000Z\tnull
+                    """;
+            assertQuery("""
+                    SELECT o.id, t.ts, t.ts2, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, ts AS ts2, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m FILL(NULL)
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan(copyPlan)
+                    .returns(copyResult);
+            assertQuery("""
+                    SELECT o.id, t.ts, t.ts2, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT ts, ts AS ts2, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m FILL(NULL)
+                        ORDER BY ts
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan(copyPlan)
+                    .returns(copyResult);
+            assertQuery("""
+                    SELECT o.id, t.ts, t.total
+                    FROM orders o
+                    JOIN LATERAL (
+                        SELECT dateadd('m', 1, ts) AS ts, sum(qty) AS total
+                        FROM trades
+                        WHERE order_id = o.id
+                        SAMPLE BY 30m FILL(NULL)
+                        LIMIT 2
+                    ) t
+                    ORDER BY o.id, t.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [id, ts]
+                                SelectedRecord
+                                    Hash Join
+                                      condition: t.__qdb_outer_ref__0_id=o.id
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: orders
+                                        Hash
+                                            Filter filter: 2L>=__lateral_rn
+                                                Window
+                                                  functions: [row_number() over (partition by [__qdb_outer_ref__0_id])]
+                                                    VirtualRecord
+                                                      functions: [dateadd('m',1,ts1),total,__qdb_outer_ref__0_id]
+                                                        Sample By Fill
+                                                          stride: '30m'
+                                                          fill: null
+                                                            Encode sort light
+                                                              keys: [ts1]
+                                                                Async Group By workers: 1
+                                                                  keys: [ts1,__qdb_outer_ref__0_id]
+                                                                  keyFunctions: [timestamp_floor_utc('30m',ts)]
+                                                                  values: [sum(qty)]
+                                                                  filter: null
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            id\tts\ttotal
+                            1\t2024-01-01T00:01:00.000000Z\t10.0
+                            1\t2024-01-01T00:31:00.000000Z\t20.0
+                            2\t2024-01-01T00:01:00.000000Z\tnull
+                            2\t2024-01-01T00:31:00.000000Z\tnull
+                            """);
+        });
+    }
+
+    // T28f: SAMPLE BY + LIMIT — combined wrappers: SampleByBinder.bindSampleBy then LateralBinder.bindCorrelatedLimit
     @Test
     public void testT28fSampleByWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -11795,9 +15096,8 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T28f: SAMPLE BY + copy of the timestamp + LIMIT. rewriteSampleBy() moves the copy, the ORDER BY
-    // and the LIMIT to a wrapper model, so compensateLimit() places row_number() in a projection
-    // that selects the bucket column twice.
+    // T28f: SAMPLE BY + a copy of the timestamp + LIMIT; the correlated LIMIT ranks the rows of a projection that
+    // selects the bucket column twice.
     @Test
     public void testT28fSampleByWithTimestampCopyAndLimit() throws Exception {
         assertMemoryLeak(() -> {
@@ -12058,13 +15358,12 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T28g: ORDER BY with function expression — moveOrderByFunctionsIntoOuterSelect wrapper
+    // T28g: ORDER BY with function expression — OrderBinder wrapper
     @Test
     public void testT28gOrderByFunctionWrapper() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 30.0, '2024-01-01T00:10:00.000000Z'),
@@ -12074,7 +15373,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (5, 2, 40.0, '2024-01-01T01:20:00.000000Z')
                     """);
 
-            // ORDER BY abs(qty - 25) triggers moveOrderByFunctionsIntoOuterSelect
+            // ORDER BY abs(qty - 25) triggers OrderBinder
             // which wraps the inner model with a SELECT * wrapper
             assertQuery("""
                     SELECT o.id, t.qty
@@ -12142,9 +15441,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28iGroupByWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, category STRING, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 'A', 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -12168,13 +15466,13 @@ public class LateralJoinTest extends AbstractCairoTest {
                         ORDER BY total DESC
                         LIMIT 2
                     ) t
-                    ORDER BY o.id, t.total DESC
+                    ORDER BY o.id, t.total DESC, t.category
                     """)
                     .noLeakCheck()
                     .returns("""
                             id\tcategory\ttotal
-                            1\tB\t30.0
                             1\tA\t30.0
+                            1\tB\t30.0
                             2\tZ\t70.0
                             2\tY\t60.0
                             """);
@@ -12190,13 +15488,13 @@ public class LateralJoinTest extends AbstractCairoTest {
                         ORDER BY total DESC
                         LIMIT 2
                     ) t
-                    ORDER BY o.id, t.total DESC
+                    ORDER BY o.id, t.total DESC, t.category
                     """)
                     .noLeakCheck()
                     .returns("""
                             id\tcategory\ttotal
-                            1\tB\t30.0
                             1\tA\t30.0
+                            1\tB\t30.0
                             2\tZ\t70.0
                             2\tY\t60.0
                             """);
@@ -12206,9 +15504,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT28jDistinctWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, category STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 'A', '2024-01-01T00:10:00.000000Z'),
@@ -12246,9 +15543,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT29CteInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("""
                     INSERT INTO trades VALUES
                     (1, 1, 10.0, '2024-01-01T00:10:00.000000Z'),
@@ -12280,10 +15576,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT30UngroupedCountInner() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -12316,10 +15610,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT31UngroupedCountLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -12350,10 +15642,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT32UngroupedSumLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -12425,10 +15715,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT35ComplexEquality() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, group_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (10, '2024-01-01T00:00:00.000000Z'),
                     (20, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -12459,14 +15747,13 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T36: Inner JOIN ON correlation — extractCorrelatedFromInnerJoins
+    // T36: Inner JOIN ON correlation — LateralBinder
     @Test
     public void testT36InnerJoinOnCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            createOrders("(1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("CREATE TABLE t1 (id INT, val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE t2 (id INT, order_id INT, t1_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO orders VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z')");
             execute("INSERT INTO t1 VALUES (1, 'X', '2024-01-01T00:10:00.000000Z'), (2, 'Y', '2024-01-01T01:10:00.000000Z')");
             execute("""
                     INSERT INTO t2 VALUES
@@ -12852,11 +16139,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT46Except() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -12899,11 +16184,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT47IntersectAll() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z')
                     """);
             execute("""
@@ -12943,11 +16226,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT48ExceptAll() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z')
                     """);
             execute("""
@@ -12985,11 +16266,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT49ExceptLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -13033,11 +16312,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT50UnionMultiGroup() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -13214,7 +16491,6 @@ public class LateralJoinTest extends AbstractCairoTest {
                             1	111	110
                             2	231	230
                             """);
-
 
             assertQuery("""
                     SELECT t1.a, x.result1 - x.result
@@ -13438,11 +16714,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT57LeftJoinInLateralPreservesNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE items (id INT, order_id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE tags (item_id INT, order_id INT, tag STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -13480,7 +16754,7 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T58: LIMIT with function ORDER BY — compensateLimit must find LIMIT and ORDER BY
+    // T58: LIMIT with function ORDER BY — LateralBinder.bindCorrelatedLimit must find LIMIT and ORDER BY
     // on different wrapper layers and resolve ORDER BY aliases through intermediate SELECTs
     @Test
     public void testT58LimitWithFunctionOrderBy() throws Exception {
@@ -13502,7 +16776,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (2, 8, '2024-01-01T01:30:00.000000Z')
                     """);
 
-            // ORDER BY abs(val - 5) triggers moveOrderByFunctionsIntoOuterSelect.
+            // ORDER BY abs(val - 5) triggers OrderBinder.
             // Per-group LIMIT 2: for each t1 row, take 2 vals closest to 5.
             assertQuery("""
                     SELECT t1.a, sub.val
@@ -13617,11 +16891,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT61MultipleLateralJoinsOnSameOuter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE fills (id INT, order_id INT, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -14173,17 +17445,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT64CascadingLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE fees (order_id INT, qty_threshold DOUBLE, fee DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -14225,21 +17493,17 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // T64b: Cascading lateral where first lateral has window function — verifies deepClone
     // handles WindowExpression correctly. Without deep clone, the shared model between
-    // orders.jm[1] and the second lateral's outer ref subquery causes rewriteSelectClause0
+    // orders.jm[1] and the second lateral's outer ref subquery causes SqlBinder
     // to corrupt the model on the second processing pass.
     @Test
     public void testT64bCascadingLateralWithWindow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE bonuses (min_rank LONG, bonus DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (1, 30.0, '2024-01-01T00:30:00.000000Z'),
@@ -14328,12 +17592,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT66ThreeWayUnionAll() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_c (order_id INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -14369,15 +17631,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT67UnionHeterogeneousBranches() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -14460,17 +17718,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT69CascadingLateralLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE discounts (min_qty DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 100.0, '2024-01-01T00:10:00.000000Z'),
                     (2,  20.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -14511,11 +17765,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT70MultipleCorrelatedJoinsInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE items (order_id INT, product STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE payments (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -14557,10 +17809,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT71PostJoinFilterAndAggregateFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -14817,11 +18067,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT77LatestByInUnionBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -14869,10 +18117,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT77bLatestByLeft() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
@@ -15027,15 +18273,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT77e1LatestByPartitionByOuterCol() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -15055,6 +18297,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ) t
                     ORDER BY o.id
                     """)
+                    .expectSize()
                     .noLeakCheck()
                     .returns("""
                             id\tqty
@@ -15233,15 +18476,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT80WindowCompensation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 30.0, '2024-01-01T00:20:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:30:00.000000Z'),
@@ -15333,10 +18572,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT80cWindowWithPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, side SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -15382,17 +18619,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT81JoinInsideUnion() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE refunds (order_id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE labels (order_id INT, label SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 20.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -15440,12 +18673,10 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT82UnionInsideJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_a (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades_b (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE tags (order_id INT, tag SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -15488,11 +18719,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT83JoinMixedCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, product_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE products (id INT, name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -15536,15 +18765,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT84UnionMixedCorrelation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 20.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -15577,16 +18802,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT85AsofJoinInsideLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE prices (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:30:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -15696,15 +18917,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testT87CorrelatedJoinOnAndBranch() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, min_qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE factors (trade_order_id INT, factor DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 15.0, '2024-01-01T00:00:00.000000Z'),
                     (2, 5.0,  '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -15732,6 +18951,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     ORDER BY o.id
                     """)
                     .noLeakCheck()
+                    .expectSize()
                     .returns("""
                             id\tadjusted_qty
                             1\t30.0
@@ -15756,7 +18976,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                         """);
     }
 
-    // T88: Unqualified correlated ref — exercises rewriteOuterRefs no-dot fallback
+    // T88: Unqualified correlated ref — exercises LateralBinder no-dot fallback
     @Test
     public void testT88UnqualifiedCorrelatedRef() throws Exception {
         assertMemoryLeak(() -> {
@@ -15791,11 +19011,9 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT89GroupByInUnionBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE refunds (order_id INT, category SYMBOL, amt DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -15837,14 +19055,12 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T90: LIMIT + offset with GROUP BY (exercises compensateLimit wrapping path)
+    // T90: LIMIT + offset with GROUP BY (exercises LateralBinder.bindCorrelatedLimit wrapping path)
     @Test
     public void testT90LimitOffsetWithGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -15884,26 +19100,24 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T91: Subquery as outer table — exercises createOuterRefBase deepClone path
+    // T91: Subquery as outer table — exercises LateralBinder deepClone path
     @Test
     public void testT91SubqueryOuter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, status SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'active', '2024-01-01T00:00:00.000000Z'),
                     (2, 'closed', '2024-01-01T01:00:00.000000Z'),
                     (3, 'active', '2024-01-01T02:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (3, 30.0, '2024-01-01T02:10:00.000000Z')
                     """);
 
-            // Outer is a subquery (not a bare table) — createOuterRefBase
+            // Outer is a subquery (not a bare table) — LateralBinder
             // takes the nestedModel path and deep-clones it
             assertQuery("""
                     SELECT o.id, sub.total
@@ -15968,17 +19182,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT93CorrelatedSubqueryInLateral() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE valid_orders (order_id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 20.0, '2024-01-01T01:10:00.000000Z'),
                     (3, 30.0, '2024-01-01T02:10:00.000000Z')
@@ -16003,14 +19213,12 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
-    // T94: Lateral with DISTINCT + GROUP BY on same query (compensateDistinct + compensateAggregate)
+    // T94: Lateral with DISTINCT + GROUP BY on same query (LateralBinder + LateralBinder.compensateScalarAggregate)
     @Test
     public void testT94DistinctWithGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE trades (order_id INT, category SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
@@ -16249,15 +19457,11 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT97LimitZero() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 20.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -16286,14 +19490,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testT98NullInNonEqualityCorrelation() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, threshold DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 15.0, '2024-01-01T00:00:00.000000Z'),
                     (2, NULL, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -16322,7 +19524,6 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testT98OuterWhereFilterWithNonEqLateral() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, status SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'ACTIVE', '2024-01-01T00:00:00.000000Z'),
@@ -16330,8 +19531,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     (3, 'ACTIVE', '2024-01-01T02:00:00.000000Z'),
                     (4, 'ACTIVE', '2024-01-01T03:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z'),
@@ -16362,20 +19562,18 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     // T98b: single source + unqualified WHERE column name
-    // Regression test: canResolveColumnForOuter must resolve unqualified columns
+    // Regression test: LateralBinder must resolve unqualified columns
     @Test
     public void testT98bOuterWhereUnqualifiedColumn() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, status SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'ACTIVE', '2024-01-01T00:00:00.000000Z'),
                     (2, 'CLOSED', '2024-01-01T01:00:00.000000Z'),
                     (3, 'ACTIVE', '2024-01-01T02:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -16397,21 +19595,21 @@ public class LateralJoinTest extends AbstractCairoTest {
                             Encode sort
                               keys: [id]
                                 VirtualRecord
-                                  functions: [id,coalesce(cnt,0)]
-                                    SelectedRecord
-                                        Hash Left Outer Join Light
-                                          condition: sub.__qdb_outer_ref__0_id=o.id
-                                          filter: true
-                                            Async JIT Filter workers: 1
-                                              filter: status='ACTIVE'
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: orders
-                                            Hash
+                                  functions: [o.id,coalesce(sub.cnt,0)]
+                                    Hash Left Outer Join Light
+                                      condition: sub.__qdb_outer_ref__0_id=o.id
+                                      filter: true
+                                        Async JIT Filter workers: 1
+                                          filter: status='ACTIVE'
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: orders
+                                        Hash
+                                            SelectedRecord
                                                 GroupBy vectorized: false
                                                   keys: [__qdb_outer_ref__0_id]
                                                   values: [count(*)]
-                                                    Filter filter: (trades.order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and trades.order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                    Filter filter: (order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
                                                         Cross Join
                                                             PageFrame
                                                                 Row forward scan
@@ -16435,16 +19633,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT98cOuterWhereWithFunction() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z'),
                     (3, '2024-01-01T02:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z'),
                     (3, 40.0, '2024-01-01T02:10:00.000000Z')
@@ -16466,21 +19660,21 @@ public class LateralJoinTest extends AbstractCairoTest {
                             Encode sort
                               keys: [id]
                                 VirtualRecord
-                                  functions: [id,coalesce(cnt,0)]
-                                    SelectedRecord
-                                        Hash Left Outer Join Light
-                                          condition: sub.__qdb_outer_ref__0_id=o.id
-                                          filter: true
-                                            Async Filter workers: 1
-                                              filter: 1<abs(id)
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: orders
-                                            Hash
+                                  functions: [o.id,coalesce(sub.cnt,0)]
+                                    Hash Left Outer Join Light
+                                      condition: sub.__qdb_outer_ref__0_id=o.id
+                                      filter: true
+                                        Async Filter workers: 1
+                                          filter: 1<abs(id)
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: orders
+                                        Hash
+                                            SelectedRecord
                                                 GroupBy vectorized: false
                                                   keys: [__qdb_outer_ref__0_id]
                                                   values: [count(*)]
-                                                    Filter filter: (trades.order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and trades.order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                    Filter filter: (order_id>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and order_id<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
                                                         Cross Join
                                                             PageFrame
                                                                 Row forward scan
@@ -16545,48 +19739,47 @@ public class LateralJoinTest extends AbstractCairoTest {
                             Encode sort
                               keys: [id]
                                 VirtualRecord
-                                  functions: [id,category,coalesce(cnt,0)]
-                                    SelectedRecord
-                                        Hash Left Outer Join Light
-                                          condition: sub.__qdb_outer_ref__0_category=t2.category and sub.__qdb_outer_ref__0_id=t1.id
-                                          symbolKeyJoin: true
-                                            Hash Join Light
-                                              condition: t2.t1_id=t1.id
+                                  functions: [t1.id,t2.category,coalesce(sub.cnt,0)]
+                                    Hash Left Outer Join Light
+                                      condition: sub.__qdb_outer_ref__0_id=t1.id and sub.__qdb_outer_ref__0_category=t2.category
+                                      symbolKeyJoin: true
+                                        Hash Join Light
+                                          condition: t2.t1_id=t1.id
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t2
+                                            Hash
                                                 Async JIT Filter workers: 1
                                                   filter: status='ACTIVE'
                                                     PageFrame
                                                         Row forward scan
                                                         Frame forward scan on: t1
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: t2
-                                            Hash
+                                        Hash
+                                            SelectedRecord
                                                 GroupBy vectorized: false
-                                                  keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
+                                                  keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_category]
                                                   values: [count(*)]
-                                                    Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                    Filter filter: (a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
                                                         Hash Join Light
-                                                          condition: __qdb_outer_ref__0_category=t3.b
+                                                          condition: __qdb_outer_ref__0_category=b
                                                           symbolKeyJoin: true
                                                             PageFrame
                                                                 Row forward scan
                                                                 Frame forward scan on: t3
                                                             Hash
                                                                 GroupBy vectorized: false
-                                                                  keys: [__qdb_outer_ref__0_category,__qdb_outer_ref__0_id]
-                                                                    SelectedRecord
-                                                                        Hash Join Light
-                                                                          condition: t2.t1_id=t1.id
-                                                                            Async JIT Filter workers: 1
-                                                                              filter: status='ACTIVE'
-                                                                                PageFrame
-                                                                                    Row forward scan
-                                                                                    Frame forward scan on: t1
-                                                                            Hash
-                                                                                PageFrame
-                                                                                    Row forward scan
-                                                                                    Frame forward scan on: t2
+                                                                  keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_category]
+                                                                    Hash Join Light
+                                                                      condition: t2.t1_id=t1.id
+                                                                        Async JIT Filter workers: 1
+                                                                          filter: status='ACTIVE'
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: t1
+                                                                        Hash
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: t2
                             """)
                     .returns("""
                             id\tcategory\tcnt
@@ -16641,34 +19834,34 @@ public class LateralJoinTest extends AbstractCairoTest {
                             Encode sort
                               keys: [id]
                                 VirtualRecord
-                                  functions: [id,t2_val,coalesce(cnt,0)]
-                                    SelectedRecord
-                                        Hash Left Outer Join Light
-                                          condition: sub.__qdb_outer_ref__0_val=t2.val and sub.__qdb_outer_ref__0_id=t1.id
-                                            Filter filter: t2.val<t1.val
-                                                Hash Join Light
-                                                  condition: t2.t1_id=t1.id
+                                  functions: [t1.id,t2.val,coalesce(sub.cnt,0)]
+                                    Hash Left Outer Join Light
+                                      condition: sub.__qdb_outer_ref__0_id=t1.id and sub.__qdb_outer_ref__0_val1=t2.val
+                                        Filter filter: t2.val<t1.val
+                                            Hash Join Light
+                                              condition: t2.t1_id=t1.id
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t1
+                                                Hash
                                                     PageFrame
                                                         Row forward scan
-                                                        Frame forward scan on: t1
-                                                    Hash
-                                                        PageFrame
-                                                            Row forward scan
-                                                            Frame forward scan on: t2
-                                            Hash
+                                                        Frame forward scan on: t2
+                                        Hash
+                                            SelectedRecord
                                                 GroupBy vectorized: false
-                                                  keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
+                                                  keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_val1]
                                                   values: [count(*)]
-                                                    Filter filter: (t3.a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and t3.a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
+                                                    Filter filter: (a>=__qdb_outer_ref__0.__qdb_outer_ref__0_id and a<__qdb_outer_ref__0.__qdb_outer_ref__0_id+1)
                                                         Hash Join Light
-                                                          condition: __qdb_outer_ref__0_val=t3.b
+                                                          condition: __qdb_outer_ref__0_val1=b
                                                             PageFrame
                                                                 Row forward scan
                                                                 Frame forward scan on: t3
                                                             Hash
                                                                 GroupBy vectorized: false
-                                                                  keys: [__qdb_outer_ref__0_val,__qdb_outer_ref__0_id]
-                                                                    SelectedRecord
+                                                                  keys: [__qdb_outer_ref__0_id,__qdb_outer_ref__0_val1]
+                                                                    Filter filter: t2.val<t1.val
                                                                         Hash Join Light
                                                                           condition: t2.t1_id=t1.id
                                                                             PageFrame
@@ -16728,20 +19921,16 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     // T99: correlated ON on join branch (ji > 0, INNER JOIN)
     // The join branch (t3) has correlated ON: t3.order_id = o.id
-    // pushDownOuterRefsForJoinBranch moves it to t3's WHERE
+    // LateralBinder moves it to t3's WHERE
     @Test
     public void testT99CorrelatedOnJoinBranch() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -16783,16 +19972,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT99bLeftJoinBranchCorrelatedOn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (1, 20.0, '2024-01-01T00:20:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
@@ -16831,17 +20016,13 @@ public class LateralJoinTest extends AbstractCairoTest {
     @Test
     public void testT99cMultipleCorrelatedJoinBranches() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE adjustments (order_id INT, adj DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE discounts (order_id INT, disc DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO orders VALUES
+            createOrders("""
                     (1, '2024-01-01T00:00:00.000000Z'),
                     (2, '2024-01-01T01:00:00.000000Z')
                     """);
-            execute("""
-                    INSERT INTO trades VALUES
+            createTrades("""
                     (1, 10.0, '2024-01-01T00:10:00.000000Z'),
                     (2, 30.0, '2024-01-01T01:10:00.000000Z')
                     """);
@@ -16880,6 +20061,192 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWindowBodySelectsOuterColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, sym SYMBOL, y INT)");
+            execute("INSERT INTO o VALUES (1, 'a', 100), (2, 'b', 200), (3, 'c', 300)");
+            execute("CREATE TABLE t (sym SYMBOL, v INT)");
+            execute("INSERT INTO t VALUES ('a', 1), ('a', 2), ('b', 3), ('b', 4)");
+
+            final String expected = """
+                    id\tv\ty\trn
+                    1\t2\t100\t1
+                    1\t1\t100\t2
+                    2\t4\t200\t1
+                    2\t3\t200\t2
+                    """;
+            final String expectedPlain = """
+                    id\tv\ty
+                    1\t2\t100
+                    1\t1\t100
+                    2\t4\t200
+                    2\t3\t200
+                    """;
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, y, row_number() OVER (ORDER BY v DESC) rn FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.rn")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedPlain);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, o.y, row_number() OVER (ORDER BY v DESC) rn FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.rn")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, o.y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expectedPlain);
+            assertQuery("SELECT o.id, l.* FROM o CROSS JOIN LATERAL (SELECT v, y, row_number() OVER (ORDER BY v DESC) rn FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.rn")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, y, row_number() OVER (ORDER BY v DESC) rn FROM t WHERE t.sym = o.sym ORDER BY y, v) l ORDER BY o.id, l.rn")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, l.* FROM o LEFT JOIN LATERAL (SELECT v, y, row_number() OVER (ORDER BY v DESC) rn FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.rn")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\ty\trn
+                            1\t2\t100\t1
+                            1\t1\t100\t2
+                            2\t4\t200\t1
+                            2\t3\t200\t2
+                            3\tnull\tnull\tnull
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o LEFT JOIN LATERAL (SELECT v, y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v DESC")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\ty
+                            1\t2\t100
+                            1\t1\t100
+                            2\t4\t200
+                            2\t3\t200
+                            3\tnull\tnull
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, y AS oy, row_number() OVER (ORDER BY v DESC) rn FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.rn")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\toy\trn
+                            1\t2\t100\t1
+                            1\t1\t100\t2
+                            2\t4\t200\t1
+                            2\t3\t200\t2
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, y AS oy FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tv\toy
+                            1\t2\t100
+                            1\t1\t100
+                            2\t4\t200
+                            2\t3\t200
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, v + y vy, row_number() OVER (ORDER BY v DESC) rn FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.rn")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\tvy\trn
+                            1\t2\t102\t1
+                            1\t1\t101\t2
+                            2\t4\t204\t1
+                            2\t3\t203\t2
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, v + y vy FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v DESC")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\tvy
+                            1\t2\t102
+                            1\t1\t101
+                            2\t4\t204
+                            2\t3\t203
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, y + 1 AS y, row_number() OVER (ORDER BY v DESC) rn FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.rn")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\ty\trn
+                            1\t2\t101\t1
+                            1\t1\t101\t2
+                            2\t4\t201\t1
+                            2\t3\t201\t2
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, y + 1 AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v DESC")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\ty
+                            1\t2\t101
+                            1\t1\t101
+                            2\t4\t201
+                            2\t3\t201
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, sum(y) OVER () AS y FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.v")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv\ty
+                            1\t1\t200.0
+                            1\t2\t200.0
+                            2\t3\t400.0
+                            2\t4\t400.0
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v * 2 AS y, sum(y) OVER () s FROM t WHERE t.sym = o.sym) l ORDER BY o.id, l.y")
+                    .noLeakCheck()
+                    .returns("""
+                            id\ty\ts
+                            1\t2\t6.0
+                            1\t4\t6.0
+                            2\t6\t14.0
+                            2\t8\t14.0
+                            """);
+            assertQuery("SELECT o.id, l.* FROM o, LATERAL (SELECT v, id AS y, y AS id, row_number() OVER (ORDER BY v) rn FROM t WHERE t.sym = o.sym) l")
+                    .fails(44, "Invalid column: id");
+        });
+    }
+
+    /**
+     * Runs the body, which reads the outer key as {@code t1.k} and projects {@code v}, once per outer key of
+     * {@link #createLimitOracleTables} with the key in place of {@code t1.k}.
+     */
+    private static String lateralBodyOracle(String body) {
+        final String[] keys = {"1", "2", "3", "NULL::INT", "4"};
+        final StringBuilder oracle = new StringBuilder("SELECT * FROM (");
+        for (int i = 0; i < keys.length; i++) {
+            if (i > 0) {
+                oracle.append(" UNION ALL ");
+            }
+            oracle.append("SELECT ").append(keys[i]).append(" k, v FROM (").append(body.replace("t1.k", keys[i])).append(')');
+        }
+        return oracle.append(") ORDER BY k, v").toString();
+    }
+
+    private static String lateralBodyQuery(String body) {
+        return "SELECT t1.k, l.v FROM t1 JOIN LATERAL (" + body + ") l ON true ORDER BY t1.k, l.v";
+    }
+
+    private static BindVarTuple limitBounds(String description, String expected, long lo, long hi) {
+        return BindVarTuple.ok(description, expected, bindVariableService -> {
+            bindVariableService.setLong("lo", lo);
+            bindVariableService.setLong("hi", hi);
+        });
+    }
+
+    private void assertLateralBodyMatchesOracle(String body, ObjList<BindVarTuple> cases) throws Exception {
+        assertQuery(lateralBodyQuery(body)).noLeakCheck().assertBinds(cases);
+        assertQuery(lateralBodyOracle(body)).noLeakCheck().sizeMayVary().assertBinds(cases);
+    }
+
+    private void assertLateralBodyMatchesOracle(String body, String expected) throws Exception {
+        assertQuery(lateralBodyQuery(body)).noLeakCheck().returns(expected);
+        assertQuery(lateralBodyOracle(body)).noLeakCheck().sizeMayVary().returns(expected);
+    }
+
+    private void assertLateralLimitMatchesOracle(String limit, String expected) throws Exception {
+        assertLateralBodyMatchesOracle("SELECT v FROM t2 WHERE t2.k = t1.k " + limit, expected);
+    }
+
+    private void assertLateralScalarBodyMatchesOracle(String body, String expected) throws Exception {
+        assertQuery(lateralBodyQuery(body)).noLeakCheck().sizeMayVary().returns(expected);
+        assertQuery(lateralBodyOracle(body)).noLeakCheck().sizeMayVary().returns(expected);
+    }
+
     private void assertPlainScalarAggregateRuntimeLimit(
             CharSequence sql,
             String expectedAtOne,
@@ -16909,8 +20276,30 @@ public class LateralJoinTest extends AbstractCairoTest {
 
         assertQuery(sql)
                 .noLeakCheck()
-                .sizeMayVary()
                 .assertBinds(cases);
+    }
+
+    private void createCountSetOperationTables() throws Exception {
+        execute("CREATE TABLE o (id INT, k INT)");
+        execute("INSERT INTO o VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)");
+        execute("CREATE TABLE a (x INT, v INT)");
+        execute("INSERT INTO a VALUES (10, 1), (10, NULL), (20, 5), (30, NULL)");
+        execute("CREATE TABLE b (y INT, w INT)");
+        execute("INSERT INTO b VALUES (1, 7), (3, 8), (3, 9), (4, 3), (20, 6)");
+    }
+
+    private void createLimitOracleTables() throws Exception {
+        createT1("(1), (2), (3), (NULL), (4)");
+        execute("CREATE TABLE t2 (k INT, v INT)");
+        execute("""
+                INSERT INTO t2 VALUES
+                (1, 10), (1, 13), (1, 11), (1, 12), (2, 21), (2, 20), (3, 30), (NULL, 7), (NULL, 8)
+                """);
+    }
+
+    private void createOrders(String rows) throws Exception {
+        execute("CREATE TABLE orders (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO orders VALUES " + rows);
     }
 
     private void createOrdersAndTrades() throws Exception {
@@ -16930,6 +20319,34 @@ public class LateralJoinTest extends AbstractCairoTest {
                 (4, 3, 40.0, 400.0, '2024-01-01T02:30:00.000000Z'),
                 (5, 3, 50.0, 500.0, '2024-01-01T02:45:00.000000Z')
                 """);
+    }
+
+    private void createSetOperationTables() throws Exception {
+        execute("CREATE TABLE o (id INT, k INT)");
+        execute("INSERT INTO o VALUES (1, 1), (2, 2), (3, 3), (4, NULL)");
+        execute("CREATE TABLE ol (id INT, k LONG)");
+        execute("INSERT INTO ol VALUES (1, 1), (2, 2), (3, 3), (4, NULL)");
+        execute("CREATE TABLE a (s SYMBOL, x INT)");
+        execute("INSERT INTO a VALUES ('p', 1), ('p', 1), ('q', 2), ('r', 3), ('p', 3), ('q', 3)");
+        execute("CREATE TABLE b (s SYMBOL, y INT)");
+        execute("INSERT INTO b VALUES ('p', 1), ('q', 3), ('p', 3), ('r', 2)");
+        execute("CREATE TABLE c (s SYMBOL, z LONG)");
+        execute("INSERT INTO c VALUES ('p', 2), ('r', 1), ('q', 3)");
+    }
+
+    private void createT0(String rows) throws Exception {
+        execute("CREATE TABLE t0 (a INT)");
+        execute("INSERT INTO t0 VALUES " + rows);
+    }
+
+    private void createT1(String rows) throws Exception {
+        execute("CREATE TABLE t1 (k INT)");
+        execute("INSERT INTO t1 VALUES " + rows);
+    }
+
+    private void createT2(String rows) throws Exception {
+        execute("CREATE TABLE t2 (x INT)");
+        execute("INSERT INTO t2 VALUES " + rows);
     }
 
     // 30m buckets per order: 1 -> 00:00 10, 00:30 20, 01:00 35, 01:30 40, 02:00 50;
@@ -16957,4 +20374,15 @@ public class LateralJoinTest extends AbstractCairoTest {
                 (10, 2, 'sell', 400.0, '2024-01-01T02:35:00.000000Z')
                 """);
     }
+
+    private void createT3(String rows) throws Exception {
+        execute("CREATE TABLE t3 (k INT)");
+        execute("INSERT INTO t3 VALUES " + rows);
+    }
+
+    private void createTrades(String rows) throws Exception {
+        execute("CREATE TABLE trades (order_id INT, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO trades VALUES " + rows);
+    }
+
 }

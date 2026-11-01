@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.constants;
 
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.engine.functions.decimal.Decimal128Function;
@@ -50,17 +49,6 @@ public class Decimal128Constant extends Decimal128Function implements ConstantFu
     @Override
     public void getDecimal256(Record rec, Decimal256 sink) {
         throw new UnsupportedOperationException();
-    }
-
-    @Override
-    public boolean isEquivalentTo(Function obj) {
-        if (this == obj) {
-            return true;
-        }
-        if (obj instanceof Decimal128Constant that) {
-            return this.lo == that.lo && this.hi == that.hi && this.type == that.type;
-        }
-        return false;
     }
 
     @Override

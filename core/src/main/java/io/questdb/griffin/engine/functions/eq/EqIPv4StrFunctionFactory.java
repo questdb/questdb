@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -40,12 +41,23 @@ import io.questdb.std.ObjList;
 
 public class EqIPv4StrFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.BOOLEAN;
+    }
+
+    @Override
     public String getSignature() {
         return "=(XS)";
     }
 
     @Override
     public boolean isBoolean() {
+        return true;
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
+        constantIPv4(args.getQuick(1), argPositions.getQuick(1));
         return true;
     }
 
@@ -60,18 +72,30 @@ public class EqIPv4StrFunctionFactory implements FunctionFactory {
         Function ipv4Func = args.getQuick(0);
         int strFuncPosition = argPositions.getQuick(1);
         Function strFunc = args.getQuick(1);
+        final int ipv4 = constantIPv4(strFunc, strFuncPosition);
         if (strFunc.isConstant()) {
-            int ipv4 = strFunc.getIPv4(null);
             return new ConstStrFunc(ipv4, ipv4Func);
-        } else if (strFunc.isRuntimeConstant()) {
-            return new RuntimeConstStrFunc(strFunc, ipv4Func);
         }
-        throw SqlException.$(strFuncPosition, "STRING constant expected");
+        return new RuntimeConstStrFunc(strFunc, ipv4Func);
     }
 
     @Override
     public boolean supportImplicitCastCharToStr() {
         return false;
+    }
+
+    /**
+     * The address a constant text operand spells, 0 for a bind variable; raises the errors for text that is no
+     * address and for an operand that is neither.
+     */
+    private static int constantIPv4(Function strFunc, int strFuncPosition) throws SqlException {
+        if (strFunc.isConstant()) {
+            return strFunc.getIPv4(null);
+        }
+        if (strFunc.isRuntimeConstant()) {
+            return 0;
+        }
+        throw SqlException.$(strFuncPosition, "STRING constant expected");
     }
 
     /**

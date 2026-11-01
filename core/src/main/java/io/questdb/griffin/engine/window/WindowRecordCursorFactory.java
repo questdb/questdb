@@ -124,19 +124,24 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         this.windowMapStates = windowMapStates;
         this.windowMapStatesCount = windowMapStates == null ? 0 : windowMapStates.size();
 
-        windowFunctions = new ObjList<>();
-        for (int i = 0, n = functions.size(); i < n; i++) {
-            Function func = functions.getQuick(i);
-            if (func instanceof WindowFunction) {
-                windowFunctions.add((WindowFunction) func);
+        try {
+            windowFunctions = new ObjList<>();
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                Function func = functions.getQuick(i);
+                if (func instanceof WindowFunction) {
+                    windowFunctions.add((WindowFunction) func);
+                }
             }
-        }
-        windowFunctionsCount = windowFunctions.size();
+            windowFunctionsCount = windowFunctions.size();
 
-        // random access is not supported because window function value depends on the window/frame
-        // context and can't be computed from single row alone, e.g. even though we might be able
-        // to skip to a rowId, we'd still need to compute values for all the rows in between
-        this.cursor = new WindowRecordCursor(functions, false);
+            // random access is not supported because window function value depends on the window/frame
+            // context and can't be computed from single row alone, e.g. even though we might be able
+            // to skip to a rowId, we'd still need to compute values for all the rows in between
+            this.cursor = new WindowRecordCursor(functions, false);
+        } catch (Throwable th) {
+            Misc.free(this, th);
+            throw th;
+        }
     }
 
     @Override

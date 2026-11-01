@@ -151,7 +151,8 @@ final class NativeFrameBoundaries {
     /**
      * Reads each column's top - the first row where it has data, with the rows before it NULL - from column version
      * metadata. {@code absentColumnTop} is the top to invent for a column the partition does not hold at all; it has
-     * to be the one the open path invents, see {@link #of}.
+     * to be the one the open path invents, see {@link #of}. A column the frame cursor pads without a reader column,
+     * mapped to a negative index, has no top: no frame of the open path ends at it.
      */
     private void populateColumnTops(
             TableReader tableReader,
@@ -167,6 +168,10 @@ final class NativeFrameBoundaries {
         columnTops.clear();
         for (int i = 0; i < columnCount; i++) {
             final int readerColumnIndex = columnIndexes.getQuick(i);
+            if (readerColumnIndex < 0) {
+                columnTops.add(0);
+                continue;
+            }
             final int writerIndex = readerMetadata.getWriterIndex(readerColumnIndex);
             final int recordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
             if (recordIndex > -1) {

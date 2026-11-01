@@ -29,10 +29,11 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 /**
- * Regression tests for the {@link io.questdb.griffin.WhereClauseParser} reentrancy bug where
- * subquery-valued designated-timestamp bounds (e.g. {@code ts >= (select ... )}) clobbered the
- * outer query's parser state. Depending on predicate order this either skipped the covering
- * index (async filter fallback) or produced an AssertionError / empty-key scan.
+ * Regression tests for the interval-extraction reentrancy bug where subquery-valued
+ * designated-timestamp bounds (e.g. {@code ts >= (select ... )}) clobbered the outer query's
+ * extraction state. Depending on predicate order this either skipped the covering index (async
+ * filter fallback) or produced an AssertionError / empty-key scan. Each generation depth now owns
+ * its {@code IntervalExtractor} and {@code SymbolKeyExtractor} through its {@code GenerationFrame}.
  *
  * <p>The table mirrors the shape that triggered the report: a nanosecond designated timestamp,
  * an indexed symbol carrying a covering (INCLUDE) sidecar, and Parquet column encodings.
@@ -241,9 +242,9 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
         });
     }
 
-    // The bound subquery has its OWN indexed symbol key. Compiling it re-enters
-    // extract(); if the nested call is not started clean it reverts the outer
-    // query's key-node intrinsic marks (revertNodes on the shared ExpressionNode).
+    // The bound subquery has its OWN indexed symbol key. Compiling it extracts that
+    // key at a nested generation depth, which must leave the outer query's extracted
+    // key intact.
     @Test
     public void testNestedSubqueryWithIndexedKey() throws Exception {
         assertMemoryLeak(() -> {
@@ -257,8 +258,8 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
             String subSymFirst = "select ts, value from sensor where series = 's1' " +
                     "and ts >= (select lo from bounds_idx where tag = 'g1') " +
                     "and ts <= (select hi from bounds_idx where tag = 'g1')";
-            // sym-last: series processed BEFORE the ts bounds, so it is in keyNodes when the
-            // nested (indexed) subquery runs clearAllKeys()/revertNodes()
+            // sym-last: series processed BEFORE the ts bounds, so the outer key is already
+            // extracted when the nested (indexed) subquery extracts its own
             String subSymLast = "select ts, value from sensor where " +
                     "ts >= (select lo from bounds_idx where tag = 'g1') " +
                     "and ts <= (select hi from bounds_idx where tag = 'g1') " +
@@ -501,9 +502,9 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
 
     // A monotonic transform of the timestamp compared to a subquery bound
     // (dateadd('h',1,ts) >= (select ...)) must prune to a runtime interval, inverting the
-    // transform the same way as a constant/bind-variable bound. Before the fix,
-    // resolveScalarBound rejected the QUERY node (isFunc excludes it), so no interval was
-    // extracted and the predicate stayed a full-scan residual filter.
+    // transform the same way as a constant/bind-variable bound. Before the fix, the scalar-bound
+    // check (now IntervalExtractor.isScalarBound()) rejected the sub-query node, so no interval
+    // was extracted and the predicate stayed a full-scan residual filter.
     @Test
     public void testMonotonicTransformSubqueryBound() throws Exception {
         assertMemoryLeak(() -> {
@@ -605,10 +606,10 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
     }
 
     // Two monotonic subquery-bound predicates with different transforms must each invert with
-    // their OWN chain. The runtime inverter retains the monotonic chain, so it must be a private
-    // copy (as for bind-variable bounds) rather than the shared tempMonotonicChain, otherwise the
-    // second predicate's compileMonotonicChain clears/overwrites the first inverter's chain and
-    // both prune with the same (wrong) transform, widening the interval.
+    // their OWN chain. The runtime inverter retains the monotonic chain, so each predicate must
+    // own a private chain (as for bind-variable bounds); a shared chain lets the second predicate
+    // overwrite the first inverter's chain and both prune with the same (wrong) transform,
+    // widening the interval.
     @Test
     public void testTwoDistinctMonotonicSubqueryBounds() throws Exception {
         assertMemoryLeak(() -> {
@@ -704,7 +705,7 @@ public class CoveringSubqueryBoundReproTest extends AbstractCairoTest {
 
     // Negated sibling of testPrefixAndWithAllEmptyOrDisjunctsReturnsNoRows. `ts != $1` is extracted
     // as a SUBTRACT interval intrinsic with its residual REMOVED from the filter
-    // (WhereClauseParser sets intrinsicValue = TRUE), so the interval model is solely responsible
+    // (IntervalExtractor consumes it), so the interval model is solely responsible
     // for the answer - nothing downstream can reject a wrong row. With every OR disjunct empty the
     // accumulator is an established empty set sitting at divider == 0; a negated NULL bound that
     // keyed on divider alone re-seeded the full [MIN, MAX] domain and returned the ENTIRE table for

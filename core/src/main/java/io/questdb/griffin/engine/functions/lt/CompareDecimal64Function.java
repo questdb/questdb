@@ -28,11 +28,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.ComparisonFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal64LoaderFunctionFactory;
 import io.questdb.std.Decimal64;
 
-public abstract class CompareDecimal64Function extends NegatableBooleanFunction implements BinaryFunction {
+public abstract class CompareDecimal64Function extends ComparisonFunction implements BinaryFunction {
     protected final Decimal64 decimalLeft = new Decimal64();
     protected final Decimal64 decimalRight = new Decimal64();
     protected final Function left;
@@ -49,14 +49,7 @@ public abstract class CompareDecimal64Function extends NegatableBooleanFunction 
 
     @Override
     public boolean getBool(Record rec) {
-        decimalLeft.ofRaw(left.getDecimal64(rec));
-        decimalRight.ofRaw(right.getDecimal64(rec));
-        if (decimalLeft.isNull() || decimalRight.isNull()) {
-            return negated && decimalLeft.isNull() == decimalRight.isNull();
-        }
-        decimalLeft.setScale(leftScale);
-        decimalRight.setScale(rightScale);
-        return negated != exec();
+        return isComplemented ? !isMatch(rec) : isMatch(rec);
     }
 
     @Override
@@ -78,4 +71,15 @@ public abstract class CompareDecimal64Function extends NegatableBooleanFunction 
      * Should execute comparison against decimal holding left argument value and the right-arg inputs.
      */
     protected abstract boolean exec();
+
+    private boolean isMatch(Record rec) {
+        decimalLeft.ofRaw(left.getDecimal64(rec));
+        decimalRight.ofRaw(right.getDecimal64(rec));
+        if (decimalLeft.isNull() || decimalRight.isNull()) {
+            return negated && decimalLeft.isNull() == decimalRight.isNull();
+        }
+        decimalLeft.setScale(leftScale);
+        decimalRight.setScale(rightScale);
+        return negated != exec();
+    }
 }

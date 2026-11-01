@@ -24,12 +24,16 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -69,6 +73,38 @@ public class NanoTimestampDriverTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFromDate() {
+        Assert.assertEquals(Numbers.LONG_NULL, driver.fromDate(Numbers.LONG_NULL));
+        Assert.assertEquals(1_000_000L, driver.fromDate(1));
+        Assert.assertEquals(9_223_372_036_854_000_000L, driver.fromDate(9_223_372_036_854L));
+        Assert.assertEquals(-9_223_372_036_854_000_000L, driver.fromDate(-9_223_372_036_854L));
+        try {
+            driver.fromDate(9_223_372_036_855L);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: 9223372036855 [DATE -> TIMESTAMP_NS]", e.getFlyweightMessage());
+        }
+        try {
+            driver.fromDate(-9_223_372_036_855L);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: -9223372036855 [DATE -> TIMESTAMP_NS]", e.getFlyweightMessage());
+        }
+        try {
+            driver.fromDate(18_446_744_073_709_552L);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: 18446744073709552 [DATE -> TIMESTAMP_NS]", e.getFlyweightMessage());
+        }
+        try {
+            driver.fromDate(Long.MIN_VALUE + 1);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: -9223372036854775807 [DATE -> TIMESTAMP_NS]", e.getFlyweightMessage());
+        }
+    }
+
+    @Test
     public void testFromTimestampUnit() {
         Assert.assertEquals(Numbers.LONG_NULL, driver.from(LineTcpParser.NULL_TIMESTAMP, CommonUtils.TIMESTAMP_UNIT_NANOS));
         Assert.assertEquals(56799L, driver.from(56799, CommonUtils.TIMESTAMP_UNIT_NANOS));
@@ -87,6 +123,21 @@ public class NanoTimestampDriverTest extends AbstractCairoTest {
             Assert.fail("Expected ArithmeticException");
         } catch (ArithmeticException e) {
             TestUtils.assertContains(e.getMessage(), "long overflow");
+        }
+    }
+
+    @Test
+    public void testGetTimestampUnitConverter() {
+        final CommonUtils.TimestampUnitConverter converter = driver.getTimestampUnitConverter(ColumnType.TIMESTAMP_MICRO);
+        Assert.assertEquals(Numbers.LONG_NULL, converter.convert(Numbers.LONG_NULL));
+        Assert.assertEquals(0, converter.convert(0));
+        Assert.assertEquals(1_000, converter.convert(1));
+        Assert.assertEquals(9_214_646_399_999_999_000L, converter.convert(9_214_646_399_999_999L));
+        for (long micros : new long[]{-1, Long.MIN_VALUE + 1, 9_214_646_400_000_000L, Long.MAX_VALUE}) {
+            final CairoException exception = Assert.assertThrows(CairoException.class,
+                    () -> converter.convert(micros));
+            TestUtils.assertContains(exception.getFlyweightMessage(),
+                    "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
         }
     }
 
@@ -171,5 +222,43 @@ public class NanoTimestampDriverTest extends AbstractCairoTest {
         Assert.assertEquals(1577836800100000000L, driver.implicitCast("2020-01-01T00:00:00.1Z", ColumnType.STRING));
         Assert.assertEquals(1577836800120000000L, driver.implicitCast("2020-01-01T00:00:00.12Z", ColumnType.STRING));
         Assert.assertEquals(1577836800123000000L, driver.implicitCast("2020-01-01T00:00:00.123Z", ColumnType.STRING));
+    }
+
+    @Test
+    public void testParseFloorNanosecondRange() throws Exception {
+        assertParseFloor(Long.MIN_VALUE + 1, "1677-09-21T00:12:43.145224193Z");
+        assertParseFloor(Long.MIN_VALUE + 2, "1677-09-21T00:12:43.145224194Z");
+        assertParseFloor(Long.MIN_VALUE + 808, "1677-09-21T00:12:43.145225000Z");
+        assertParseFloor(Long.MIN_VALUE + 1, "1677-09-21T01:12:43.145224193+01:00");
+        assertParseFloor(Long.MIN_VALUE + 1, "1677-W38-2T00:12:43.145224193");
+        assertParseFloor(Long.MAX_VALUE - 1, "2262-04-11T23:47:16.854775806Z");
+        assertParseFloor(Long.MAX_VALUE, "2262-04-11T23:47:16.854775807Z");
+        assertParseFloor(Long.MAX_VALUE, "2262-04-12T00:47:16.854775807+01:00");
+        assertParseFloor(Long.MAX_VALUE, "2262-W15-5T23:47:16.854775807");
+        assertParseFloor(-1, "1969-12-31T23:59:59.999999999Z");
+        assertParseFloor(0, "1970-01-01T00:00:00.000000000Z");
+        assertParseFloor(1, "1970-01-01T00:00:00.000000001Z");
+        Assert.assertEquals(Numbers.LONG_NULL, driver.parseFloorLiteral((CharSequence) null));
+        Assert.assertEquals(Numbers.LONG_NULL, driver.parseFloorLiteral((Utf8Sequence) null));
+    }
+
+    @Test
+    public void testParseFloorRejectsNanosecondOverflow() {
+        for (String text : new String[]{
+                "1500-01-01", "1677", "1677-09-21T00:12:43.145224191Z",
+                "1677-09-21T00:12:43.145224192Z", "1677-09-21T00:12:43.145224Z",
+                "1677-09-21T00:12:43.145224193+00:01", "1677-W38-2T00:12:43.145224192",
+                "2262-04-11T23:47:16.854775808Z", "2262-04-11T23:47:16.854775807-00:01",
+                "2262-W15-5T23:47:16.854775808", "2262-12", "2263-01-01"
+        }) {
+            Assert.assertThrows(text, NumericException.class, () -> driver.parseFloorLiteral(text));
+            final Utf8String utf8 = new Utf8String(text);
+            Assert.assertThrows(text, NumericException.class, () -> driver.parseFloorLiteral(utf8));
+        }
+    }
+
+    private void assertParseFloor(long expected, String text) throws NumericException {
+        Assert.assertEquals(text, expected, driver.parseFloorLiteral(text));
+        Assert.assertEquals(text, expected, driver.parseFloorLiteral(new Utf8String(text)));
     }
 }

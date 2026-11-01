@@ -86,6 +86,11 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
      * @return the signature string ("max(N)")
      */
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.LONG;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }
@@ -262,6 +267,7 @@ public class MaxLongWindowFunctionFactory extends AbstractWindowFunctionFactory 
                     );
                 } // between current row and current row
                 else if (rowsLo == 0 && rowsHi == 0) {
+                    CairoException.rethrowCleanupFailure(Misc.freeObjListBestEffort(null, partitionByRecord.getFunctions()));
                     return new MaxMinOverCurrentRowFunction(args.get(0), NAME);
                 } // whole partition
                 else if (rowsLo == Long.MIN_VALUE && rowsHi == Long.MAX_VALUE) {

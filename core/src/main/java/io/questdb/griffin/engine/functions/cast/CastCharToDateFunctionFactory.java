@@ -36,6 +36,11 @@ import io.questdb.std.ObjList;
 
 public class CastCharToDateFunctionFactory implements FunctionFactory {
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DATE;
+    }
+
+    @Override
     public String getSignature() {
         return "cast(Am)";
     }

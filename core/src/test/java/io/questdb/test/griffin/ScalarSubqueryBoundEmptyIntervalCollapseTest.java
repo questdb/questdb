@@ -42,7 +42,7 @@ import org.junit.Test;
  * be written <em>before</em> the monotonic predicate to be processed <em>after</em> it. Both orders are
  * pinned here.
  *
- * @see io.questdb.griffin.model.IntrinsicModel
+ * @see io.questdb.griffin.model.RuntimeIntervalModelBuilder
  * @see io.questdb.griffin.engine.functions.ScalarSubQueryBoundRefFunction
  */
 public class ScalarSubqueryBoundEmptyIntervalCollapseTest extends AbstractCairoTest {

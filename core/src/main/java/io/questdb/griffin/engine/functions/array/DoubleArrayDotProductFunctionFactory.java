@@ -45,6 +45,11 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
     private static final String FUNCTION_NAME = "dot_product";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.DOUBLE;
+    }
+
+    @Override
     public String getSignature() {
         return FUNCTION_NAME + "(D[]D[])";
     }
@@ -131,10 +136,11 @@ public class DoubleArrayDotProductFunctionFactory implements FunctionFactory {
             BinaryFunction.super.init(symbolTableSource, executionContext);
 
             // left/right argument may be a bind var, i.e. have weak dimensionality,
-            // so that the number of dimensions is only available at init() time
-            final int dimsLeft = ColumnType.decodeArrayDimensionality(leftArg.getType());
-            final int dimsRight = ColumnType.decodeArrayDimensionality(rightArg.getType());
-            if (dimsLeft != dimsRight) {
+            // so that the number of dimensions is only available at init() time;
+            // a NULL bind var keeps weak dimensionality
+            final int dimsLeft = ColumnType.decodeWeakArrayDimensionality(leftArg.getType());
+            final int dimsRight = ColumnType.decodeWeakArrayDimensionality(rightArg.getType());
+            if (dimsLeft > 0 && dimsRight > 0 && dimsLeft != dimsRight) {
                 throw SqlException.position(leftArgPos)
                         .put("arrays have different number of dimensions [dimsLeft=").put(dimsLeft)
                         .put(", dimsRight=").put(dimsRight).put(']');

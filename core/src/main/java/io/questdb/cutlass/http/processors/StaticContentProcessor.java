@@ -216,6 +216,15 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
         context.simpleResponse().sendStatusTextContent(code, header);
     }
 
+    private boolean isCurrentVersion(DirectUtf8Sequence ifRange, LPSZ path) {
+        if (ifRange == null) {
+            return true;
+        }
+        utf8Sink.clear();
+        utf8Sink.putAscii('"').put(ff.getLastModified(path)).putAscii('"');
+        return Utf8s.equals(ifRange, utf8Sink);
+    }
+
     private void send(HttpConnectionContext context, LPSZ path, boolean asAttachment) throws PeerDisconnectedException, PeerIsSlowToReadException {
         TelemetryTask.store(telemetry, TelemetryOrigin.HTTP, TelemetryEvent.HTTP_STATIC_CONTENT);
         int n = Utf8s.lastIndexOfAscii(path, '.');
@@ -256,15 +265,6 @@ public class StaticContentProcessor implements HttpRequestProcessor, HttpRequest
         }
 
         sendVanilla(context, path, contentType, asAttachment);
-    }
-
-    private boolean isCurrentVersion(DirectUtf8Sequence ifRange, LPSZ path) {
-        if (ifRange == null) {
-            return true;
-        }
-        utf8Sink.clear();
-        utf8Sink.putAscii('"').put(ff.getLastModified(path)).putAscii('"');
-        return Utf8s.equals(ifRange, utf8Sink);
     }
 
     private void sendRange(

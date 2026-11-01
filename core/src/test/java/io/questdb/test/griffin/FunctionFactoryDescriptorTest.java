@@ -28,9 +28,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.FunctionFactoryCacheBuilder;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.groupby.ModeBooleanGroupByFunctionFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
@@ -38,9 +40,39 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.TreeSet;
+
 public class FunctionFactoryDescriptorTest {
 
     private static final StringSink sink = new StringSink();
+
+    @Test
+    public void testAggregateOrderDependence() throws SqlException {
+        final TreeSet<String> tableOrder = new TreeSet<>();
+        final TreeSet<String> inputOrder = new TreeSet<>();
+        final TreeSet<String> independent = new TreeSet<>();
+        for (FunctionFactory factory : new FunctionFactoryCacheBuilder().scan(null).build()) {
+            final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(factory);
+            if (factory.isGroupBy()) {
+                switch (descriptor.getOrderDependence()) {
+                    case TABLE_ORDER -> tableOrder.add(descriptor.getName());
+                    case INPUT_ORDER -> inputOrder.add(descriptor.getName());
+                    case NONE -> independent.add(descriptor.getName());
+                }
+            } else {
+                Assert.assertEquals(factory.getSignature(), FunctionFactory.OrderDependence.NONE, descriptor.getOrderDependence());
+            }
+        }
+        Assert.assertEquals("[array_agg, first, first_not_null, last, last_not_null, sparkline, twap]", tableOrder.toString());
+        Assert.assertEquals("[arg_max, arg_min, haversine_dist_deg, isOrdered, mode, string_agg, string_distinct_agg]", inputOrder.toString());
+        Assert.assertEquals("[approx_count_distinct, approx_median, approx_percentile, array_elem_avg, array_elem_max, array_elem_min, "
+                + "array_elem_sum, avg, bit_and, bit_or, bit_xor, bool_and, bool_or, corr, count, count_distinct, covar_pop, covar_samp, "
+                + "geomean, ksum, kurtosis, kurtosis_pop, kurtosis_samp, max, min, mode, nsum, percentile_cont, percentile_disc, "
+                + "quantile_cont, quantile_disc, regr_intercept, regr_r2, regr_slope, skewness, skewness_pop, skewness_samp, stddev, "
+                + "stddev_pop, stddev_samp, sum, sum_t, sumx, var_pop, var_samp, variance, vwap, weighted_avg, weighted_stddev, "
+                + "weighted_stddev_freq, weighted_stddev_rel]", independent.toString());
+        Assert.assertEquals(FunctionFactory.OrderDependence.NONE, new FunctionFactoryDescriptor(new ModeBooleanGroupByFunctionFactory()).getOrderDependence());
+    }
 
     @Test
     public void testSignatureWithArrayAsAFirstArgument() throws SqlException {

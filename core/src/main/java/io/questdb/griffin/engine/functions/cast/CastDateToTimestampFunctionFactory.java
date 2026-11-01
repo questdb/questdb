@@ -25,14 +25,31 @@
 package io.questdb.griffin.engine.functions.cast;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class CastDateToTimestampFunctionFactory implements FunctionFactory {
+
+    /**
+     * Converts a DATE operand of a comparison at TIMESTAMP_NS precision from its milliseconds, and returns any
+     * other operand as it is.
+     */
+    public static Function toNanosOperand(Function operand, int timestampType) {
+        return operand.getType() == ColumnType.DATE && ColumnType.isTimestampNano(timestampType)
+                ? new Func(operand, timestampType)
+                : operand;
+    }
+
+    @Override
+    public int getResultType(IntList argTypes) {
+        return ResultTypes.castTarget(argTypes);
+    }
 
     @Override
     public String getSignature() {

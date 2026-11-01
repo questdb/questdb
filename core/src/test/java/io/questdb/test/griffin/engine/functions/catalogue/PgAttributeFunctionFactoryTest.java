@@ -45,7 +45,7 @@ public class PgAttributeFunctionFactoryTest extends AbstractCairoTest {
                     .assertsPlan("""
                             SelectedRecord
                                 Encode sort light
-                                  keys: [b1]
+                                  keys: [b]
                                     CachedWindowLight
                                       orderedFunctions: [[b desc] => [row_number() over (partition by [a])]]
                                         PageFrame

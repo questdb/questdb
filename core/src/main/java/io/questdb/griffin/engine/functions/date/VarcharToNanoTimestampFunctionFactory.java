@@ -36,6 +36,11 @@ public final class VarcharToNanoTimestampFunctionFactory implements FunctionFact
     private static final String NAME = "to_timestamp_ns";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.TIMESTAMP_NANO;
+    }
+
+    @Override
     public String getSignature() {
         return "to_timestamp_ns(Ø)";
     }

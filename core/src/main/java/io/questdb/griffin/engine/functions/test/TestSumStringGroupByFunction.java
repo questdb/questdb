@@ -53,6 +53,7 @@ public class TestSumStringGroupByFunction extends StrFunction implements GroupBy
     @Override
     public void close() {
         mem = Unsafe.free(mem, 1024, MemoryTag.NATIVE_FUNC_RSS);
+        UnaryFunction.super.close();
     }
 
     @Override

@@ -24,43 +24,124 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.IQueryModel;
+import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
+import io.questdb.std.Transient;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.millitime.Dates;
+import org.jetbrains.annotations.Nullable;
 
 public interface CreateMatViewOperation extends TableStructure, Operation {
 
-    static int matViewPeriodDelaySeconds(int delay, char delayUnit, int pos) throws SqlException {
+    static long matViewPeriodDelaySeconds(int delay, char delayUnit, int pos) throws SqlException {
         return switch (delayUnit) {
             case 's' -> delay;
-            case 'm' -> delay * 60;
-            case 'h' -> delay * 60 * 60;
-            case 'd' -> delay * 24 * 60 * 60;
+            case 'm' -> delay * 60L;
+            case 'h' -> delay * 60L * 60;
+            case 'd' -> delay * 24L * 60 * 60;
             default -> throw SqlException.position(pos).put("unsupported delay unit: ").put(delay).put(delayUnit)
                     .put(", supported units are 's', 'm', 'h', 'd'");
         };
     }
 
-    static int matViewPeriodLengthSeconds(int length, char lengthUnit, int pos) throws SqlException {
+    static long matViewPeriodLengthSeconds(int length, char lengthUnit, int pos) throws SqlException {
         return switch (lengthUnit) {
             case 's' -> length;
-            case 'm' -> length * 60;
-            case 'h' -> length * 60 * 60;
-            case 'd' -> length * 24 * 60 * 60;
+            case 'm' -> length * 60L;
+            case 'h' -> length * 60L * 60;
+            case 'd' -> length * 24L * 60 * 60;
             default -> throw SqlException.position(pos).put("unsupported length unit: ").put(length).put(lengthUnit)
                     .put(", supported units are 's', 'm', 'h', 'd'");
         };
     }
 
+    /**
+     * The start of a PERIOD refresh timer: the start of the current period of {@code length} {@code lengthUnit}, which
+     * {@link #validateMatViewPeriodLength} validated, in the time zone {@code rules}, or in UTC for null, in
+     * microseconds.
+     */
+    static long periodTimerStartUs(MicrosecondClock clock, int length, char lengthUnit, @Nullable TimeZoneRules rules, int pos) throws SqlException {
+        final long nowMicros = clock.getTicks();
+        return TimestampSamplerFactory.getInstance(MicrosTimestampDriver.INSTANCE, length, lengthUnit, pos)
+                .round(rules != null ? nowMicros + rules.getOffset(nowMicros) : nowMicros);
+    }
+
+    /**
+     * The rules of the PERIOD time zone {@code timeZone}, null for none; an unknown time zone fails at {@code pos}.
+     */
+    static TimeZoneRules periodTimeZoneRules(@Nullable CharSequence timeZone, int pos) throws SqlException {
+        if (timeZone == null) {
+            return null;
+        }
+        try {
+            return MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone);
+        } catch (CairoException e) {
+            throw SqlException.position(pos).put(e.getFlyweightMessage());
+        }
+    }
+
+    /**
+     * The length of a PERIOD (SAMPLE BY INTERVAL) refresh, which aligns the period to the SAMPLE BY bucket: the
+     * sampling interval {@code samplingInterval}, clamped to INT.
+     */
+    static int samplePeriodLength(long samplingInterval) {
+        return (int) Math.min(samplingInterval, Integer.MAX_VALUE);
+    }
+
+    /**
+     * The start of the timer of a PERIOD (SAMPLE BY INTERVAL) refresh, see {@link #periodTimerStartUs}: validates the
+     * {@link #samplePeriodLength length} of {@code samplingInterval} {@code samplingIntervalUnit}, the SAMPLE BY time
+     * zone {@code timeZone}, which the period starts in, and the SAMPLE BY offset {@code timeZoneOffset}, failing at
+     * {@code pos}.
+     */
+    static long samplePeriodTimerStartUs(
+            MicrosecondClock clock,
+            long samplingInterval,
+            char samplingIntervalUnit,
+            @Nullable CharSequence timeZone,
+            @Nullable CharSequence timeZoneOffset,
+            int pos
+    ) throws SqlException {
+        final int length = samplePeriodLength(samplingInterval);
+        validateMatViewPeriodLength(length, samplingIntervalUnit, pos);
+        final TimeZoneRules rules = periodTimeZoneRules(timeZone, pos);
+        validatePeriodSampleByOffset(timeZoneOffset, pos);
+        return periodTimerStartUs(clock, length, samplingIntervalUnit, rules, pos);
+    }
+
     static void validateMatViewPeriodLength(int length, char lengthUnit, int pos) throws SqlException {
-        final int lengthSeconds = matViewPeriodLengthSeconds(length, lengthUnit, pos);
+        final long lengthSeconds = matViewPeriodLengthSeconds(length, lengthUnit, pos);
         if (lengthSeconds > 24 * 60 * 60) {
             throw SqlException.position(pos).put("maximum supported length interval is 24 hours: ").put(length).put(lengthUnit);
+        }
+    }
+
+    /**
+     * Fails at {@code pos} unless the offset of the SAMPLE BY a PERIOD (SAMPLE BY INTERVAL) aligns to, {@code offset},
+     * is none or a valid offset of zero.
+     */
+    static void validatePeriodSampleByOffset(@Nullable CharSequence offset, int pos) throws SqlException {
+        if (offset == null) {
+            return;
+        }
+        final long value = Dates.parseOffset(offset);
+        if (value == Numbers.LONG_NULL) {
+            throw SqlException.position(pos).put("invalid offset: ").put(offset);
+        }
+        if (Numbers.decodeLowInt(value) != 0) {
+            throw SqlException.position(pos).put("PERIOD (SAMPLE BY INTERVAL) can't be used with WITH OFFSET");
         }
     }
 
@@ -84,7 +165,12 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
 
     void updateOperationFutureTableToken(TableToken tableToken);
 
-    void validateAndUpdateMetadataFromModel(SqlExecutionContext sqlExecutionContext, FunctionFactoryCache functionFactoryCache, IQueryModel queryModel) throws SqlException;
+    /**
+     * Validates the bound query of the view and records its columns, named at {@code positions}, the designated
+     * timestamp its SAMPLE BY bucket or timestamp_floor() key defines, its sampling interval and the symbol
+     * capacities it takes from the base table, without retaining either input.
+     */
+    void validateAndUpdateMetadataFromPlan(SqlExecutionContext sqlExecutionContext, @Transient LogicalPlan root, @Transient IntList positions) throws SqlException;
 
     void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata, int scanDirection) throws SqlException;
 }

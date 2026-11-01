@@ -25,13 +25,14 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
-import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableDescriptor;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Misc;
@@ -41,30 +42,37 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCursorFactory {
+    private final IntList authorizedColumnIndexes = new IntList();
+    private final IntHashSet authorizedColumns = new IntHashSet();
+    private final IntList checkedColumnIndexes = new IntList();
     private final ObjList<CharSequence> columnNames = new ObjList<>();
-    private final RecordMetadata metadata;
     private final long metadataVersion;
+    private final TableDescriptor table;
     private final TableToken tableToken;
     private final boolean updateQuery;
     private final String viewName;
     private final int viewPosition;
+    private final LowerCaseCharSequenceHashSet viewReadColumns;
+    private long maxRowCount = Long.MAX_VALUE;
+    private long minRowCount;
     private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
     private long pushdownPartitionTableVersion = -1;
 
     AbstractPartitionFrameCursorFactory(
             TableToken tableToken,
             long metadataVersion,
-            RecordMetadata metadata,
+            TableDescriptor table,
             @Nullable String viewName,
             int viewPosition,
             boolean updateQuery
     ) {
         this.tableToken = tableToken;
         this.metadataVersion = metadataVersion;
-        this.metadata = metadata;
+        this.table = table;
         this.viewName = viewName;
         this.viewPosition = viewPosition;
         this.updateQuery = updateQuery;
+        this.viewReadColumns = viewName != null ? new LowerCaseCharSequenceHashSet() : null;
     }
 
     @Override
@@ -73,18 +81,28 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     }
 
     @Override
-    public RecordMetadata getMetadata() {
-        return metadata;
-    }
-
-    @Override
     public @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> getPushdownFilterConditions() {
         return pushdownFilterConditions;
     }
 
     @Override
+    public TableDescriptor getTableDescriptor() {
+        return table;
+    }
+
+    @Override
     public TableToken getTableToken() {
         return tableToken;
+    }
+
+    @Override
+    public void setAuthorizedColumnIndexes(IntList columnIndexes) {
+        authorizedColumnIndexes.clear();
+        authorizedColumnIndexes.addAll(columnIndexes);
+        authorizedColumns.clear();
+        for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+            authorizedColumns.add(columnIndexes.getQuick(i));
+        }
     }
 
     @Override
@@ -94,6 +112,12 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     ) {
         this.pushdownPartitionTableVersion = partitionTableVersion;
         this.pushdownFilterConditions = pushdownFilterConditions;
+    }
+
+    @Override
+    public void setRowCountRange(long minRowCount, long maxRowCount) {
+        this.minRowCount = minRowCount;
+        this.maxRowCount = maxRowCount;
     }
 
     @Override
@@ -115,8 +139,17 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
                 .putAscii("\"}");
     }
 
-    void authorizeSelect(SqlExecutionContext executionContext, @NotNull IntList columnIndexes) throws SqlException {
+    void authorizeSelect(SqlExecutionContext executionContext, @NotNull IntList readColumnIndexes) throws SqlException {
         final SecurityContext securityContext = executionContext.getSecurityContext();
+        final IntList columnIndexes = checkedColumnIndexes;
+        columnIndexes.clear();
+        columnIndexes.addAll(authorizedColumnIndexes);
+        for (int i = 0, n = readColumnIndexes.size(); i < n; i++) {
+            final int columnIndex = readColumnIndexes.getQuick(i);
+            if (authorizedColumns.excludes(columnIndex)) {
+                columnIndexes.add(columnIndex);
+            }
+        }
         if (viewName != null) {
             // reading table via view, check access to view
             final CairoEngine engine = executionContext.getCairoEngine();
@@ -127,28 +160,29 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
             }
             securityContext.authorizeSelect(viewDefinition);
 
-            // columns not referenced by the view require explicit permission
-            final LowerCaseCharSequenceHashSet depCols = viewDefinition.getDependencies().get(tableToken.getTableName());
-            // A null depCols means the view's persisted dependency map has no entry for this base
-            // table - either a dependency-collector gap missed the reference, or the base table was
-            // renamed after the view was created. Fail safe: treat the table as not covered by the
-            // view, so every column read here requires explicit per-column SELECT on the base table.
-            if (depCols == null || !depCols.contains("*")) {
-                columnNames.clear();
-                for (int i = 0, n = columnIndexes.size(); i < n; i++) {
-                    final String columnName = metadata.getColumnName(columnIndexes.getQuick(i));
-                    if (depCols == null || !depCols.contains(columnName)) {
-                        columnNames.add(columnName);
+            // Columns the view does not read, directly or through the views it reads, require explicit
+            // permission. That includes every column of a table the dependency maps do not record, which
+            // a dependency-collector gap or a rename of the table after the view was created can cause.
+            columnNames.clear();
+            if (columnIndexes.size() > 0) {
+                viewReadColumns.clear();
+                engine.getViewGraph().collectReadColumns(engine, viewDefinition, tableToken.getTableName(), viewReadColumns);
+                if (viewReadColumns.excludes("*")) {
+                    for (int i = 0, n = columnIndexes.size(); i < n; i++) {
+                        final String columnName = table.getColumnName(columnIndexes.getQuick(i));
+                        if (viewReadColumns.excludes(columnName)) {
+                            columnNames.add(columnName);
+                        }
                     }
                 }
-                if (columnNames.size() > 0) {
-                    securityContext.authorizeSelect(tableToken, columnNames);
-                }
+            }
+            if (columnNames.size() > 0) {
+                securityContext.authorizeSelect(tableToken, columnNames);
             }
         } else if (columnIndexes.size() > 0) {
             columnNames.clear();
             for (int i = 0, n = columnIndexes.size(); i < n; i++) {
-                final String columnName = metadata.getColumnName(columnIndexes.getQuick(i));
+                final String columnName = table.getColumnName(columnIndexes.getQuick(i));
                 columnNames.add(columnName);
             }
             securityContext.authorizeSelect(tableToken, columnNames);
@@ -175,6 +209,11 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
                 }
                 pushdownPartitionTableVersion = currentPartitionTableVersion;
             }
+        }
+        final long rowCount = reader.size();
+        if ((rowCount < minRowCount || rowCount > maxRowCount) && !executionContext.isTableRowCountChangeTolerated()) {
+            Misc.free(reader);
+            throw TableReferenceOutOfDateException.ofRowCountChange(tableToken);
         }
         return reader;
     }

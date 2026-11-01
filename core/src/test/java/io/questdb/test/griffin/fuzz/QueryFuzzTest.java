@@ -41,6 +41,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
+import io.questdb.test.griffin.fuzz.clauses.SetOperationClause;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -57,7 +58,7 @@ import java.nio.file.Paths;
  * scalar types plus DECIMAL and DOUBLE arrays, inserts rows that span
  * multiple DAY partitions, then runs a budget of randomly generated
  * SELECT / GROUP BY / SAMPLE BY / LATEST ON / ASOF-LT-SPLICE / HORIZON /
- * WINDOW JOIN / equi-join GROUP BY
+ * WINDOW JOIN / equi-join GROUP BY / set operation
  * queries and
  * materializes every result row, additionally re-iterating each cursor
  * after {@code toTop()} and cross-checking {@code size()} /
@@ -143,6 +144,12 @@ import java.nio.file.Paths;
  *         hash join GROUP BY replaces (default true). Their band is carved from
  *         the GROUP BY range, so the other shapes' frequencies are unchanged;
  *         pass {@code false} to give the band back to GROUP BY.</li>
+ *     <li>{@code -Dquestdb.fuzz.setop=true|false} &mdash; generate set
+ *         operations whose branches give one column different types, under a
+ *         WHERE or JOIN ON over that column (default true). Their band is
+ *         carved from the SAMPLE BY range, so the other shapes' frequencies
+ *         are unchanged; pass {@code false} to give the band back to SAMPLE
+ *         BY.</li>
  *     <li>{@code -Dquestdb.fuzz.diff.fused=true|false} &mdash; run every
  *         equi-join GROUP BY query a second time with the fused hash join
  *         GROUP BY disabled and compare the two materializations (default
@@ -606,7 +613,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         // Bug from fault-injection fuzzing: SELECT max(ts) FROM t WHERE test_fault()
         // swallowed the injected fault under parallel execution and was reported as a
         // swallowed-error failure. The optimiser
-        // (SqlOptimiser.rewriteSingleFirstLastGroupBy) rewrites a lone
+        // (TimestampEndpointLimit.limitEndpointInputs) rewrites a lone
         // min/max/first/last over the designated timestamp into an
         // ORDER BY ts [DESC] LIMIT 1 scan, so a fault that fires on a frame past the
         // single-row cutoff is legitimately discarded -- the same early termination
@@ -653,6 +660,123 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 Assert.assertFalse("unexpected pushed-down limit in plan: " + sql,
                         QueryRunner.planHasPushedLimit(planOf(sql)));
             }
+        });
+    }
+
+    @Test
+    public void testSetOperationFenceKeepsFiltersAboveTheSet() throws Exception {
+        // QueryRunner compares a set operation with its fenced form, which proves something
+        // only if the planner pushes the filters of the one into the set's branches and keeps
+        // those of the other above the set. The optimiser pushes a filter into branches that
+        // read the column at the set's type, the binder into branches of another precision.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO a SELECT x::INT % 4, timestamp_sequence('2024-01-01', 1_800_000_000L) FROM long_sequence(150)");
+            execute("INSERT INTO b SELECT x::INT % 4, timestamp_sequence('2024-01-01', 1_800_000_000L) FROM long_sequence(150)");
+            final String sameType = "(SELECT ts v, k id FROM a UNION ALL SELECT ts v1, k id1 FROM b)";
+            final String mixedPrecision = "(SELECT ts v, k id FROM a UNION ALL SELECT ts::TIMESTAMP_NS v1, k id1 FROM b)";
+            final String where = " u WHERE v > '2024-01-02T05:00:00.000000Z'";
+            final String on = " u JOIN b x ON u.id = x.k AND u.v > '2024-01-02T05:00:00.000000Z'";
+
+            assertQuery("SELECT v, id FROM " + sameType + where)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Union All
+                                SelectedRecord
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: a
+                                          intervals: [("2024-01-02T05:00:00.000001Z","MAX")]
+                                SelectedRecord
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: b
+                                          intervals: [("2024-01-02T05:00:00.000001Z","MAX")]
+                            """);
+            assertQuery("SELECT v, id FROM " + SetOperationClause.fence(sameType) + where)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Filter filter: 2024-01-02T05:00:00.000000Z<v
+                                Limit value: 1000000 skip-rows: 0 take-rows: 300
+                                    Union All
+                                        SelectedRecord
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                        SelectedRecord
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                            """);
+            assertQuery("SELECT v, id FROM " + mixedPrecision + where)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Union All
+                                SelectedRecord
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: a
+                                          intervals: [("2024-01-02T05:00:00.000001Z","MAX")]
+                                Filter filter: 2024-01-02T05:00:00.000000000Z<v1
+                                    VirtualRecord
+                                      functions: [ts::timestamp_ns,k]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                            """);
+            assertQuery("SELECT v, id FROM " + SetOperationClause.fence(mixedPrecision) + where)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Filter filter: 2024-01-02T05:00:00.000000000Z<v
+                                Limit value: 1000000 skip-rows: 0 take-rows: 300
+                                    Union All
+                                        SelectedRecord
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                        VirtualRecord
+                                          functions: [ts::timestamp_ns,k]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                            """);
+            assertQuery("SELECT u.v, u.id, x.ts FROM " + mixedPrecision + on)
+                    .noLeakCheck()
+                    .assertsPlanContaining(
+                            "Interval forward scan on: a",
+                            "Filter filter: 2024-01-02T05:00:00.000000000Z<v1"
+                    );
+            assertQuery("SELECT u.v, u.id, x.ts FROM " + SetOperationClause.fence(mixedPrecision) + on)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: x.k=u.id
+                                    Filter filter: 2024-01-02T05:00:00.000000000Z<v
+                                        Limit value: 1000000 skip-rows: 0 take-rows: 300
+                                            Union All
+                                                SelectedRecord
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: a
+                                                VirtualRecord
+                                                  functions: [ts::timestamp_ns,k]
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: b
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                            """);
+
+            assertSqlCursors("SELECT v, id FROM " + sameType + where + " ORDER BY v, id",
+                    "SELECT v, id FROM " + SetOperationClause.fence(sameType) + where + " ORDER BY v, id");
+            assertSqlCursors("SELECT v, id FROM " + mixedPrecision + where + " ORDER BY v, id",
+                    "SELECT v, id FROM " + SetOperationClause.fence(mixedPrecision) + where + " ORDER BY v, id");
+            assertSqlCursors("SELECT u.v, u.id, x.ts FROM " + mixedPrecision + on + " ORDER BY u.v, x.ts",
+                    "SELECT u.v, u.id, x.ts FROM " + SetOperationClause.fence(mixedPrecision) + on + " ORDER BY u.v, x.ts");
         });
     }
 
@@ -802,6 +926,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
             case POSTING -> hasPostingIndexedSymbol(tables)
                     ? null
                     : "the run's random schema drew no posting-indexed SYMBOL, so PostingClause.tryGenerate returns null on every draw";
+            case SET_OPERATION -> config.isSetOperationEnabled()
+                    ? null
+                    : "-D" + FuzzConfig.SET_OPERATION_PROP + "=false";
             case TEMPORAL_JOIN -> describeMissingJoinTables(tables);
             case WINDOW -> config.isWindowEnabled()
                     ? null
@@ -913,6 +1040,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", horizonJoin=").$(config.isHorizonJoinEnabled())
                 .$(", windowJoin=").$(config.isWindowJoinEnabled())
                 .$(", hashJoin=").$(config.isHashJoinEnabled())
+                .$(", setOperation=").$(config.isSetOperationEnabled())
                 .$(", diffFused=").$(config.isDiffFusedEnabled())
                 .$(", hashJoinPayload=").$(config.getHashJoinPayloadLayout() != null ? config.getHashJoinPayloadLayout().name() : "rule")
                 .$(", hashJoinBuild=").$(config.getHashJoinBuildMode().name())
@@ -993,7 +1121,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 boolean injectFaultFn = faultType == FaultType.FUNCTION;
                 long preGenS0 = rnd.getSeed0();
                 long preGenS1 = rnd.getSeed1();
-                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled());
+                GeneratedQuery query = QueryGenerator.generate(rnd, tables, null, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isSetOperationEnabled());
                 QueryRunner.Result result;
                 if (faultType != null) {
                     // Fault queries use a crash-and-recover oracle, not the
@@ -1056,7 +1184,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         long bindS1 = rnd.nextLong();
                         rnd.reset(preGenS0, preGenS1);
                         BindContext ctx = new BindContext(new Rnd(bindS0, bindS1), CONSTANT_BIND_PROBABILITY_PCT);
-                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled());
+                        GeneratedQuery bindForm = QueryGenerator.generate(rnd, tables, ctx, injectFaultFn, config.isWindowEnabled(), config.isLatestOnEnabled(), config.isHorizonJoinEnabled(), config.isWindowJoinEnabled(), config.isHashJoinEnabled(), config.isSetOperationEnabled());
                         if (ctx.getBindValues().size() > 0) {
                             query = query.withBind(bindForm.sql(), ctx.getBindNames(), ctx.getBindValues());
                             bindGen++;

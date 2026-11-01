@@ -105,6 +105,10 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         if (offset == 0) {
+            if (defaultValue != null) {
+                args.setQuick(2, null);
+                Misc.free(defaultValue);
+            }
             return lagCurrentRowConstructor.newFunction(windowContext.getPartitionByRecord(), args.get(0),
                     LeadLagWindowFunctionFactoryHelper.LAG_NAME, windowContext.isIgnoreNulls());
         }

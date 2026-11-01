@@ -1,0 +1,89 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.columns;
+
+import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.VarcharFunction;
+import io.questdb.std.str.Utf8Sequence;
+
+final class BindableVarcharColumn extends VarcharFunction implements BindableColumn {
+    private int columnId;
+    private int columnIndex = -1;
+    private boolean isOpen = true;
+
+    BindableVarcharColumn(int columnId) {
+        this.columnId = columnId;
+    }
+
+    @Override
+    public void close() {
+        isOpen = false;
+    }
+
+    @Override
+    public int getColumnId() {
+        return columnId;
+    }
+
+    @Override
+    public Utf8Sequence getVarcharA(Record record) {
+        assert columnIndex >= 0;
+        return record.getVarcharA(columnIndex);
+    }
+
+    @Override
+    public Utf8Sequence getVarcharB(Record record) {
+        assert columnIndex >= 0;
+        return record.getVarcharB(columnIndex);
+    }
+
+    @Override
+    public int getVarcharSize(Record record) {
+        assert columnIndex >= 0;
+        return record.getVarcharSize(columnIndex);
+    }
+
+    @Override
+    public boolean isOpen() {
+        return isOpen;
+    }
+
+    @Override
+    public void setColumnId(int columnId) {
+        assert columnIndex == -1 && isOpen;
+        this.columnId = columnId;
+    }
+
+    @Override
+    public void setColumnIndex(int columnIndex) {
+        this.columnIndex = columnIndex;
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.putColumnName(columnIndex);
+    }
+}

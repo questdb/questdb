@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
@@ -43,6 +42,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
@@ -51,8 +51,8 @@ import io.questdb.griffin.QueryFutureUpdateListener;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
-import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
@@ -61,7 +61,6 @@ import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowContext;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.jit.JitUtil;
 import io.questdb.mp.RingQueue;
@@ -82,6 +81,7 @@ import io.questdb.std.Rnd;
 import io.questdb.std.str.CharSink;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.griffin.AsyncFilterConstructionFault;
 import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -109,6 +109,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         // We intentionally use a small capacity for the reduce queue to exhibit various edge cases.
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, QUEUE_CAPACITY);
 
+        configurationFactory = AsyncFilterConstructionFault.CONFIGURATION_FACTORY;
         AbstractCairoTest.setUpStatic();
     }
 
@@ -168,70 +169,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                             """,
                     AsyncWindowJoinFastRecordCursorFactory.class
             );
-        });
-    }
-
-    @Test
-    public void testCloseAfterFailingHalfCloseContinuesFactoryTeardown() throws Exception {
-        assertMemoryLeak(() -> {
-            final RuntimeException worker0Failure = new RuntimeException("worker 0 close");
-            final RuntimeException worker1Failure = new RuntimeException("worker 1 close");
-            final RuntimeException baseFailure = new RuntimeException("base close");
-            final RuntimeException ownerFailure = new RuntimeException("owner close");
-            final TrackingBooleanFunction ownerFilter = new TrackingBooleanFunction(ownerFailure);
-            final TrackingBooleanFunction worker0 = new TrackingBooleanFunction(worker0Failure);
-            final TrackingBooleanFunction worker1 = new TrackingBooleanFunction(worker1Failure);
-            final TrackingBooleanFunction worker2 = new TrackingBooleanFunction(null);
-            final ObjList<io.questdb.cairo.sql.Function> workerFilters = new ObjList<>();
-            workerFilters.add(worker0);
-            workerFilters.add(worker1);
-            workerFilters.add(worker2);
-            final TrackingEmptyFactory base = new TrackingEmptyFactory(baseFailure);
-            final AsyncFilteredRecordCursorFactory factory = new AsyncFilteredRecordCursorFactory(
-                    engine,
-                    configuration,
-                    engine.getMessageBus(),
-                    base,
-                    ownerFilter,
-                    new IntHashSet(),
-                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
-                    workerFilters,
-                    ExpressionNode.FACTORY.newInstance(),
-                    null,
-                    0,
-                    3,
-                    false
-            );
-
-            try {
-                factory.halfClose();
-                Assert.fail();
-            } catch (RuntimeException e) {
-                Assert.assertSame(worker0Failure, e);
-                Assert.assertArrayEquals(new Throwable[]{worker1Failure}, e.getSuppressed());
-            }
-            Assert.assertEquals(1, worker0.closeCount);
-            Assert.assertEquals(1, worker1.closeCount);
-            Assert.assertEquals(1, worker2.closeCount);
-            Assert.assertEquals(0, base.closeCount);
-            Assert.assertEquals(0, ownerFilter.closeCount);
-            Assert.assertNull(workerFilters.getQuick(0));
-            Assert.assertNull(workerFilters.getQuick(1));
-            Assert.assertNull(workerFilters.getQuick(2));
-
-            try {
-                factory.close();
-                Assert.fail();
-            } catch (RuntimeException e) {
-                Assert.assertSame(baseFailure, e);
-                Assert.assertArrayEquals(new Throwable[]{ownerFailure}, e.getSuppressed());
-            }
-            factory.close();
-            Assert.assertEquals(1, worker0.closeCount);
-            Assert.assertEquals(1, worker1.closeCount);
-            Assert.assertEquals(1, worker2.closeCount);
-            Assert.assertEquals(1, base.closeCount);
-            Assert.assertEquals(1, ownerFilter.closeCount);
         });
     }
 
@@ -682,6 +619,44 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegativeLimitPastMaxNegativeLimitInitializesLimitOnce() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x::INT i, timestamp_sequence(0, 1_000_000) ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+            final InitCountingLimit limit = new InitCountingLimit(-3);
+            try (
+                    RecordCursorFactory factory = new AsyncFilteredRecordCursorFactory(
+                            engine,
+                            configuration,
+                            engine.getMessageBus(),
+                            select("SELECT * FROM x"),
+                            BooleanConstant.TRUE,
+                            new IntHashSet(),
+                            () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER),
+                            null,
+                            limit,
+                            0,
+                            1,
+                            false
+                    );
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertEquals(1, limit.initCount);
+                println(factory, cursor);
+            }
+            TestUtils.assertEquals(
+                    """
+                            i	ts
+                            8	1970-01-01T00:00:07.000000Z
+                            9	1970-01-01T00:00:08.000000Z
+                            10	1970-01-01T00:00:09.000000Z
+                            """,
+                    sink
+            );
+        });
+    }
+
+    @Test
     public void testNoLimit() throws Exception {
         testNoLimit(true, SqlJitMode.JIT_MODE_DISABLED, AsyncFilteredRecordCursorFactory.class);
     }
@@ -921,9 +896,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
             TestThrowingFilterFunctionFactory.reset(-1);
             final RuntimeException sentinel = new RuntimeException("async filter constructor");
             try {
-                AsyncFilteredRecordCursorFactory.setConstructorFailureHookForTesting(() -> {
-                    throw sentinel;
-                });
+                AsyncFilterConstructionFault.arm(sentinel);
                 try (
                         SqlExecutionContext context = TestUtils.createSqlExecutionCtx(engine, 4);
                         RecordCursorFactory ignored = engine.select(
@@ -944,7 +917,7 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 Assert.assertEquals(5, TestThrowingFilterFunctionFactory.CONSTRUCT_COUNT.get());
                 Assert.assertEquals(5, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
             } finally {
-                AsyncFilteredRecordCursorFactory.setConstructorFailureHookForTesting(null);
+                AsyncFilterConstructionFault.disarm();
                 TestThrowingFilterFunctionFactory.reset(-1);
             }
         });
@@ -1491,7 +1464,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 boolean isOrdered,
                 int orderByDirection,
                 int orderByPos,
-                boolean baseSupportsRandomAccess,
                 int framingMode,
                 long rowsLo,
                 char rowsLoUnit,
@@ -1515,7 +1487,6 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                     isOrdered,
                     orderByDirection,
                     orderByPos,
-                    baseSupportsRandomAccess,
                     framingMode,
                     rowsLo,
                     rowsLoUnit,
@@ -1866,43 +1837,22 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
     }
 
-    private static class TrackingBooleanFunction extends BooleanFunction {
-        private final RuntimeException failure;
-        private int closeCount;
+    private static class InitCountingLimit extends LongFunction {
+        private final long value;
+        private int initCount;
 
-        private TrackingBooleanFunction(RuntimeException failure) {
-            this.failure = failure;
+        private InitCountingLimit(long value) {
+            this.value = value;
         }
 
         @Override
-        public void close() {
-            closeCount++;
-            if (failure != null) {
-                throw failure;
-            }
+        public long getLong(Record rec) {
+            return value;
         }
 
         @Override
-        public boolean getBool(Record rec) {
-            return true;
-        }
-    }
-
-    private static class TrackingEmptyFactory extends EmptyTableRecordCursorFactory {
-        private final RuntimeException failure;
-        private int closeCount;
-
-        private TrackingEmptyFactory(RuntimeException failure) {
-            super(new GenericRecordMetadata());
-            this.failure = failure;
-        }
-
-        @Override
-        protected void _close() {
-            closeCount++;
-            if (failure != null) {
-                throw failure;
-            }
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) {
+            initCount++;
         }
     }
 }

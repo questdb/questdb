@@ -32,16 +32,18 @@ import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TimeFrameCursor;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.Plannable;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
-import io.questdb.griffin.model.JoinContext;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -62,20 +64,21 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
             RecordSink slaveKeyCopier,
             int columnSplit,
             @Transient ColumnTypes keyTypes,
-            JoinContext joinContext,
+            Plannable joinContext,
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable Function keyCheck
     ) {
-        super(metadata, masterFactory, slaveFactory, joinContext, toleranceInterval);
+        super(metadata, masterFactory, slaveFactory, joinContext, toleranceInterval, keyCheck);
         this.masterKeyCopier = masterKeyCopier;
         this.slaveKeyCopier = slaveKeyCopier;
-        this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
-                ? new SymbolTranslatingRecord(configuration, masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
-                : null;
         Map fwdScanKeyToRowId = null;
         Map bwdScanKeyToRowId = null;
         try {
+            this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null
+                    ? new SymbolTranslatingRecord(configuration, masterFactory.getMetadata().getColumnCount(), masterSymbolKeyColumnIndices, slaveSymbolKeyColumnIndices)
+                    : null;
             long maxSinkTargetHeapSize = (long)
                     configuration.getSqlHashJoinValuePageSize() * configuration.getSqlHashJoinValueMaxPages();
             fwdScanKeyToRowId = MapFactory.createUnorderedMap(configuration, keyTypes, TYPES_VALUE, false, false);
@@ -92,12 +95,13 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
                     slaveFactory.getMetadata().getTimestampIndex(),
                     slaveFactory.getMetadata().getTimestampType(),
                     new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
-                            SingleRecordSink.CONFIG_KEYS_ASOF_JOIN)
+                            SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
+                    keyCheck
             );
         } catch (Throwable th) {
-            Misc.free(bwdScanKeyToRowId);
-            Misc.free(fwdScanKeyToRowId);
-            close();
+            Misc.free(bwdScanKeyToRowId, th);
+            Misc.free(fwdScanKeyToRowId, th);
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -147,7 +151,8 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
                 SingleRecordSink masterSinkTarget,
                 int slaveTimestampIndex,
                 int slaveTimestampType,
-                SingleRecordSink slaveSinkTarget
+                SingleRecordSink slaveSinkTarget,
+                @Nullable Function keyCheck
         ) {
             super(
                     columnSplit,
@@ -157,7 +162,8 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
                     masterTimestampIndex,
                     masterTimestampType,
                     slaveTimestampIndex,
-                    slaveTimestampType
+                    slaveTimestampType,
+                    keyCheck
             );
             this.masterSinkTarget = masterSinkTarget;
             this.slaveSinkTarget = slaveSinkTarget;
@@ -172,7 +178,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
         }
 
         @Override
-        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+        public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionContext executionContext) throws SqlException {
             // Reopen the sinks and the translation caches before super.of() adopts the cursors
             // so an open-time breach frees each exactly once.
             masterSinkTarget.reopen();
@@ -180,7 +186,7 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.initSources(masterCursor, slaveCursor);
             }
-            super.of(masterCursor, slaveCursor, circuitBreaker);
+            super.of(masterCursor, slaveCursor, executionContext);
             masterKeyRecord = masterRecord;
             if (symbolTranslatingRecord != null) {
                 symbolTranslatingRecord.of(masterRecord);

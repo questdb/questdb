@@ -42,7 +42,7 @@ public interface ExecutionModel {
 
     int getModelType();
 
-    default IQueryModel getQueryModel() {
+    default QueryModel getQueryModel() {
         return null;
     }
 

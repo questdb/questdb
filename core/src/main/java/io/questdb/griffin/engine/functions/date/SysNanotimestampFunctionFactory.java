@@ -37,6 +37,11 @@ public class SysNanotimestampFunctionFactory implements FunctionFactory {
     private static final String SIGNATURE = "systimestamp_ns()";
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.TIMESTAMP_NANO;
+    }
+
+    @Override
     public String getSignature() {
         return SIGNATURE;
     }

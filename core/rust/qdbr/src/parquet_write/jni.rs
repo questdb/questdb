@@ -675,6 +675,7 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionEnc
                 0, // unused_bytes: new file, no dead space
                 squash_tracker,
                 seq_txn,
+                true,
             )
             .context("generate_parquet_metadata failed")?;
 

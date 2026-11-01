@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.functions.math;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -41,8 +42,18 @@ import io.questdb.std.Transient;
 public class DivIntFunctionFactory implements FunctionFactory {
 
     @Override
+    public int getResultType(IntList argTypes) {
+        return ColumnType.INT;
+    }
+
+    @Override
     public String getSignature() {
         return "/(II)";
+    }
+
+    @Override
+    public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) {
+        return !args.getQuick(0).isNullConstant() && !args.getQuick(1).isNullConstant();
     }
 
     @Override
@@ -57,7 +68,7 @@ public class DivIntFunctionFactory implements FunctionFactory {
         final Function right = args.getQuick(1);
         // null / x and x / null always evaluate to null. Fold at construction time so the
         // non-null operand (potentially a column reference) is never evaluated with a null
-        // record via FunctionParser.functionToConstant().
+        // record via FunctionResolver.functionToConstant().
         if (left.isNullConstant()) {
             Misc.free(right);
             return IntConstant.NULL;

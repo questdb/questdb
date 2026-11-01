@@ -58,6 +58,26 @@ public class TimestampSamplerFactoryTest {
     }
 
     @Test
+    public void testBucketBeyondLong() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        for (char unit : new char[]{'U', 'T', 's', 'm', 'h', 'd', 'w'}) {
+            final long unitSize = driver.from(1, unit);
+            if (unitSize == 1) {
+                continue;
+            }
+            final long maxInterval = Long.MAX_VALUE / unitSize;
+            Assert.assertNotNull(TimestampSamplerFactory.getInstance(driver, maxInterval, unit, 7));
+            try {
+                TimestampSamplerFactory.getInstance(driver, maxInterval + 1, unit, 7);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(7, e.getPosition());
+                TestUtils.assertEquals("invalid sample value [value=" + (maxInterval + 1) + "]", e.getFlyweightMessage());
+            }
+        }
+    }
+
+    @Test
     public void testFindIntervalEndIndex() throws SqlException {
         // Valid cases - positive values
         Assert.assertEquals(1, TimestampSamplerFactory.findIntervalEndIndex("5s", 0));
@@ -112,6 +132,22 @@ public class TimestampSamplerFactoryTest {
         assertFindPositiveIntervalEndIndexFailure(100, "negative interval is not allowed", "-", 100);
 
         Assert.assertEquals(0, TimestampSamplerFactory.findPositiveIntervalEndIndex("m", 11, "sample"));
+    }
+
+    @Test
+    public void testIntervalBeyondIntForIntSamplers() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        for (char unit : new char[]{'M', 'y'}) {
+            Assert.assertNotNull(TimestampSamplerFactory.getInstance(driver, Integer.MAX_VALUE, unit, 7));
+            try {
+                TimestampSamplerFactory.getInstance(driver, Integer.MAX_VALUE + 1L, unit, 7);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(7, e.getPosition());
+                TestUtils.assertEquals("invalid sample value [value=2147483648]", e.getFlyweightMessage());
+            }
+        }
+        Assert.assertNotNull(TimestampSamplerFactory.getInstance(driver, Integer.MAX_VALUE + 1L, 's', 7));
     }
 
     @Test
@@ -282,6 +318,22 @@ public class TimestampSamplerFactoryTest {
     @Test
     public void testSecondsZero() {
         assertFailure(120, "zero is not a valid sample value", "0s", 120);
+    }
+
+    @Test
+    public void testUnderscoreSeparatedInterval() throws SqlException {
+        final TimestampDriver driver = timestampType.getDriver();
+        Assert.assertEquals(5, TimestampSamplerFactory.findPositiveIntervalEndIndex("1_200s", 0, "sample"));
+        Assert.assertEquals(6, TimestampSamplerFactory.findIntervalEndIndex("-1_200s", 0));
+        Assert.assertEquals(-1_200, TimestampSamplerFactory.parseInterval("-1_200s", 6, 0));
+        final TimestampSampler underscored = TimestampSamplerFactory.getInstance(driver, "1_200s", 0);
+        final TimestampSampler plain = TimestampSamplerFactory.getInstance(driver, "1200s", 0);
+        final long ts = driver.fromSeconds(86_400 + 3_601);
+        Assert.assertEquals(plain.round(ts), underscored.round(ts));
+        Assert.assertEquals(plain.nextTimestamp(ts), underscored.nextTimestamp(ts));
+        assertFailure(10, "invalid sample value", "5_s", 10);
+        assertFailure(10, "invalid sample value", "1__0s", 10);
+        assertFailure(10, "expected single letter qualifier", "_5s", 10);
     }
 
     @Test

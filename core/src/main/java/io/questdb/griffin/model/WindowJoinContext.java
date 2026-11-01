@@ -37,15 +37,13 @@ public class WindowJoinContext implements Mutable {
     private int hiKind = CURRENT;
     private int hiKindPos;
     private boolean includePrevailing = true;
-    private boolean isDynamicHi;
-    private boolean isDynamicLo;
     private long lo = Long.MIN_VALUE;
     private ExpressionNode loExpr;
     private int loExprPos;
     private char loExprTimeUnit;
     private int loKind = PRECEDING;
     private int loKindPos;
-    private IQueryModel parentModel;
+    private QueryModel parentModel;
 
     @Override
     public void clear() {
@@ -62,8 +60,6 @@ public class WindowJoinContext implements Mutable {
         hiKind = CURRENT;
         hiKindPos = 0;
         includePrevailing = true;
-        isDynamicHi = false;
-        isDynamicLo = false;
         parentModel = null;
     }
 
@@ -115,28 +111,12 @@ public class WindowJoinContext implements Mutable {
         return loKindPos;
     }
 
-    public IQueryModel getParentModel() {
+    public QueryModel getParentModel() {
         return parentModel;
-    }
-
-    public boolean isDynamicHi() {
-        return isDynamicHi;
-    }
-
-    public boolean isDynamicLo() {
-        return isDynamicLo;
     }
 
     public boolean isIncludePrevailing() {
         return includePrevailing;
-    }
-
-    public void setDynamicHi(boolean isDynamicHi) {
-        this.isDynamicHi = isDynamicHi;
-    }
-
-    public void setDynamicLo(boolean isDynamicLo) {
-        this.isDynamicLo = isDynamicLo;
     }
 
     public void setHi(long hi) {
@@ -179,7 +159,7 @@ public class WindowJoinContext implements Mutable {
         this.loKindPos = loKindPos;
     }
 
-    public void setParentModel(IQueryModel parentModel) {
+    public void setParentModel(QueryModel parentModel) {
         this.parentModel = parentModel;
     }
 }

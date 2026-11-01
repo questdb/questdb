@@ -29,11 +29,9 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
-import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
-import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.SortedRunsMerge;
 import io.questdb.std.LongList;
@@ -327,6 +325,15 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
         columnTypes.add(ColumnType.LONG);   // +6: last frame index
     }
 
+    /**
+     * Both the parallel and the serial aggregation paths rely on each page frame's observations already being
+     * sorted by the timestamp argument; that holds only for the designated timestamp of a forward scan.
+     */
+    @Override
+    public boolean isAscendingTimestampRequired() {
+        return true;
+    }
+
     @Override
     public boolean isConstant() {
         return false;
@@ -356,6 +363,11 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
      * The old destination buffers are abandoned and reclaimed when the
      * allocator is closed.
      */
+    @Override
+    public boolean isTimestampArgumentRequired() {
+        return true;
+    }
+
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcCount = srcValue.getLong(valueIndex + 1);
@@ -450,24 +462,6 @@ public class TwapGroupByFunction extends DoubleFunction implements GroupByFuncti
     @Override
     public boolean supportsParallelism() {
         return BinaryFunction.super.supportsParallelism();
-    }
-
-    /**
-     * Rejects the query at compile time unless the second argument is the
-     * table's designated timestamp and the base query delivers rows in
-     * ascending order of it. Both the parallel and the serial aggregation
-     * paths rely on each page frame's observations already being sorted by
-     * the timestamp argument; that holds only for the designated timestamp
-     * of a forward scan.
-     */
-    public void validateTimestampArg(int designatedTimestampIndex, boolean isBaseTimestampAscending, int position) throws SqlException {
-        ColumnFunction cf = ColumnFunction.unwrap(tsFunc);
-        if (designatedTimestampIndex < 0 || cf == null || cf.getColumnIndex() != designatedTimestampIndex) {
-            throw SqlException.$(position, "twap() requires the table's designated timestamp as the second argument");
-        }
-        if (!isBaseTimestampAscending) {
-            throw SqlException.$(position, "twap() requires the base query to provide ascending designated timestamp order");
-        }
     }
 
     private void resetCache() {

@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -126,7 +127,7 @@ public abstract class SymbolFunction implements Function, SymbolTable {
 
     @Override
     public final double getDouble(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsDouble(getStrA(rec));
     }
 
     @Override
@@ -156,7 +157,7 @@ public abstract class SymbolFunction implements Function, SymbolTable {
 
     @Override
     public final int getIPv4(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsIPv4(getSymbol(rec));
     }
 
     @Override
@@ -166,7 +167,7 @@ public abstract class SymbolFunction implements Function, SymbolTable {
 
     @Override
     public final long getLong(Record rec) {
-        throw new UnsupportedOperationException();
+        return SqlUtil.implicitCastStrAsLong(getStrA(rec));
     }
 
     @Override
@@ -258,7 +259,13 @@ public abstract class SymbolFunction implements Function, SymbolTable {
 
     @Override
     public final int getVarcharSize(Record rec) {
-        throw new UnsupportedOperationException();
+        final CharSequence value = getStrA(rec);
+        if (value == null) {
+            return TableUtils.NULL_LEN;
+        }
+        utf8SinkA.clear();
+        utf8SinkA.put(value);
+        return utf8SinkA.size();
     }
 
     /**
