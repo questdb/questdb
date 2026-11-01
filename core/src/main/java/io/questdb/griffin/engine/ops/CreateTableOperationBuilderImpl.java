@@ -502,8 +502,8 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         if (!hasCastGroup(from) || !hasCastGroup(to)) {
             // The group table stops at VARCHAR, so the decimal, array and NULL tags have no entry,
             // and no single group could express a decimal's precision and scale or an array's
-            // dimensionality. INSERT ... SELECT gates the very same record copier on
-            // isConvertibleFrom, so deferring to it admits exactly the pairs the copier implements.
+            // dimensionality. Defer to isConvertibleFrom, the rule INSERT ... SELECT applies before it
+            // runs the same record copier.
             return ColumnType.isConvertibleFrom(from, to);
         }
         return castGroups.getQuick(ColumnType.tagOf(from)) == castGroups.getQuick(ColumnType.tagOf(to));
