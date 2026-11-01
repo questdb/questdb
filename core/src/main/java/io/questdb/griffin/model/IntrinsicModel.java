@@ -97,6 +97,13 @@ public class IntrinsicModel implements Mutable {
         return runtimeIntervalBuilder.isBetweenBoundaryFunctionConsumed();
     }
 
+    /**
+     * Returns true when the interval conditions so far select no timestamp at all.
+     */
+    public boolean isIntervalSetEmpty() {
+        return runtimeIntervalBuilder.isEmptySet();
+    }
+
     public void intersectEmpty() {
         runtimeIntervalBuilder.intersectEmpty();
         intrinsicValue = FALSE;

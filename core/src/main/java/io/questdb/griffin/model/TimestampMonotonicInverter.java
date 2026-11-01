@@ -45,6 +45,10 @@ import io.questdb.std.Numbers;
  * {@link MonotonicTimestampFunction}s. The queried value range is built from the
  * resolved bound(s) and inverted layer by layer onto the timestamp axis.
  * <p>
+ * The range comes either from point bounds, or from a {@link CompiledTickExpression} for
+ * {@code g(ts) IN 'tick'}, when the TICK expression holds a date variable and so resolves
+ * to a different interval on every execution.
+ * <p>
  * Stored in {@link RuntimeIntervalModel}'s dynamic range list and evaluated under
  * {@link IntervalOperation#INTERSECT_INTERVALS}, mirroring
  * {@link CompiledTickExpression}.
@@ -59,6 +63,8 @@ public class TimestampMonotonicInverter extends UntypedFunction {
     private final Function loBound;
     private final short loBoundAdjustment;
     private final long loConst;
+    private final CompiledTickExpression tickExpr;
+    private final LongList tickIntervals;
     private final TimestampDriver timestampDriver;
 
     public TimestampMonotonicInverter(
@@ -81,13 +87,33 @@ public class TimestampMonotonicInverter extends UntypedFunction {
         this.hiConst = hiConst;
         this.isBetween = isBetween;
         this.timestampDriver = timestampDriver;
+        this.tickExpr = null;
+        this.tickIntervals = null;
+    }
+
+    /**
+     * Inverts {@code g(ts) IN 'tick'}, where {@code tickExpr} is the compiled TICK expression,
+     * resolved in the output domain of the chain.
+     */
+    public TimestampMonotonicInverter(Function head, CompiledTickExpression tickExpr, TimestampDriver timestampDriver) {
+        this.head = head;
+        this.tickExpr = tickExpr;
+        this.tickIntervals = new LongList();
+        this.timestampDriver = timestampDriver;
+        this.loBound = null;
+        this.loBoundAdjustment = 0;
+        this.loConst = Long.MIN_VALUE;
+        this.hiBound = null;
+        this.hiBoundAdjustment = 0;
+        this.hiConst = Long.MAX_VALUE;
+        this.isBetween = false;
     }
 
     @Override
     public void close() {
-        // head, loBound and hiBound are distinct owners hidden inside the inverter; the outer
-        // best-effort dynamic-range list cleanup only reaches this close(), not the functions it
-        // holds. A close() failure on an earlier owner must not abandon the later ones, so free
+        // head, loBound, hiBound and tickExpr are distinct owners hidden inside the inverter; the
+        // outer best-effort dynamic-range list cleanup only reaches this close(), not the functions
+        // it holds. A close() failure on an earlier owner must not abandon the later ones, so free
         // every distinct owner best-effort (hiBound may alias loBound - free it once) and rethrow
         // the accumulated failure, mirroring the freeBorrowedModels convention.
         Throwable failure = Misc.freeBestEffort(null, head);
@@ -95,16 +121,22 @@ public class TimestampMonotonicInverter extends UntypedFunction {
         if (hiBound != loBound) {
             failure = Misc.freeBestEffort(failure, hiBound);
         }
+        failure = Misc.freeBestEffort(failure, tickExpr);
         CairoException.rethrowCleanupFailure(failure);
     }
 
     /**
      * Appends a single inverted {@code [lo, hi]} pair to {@code out}, or nothing
-     * when the predicate matches no rows (a NULL bound, or an empty preimage). The
-     * empty case relies on the enclosing {@code INTERSECT_INTERVALS} to reduce the
-     * result to the empty set.
+     * when the predicate matches no rows (a NULL bound, an empty preimage, or a TICK
+     * expression that resolves to no interval). The empty case relies on the enclosing
+     * {@code INTERSECT_INTERVALS} to reduce the result to the empty set.
      */
     public void evaluate(LongList out) {
+        if (tickExpr != null) {
+            evaluateTickExpr(out);
+            return;
+        }
+
         long lo;
         if (loBound != null) {
             lo = resolveBound(loBound);
@@ -147,24 +179,7 @@ public class TimestampMonotonicInverter extends UntypedFunction {
         }
 
         io.of(lo, hi);
-        // Traverse the owned head's linked monotonic chain (head -> getTimestampArg() -> ...) rather
-        // than a copied ObjList. The links hold the same functions in the same outermost-first order
-        // the compile path built, so inversion is identical, and the traversal allocates nothing.
-        Function f = head;
-        while (f instanceof MonotonicTimestampFunction m) {
-            if (m.invertTimestampInterval(io) == MonotonicTimestampFunction.NONE) {
-                // bound outside the invertible range: impose no interval, leaving it to the filter
-                out.add(Numbers.LONG_NULL, Long.MAX_VALUE);
-                return;
-            }
-            if (io.getLo() > io.getHi()) {
-                return;
-            }
-            f = m.getTimestampArg();
-        }
-        if (io.getLo() <= io.getHi()) {
-            out.add(io.getLo(), io.getHi());
-        }
+        invert(out);
     }
 
     @Override
@@ -174,6 +189,9 @@ public class TimestampMonotonicInverter extends UntypedFunction {
 
     @Override
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        if (tickExpr != null) {
+            tickExpr.init(symbolTableSource, executionContext);
+        }
         if (loBound != null) {
             loBound.init(symbolTableSource, executionContext);
         }
@@ -195,6 +213,44 @@ public class TimestampMonotonicInverter extends UntypedFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("monotonic_ts_interval");
+    }
+
+    private void evaluateTickExpr(LongList out) {
+        tickIntervals.clear();
+        tickExpr.evaluate(tickIntervals);
+        if (tickIntervals.size() == 0) {
+            // the expression resolves to no interval at all, so the predicate matches no rows
+            return;
+        }
+        if (tickIntervals.size() > 2) {
+            // A list is not one range to invert through the chain. Impose no interval and leave the
+            // rows to the residual filter, the same as for a list known at compile time.
+            out.add(Numbers.LONG_NULL, Long.MAX_VALUE);
+            return;
+        }
+        io.of(tickIntervals.getQuick(0), tickIntervals.getQuick(1));
+        invert(out);
+    }
+
+    private void invert(LongList out) {
+        // Traverse the owned head's linked monotonic chain (head -> getTimestampArg() -> ...) rather
+        // than a copied ObjList. The links hold the same functions in the same outermost-first order
+        // the compile path built, so inversion is identical, and the traversal allocates nothing.
+        Function f = head;
+        while (f instanceof MonotonicTimestampFunction m) {
+            if (m.invertTimestampInterval(io) == MonotonicTimestampFunction.NONE) {
+                // bound outside the invertible range: impose no interval, leaving it to the filter
+                out.add(Numbers.LONG_NULL, Long.MAX_VALUE);
+                return;
+            }
+            if (io.getLo() > io.getHi()) {
+                return;
+            }
+            f = m.getTimestampArg();
+        }
+        if (io.getLo() <= io.getHi()) {
+            out.add(io.getLo(), io.getHi());
+        }
     }
 
     private long resolveBound(Function f) {
