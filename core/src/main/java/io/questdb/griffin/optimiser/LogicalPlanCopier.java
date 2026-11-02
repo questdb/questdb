@@ -269,7 +269,8 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         final LogicalPlan clone = switch (plan) {
             case ScanPlan scan -> cloneScan(scan);
             case FunctionSourcePlan source -> context.getFunctionSources().copy(source);
-            case FilterPlan filter -> planNodes.filters.next().of(filter.getChild(), filter.getPredicate(), filter.getPosition());
+            case FilterPlan filter ->
+                    planNodes.filters.next().of(filter.getChild(), filter.getPredicate(), filter.getPosition());
             case ProjectPlan project -> cloneProject(project);
             case SampleByPlan sampleBy -> cloneSampleBy(sampleBy);
             case AggregatePlan aggregate -> cloneAggregate(aggregate);
@@ -301,7 +302,8 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
                 yield operationClone;
             }
             case SortPlan sort -> cloneSort(sort);
-            case LimitPlan limit -> planNodes.limits.next().of(limit.getChild(), limit.getLo(), limit.getHi(), limit.getPosition());
+            case LimitPlan limit ->
+                    planNodes.limits.next().of(limit.getChild(), limit.getLo(), limit.getHi(), limit.getPosition());
         };
         clone.getOutput().copyFrom(plan.getOutput());
         return clone;

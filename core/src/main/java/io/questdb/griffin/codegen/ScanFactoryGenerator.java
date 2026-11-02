@@ -309,8 +309,9 @@ final class ScanFactoryGenerator {
         }
         return switch (scan.getIntervalScan()) {
             case NONE -> null;
-            case STATIC -> new RuntimeIntervalModel(ColumnType.getTimestampDriver(scan.getNativeTimestampType()), table.getPartitionedBy(),
-                    new LongList(scan.getStaticIntervals()), new ObjList<>());
+            case STATIC ->
+                    new RuntimeIntervalModel(ColumnType.getTimestampDriver(scan.getNativeTimestampType()), table.getPartitionedBy(),
+                            new LongList(scan.getStaticIntervals()), new ObjList<>());
             case RUNTIME -> scanIntervals.build(table.getPartitionedBy());
         };
     }

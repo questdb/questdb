@@ -268,17 +268,6 @@ final class JoinFactoryGenerator {
     }
 
     /**
-     * The mapping of the single symbol key the recorded time-frame scan of an ASOF join reads, which the short circuit
-     * of the join keys holds.
-     */
-    private static SymbolJoinKeyMapping singleSymbolMapping(SymbolShortCircuit symbolShortCircuit, ListColumnFilter joinColumns) {
-        if (!isSingleSymbolJoin(symbolShortCircuit, joinColumns)) {
-            throw new IllegalStateException("recorded ASOF time-frame scan reads a single symbol key the join keys do not map");
-        }
-        return (SymbolJoinKeyMapping) symbolShortCircuit;
-    }
-
-    /**
      * Fills the outer metadata of a column-only projection over the window join and returns the
      * projected column indexes, or null when the projection keeps every column in place.
      */
@@ -300,6 +289,17 @@ final class JoinFactoryGenerator {
         }
         outerMetadata.setTimestampIndex(PlanToFactoryRules.windowJoinProjectionTimestampIndex(projection, output, innerMetadata.getTimestampIndex()));
         return isIdentity ? null : columnIndex;
+    }
+
+    /**
+     * The mapping of the single symbol key the recorded time-frame scan of an ASOF join reads, which the short circuit
+     * of the join keys holds.
+     */
+    private static SymbolJoinKeyMapping singleSymbolMapping(SymbolShortCircuit symbolShortCircuit, ListColumnFilter joinColumns) {
+        if (!isSingleSymbolJoin(symbolShortCircuit, joinColumns)) {
+            throw new IllegalStateException("recorded ASOF time-frame scan reads a single symbol key the join keys do not map");
+        }
+        return (SymbolJoinKeyMapping) symbolShortCircuit;
     }
 
     /**
@@ -1255,10 +1255,12 @@ final class JoinFactoryGenerator {
                 master = new RuntimeConstGateRecordCursorFactory(master, slaveRows);
             }
             master = switch (step.getJoinType()) {
-                case ASOF, LT -> generateTemporal(frame, step, PlanToFactoryRules.isSelfJoin(join, i), masterOutput, masterAlias, master,
-                        slave, slave.getMetadata(), null, null, producerLo, executionContext);
-                case SPLICE -> generateSplice(frame, step, PlanToFactoryRules.isSelfJoin(join, i), masterOutput, masterAlias, master, slave,
-                        producerLo, executionContext);
+                case ASOF, LT ->
+                        generateTemporal(frame, step, PlanToFactoryRules.isSelfJoin(join, i), masterOutput, masterAlias, master,
+                                slave, slave.getMetadata(), null, null, producerLo, executionContext);
+                case SPLICE ->
+                        generateSplice(frame, step, PlanToFactoryRules.isSelfJoin(join, i), masterOutput, masterAlias, master, slave,
+                                producerLo, executionContext);
                 default ->
                         generate(frame, join, i, masterOutput, masterAlias, master, slave, producerLo, slaveProducerLo, stepSlaveRows,
                                 executionContext);

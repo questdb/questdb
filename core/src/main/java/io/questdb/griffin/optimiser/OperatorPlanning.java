@@ -492,10 +492,6 @@ final class OperatorPlanning implements Mutable {
                 PhysicalProperties.masterTimestampIndex(join, inputIndex), timestampIndex(step.getInput()));
     }
 
-    static boolean isPageFrameSource(LogicalPlan plan) {
-        return PhysicalProperties.supportsPageFrameCursor(plan) == PhysicalProperties.Capability.YES;
-    }
-
     private boolean isRandomAccess(LogicalPlan plan) {
         return PhysicalProperties.supportsRandomAccess(plan) == PhysicalProperties.Capability.YES;
     }
@@ -518,44 +514,6 @@ final class OperatorPlanning implements Mutable {
             }
         }
         return true;
-    }
-
-    /**
-     * True when the consumer steals the filter the generator builds for the plan and reads the frames under it: a
-     * parallel filter without a LIMIT, within a pattern scan or above it; the serial filter of a table scan, which a
-     * top-K and a frame reducer steal, and of a covering index scan, which a frame reducer steals; and a gate over page frames,
-     * which a temporal join steals when the factory under the filter serves time frames, as it must for any filter.
-     */
-    static boolean isStolenFilter(LogicalPlan plan, FilterConsumer consumer) {
-        final FilterPlan filter = PlanToFactoryRules.stolenFilter(plan);
-        if (filter == null) {
-            return false;
-        }
-        final boolean isSerialScanFilterStolen = consumer == FilterConsumer.TOP_K || consumer == FilterConsumer.FRAME_REDUCER;
-        final boolean isGateStolen = consumer == FilterConsumer.TEMPORAL_JOIN;
-        final boolean isStolen;
-        if (!PlanToFactoryRules.isFusedFilter(filter)) {
-            final FilterPlan.Algorithm algorithm = filter.getAlgorithm();
-            isStolen = isPageFrameSource(filter.getChild())
-                    && (algorithm == FilterPlan.Algorithm.PARALLEL || isGateStolen && algorithm == FilterPlan.Algorithm.GATE);
-        } else {
-            final ScanPlan scan = (ScanPlan) filter.getChild();
-            final FilterPlan.Algorithm algorithm = scan.getResidualAlgorithm();
-            final boolean isLimited = PhysicalProperties.implementsLimit(filter) == PhysicalProperties.Capability.YES;
-            final boolean isCovering = scan.getIndexRead() == ScanPlan.IndexRead.COVERING;
-            final boolean isParallel = algorithm == FilterPlan.Algorithm.PARALLEL;
-            isStolen = switch (scan.getAccessPath()) {
-                case PAGE_FRAMES -> algorithm != null && (algorithm.isFiltering()
-                        ? (isParallel || isSerialScanFilterStolen) && !isLimited : isGateStolen && algorithm == FilterPlan.Algorithm.GATE);
-                case SYMBOL_INDEX ->
-                        isCovering && algorithm != null && !scan.hasCoveringBackup()
-                                && (isParallel ? !isLimited : consumer == FilterConsumer.FRAME_REDUCER);
-                case SYMBOL_PATTERN -> !isCovering ? isParallel : isParallel ? !isLimited : isSerialScanFilterStolen;
-                case null, default -> false;
-            };
-        }
-        return isStolen && (consumer != FilterConsumer.TEMPORAL_JOIN
-                || PhysicalProperties.supportsLeafTimeFrameCursor(filter) == PhysicalProperties.Capability.YES);
     }
 
     /**
@@ -733,6 +691,15 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * Decides how the generator removes the duplicates of the DISTINCT, see {@link DistinctPlan.Algorithm}.
+     */
+    private void planDistinct(DistinctPlan distinct) {
+        final LogicalPlan input = distinct.getChild();
+        distinct.setAlgorithm(isKnownYes(PhysicalProperties.supportsRandomAccess(input)) && timestampIndex(input) >= 0
+                ? DistinctPlan.Algorithm.TIME_SERIES : DistinctPlan.Algorithm.HASH);
+    }
+
+    /**
      * Decides how the fill reads the buckets of its input.
      */
     private void planFill(FillPlan fill) {
@@ -764,15 +731,6 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * Decides how the generator removes the duplicates of the DISTINCT, see {@link DistinctPlan.Algorithm}.
-     */
-    private void planDistinct(DistinctPlan distinct) {
-        final LogicalPlan input = distinct.getChild();
-        distinct.setAlgorithm(isKnownYes(PhysicalProperties.supportsRandomAccess(input)) && timestampIndex(input) >= 0
-                ? DistinctPlan.Algorithm.TIME_SERIES : DistinctPlan.Algorithm.HASH);
-    }
-
-    /**
      * Decides how the generator reads the master of a HORIZON JOIN whose rows a projection reads; the projection
      * evaluates its expressions on the thread that reads the rows, so they never stop the join running in parallel.
      */
@@ -783,28 +741,6 @@ final class OperatorPlanning implements Mutable {
         validateHorizonInputs(horizon);
         planHorizonKeyLookups(horizon);
         horizon.setAlgorithm(horizonAlgorithm(horizon, true));
-    }
-
-    /**
-     * Rejects a HORIZON JOIN input the join consumes the designated timestamp of when its factory designates none, an
-     * input that does not deliver ascending designated timestamp order, and a slave whose rows the join cannot match
-     * through time-frame cursors.
-     */
-    private void validateHorizonInputs(HorizonJoinPlan horizon) throws SqlException {
-        final LogicalPlan master = horizon.getMaster();
-        validateConsumedTimestamp(master);
-        final ObjList<HorizonJoinSlave> slaves = horizon.getSlaves();
-        for (int i = 0, n = slaves.size(); i < n; i++) {
-            final HorizonJoinSlave slave = slaves.getQuick(i);
-            validateConsumedTimestamp(slave.getInput());
-            validateTimeSeriesOrders(master, slave.getInput(), slave.getPosition());
-        }
-        for (int i = 0, n = slaves.size(); i < n; i++) {
-            final HorizonJoinSlave slave = slaves.getQuick(i);
-            if (!isKnownYes(PhysicalProperties.supportsHorizonSlaveTimeFrameCursor(slave.getInput()))) {
-                throw SqlException.$(slave.getPosition(), "right-hand side of HORIZON JOIN can only be a table with an optional filter");
-            }
-        }
     }
 
     private void planHorizonKeyLookups(HorizonJoinPlan horizon) throws SqlException {
@@ -1457,6 +1393,28 @@ final class OperatorPlanning implements Mutable {
         }
     }
 
+    /**
+     * Rejects a HORIZON JOIN input the join consumes the designated timestamp of when its factory designates none, an
+     * input that does not deliver ascending designated timestamp order, and a slave whose rows the join cannot match
+     * through time-frame cursors.
+     */
+    private void validateHorizonInputs(HorizonJoinPlan horizon) throws SqlException {
+        final LogicalPlan master = horizon.getMaster();
+        validateConsumedTimestamp(master);
+        final ObjList<HorizonJoinSlave> slaves = horizon.getSlaves();
+        for (int i = 0, n = slaves.size(); i < n; i++) {
+            final HorizonJoinSlave slave = slaves.getQuick(i);
+            validateConsumedTimestamp(slave.getInput());
+            validateTimeSeriesOrders(master, slave.getInput(), slave.getPosition());
+        }
+        for (int i = 0, n = slaves.size(); i < n; i++) {
+            final HorizonJoinSlave slave = slaves.getQuick(i);
+            if (!isKnownYes(PhysicalProperties.supportsHorizonSlaveTimeFrameCursor(slave.getInput()))) {
+                throw SqlException.$(slave.getPosition(), "right-hand side of HORIZON JOIN can only be a table with an optional filter");
+            }
+        }
+    }
+
     private void validateSlaveOrder(LogicalPlan slave, int position) throws SqlException {
         readOrder(slave, false, true);
         if (scanDirection(slave) != PhysicalProperties.ScanDirection.FORWARD) {
@@ -1647,6 +1605,10 @@ final class OperatorPlanning implements Mutable {
         return fill.size() == 1 && fill.getQuick(0) == FillMode.LINEAR;
     }
 
+    static boolean isPageFrameSource(LogicalPlan plan) {
+        return PhysicalProperties.supportsPageFrameCursor(plan) == PhysicalProperties.Capability.YES;
+    }
+
     /**
      * True when the GROUP BY over the base runs in parallel once it reads page frames: every key and aggregate
      * function supports parallelism, and a keyless aggregate that stops early reads a filtered base.
@@ -1669,6 +1631,43 @@ final class OperatorPlanning implements Mutable {
      */
     static boolean isSampleByRowsFill(FillPlan fill) {
         return fill.getChild() instanceof SampleByPlan sample && sample.getAlgorithm() == SampleByPlan.Algorithm.FILL_NONE;
+    }
+
+    /**
+     * True when the consumer steals the filter the generator builds for the plan and reads the frames under it: a
+     * parallel filter without a LIMIT, within a pattern scan or above it; the serial filter of a table scan, which a
+     * top-K and a frame reducer steal, and of a covering index scan, which a frame reducer steals; and a gate over page frames,
+     * which a temporal join steals when the factory under the filter serves time frames, as it must for any filter.
+     */
+    static boolean isStolenFilter(LogicalPlan plan, FilterConsumer consumer) {
+        final FilterPlan filter = PlanToFactoryRules.stolenFilter(plan);
+        if (filter == null) {
+            return false;
+        }
+        final boolean isSerialScanFilterStolen = consumer == FilterConsumer.TOP_K || consumer == FilterConsumer.FRAME_REDUCER;
+        final boolean isGateStolen = consumer == FilterConsumer.TEMPORAL_JOIN;
+        final boolean isStolen;
+        if (!PlanToFactoryRules.isFusedFilter(filter)) {
+            final FilterPlan.Algorithm algorithm = filter.getAlgorithm();
+            isStolen = isPageFrameSource(filter.getChild())
+                    && (algorithm == FilterPlan.Algorithm.PARALLEL || isGateStolen && algorithm == FilterPlan.Algorithm.GATE);
+        } else {
+            final ScanPlan scan = (ScanPlan) filter.getChild();
+            final FilterPlan.Algorithm algorithm = scan.getResidualAlgorithm();
+            final boolean isLimited = PhysicalProperties.implementsLimit(filter) == PhysicalProperties.Capability.YES;
+            final boolean isCovering = scan.getIndexRead() == ScanPlan.IndexRead.COVERING;
+            final boolean isParallel = algorithm == FilterPlan.Algorithm.PARALLEL;
+            isStolen = switch (scan.getAccessPath()) {
+                case PAGE_FRAMES -> algorithm != null && (algorithm.isFiltering()
+                        ? (isParallel || isSerialScanFilterStolen) && !isLimited : isGateStolen && algorithm == FilterPlan.Algorithm.GATE);
+                case SYMBOL_INDEX -> isCovering && algorithm != null && !scan.hasCoveringBackup()
+                        && (isParallel ? !isLimited : consumer == FilterConsumer.FRAME_REDUCER);
+                case SYMBOL_PATTERN -> !isCovering ? isParallel : isParallel ? !isLimited : isSerialScanFilterStolen;
+                case null, default -> false;
+            };
+        }
+        return isStolen && (consumer != FilterConsumer.TEMPORAL_JOIN
+                || PhysicalProperties.supportsLeafTimeFrameCursor(filter) == PhysicalProperties.Capability.YES);
     }
 
     /**

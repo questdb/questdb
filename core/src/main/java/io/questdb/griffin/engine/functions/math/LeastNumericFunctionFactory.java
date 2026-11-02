@@ -86,8 +86,10 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
         for (int i = 0, n = args.size(); i < n; i++) {
             final int type = args.getQuick(i).getType();
             switch (ColumnType.tagOf(type)) {
-                case ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.LONG, ColumnType.INT, ColumnType.SHORT, ColumnType.BYTE,
-                     ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32,
+                case ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.LONG, ColumnType.INT, ColumnType.SHORT,
+                     ColumnType.BYTE,
+                     ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DECIMAL8, ColumnType.DECIMAL16,
+                     ColumnType.DECIMAL32,
                      ColumnType.DECIMAL64, ColumnType.DECIMAL128, ColumnType.DECIMAL256, ColumnType.NULL -> {
                 }
                 default ->
@@ -121,7 +123,8 @@ public class LeastNumericFunctionFactory implements FunctionFactory {
                     new CastLongToByteFunctionFactory.CastLongToByteFunction(new LeastLongRecordFunction(ownArgs));
             case ColumnType.DECIMAL8, ColumnType.DECIMAL16, ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
                     new LeastDecimal64RecordFunction(type, ColumnType.getDecimalScale(type), ownArgs);
-            case ColumnType.DECIMAL128 -> new LeastDecimal128RecordFunction(type, ColumnType.getDecimalScale(type), ownArgs);
+            case ColumnType.DECIMAL128 ->
+                    new LeastDecimal128RecordFunction(type, ColumnType.getDecimalScale(type), ownArgs);
             case ColumnType.DECIMAL256 ->
                     new LeastDecimal256RecordFunction(type, ColumnType.getDecimalScale(type), ownArgs, new IntList(argPositions));
             default -> throw SqlException.position(argPositions.getQuick(0)).put("unexpected argument types");

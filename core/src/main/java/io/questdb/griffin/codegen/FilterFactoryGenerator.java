@@ -386,8 +386,10 @@ final class FilterFactoryGenerator {
             case FOLDED_TRUE -> generateFolded(frame, producerLo, base, filter, true);
             case FOLDED_FALSE -> generateFolded(frame, producerLo, base, filter, false);
             case GATE -> new RuntimeConstGateRecordCursorFactory(base, filter);
-            case PARALLEL -> generateParallel(frame, predicate, input, base, filter, executionContext, isUpdate, limitCount, enablePreTouch);
-            case SERIAL, WINDOW_KEEP_FLAG -> generateJavaFilter(base, filter, false, null, null, null, 0, false, executionContext);
+            case PARALLEL ->
+                    generateParallel(frame, predicate, input, base, filter, executionContext, isUpdate, limitCount, enablePreTouch);
+            case SERIAL, WINDOW_KEEP_FLAG ->
+                    generateJavaFilter(base, filter, false, null, null, null, 0, false, executionContext);
         };
     }
 

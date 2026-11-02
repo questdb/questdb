@@ -501,6 +501,36 @@ final class PhysicalChoiceVerifier {
         return isValid ? null : PlanVerifier.DOMAIN_READ_ALGORITHM;
     }
 
+    static String fill(FillPlan fill, boolean isPlanned) {
+        final FillPlan.Algorithm algorithm = fill.getAlgorithm();
+        if (algorithm == null) {
+            return isPlanned ? PlanVerifier.CHOICE_UNPLANNED : null;
+        }
+        final int inputTimestampIndex = PhysicalProperties.timestampIndex(fill.getChild());
+        return (algorithm == FillPlan.Algorithm.SAMPLE_BY_ROWS) != OperatorPlanning.isSampleByRowsFill(fill)
+                || inputTimestampIndex != PhysicalProperties.UNKNOWN_TIMESTAMP
+                && (algorithm == FillPlan.Algorithm.SORTED) == (inputTimestampIndex == fill.derivedTimestampIndex())
+                ? PlanVerifier.FILL_ALGORITHM : null;
+    }
+
+    static String filter(FilterPlan filter, boolean isPlanned) {
+        if (isPlanned && filter.hasUpdateScan() != LogicalPlans.hasUpdateScan(filter.getChild())) {
+            return PlanVerifier.FILTER_UPDATE_SCAN;
+        }
+        final boolean isFused = PlanToFactoryRules.isFusedFilter(filter);
+        final FilterPlan.Algorithm algorithm = filter.getAlgorithm();
+        if (algorithm == null) {
+            return isPlanned && !isFused ? PlanVerifier.CHOICE_UNPLANNED : null;
+        }
+        if (isFused) {
+            return PlanVerifier.FILTER_ALGORITHM;
+        }
+        final FilterPlan.Algorithm folded = OperatorPlanning.foldedAlgorithm(filter.getPredicate(), true);
+        return folded != null ? algorithm != folded ? PlanVerifier.FILTER_ALGORITHM : null
+                : !algorithm.isFiltering() || (algorithm == FilterPlan.Algorithm.WINDOW_KEEP_FLAG) != PlanToFactoryRules.isWindowKeepFlag(filter)
+                  ? PlanVerifier.FILTER_ALGORITHM : null;
+    }
+
     /**
      * Checks the slaves of a HORIZON JOIN, whose rows it matches through time-frame cursors once planned, and how it
      * reads its master: a fused aggregate records no choice on the join, a projection records the one the master
@@ -538,36 +568,6 @@ final class PhysicalChoiceVerifier {
             return PlanVerifier.HORIZON_ALGORITHM;
         }
         return algorithm == HorizonJoinPlan.Algorithm.SERIAL ? serialHorizon(horizon, isPlanned) : null;
-    }
-
-    static String fill(FillPlan fill, boolean isPlanned) {
-        final FillPlan.Algorithm algorithm = fill.getAlgorithm();
-        if (algorithm == null) {
-            return isPlanned ? PlanVerifier.CHOICE_UNPLANNED : null;
-        }
-        final int inputTimestampIndex = PhysicalProperties.timestampIndex(fill.getChild());
-        return (algorithm == FillPlan.Algorithm.SAMPLE_BY_ROWS) != OperatorPlanning.isSampleByRowsFill(fill)
-                || inputTimestampIndex != PhysicalProperties.UNKNOWN_TIMESTAMP
-                && (algorithm == FillPlan.Algorithm.SORTED) == (inputTimestampIndex == fill.derivedTimestampIndex())
-                ? PlanVerifier.FILL_ALGORITHM : null;
-    }
-
-    static String filter(FilterPlan filter, boolean isPlanned) {
-        if (isPlanned && filter.hasUpdateScan() != LogicalPlans.hasUpdateScan(filter.getChild())) {
-            return PlanVerifier.FILTER_UPDATE_SCAN;
-        }
-        final boolean isFused = PlanToFactoryRules.isFusedFilter(filter);
-        final FilterPlan.Algorithm algorithm = filter.getAlgorithm();
-        if (algorithm == null) {
-            return isPlanned && !isFused ? PlanVerifier.CHOICE_UNPLANNED : null;
-        }
-        if (isFused) {
-            return PlanVerifier.FILTER_ALGORITHM;
-        }
-        final FilterPlan.Algorithm folded = OperatorPlanning.foldedAlgorithm(filter.getPredicate(), true);
-        return folded != null ? algorithm != folded ? PlanVerifier.FILTER_ALGORITHM : null
-                : !algorithm.isFiltering() || (algorithm == FilterPlan.Algorithm.WINDOW_KEEP_FLAG) != PlanToFactoryRules.isWindowKeepFlag(filter)
-                ? PlanVerifier.FILTER_ALGORITHM : null;
     }
 
     /**

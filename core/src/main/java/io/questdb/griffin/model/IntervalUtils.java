@@ -502,7 +502,8 @@ public final class IntervalUtils {
     public static int getTimestampTypeByIntervalType(int intervalType) {
         assert ColumnType.isInterval(intervalType) || ColumnType.isNull(intervalType);
         return switch (intervalType) {
-            case ColumnType.NULL, ColumnType.INTERVAL_RAW, ColumnType.INTERVAL_TIMESTAMP_MICRO -> ColumnType.TIMESTAMP_MICRO;
+            case ColumnType.NULL, ColumnType.INTERVAL_RAW, ColumnType.INTERVAL_TIMESTAMP_MICRO ->
+                    ColumnType.TIMESTAMP_MICRO;
             case ColumnType.INTERVAL_TIMESTAMP_NANO -> ColumnType.TIMESTAMP_NANO;
             default -> ColumnType.UNDEFINED;
         };
@@ -1326,42 +1327,6 @@ public final class IntervalUtils {
         }
     }
 
-    public static void replaceHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, short operation, LongList out) {
-        int lastIndex = out.size() - 4;
-        out.setQuick(lastIndex, lo);
-        out.setQuick(lastIndex + HI_INDEX, hi);
-        out.setQuick(
-                lastIndex + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX,
-                Numbers.encodeLowHighInts(
-                        Numbers.encodeLowHighShorts(operation, (short) ((int) periodType + Short.MIN_VALUE)),
-                        0
-                )
-        );
-        out.setQuick(lastIndex + PERIOD_COUNT_INDEX, Numbers.encodeLowHighInts(period, periodCount));
-    }
-
-    /**
-     * Sets the day filter mask on intervals in dynamic (4-long) format.
-     * This modifies encoded intervals in-place to add day filtering for runtime evaluation.
-     *
-     * @param intervals     the interval list containing encoded intervals
-     * @param startIndex    start index of intervals to modify
-     * @param dayFilterMask bitmask for day-of-week filter (bits 0-6 for Mon-Sun)
-     */
-    public static void setDayFilterMaskOnEncodedIntervals(LongList intervals, int startIndex, int dayFilterMask) {
-        if (dayFilterMask == 0) {
-            return;
-        }
-        for (int i = startIndex; i < intervals.size(); i += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
-            long periodCountLong = intervals.getQuick(i + PERIOD_COUNT_INDEX);
-            int period = Numbers.decodeLowInt(periodCountLong);
-            int periodCount = Numbers.decodeHighInt(periodCountLong);
-            // Clear existing dayFilterMask bits and set new ones
-            int newPeriodCount = (periodCount & 0x00FFFFFF) | ((dayFilterMask & 0xFF) << 24);
-            intervals.setQuick(i + PERIOD_COUNT_INDEX, Numbers.encodeLowHighInts(period, newPeriodCount));
-        }
-    }
-
     /**
      * The value of text compared with values of another precision, at the precision the text spells; NULL for NULL
      * text.
@@ -1400,6 +1365,42 @@ public final class IntervalUtils {
             return ColumnType.getTimestampDriver(textTimestampType).parseFloorLiteral(text);
         } catch (NumericException e) {
             throw ImplicitCastException.inconvertibleValue(text, ColumnType.VARCHAR, timestampDriver.getTimestampType()).position(position);
+        }
+    }
+
+    public static void replaceHiLoInterval(long lo, long hi, int period, char periodType, int periodCount, short operation, LongList out) {
+        int lastIndex = out.size() - 4;
+        out.setQuick(lastIndex, lo);
+        out.setQuick(lastIndex + HI_INDEX, hi);
+        out.setQuick(
+                lastIndex + OPERATION_PERIOD_TYPE_ADJUSTMENT_INDEX,
+                Numbers.encodeLowHighInts(
+                        Numbers.encodeLowHighShorts(operation, (short) ((int) periodType + Short.MIN_VALUE)),
+                        0
+                )
+        );
+        out.setQuick(lastIndex + PERIOD_COUNT_INDEX, Numbers.encodeLowHighInts(period, periodCount));
+    }
+
+    /**
+     * Sets the day filter mask on intervals in dynamic (4-long) format.
+     * This modifies encoded intervals in-place to add day filtering for runtime evaluation.
+     *
+     * @param intervals     the interval list containing encoded intervals
+     * @param startIndex    start index of intervals to modify
+     * @param dayFilterMask bitmask for day-of-week filter (bits 0-6 for Mon-Sun)
+     */
+    public static void setDayFilterMaskOnEncodedIntervals(LongList intervals, int startIndex, int dayFilterMask) {
+        if (dayFilterMask == 0) {
+            return;
+        }
+        for (int i = startIndex; i < intervals.size(); i += STATIC_LONGS_PER_DYNAMIC_INTERVAL) {
+            long periodCountLong = intervals.getQuick(i + PERIOD_COUNT_INDEX);
+            int period = Numbers.decodeLowInt(periodCountLong);
+            int periodCount = Numbers.decodeHighInt(periodCountLong);
+            // Clear existing dayFilterMask bits and set new ones
+            int newPeriodCount = (periodCount & 0x00FFFFFF) | ((dayFilterMask & 0xFF) << 24);
+            intervals.setQuick(i + PERIOD_COUNT_INDEX, Numbers.encodeLowHighInts(period, newPeriodCount));
         }
     }
 
