@@ -26,19 +26,16 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.EntityColumnFilter;
 import io.questdb.cairo.TableReader;
 import io.questdb.griffin.LoopingRecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
-import io.questdb.std.BytecodeAssembler;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
-import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collection;
 
@@ -402,20 +399,13 @@ public class InsertDecimalFromTextTest extends AbstractCairoTest {
     }
 
     /**
-     * Reports which implementation {@code generateCopier} returned. The single-method and the chunked
-     * copiers are both generated under the same class name, but only the chunked one splits the column
-     * copies into private {@code copy0..copyN} sub-methods.
+     * Reports which implementation {@code generateCopier} returned.
      */
     private static CopierMode copierModeOf(RecordToRowCopier copier) {
         if (copier instanceof LoopingRecordToRowCopier) {
             return CopierMode.LOOPING;
         }
-        for (Method method : copier.getClass().getDeclaredMethods()) {
-            if (method.getName().startsWith("copy") && !"copy".equals(method.getName())) {
-                return CopierMode.CHUNKED;
-            }
-        }
-        return CopierMode.SINGLE_METHOD;
+        return RecordToRowCopierTestUtils.countChunkMethods(copier) > 0 ? CopierMode.CHUNKED : CopierMode.SINGLE_METHOD;
     }
 
     private static String everyWidthNulls(int rowCount) {
@@ -443,16 +433,10 @@ public class InsertDecimalFromTextTest extends AbstractCairoTest {
                 TableReader src = getReader("src");
                 TableReader dst = getReader("dst")
         ) {
-            EntityColumnFilter columnFilter = new EntityColumnFilter();
-            columnFilter.of(dst.getMetadata().getColumnCount());
-            RecordToRowCopier copier = RecordToRowCopierUtils.generateCopier(
-                    new BytecodeAssembler(),
-                    src.getMetadata(),
-                    dst.getMetadata(),
-                    columnFilter,
-                    configuration
+            Assert.assertEquals(
+                    copierMode,
+                    copierModeOf(RecordToRowCopierTestUtils.generateInsertSelectCopier(src, dst, configuration))
             );
-            Assert.assertEquals(copierMode, copierModeOf(copier));
         }
     }
 
