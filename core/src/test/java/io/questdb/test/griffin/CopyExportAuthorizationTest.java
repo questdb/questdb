@@ -27,10 +27,12 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -52,6 +54,9 @@ import org.junit.runners.Parameterized;
 import java.io.File;
 import java.util.Collection;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(Parameterized.class)
 public class CopyExportAuthorizationTest extends AbstractCairoTest {
@@ -258,7 +263,7 @@ public class CopyExportAuthorizationTest extends AbstractCairoTest {
                     runExportJob(factory, context);
                 }
                 Assert.assertEquals(token, securityContext.jobTableToken);
-                Assert.assertEquals("[ts,x,secret,extra]", securityContext.jobColumns.toString());
+                TestUtils.assertEquals("[ts,x,secret,extra]", securityContext.jobChecks);
                 assertExportFailed("permission denied [table=t, column=extra]");
                 execute("ALTER TABLE t DROP COLUMN extra");
                 drainWalQueue();
@@ -275,7 +280,7 @@ public class CopyExportAuthorizationTest extends AbstractCairoTest {
             try (SqlExecutionContextImpl context = newContext(securityContext)) {
                 exportAfterEnforcing(securityContext, context);
                 Assert.assertEquals(engine.verifyTableName("t"), securityContext.jobTableToken);
-                Assert.assertEquals("[ts,x,secret]", securityContext.jobColumns.toString());
+                TestUtils.assertEquals("[ts,x,secret]", securityContext.jobChecks);
                 assertExportFailed("permission denied [table=t]");
                 assertNoExportAndRecover(context);
             }
@@ -283,70 +288,71 @@ public class CopyExportAuthorizationTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExportJobExportsAuthorizedSnapshot() throws Exception {
+    public void testExportJobDoesNotRecheckWhenRetriesDisabled() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_MAX_RECOMPILE_ATTEMPTS, 0);
+        assertExportRetryExhaustion();
+    }
+
+    @Test
+    public void testExportJobRechecksColumnAddedAfterItTookReader() throws Exception {
         assertMemoryLeak(() -> {
             createReplacementTable();
             final TableToken token = engine.verifyTableName("t");
             final JobCheckSecurityContext securityContext = new JobCheckSecurityContext();
             securityContext.grantedTableId = token.getTableId();
-            // A column added after the export job took its reader stays out of both the check and the file.
+            try (SqlExecutionContextImpl context = newContext(securityContext)) {
+                exportWithChangeWhenJobTakesReader(securityContext, context, () -> {
+                    execute("ALTER TABLE t ADD COLUMN extra INT");
+                    drainWalQueue();
+                });
+            }
+            // The job checks the columns of the reader it took first, finds the table changed since, and checks the
+            // columns of the reader it exports.
+            TestUtils.assertEquals("[ts,x,secret][ts,x,secret,extra]", securityContext.jobChecks);
+            Assert.assertEquals(0, engine.getBusyReaderCount());
+            assertExportSucceeded("""
+                    ts\tx\tsecret\textra
+                    2024-01-02T00:00:00.000000Z\t2\t42\tnull
+                    2024-01-02T01:00:00.000000Z\tnull\t43\tnull
+                    """);
+        });
+    }
+
+    @Test
+    public void testExportJobRechecksColumnRenamedDuringCheck() throws Exception {
+        assertMemoryLeak(() -> {
+            createReplacementTable();
+            final TableToken token = engine.verifyTableName("t");
+            final JobCheckSecurityContext securityContext = new JobCheckSecurityContext();
+            securityContext.grantedTableId = token.getTableId();
+            // the principal may read ts and x, but not secret under any name
+            securityContext.readableColumns = Set.of("ts", "x");
             securityContext.concurrentChange = () -> {
-                execute("ALTER TABLE t ADD COLUMN extra INT");
+                execute("ALTER TABLE t RENAME COLUMN secret TO secret2");
                 drainWalQueue();
             };
             try (SqlExecutionContextImpl context = newContext(securityContext)) {
                 exportAfterEnforcing(securityContext, context);
+                TestUtils.assertEquals("", securityContext.refusedChange);
+                // The first check passed secret, a name the table no longer held, so the job checks the renamed
+                // column before it exports anything.
+                TestUtils.assertEquals("[ts,x,secret][ts,x,secret2]", securityContext.jobChecks);
+                assertExportFailed("permission denied [table=t, column=secret2]");
+                execute("ALTER TABLE t RENAME COLUMN secret2 TO secret");
+                drainWalQueue();
+                assertNoExportAndRecover(context);
             }
-            TestUtils.assertEquals("", securityContext.refusedChange);
-            Assert.assertEquals(token, securityContext.jobTableToken);
-            Assert.assertEquals("[ts,x,secret]", securityContext.jobColumns.toString());
-            assertExportSucceeded();
-            assertQuery("SELECT * FROM t")
-                    .noLeakCheck()
-                    .expectSize()
-                    .timestamp("ts")
-                    .returns("""
-                            ts\tx\tsecret\textra
-                            2024-01-02T00:00:00.000000Z\t2\t42\tnull
-                            2024-01-02T01:00:00.000000Z\tnull\t43\tnull
-                            """);
         });
     }
 
     @Test
     public void testExportJobRejectsTableDroppedDuringCheck() throws Exception {
-        assertMemoryLeak(() -> {
-            createReplacementTable();
-            final TableToken token = engine.verifyTableName("t");
-            final JobCheckSecurityContext securityContext = new JobCheckSecurityContext();
-            securityContext.concurrentChange = () -> execute("DROP TABLE t");
-            try (SqlExecutionContextImpl context = newContext(securityContext)) {
-                exportAfterEnforcing(securityContext, context);
-                assertRejectedExport(securityContext, token, "table does not exist [table=t]");
-                if (isWal) {
-                    createReplacementTable();
-                }
-                assertNoExportAndRecover(context);
-            }
-        });
+        assertExportRejectsTableChangedDuringCheck("DROP TABLE t", this::createReplacementTable);
     }
 
     @Test
     public void testExportJobRejectsTableRenamedDuringCheck() throws Exception {
-        assertMemoryLeak(() -> {
-            createReplacementTable();
-            final TableToken token = engine.verifyTableName("t");
-            final JobCheckSecurityContext securityContext = new JobCheckSecurityContext();
-            securityContext.concurrentChange = () -> execute("RENAME TABLE t TO t_old");
-            try (SqlExecutionContextImpl context = newContext(securityContext)) {
-                exportAfterEnforcing(securityContext, context);
-                assertRejectedExport(securityContext, token, "table does not exist [table=t]");
-                if (isWal) {
-                    execute("RENAME TABLE t_old TO t");
-                }
-                assertNoExportAndRecover(context);
-            }
-        });
+        assertExportRejectsTableChangedDuringCheck("RENAME TABLE t TO t_old", () -> execute("RENAME TABLE t_old TO t"));
     }
 
     @Test
@@ -382,6 +388,11 @@ public class CopyExportAuthorizationTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testExportJobStopsRecheckingAtDefaultRetryLimit() throws Exception {
+        assertExportRetryExhaustion();
+    }
+
     private static void assertCairoFailure(SqlExecutionContext context, String expectedMessage) throws SqlException {
         try (RecordCursorFactory ignored = select(COPY_SQL, context)) {
             Assert.fail("COPY compilation must fail");
@@ -395,6 +406,50 @@ public class CopyExportAuthorizationTest extends AbstractCairoTest {
             // Grants can change between compilation and the export job, e.g. for a prepared statement or a queued export.
             securityContext.isEnforced = true;
             runExportJob(factory, context);
+        }
+    }
+
+    // Runs the change on the export job's thread inside getReader(), once the job's reader holds its snapshot.
+    private static void exportWithChangeWhenJobTakesReader(
+            JobCheckSecurityContext securityContext,
+            SqlExecutionContext context,
+            TestUtils.CheckedRunnable change
+    ) throws Exception {
+        try (RecordCursorFactory factory = select(COPY_SQL, context)) {
+            securityContext.isEnforced = true;
+            try (RecordCursor cursor = factory.getCursor(context)) {
+                Assert.assertTrue(cursor.hasNext());
+            }
+            final long jobThreadId = Thread.currentThread().threadId();
+            final AtomicBoolean isChangePending = new AtomicBoolean(true);
+            final AtomicReference<Throwable> changeFailure = new AtomicReference<>();
+            final PoolListener previousListener = engine.getPoolListener();
+            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+                if (previousListener != null) {
+                    previousListener.onEvent(factoryType, thread, tableToken, event, segment, position);
+                }
+                if (factoryType == PoolListener.SRC_READER
+                        && (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE)
+                        && thread == jobThreadId
+                        && tableToken != null
+                        && "t".equals(tableToken.getTableName())
+                        && isChangePending.compareAndSet(true, false)) {
+                    try {
+                        change.run();
+                    } catch (Throwable th) {
+                        changeFailure.set(th);
+                    }
+                }
+            });
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                Assert.assertTrue("the export must reach the job", job.run());
+            } finally {
+                engine.setPoolListener(previousListener);
+            }
+            if (changeFailure.get() != null) {
+                throw new AssertionError("the concurrent change failed", changeFailure.get());
+            }
+            Assert.assertFalse("the change must run when the export job takes its reader", isChangePending.get());
         }
     }
 
@@ -416,7 +471,7 @@ public class CopyExportAuthorizationTest extends AbstractCairoTest {
 
     private void assertExport(RecordCursorFactory factory, SqlExecutionContext context) throws Exception {
         runExportJob(factory, context);
-        assertExportSucceeded();
+        assertExportSucceeded(EXPECTED_ROWS);
         assertQuery("SELECT * FROM t")
                 .noLeakCheck()
                 .expectSize()
@@ -431,7 +486,58 @@ public class CopyExportAuthorizationTest extends AbstractCairoTest {
                 .returns("status\tmessage\nfailed\t" + expectedMessage + '\n');
     }
 
-    private void assertExportSucceeded() throws Exception {
+    private void assertExportRejectsTableChangedDuringCheck(String change, TestUtils.CheckedRunnable walRecovery) throws Exception {
+        assertMemoryLeak(() -> {
+            createReplacementTable();
+            final TableToken token = engine.verifyTableName("t");
+            final JobCheckSecurityContext securityContext = new JobCheckSecurityContext();
+            securityContext.concurrentChange = () -> execute(change);
+            try (SqlExecutionContextImpl context = newContext(securityContext)) {
+                exportAfterEnforcing(securityContext, context);
+                assertRejectedExport(securityContext, token, "table does not exist [table=t]");
+                if (isWal) {
+                    // the change went through, so the recovery export needs t back
+                    TestUtils.unchecked(walRecovery);
+                }
+                assertNoExportAndRecover(context);
+            }
+        });
+    }
+
+    private void assertExportRetryExhaustion() throws Exception {
+        assertMemoryLeak(() -> {
+            createReplacementTable();
+            final TableToken token = engine.verifyTableName("t");
+            final JobCheckSecurityContext securityContext = new JobCheckSecurityContext();
+            securityContext.grantedTableId = token.getTableId();
+            // every check races another schema change
+            final boolean[] isRenamed = {false};
+            securityContext.concurrentChange = () -> {
+                execute(isRenamed[0] ? "ALTER TABLE t RENAME COLUMN secret2 TO secret" : "ALTER TABLE t RENAME COLUMN secret TO secret2");
+                drainWalQueue();
+                isRenamed[0] = !isRenamed[0];
+            };
+            securityContext.isChangeRepeated = true;
+            try (SqlExecutionContextImpl context = newContext(securityContext)) {
+                exportAfterEnforcing(securityContext, context);
+                TestUtils.assertEquals("", securityContext.refusedChange);
+                // the first check, then one more check for each retry
+                final StringSink expectedChecks = new StringSink();
+                for (int i = 0, n = configuration.getMaxSqlRecompileAttempts(); i <= n; i++) {
+                    expectedChecks.put(i % 2 == 0 ? "[ts,x,secret]" : "[ts,x,secret2]");
+                }
+                TestUtils.assertEquals(expectedChecks, securityContext.jobChecks);
+                assertExportFailed("table schema changed too many times [table=t]");
+                if (isRenamed[0]) {
+                    execute("ALTER TABLE t RENAME COLUMN secret2 TO secret");
+                    drainWalQueue();
+                }
+                assertNoExportAndRecover(context);
+            }
+        });
+    }
+
+    private void assertExportSucceeded(String expectedRows) throws Exception {
         assertQuery("SELECT status, num_exported_files, export_path FROM \"sys.copy_export_log\" LIMIT -1")
                 .noLeakCheck()
                 .expectSize()
@@ -440,7 +546,7 @@ public class CopyExportAuthorizationTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .expectSize()
                 .timestamp("ts")
-                .returns(EXPECTED_ROWS);
+                .returns(expectedRows);
     }
 
     private void assertNoExportAndRecover(SqlExecutionContextImpl context) throws Exception {
@@ -472,7 +578,7 @@ public class CopyExportAuthorizationTest extends AbstractCairoTest {
 
     private void assertRejectedExport(JobCheckSecurityContext securityContext, TableToken token, String walFailure) throws Exception {
         Assert.assertEquals(token, securityContext.jobTableToken);
-        Assert.assertEquals("[ts,x,secret]", securityContext.jobColumns.toString());
+        TestUtils.assertEquals("[ts,x,secret]", securityContext.jobChecks);
         if (isWal) {
             // RENAME and DROP of a WAL table do not wait for the reader the export job holds
             TestUtils.assertEquals("", securityContext.refusedChange);
@@ -520,14 +626,18 @@ public class CopyExportAuthorizationTest extends AbstractCairoTest {
 
     // Allows everything until a test enforces the grants for the export job. From then on it judges the table that
     // holds the name when the check runs, as the Enterprise permission check does: the granted table passes, and so
-    // does a name that no table holds. The concurrent change runs inside the check, after the job took its reader.
+    // does a name that no table holds. With readable columns set, it judges the columns the same way: it looks each
+    // name up in the table's metadata as of the check, passes a name that metadata does not hold, and refuses any
+    // other column that is not readable. The concurrent change runs inside the check, after the job took its reader.
     private static class JobCheckSecurityContext extends AllowAllSecurityContext {
-        private final ObjList<CharSequence> jobColumns = new ObjList<>();
+        private final StringSink jobChecks = new StringSink();
         private final StringSink refusedChange = new StringSink();
         private TestUtils.CheckedRunnable concurrentChange;
         private int grantedTableId = -1;
+        private boolean isChangeRepeated;
         private boolean isEnforced;
         private TableToken jobTableToken;
+        private Set<String> readableColumns;
 
         @Override
         public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
@@ -535,13 +645,12 @@ public class CopyExportAuthorizationTest extends AbstractCairoTest {
                 return;
             }
             jobTableToken = tableToken;
-            jobColumns.clear();
-            for (int i = 0, n = columnNames.size(); i < n; i++) {
-                jobColumns.add(Chars.toString(columnNames.getQuick(i)));
-            }
+            jobChecks.put(columnNames.toString());
             if (concurrentChange != null) {
                 final TestUtils.CheckedRunnable change = concurrentChange;
-                concurrentChange = null;
+                if (!isChangeRepeated) {
+                    concurrentChange = null;
+                }
                 try {
                     change.run();
                 } catch (Throwable th) {
@@ -551,6 +660,17 @@ public class CopyExportAuthorizationTest extends AbstractCairoTest {
             final TableToken nameHolder = engine.getTableTokenIfExists(tableToken.getTableName());
             if (nameHolder != null && nameHolder.getTableId() != grantedTableId) {
                 throw CairoException.authorization().put("permission denied [table=").put(tableToken.getTableName()).put(']');
+            }
+            if (readableColumns != null) {
+                try (TableRecordMetadata metadata = engine.getLegacyMetadata(tableToken)) {
+                    for (int i = 0, n = columnNames.size(); i < n; i++) {
+                        final CharSequence columnName = columnNames.getQuick(i);
+                        if (metadata.getColumnIndexQuiet(columnName) > -1 && !readableColumns.contains(Chars.toString(columnName))) {
+                            throw CairoException.authorization().put("permission denied [table=").put(tableToken.getTableName())
+                                    .put(", column=").put(columnName).put(']');
+                        }
+                    }
+                }
             }
         }
     }

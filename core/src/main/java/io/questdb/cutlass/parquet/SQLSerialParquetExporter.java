@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -187,17 +188,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                 // export would report success over stale data. Resolve the mode on the very reader that will be
                 // read, and materialize through a temp table when this snapshot is composite.
                 tableToken = cairoEngine.verifyTableName(exportTableName);
-                sourceReader = cairoEngine.getReader(tableToken);
-                final TableReaderMetadata metadata = sourceReader.getMetadata();
-                columnNames.clear();
-                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    columnNames.add(metadata.getColumnName(i));
-                }
-                sqlExecutionContext.getSecurityContext().authorizeSelect(tableToken, columnNames);
-                // A security context can look the table up by name when the check runs, and pass a name that no table
-                // holds. After a RENAME or DROP that commits once getReader() returns, the check judges another table or
-                // none, so verifyTableToken() stops the export unless the name still leads to the table this reader reads.
-                cairoEngine.verifyTableToken(tableToken);
+                sourceReader = getAuthorizedReader(cairoEngine, tableToken);
                 if (sourceReader.getTxFile().hasCompositePartitions()) {
                     final int sourcePartitionBy = sourceReader.getPartitionedBy();
                     sourceReader = Misc.free(sourceReader);
@@ -451,6 +442,47 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
         sink.put("copy.");
         Numbers.appendHex(sink, copyID, true);
         return sink.toString();
+    }
+
+    /**
+     * Returns the reader a direct table export reads, once the principal may SELECT every column of the reader's
+     * snapshot. A security context can resolve the table and column names against the table as it is when the check
+     * runs, and pass a name it does not find. A DDL that commits once getReader() returns can therefore make the check
+     * judge another table, or skip a renamed or dropped column whose data the snapshot still holds. When the name no
+     * longer leads to the reader's table, the export fails. When the schema changed, this method checks a fresh reader
+     * again, at most {@code cairo.sql.max.recompile.attempts} more times.
+     */
+    private TableReader getAuthorizedReader(CairoEngine engine, TableToken tableToken) {
+        final int maxRetries = configuration.getMaxSqlRecompileAttempts();
+        for (int retries = 0; ; retries++) {
+            final TableReader reader = engine.getReader(tableToken);
+            final boolean isSchemaUnchanged;
+            try {
+                final TableReaderMetadata metadata = reader.getMetadata();
+                columnNames.clear();
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    columnNames.add(metadata.getColumnName(i));
+                }
+                sqlExecutionContext.getSecurityContext().authorizeSelect(tableToken, columnNames);
+                engine.verifyTableToken(tableToken);
+                try (TableMetadata current = engine.getTableMetadata(tableToken)) {
+                    isSchemaUnchanged = current.getMetadataVersion() == metadata.getMetadataVersion();
+                }
+            } catch (Throwable th) {
+                Misc.free(reader);
+                throw th;
+            }
+            if (isSchemaUnchanged) {
+                return reader;
+            }
+            Misc.free(reader);
+            if (retries >= maxRetries) {
+                throw CairoException.nonCritical()
+                        .put("table schema changed too many times [table=").put(tableToken.getTableName()).put(']');
+            }
+            LOG.info().$("table schema changed during export authorization, authorizing again [id=")
+                    .$hexPadded(task.getCopyID()).$(", table=").$(tableToken).I$();
+        }
     }
 
     private void moveAndOverwriteFiles() {

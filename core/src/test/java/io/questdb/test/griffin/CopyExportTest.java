@@ -4458,10 +4458,10 @@ public class CopyExportTest extends AbstractCairoTest {
                             .with(securityContext, null, null, -1, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
                     RecordCursorFactory factory = select(copySql, context)
             ) {
-                // every exported column is authorized at compile time
+                // COPY authorizes every exported column at compile time
                 Assert.assertEquals("[ts,x,y]", securityContext.selectColumns.toString());
 
-                // and again when the export runs, since the factory can be executed long after compilation
+                // and the export job authorizes them again, since a caller can execute the factory long after compilation
                 securityContext.selectColumns.clear();
                 securityContext.isSelectDenied = true;
                 CopyExportRunnable stmt = () -> {
