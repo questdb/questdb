@@ -31,6 +31,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -72,6 +73,13 @@ import java.util.function.IntFunction;
  * The lazy targets cover each way the {@code _pm} decoder turns top rows into NULL: through the
  * chunk's {@code null_count} (BOOLEAN to VARCHAR and INT, BYTE to VARCHAR and DOUBLE, SHORT to
  * STRING and DOUBLE) and through the definition levels (BYTE to INT, SHORT to LONG).
+ * <p>
+ * A run takes each test method through one of the 9 types and lazy targets per WAL mode, not through
+ * all of them: the hash of the method name spreads the methods over the pairs, and a shift that
+ * each run draws moves every method to another pair, see {@link #setUp()}. Each run covers every
+ * pair, and over the runs every method meets every pair. With
+ * {@code -Dquestdb.fuzz.parquet.noSentinel.everyTypeTarget=true} every method runs under every
+ * pair.
  */
 @RunWith(Parameterized.class)
 public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
@@ -107,19 +115,45 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     };
     // the columns of the rows that floatRow() renders
     private static final String FLOAT_COLUMNS = "v, ts, c1, c2, c3, d, f";
+    // every test method runs under every type and lazy target, see data()
+    private static final boolean IS_EVERY_TYPE_TARGET = Boolean.getBoolean("questdb.fuzz.parquet.noSentinel.everyTypeTarget");
     private static final String O3_DAY = "2024-01-01";
     // the columns of the rows that twoColumnRow() renders
     private static final String TWO_COLUMN_TOP_COLUMNS = "v, ts, c, s";
+    // the tested types, which have no NULL sentinel but CHAR, with the lazy targets of c2
+    private static final String[][] TYPE_TARGETS = {
+            {"BOOLEAN", "VARCHAR"},
+            {"BOOLEAN", "INT"},
+            {"BYTE", "VARCHAR"},
+            {"BYTE", "DOUBLE"},
+            {"BYTE", "INT"},
+            {"SHORT", "STRING"},
+            {"SHORT", "DOUBLE"},
+            {"SHORT", "LONG"},
+            {"CHAR", "STRING"},
+    };
+    // per WAL mode, WITH_WAL first, the shift of TYPE_TARGETS that this run applies to the pair of each test
+    // method, see typeTargetOfMethod()
+    private static final int[] TYPE_TARGET_SHIFTS = drawTypeTargetShifts();
     // the columns of the rows that rowOf() renders
     private static final String UPSERT_COLUMNS = "v, ts, c1, c2, c3, ci, cv, cg, cd";
     private final boolean isWal;
-    private final String lazyTarget;
-    private final String type;
+    // the type and lazy target of the parameters, null when the pair rotates over the test methods
+    private final String paramLazyTarget;
+    private final String paramType;
+    private String lazyTarget;
+    private String type;
 
-    public O3ParquetNoSentinelColumnTopTest(WalMode walMode, String type, String lazyTarget) {
+    // name only names the parameters, see data()
+    public O3ParquetNoSentinelColumnTopTest(
+            WalMode walMode,
+            String type,
+            String lazyTarget,
+            @SuppressWarnings("unused") String name
+    ) {
         this.isWal = walMode == WalMode.WITH_WAL;
-        this.type = type;
-        this.lazyTarget = lazyTarget;
+        this.paramType = type;
+        this.paramLazyTarget = lazyTarget;
     }
 
     @Override
@@ -131,25 +165,29 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // partitions of the WAL twin tw read 0 in BOOLEAN, BYTE and SHORT rows where that merge keeps a
         // top, which reads NULL after a type change. Ask for the default merge.
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, false);
+        if (paramType != null) {
+            type = paramType;
+            lazyTarget = paramLazyTarget;
+        } else {
+            final String[] typeTarget = typeTargetOfMethod();
+            type = typeTarget[0];
+            lazyTarget = typeTarget[1];
+        }
+        LOG.info().$("type and lazy target [type=").$(type).$(", lazyTarget=").$(lazyTarget).I$();
     }
 
-    @Parameterized.Parameters(name = "{0}-{1}-{2}")
+    // one parameter set per WAL mode, whose test methods take their type and lazy target from
+    // typeTargetOfMethod(); with IS_EVERY_TYPE_TARGET, one per WAL mode and pair
+    @Parameterized.Parameters(name = "{3}")
     public static Collection<Object[]> data() {
-        final String[][] typeTargets = {
-                {"BOOLEAN", "VARCHAR"},
-                {"BOOLEAN", "INT"},
-                {"BYTE", "VARCHAR"},
-                {"BYTE", "DOUBLE"},
-                {"BYTE", "INT"},
-                {"SHORT", "STRING"},
-                {"SHORT", "DOUBLE"},
-                {"SHORT", "LONG"},
-                {"CHAR", "STRING"},
-        };
         final List<Object[]> params = new ArrayList<>();
         for (WalMode walMode : WalMode.values()) {
-            for (String[] typeTarget : typeTargets) {
-                params.add(new Object[]{walMode, typeTarget[0], typeTarget[1]});
+            if (!IS_EVERY_TYPE_TARGET) {
+                params.add(new Object[]{walMode, null, null, walMode.name()});
+                continue;
+            }
+            for (String[] typeTarget : TYPE_TARGETS) {
+                params.add(new Object[]{walMode, typeTarget[0], typeTarget[1], walMode + "-" + typeTarget[0] + "-" + typeTarget[1]});
             }
         }
         return params;
@@ -647,7 +685,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // column that the identity check decoded. With KEYS(ts, csym, cvarchar) every column but the keys turns
         // NULL, the same, or the VARCHAR key changes, which makes the row new: the merge takes over the keys that
         // the check decoded and decodes the other columns. The test does not depend on the parameters, it runs once
-        Assume.assumeTrue(isWal && "BYTE".equals(type) && "INT".equals(lazyTarget));
+        assumeWalOnce();
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             assertEveryTypeRow6Upsert("ts", false);
@@ -907,7 +945,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // value as stored passes the identity check of the small row group 1, which also takes the row at 23:00 past
         // the max, NULL in every column of every type. The merge loop merges row group 1 from what the check decoded:
         // each of the 28 columns decodes once. The test does not depend on the parameters, it runs once
-        Assume.assumeTrue(isWal && "BYTE".equals(type) && "INT".equals(lazyTarget));
+        assumeWalOnce();
         setInPlaceProperties(8);
         assertMemoryLeak(() -> {
             createEveryTypeValueTables(" DEDUP UPSERT KEYS(ts)", 9);
@@ -930,7 +968,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // the top of w. Then, per type, row 6 resent with NULL in place of the value of that column differs:
         // native merges and materializes the top of w. One row group holds the 8 rows, so that the merge writes
         // every row of the top. The test does not depend on the parameters, it runs once
-        Assume.assumeTrue(isWal && "BYTE".equals(type) && "INT".equals(lazyTarget));
+        assumeWalOnce();
         setInPlaceProperties(8);
         assertMemoryLeak(() -> {
             createEveryTypeValueTables();
@@ -1048,7 +1086,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // in each, as the null buffers of the absent columns do. Native appends the row at 23:00, every column
         // reads NULL in rows 1..8, also the types without NULL after a lazy change to INT. The test does not
         // depend on the parameters, it runs once
-        Assume.assumeTrue(isWal && "BYTE".equals(type) && "INT".equals(lazyTarget));
+        assumeWalOnce();
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             createEveryTypeTables(8, " DEDUP UPSERT KEYS(ts)");
@@ -1508,7 +1546,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // identity check of row group 1, which holds no NULL, and the update leaves it in place; row 10 changes,
         // every column but the keys turns NULL, which fails the check of row group 2. The merge takes it over: each
         // of the 28 columns decodes once per row group. The test does not depend on the parameters, it runs once
-        Assume.assumeTrue(isWal && "BYTE".equals(type) && "INT".equals(lazyTarget));
+        assumeWalOnce();
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             for (String keys : new String[]{"ts", "ts, csym, cvarchar"}) {
@@ -1741,7 +1779,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // 1 holds rows 5, 6 of the top of s, not of c: its merge writes 0 over them. Every row group is written:
         // 4 columns of 3 row groups in the check and again in the merge. The test does not depend on the
         // parameters, it runs once
-        Assume.assumeTrue(isWal && "BYTE".equals(type) && "INT".equals(lazyTarget));
+        assumeWalOnce();
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             createTwoColumnTopTables(2, 6, 12);
@@ -1777,7 +1815,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         // NULLs of rows 1..6 stay in row groups 0 and 1. The second replays row 2 and changes row 7, which ends both
         // tops after row 1: row group 0 holds top rows, its merge writes 0/false over them. The test does not
         // depend on the parameters, it runs once
-        Assume.assumeTrue(isWal && "BYTE".equals(type) && "INT".equals(lazyTarget));
+        assumeWalOnce();
         setInPlaceProperties(4);
         assertMemoryLeak(() -> {
             createTwoColumnTopTables(6, 6, 12);
@@ -2455,6 +2493,14 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         });
     }
 
+    // the shifts of TYPE_TARGET_SHIFTS: TestUtils prints the seeds, -Dfuzz.s0 and -Dfuzz.s1 set them
+    private static int[] drawTypeTargetShifts() {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int[] shifts = {rnd.nextInt(TYPE_TARGETS.length), rnd.nextInt(TYPE_TARGETS.length)};
+        LOG.info().$("type and lazy target shifts [withWal=").$(shifts[0]).$(", noWal=").$(shifts[1]).I$();
+        return shifts;
+    }
+
     private static long getIdentityCheckDecodedColumnCount() {
         try (TableWriter writer = getWriter("pt")) {
             return writer.getUpsertIdentityCheckDecodedColumnCount();
@@ -2928,6 +2974,12 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             insertO3(o3Ts);
             assertReaders(topRows(8, 2, -1, o3Ts, isTopKept));
         });
+    }
+
+    // for the tests that depend on neither the type nor the lazy target: they run once, in WAL mode, under
+    // BYTE and INT when every test method runs under every pair
+    private void assumeWalOnce() {
+        Assume.assumeTrue(isWal && (paramType == null || ("BYTE".equals(type) && "INT".equals(lazyTarget))));
     }
 
     // changes the type of control column ci on the parquet partition: the next O3 commit rewrites the
@@ -3455,6 +3507,17 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             rows.add(pos, new Row(50, o3Ts, Kind.O3));
         }
         return rows;
+    }
+
+    // the type and lazy target of this test method in this run: the hash of the method name, shifted by the
+    // shift that the run drew for the WAL mode, picks one of TYPE_TARGETS. String.hashCode() is the same on
+    // every JVM, so the shifts of a run fix the pair of every method
+    private String[] typeTargetOfMethod() {
+        final String name = testName.getMethodName();
+        final int paramsAt = name.indexOf('[');
+        final String method = paramsAt < 0 ? name : name.substring(0, paramsAt);
+        final int shift = TYPE_TARGET_SHIFTS[isWal ? 0 : 1];
+        return TYPE_TARGETS[Math.floorMod(method.hashCode() + shift, TYPE_TARGETS.length)];
     }
 
     private String zeroText() {
