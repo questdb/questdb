@@ -1575,6 +1575,25 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateListAboveMergeThresholdWithApplyEncodedFalse() throws SqlException {
+        // The 152 days of five elements make 608 longs in the 4-long encoded format, which reach
+        // the incremental merge threshold (256) when counted in pairs. The encoded entries must
+        // stay as they are: one per day, in list order.
+        final StringBuilder expected = new StringBuilder("[");
+        for (LocalDate day = LocalDate.of(2024, 1, 1); day.isBefore(LocalDate.of(2024, 6, 1)); day = day.plusDays(1)) {
+            if (expected.length() > 1) {
+                expected.append(',');
+            }
+            expected.append("{lo=").append(day).append("T00:00:00.000000Z, hi=").append(day).append("T23:59:59.999999Z}");
+        }
+        expected.append(']');
+        assertEncodedInterval(
+                expected.toString(),
+                "[2024-01-[01..31],2024-02-[01..29],2024-03-[01..31],2024-04-[01..30],2024-05-[01..31]]"
+        );
+    }
+
+    @Test
     public void testDateListAllElementsHaveTime() throws SqlException {
         // All elements have time - global time suffix is completely ignored
         assertBracketInterval(
@@ -1776,8 +1795,32 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateListMatchesUnmergedOracle() throws SqlException {
+        // An element whose bracket expansion reaches the incremental merge threshold (256) merges
+        // its own intervals only, before its day filter and time zone, so the intervals of the
+        // earlier elements keep their place and their conversion.
+        assertMatchesUnmergedOracle(
+                "[2024-01-[01..31],2024-[02..12]-[01..28]]@+05:00",
+                "[2024-01-[01..31]@+05:00,2024-[02..12]-[01..28]@+05:00]",
+                "[2024-01-[01..31]@Europe/London,2024-[02..12]-[01..28]@America/New_York]",
+                "[2024-01-[01..31],2024-[02..12]-[01..28]]T09:00@+05:00;1h",
+                "[2024-01-[01..31],2024-[02..12]-[01..28]]@+05:00#mon",
+                "[2023-[01..12]-[01..28]T09:00,2023-[03..04]#mon]",
+                "[[2019..2024]-[01..12]-[01..28]#mon,2024-[09..10]#workday]",
+                "[[2019..2024]-[01..12]-[01..28],2024-[09..10]]#mon",
+                // the day filter drops every leaf of the last element: 2024-01-01 is a Monday
+                "[2024-01-05,2024-01-07,2024-01-01T[00..23]:[00..59]#sun]",
+                // each time list value converts its own 600 intervals
+                "2024-01-01T[20:00@-05:00,10:00@+05:00]:[00..59].[0..9]",
+                "2024-01-01T[20:00,10:00]:[00..59].[0..9]@-05:00",
+                "[$today,2024-[01..12]-[01..28]@+05:00]",
+                "[2024-[01..12]-[01..28]@+05:00,$today..$today+300d]"
+        );
+    }
+
+    @Test
     public void testDateListMixedElementFiltersGrowthBetweenMerges() throws SqlException {
-        // Filtered 31-day elements around an unfiltered element that merges from the list base
+        // Filtered 31-day elements around an unfiltered element that merges its own 336 leaves
         final StringBuilder interval = new StringBuilder("[");
         for (int k = 0; k < 200; k++) {
             interval.append("2024-01-[01..31]#mon,");
@@ -4885,7 +4928,7 @@ public class TickExprTest {
     public void testExpandingDayFilterMatchesUnmergedOracle() throws SqlException {
         // For these inputs an expanding day filter (year, month or week precision) gives the same
         // days whether it runs on merged blocks or on each leaf.
-        assertExpandingDayFilterMatchesUnmergedOracle(
+        assertMatchesUnmergedOracle(
                 "2024-[01..12]#mon;3650d",
                 "20[00..24]-[01..12]#mon,wed",
                 "20[00..99]-[01,03,05,07,09,11]#sat,sun",
@@ -4901,7 +4944,7 @@ public class TickExprTest {
     public void testExpandingDayFilterMatchesUnmergedOracleOutsideNanoRange() throws SqlException {
         // TIMESTAMP_NS covers the years 1677-2262 only
         Assume.assumeTrue(timestampType == TestTimestampType.MICRO);
-        assertExpandingDayFilterMatchesUnmergedOracle("1[000..999]#mon", "2[100..355]#mon;100000d");
+        assertMatchesUnmergedOracle("1[000..999]#mon", "2[100..355]#mon;100000d");
     }
 
     @Test
@@ -6666,35 +6709,6 @@ public class TickExprTest {
         );
     }
 
-    private void assertExpandingDayFilterMatchesUnmergedOracle(String... intervals) throws SqlException {
-        // both configurations lift the cap, so only the merge points differ
-        final CairoConfiguration mergingConfiguration = new DefaultCairoConfiguration(".") {
-            @Override
-            public int getSqlIntervalMaxIntervalsAfterMerge() {
-                return 10_000_000;
-            }
-        };
-        final CairoConfiguration oracleConfiguration = new DefaultCairoConfiguration(".") {
-            @Override
-            public int getSqlIntervalIncrementalMergeThreshold() {
-                return 5_000_000;
-            }
-
-            @Override
-            public int getSqlIntervalMaxIntervalsAfterMerge() {
-                return 10_000_000;
-            }
-        };
-        for (String interval : intervals) {
-            final LongList expected = new LongList();
-            final LongList actual = new LongList();
-            parseTickExprAtMonday(oracleConfiguration, expected, interval);
-            parseTickExprAtMonday(mergingConfiguration, actual, interval);
-            Assert.assertTrue(interval, expected.size() > 0);
-            Assert.assertEquals(interval, expected, actual);
-        }
-    }
-
     private void assertFullDayMondays(LongList intervals, int expectedCount) {
         final TimestampDriver timestampDriver = timestampType.getDriver();
         Assert.assertEquals(expectedCount, intervals.size() / 2);
@@ -6743,6 +6757,35 @@ public class TickExprTest {
             parseTickExpr(timestampDriver, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT);
             Assert.fail();
         } catch (SqlException ignore) {
+        }
+    }
+
+    private void assertMatchesUnmergedOracle(String... intervals) throws SqlException {
+        // both configurations lift the cap, so only the merge points differ
+        final CairoConfiguration mergingConfiguration = new DefaultCairoConfiguration(".") {
+            @Override
+            public int getSqlIntervalMaxIntervalsAfterMerge() {
+                return 10_000_000;
+            }
+        };
+        final CairoConfiguration oracleConfiguration = new DefaultCairoConfiguration(".") {
+            @Override
+            public int getSqlIntervalIncrementalMergeThreshold() {
+                return 5_000_000;
+            }
+
+            @Override
+            public int getSqlIntervalMaxIntervalsAfterMerge() {
+                return 10_000_000;
+            }
+        };
+        for (String interval : intervals) {
+            final LongList expected = new LongList();
+            final LongList actual = new LongList();
+            parseTickExprAtMonday(oracleConfiguration, expected, interval);
+            parseTickExprAtMonday(mergingConfiguration, actual, interval);
+            Assert.assertTrue(interval, expected.size() > 0);
+            Assert.assertEquals(interval, expected, actual);
         }
     }
 

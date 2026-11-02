@@ -599,6 +599,50 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInDateListDayFilterAfterLargeElement() throws Exception {
+        // The first element expands to 336 intervals, above the incremental merge threshold (256),
+        // and the second element's day filter must judge only the Mondays of March and April 2023.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE x (k INT, tm #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2000-06-01T12:00:00.000000Z', '2000-06-01T12:00:00.000000Z'),
+                    (2, '2023-03-06T12:00:00.000000Z', '2023-03-06T12:00:00.000000Z'),
+                    (3, '2023-03-07T12:00:00.000000Z', '2023-03-07T12:00:00.000000Z'),
+                    (4, '2023-06-01T09:00:30.000000Z', '2023-06-01T09:00:30.000000Z'),
+                    (5, '2023-11-15T12:00:00.000000Z', '2023-11-15T12:00:00.000000Z')
+                    """);
+            // the Monday 2023-03-06 and the 09:00 minute of 2023-06-01
+            final String expected = """
+                    k
+                    2
+                    4
+                    """;
+            for (String column : new String[]{"ts", "tm"}) {
+                assertQuery("SELECT k FROM x WHERE " + column + " IN '[2023-[01..12]-[01..28]T09:00,2023-[03..04]#mon]'")
+                        .noLeakCheck()
+                        .returns(expected);
+                assertQuery("SELECT k FROM x WHERE " + column + " IN '[2023-[03..04]#mon,2023-[01..12]-[01..28]T09:00]'")
+                        .noLeakCheck()
+                        .returns(expected);
+                assertQuery("SELECT k FROM x WHERE " + column + " IN '[2023-[01..12]-[01..28]T09:00,2023-03#mon,2023-04#mon]'")
+                        .noLeakCheck()
+                        .returns(expected);
+                assertQuery("SELECT k FROM x WHERE " + column + " IN '[2023-[01..12]-[01..28]T09:00,2023-03-[01..31]#mon]'")
+                        .noLeakCheck()
+                        .returns(expected);
+                // a day filter on the whole list
+                assertQuery("SELECT k FROM x WHERE " + column + " IN '[2023-[01..12]-[01..28]T09:00,2023-[03..04]]#mon'")
+                        .noLeakCheck()
+                        .returns("k\n2\n");
+            }
+        });
+    }
+
+    @Test
     public void testInDateListDayFilterOverMaxIntervalsFailsEarly() throws Exception {
         // Each 100-year element filters to about 5,218 Mondays, so too-many-intervals wins over the
         // unparsable third element.
@@ -624,6 +668,94 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     """;
             assertQuery("SELECT k FROM x WHERE " + dayFilterPredicate).noLeakCheck().returns(mondays);
             assertInBothOrders(dayFilterPredicate, "ts > dateadd('y', -30, now())", mondays);
+        });
+    }
+
+    @Test
+    public void testInDateListMonthDayFilterAfterLargeFilteredElement() throws Exception {
+        // The first element filters 2,016 bracket values to 288 Mondays, above the incremental merge
+        // threshold (256). The month elements after it expand their own day filter to single days,
+        // which must not reach into the Mondays.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE x (k INT, tm #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
+            // 1 and 4 are Mondays, 2 a Saturday, 3 and 5 Tuesdays, 6 a Monday and 7 a Sunday
+            execute("""
+                    INSERT INTO x VALUES
+                    (6, '2019-01-07T12:00:00.000000Z', '2019-01-07T12:00:00.000000Z'),
+                    (1, '2024-09-02T12:00:00.000000Z', '2024-09-02T12:00:00.000000Z'),
+                    (2, '2024-09-07T12:00:00.000000Z', '2024-09-07T12:00:00.000000Z'),
+                    (7, '2024-09-29T12:00:00.000000Z', '2024-09-29T12:00:00.000000Z'),
+                    (3, '2024-10-15T12:00:00.000000Z', '2024-10-15T12:00:00.000000Z'),
+                    (4, '2024-11-04T12:00:00.000000Z', '2024-11-04T12:00:00.000000Z'),
+                    (5, '2024-11-05T12:00:00.000000Z', '2024-11-05T12:00:00.000000Z')
+                    """);
+            final String mondaysAndWorkdays = """
+                    k
+                    6
+                    1
+                    3
+                    4
+                    """;
+            for (String column : new String[]{"ts", "tm"}) {
+                final String prefix = "SELECT k FROM x WHERE " + column + " IN ";
+                assertQuery(prefix + "'[[2019..2024]-[01..12]-[01..28]#mon,2024-[09..10]#workday]'")
+                        .noLeakCheck()
+                        .returns(mondaysAndWorkdays);
+                assertQuery(prefix + "'[[2019..2024]-[01..12]-[01..28]#mon,2024-09#workday,2024-10#workday]'")
+                        .noLeakCheck()
+                        .returns(mondaysAndWorkdays);
+                assertQuery(prefix + "'[[2019..2024]-[01..12]-[01..28]#mon,2024#workday]'")
+                        .noLeakCheck()
+                        .returns(mondaysAndWorkdays + "5\n");
+                assertQuery(prefix + "'[[2019..2024]-[01..12]-[01..28],2024-[09..10]]#mon'")
+                        .noLeakCheck()
+                        .returns("""
+                                k
+                                6
+                                1
+                                4
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testInDateListTimeZoneAboveMergeThreshold() throws Exception {
+        // One row per hour from 2023-12-31T00:00Z to 2025-01-08T23:00Z, so every local day of 2024
+        // at +05:00 holds 24 rows. January's 31 days and the 308 days 1 to 28 of February to
+        // December make 339 bracket values, above the incremental merge threshold (256).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE t (tm #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH", timestampType.getTypeName());
+            execute("""
+                    INSERT INTO t
+                    SELECT '2023-12-31'::TIMESTAMP + (x - 1) * 3_600_000_000L, '2023-12-31'::TIMESTAMP + (x - 1) * 3_600_000_000L
+                    FROM long_sequence(9_000)
+                    """);
+            final String[][] cases = {
+                    {"'[2024-01-[01..31],2024-[02..12]-[01..28]]@+05:00'", String.valueOf((31 + 11 * 28) * 24)},
+                    {"'[2024-01-[01..31]@+05:00,2024-[02..12]-[01..28]@+05:00]'", String.valueOf((31 + 11 * 28) * 24)},
+                    {"'[2024-01-[01..31]@Asia/Karachi,2024-[02..12]-[01..28]@Asia/Karachi]'", String.valueOf((31 + 11 * 28) * 24)},
+                    {"'[2024-01-01@+05:00,2024-[02..12]-[01..28]@+05:00]'", String.valueOf((1 + 11 * 28) * 24)},
+                    {"'[2024-01-[01..31]@+05:00,2024-[02..05]-[01..28]@+05:00]'", String.valueOf((31 + 4 * 28) * 24)},
+                    {"'2024-[02..12]-[01..28]@+05:00'", String.valueOf(11 * 28 * 24)},
+                    // the Mondays among them: 5 in January and 4 in each of the 11 later months
+                    {"'[2024-01-[01..31],2024-[02..12]-[01..28]]@+05:00#mon'", String.valueOf((5 + 11 * 4) * 24)},
+                    {"'[2024-01-[01..31]@+05:00,2024-[02..12]-[01..28]@+05:00#mon]'", String.valueOf((31 + 11 * 4) * 24)},
+                    // 09:00 to 10:00 local on each day
+                    {"'[2024-01-[01..31],2024-[02..12]-[01..28]]T09:00@+05:00;1h'", String.valueOf(31 + 11 * 28)},
+            };
+            for (String[] c : cases) {
+                for (String column : new String[]{"ts", "tm"}) {
+                    assertQuery("SELECT count() FROM t WHERE " + column + " IN " + c[0])
+                            .noLeakCheck()
+                            .expectSize()
+                            .noRandomAccess()
+                            .returns("count\n" + c[1] + "\n");
+                }
+            }
         });
     }
 
@@ -1346,6 +1478,44 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .timestamp("ts")
                     .returns("a\tts\n");
+        });
+    }
+
+    @Test
+    public void testInTimeListTimeZoneAboveMergeThreshold() throws Exception {
+        // Each time list value expands the first minute of its hour to 600 tenths of a second, above
+        // the incremental merge threshold (256), and then converts them from its own time zone.
+        // 20:00 at -05:00 is 01:00Z on the next day, and 10:00 at +05:00 is 05:00Z.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE x (k INT, tm #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T05:00:30.000000Z', '2024-01-01T05:00:30.000000Z'),
+                    (2, '2024-01-01T10:00:30.000000Z', '2024-01-01T10:00:30.000000Z'),
+                    (5, '2024-01-01T15:00:30.000000Z', '2024-01-01T15:00:30.000000Z'),
+                    (3, '2024-01-01T20:00:30.000000Z', '2024-01-01T20:00:30.000000Z'),
+                    (4, '2024-01-02T01:00:30.000000Z', '2024-01-02T01:00:30.000000Z')
+                    """);
+            for (String column : new String[]{"ts", "tm"}) {
+                assertQuery("SELECT k FROM x WHERE " + column + " IN '2024-01-01T[20:00@-05:00,10:00@+05:00]:[00..59].[0..9]'")
+                        .noLeakCheck()
+                        .returns("""
+                                k
+                                1
+                                4
+                                """);
+                // both values at -05:00: 10:00 is 15:00Z
+                assertQuery("SELECT k FROM x WHERE " + column + " IN '2024-01-01T[20:00,10:00]:[00..59].[0..9]@-05:00'")
+                        .noLeakCheck()
+                        .returns("""
+                                k
+                                5
+                                4
+                                """);
+            }
         });
     }
 
