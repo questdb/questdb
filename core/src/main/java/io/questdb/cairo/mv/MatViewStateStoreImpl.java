@@ -386,6 +386,10 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
                         }
                         remainingFlags &= ~MatViewState.PENDING_TASK_RETRY_FULL_REFRESH;
                     }
+                    if ((remainingFlags & MatViewState.PENDING_TASK_RETRY_INCREMENTAL_REFRESH) != 0) {
+                        enqueueIncrementalRefresh(matViewToken);
+                        remainingFlags &= ~MatViewState.PENDING_TASK_RETRY_INCREMENTAL_REFRESH;
+                    }
                 } catch (Throwable th) {
                     if (remainingFlags != 0) {
                         state.requestPendingTaskRetry(remainingFlags);
@@ -452,6 +456,10 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
                         requestPendingFullRefreshReenqueue(state);
                     } else if (task.operation == MatViewRefreshTask.INVALIDATE) {
                         requestPendingInvalidationReenqueue(state);
+                    } else if (task.operation == MatViewRefreshTask.INCREMENTAL_REFRESH) {
+                        // A lock holder's release enqueues one incremental refresh for every refresh
+                        // that lost the lock during its hold, so losing this task loses all of them.
+                        requestPendingIncrementalRefreshReenqueue(state);
                     }
                 }
             }
@@ -474,6 +482,12 @@ public class MatViewStateStoreImpl implements MatViewStateStore {
     @Override
     public void requestPendingFullRefreshReenqueue(MatViewState viewState) {
         viewState.requestPendingTaskRetry(MatViewState.PENDING_TASK_RETRY_FULL_REFRESH);
+        isPendingTaskReenqueueRequested.set(true);
+    }
+
+    @Override
+    public void requestPendingIncrementalRefreshReenqueue(MatViewState viewState) {
+        viewState.requestPendingTaskRetry(MatViewState.PENDING_TASK_RETRY_INCREMENTAL_REFRESH);
         isPendingTaskReenqueueRequested.set(true);
     }
 

@@ -24,12 +24,17 @@
 
 package io.questdb.test.cairo.crash;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.wal.WalReader;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.str.Path;
+import org.junit.Assert;
 
 import java.util.Arrays;
 import java.util.LinkedHashSet;
@@ -37,8 +42,8 @@ import java.util.Set;
 
 /**
  * Shared adaptive crash-test machinery: the fresh-process restart sequence ({@link #recoverAfterCrash}), the
- * handle and fd reclamation that keeps a live-JVM crash simulation leak-clean, and two helpers every adaptive
- * crash oracle needs ({@link #anyTableSuspended}, {@link #readOnDiskTxnSeqTxn}).
+ * handle and fd reclamation that keeps a live-JVM crash simulation leak-clean, and the helpers adaptive crash
+ * oracles share ({@link #anyTableSuspended}, {@link #assertWalSegmentsReadable}, {@link #readOnDiskTxnSeqTxn}).
  * <p>
  * It sits between {@link AbstractCrashConsistencyTest}, the generic crash oracle, and
  * {@link AbstractAdaptiveCrashSweepTest}, the nightly per-durability-op sweep driver. A test that asserts one
@@ -56,6 +61,39 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
             }
         }
         return false;
+    }
+
+    /**
+     * Opens, through {@link WalReader}, every WAL segment that a data txn after {@code afterSeqTxn} names, and returns
+     * how many data txns it checked. A sequencer record must never be durable ahead of a file it names; a segment
+     * whose {@code _meta} did not survive the power loss fails to open. WAL apply maps column files through the
+     * table's own metadata and never reads the segment {@code _meta}, so a crash oracle has to check it here: the
+     * live-view drain reads a base table's WAL through {@link WalReader}.
+     *
+     * @param failurePrefix prepended to the failure message, such as the crash point
+     */
+    protected int assertWalSegmentsReadable(TableToken token, long afterSeqTxn, String failurePrefix) {
+        int dataTxnCount = 0;
+        try (
+                TransactionLogCursor cursor = engine.getTableSequencerAPI().getCursor(token, afterSeqTxn);
+                WalReader reader = new WalReader(engine.getConfiguration())
+        ) {
+            while (cursor.hasNext()) {
+                final int walId = cursor.getWalId();
+                if (walId < 1) {
+                    continue;
+                }
+                dataTxnCount++;
+                try {
+                    reader.of(token, WalUtils.WAL_NAME_BASE + walId, cursor.getSegmentId(), 0);
+                } catch (CairoException e) {
+                    Assert.fail(failurePrefix + "txn " + cursor.getTxn() + " names " + WalUtils.WAL_NAME_BASE + walId
+                            + '/' + cursor.getSegmentId() + ", which does not open after the power loss: "
+                            + e.getFlyweightMessage());
+                }
+            }
+        }
+        return dataTxnCount;
     }
 
     /**

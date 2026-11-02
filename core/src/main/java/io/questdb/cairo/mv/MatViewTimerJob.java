@@ -319,15 +319,16 @@ public class MatViewTimerJob extends SynchronizedJob {
                     } else if (!state.hasPendingInvalidationReason() && !state.isInvalid()) {
                         switch (timer.getType()) {
                             case Timer.INCREMENTAL_REFRESH_TYPE:
-                                // Check if the view has refreshed since the last timer expiration.
-                                // If not, don't schedule refresh to avoid unbounded growth of the queue.
+                                // Check if the refresh task the last firing enqueued has finished, whether or
+                                // not it refreshed anything. If not, don't schedule another one, to avoid
+                                // unbounded growth of the queue.
                                 final long refreshSeq = state.getRefreshSeq();
                                 if (timer.getKnownSeq() != refreshSeq) {
                                     matViewStateStore.enqueueIncrementalRefresh(viewToken);
                                     timer.setKnownSeq(refreshSeq);
                                     reportFiring(timer, viewToken);
                                 } else {
-                                    // The refresh the previous firing enqueued has not completed yet, so
+                                    // The refresh task the previous firing enqueued has not finished yet, so
                                     // this firing schedules nothing. Steady state for a view whose refreshes
                                     // cannot keep up with its timer, or whose refresh job is backed up.
                                     reportMissedFiring(timer, viewToken, "previous refresh has not completed");

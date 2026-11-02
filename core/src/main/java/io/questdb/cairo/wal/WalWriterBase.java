@@ -181,17 +181,25 @@ abstract class WalWriterBase implements AutoCloseable {
     }
 
     /**
-     * The one call a WAL writer makes to sequence its last record. It first makes the files the record relies on
-     * durable, in the modes that promise it: every record the writer has appended and not flushed, and the
-     * segment's own files ({@link #syncSegmentFilesBeforeSequencing(int)}). So no write path can get a sequencer
-     * record ahead of a file it names.
+     * Sequences the writer's last record. It first makes the files the record relies on durable, in the modes that
+     * promise it: every record the writer has appended and not flushed, and the segment's own files
+     * ({@link #syncSegmentFilesBeforeSequencing(int)}). This method and {@link #nextSeqTxnIfLastTxn} are the only
+     * calls a WAL writer makes to sequence a record, so no write path can get a sequencer record ahead of a file it
+     * names.
      */
     long nextSeqTxn(long structureVersion, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
-        // Local WAL commits keep the configured grade; a replica does not upload them.
-        final int commitMode = configuration.getCommitMode();
-        events.syncBeforeSequencing(commitMode);
-        syncSegmentFilesBeforeSequencing(commitMode);
+        syncBeforeSequencing();
         return sequencer.nextTxn(tableToken, walId, structureVersion, segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
+    }
+
+    /**
+     * Sequences the writer's last record like {@link #nextSeqTxn}, but only while {@code expectedLastTxn} is still
+     * the table's latest txn, and returns {@code TableSequencer.FENCE_REJECTED} otherwise. It makes the same files
+     * durable first, whichever way the sequencer decides.
+     */
+    long nextSeqTxnIfLastTxn(long expectedLastTxn, long structureVersion, long txnMinTimestamp, long txnMaxTimestamp, long txnRowCount) {
+        syncBeforeSequencing();
+        return sequencer.nextTxnIfLastTxn(tableToken, expectedLastTxn, walId, structureVersion, segmentId, lastSegmentTxn, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
     }
 
     void notifySegmentClosure(long oldLastSegmentTxn, int segmentId) {
@@ -220,9 +228,16 @@ abstract class WalWriterBase implements AutoCloseable {
     }
 
     /**
-     * Makes the writer's per-segment files other than the event files durable before {@link #nextSeqTxn} sequences a
-     * record in the segment, in the modes that promise durability across a power loss, and does nothing for a file
-     * that has not changed since its last flush.
+     * Makes the writer's per-segment files other than the event files durable before {@link #nextSeqTxn} or
+     * {@link #nextSeqTxnIfLastTxn} sequences a record in the segment, in the modes that promise durability across a
+     * power loss, and does nothing for a file that has not changed since its last flush.
      */
     abstract void syncSegmentFilesBeforeSequencing(int commitMode);
+
+    private void syncBeforeSequencing() {
+        // Local WAL commits keep the configured grade; a replica does not upload them.
+        final int commitMode = configuration.getCommitMode();
+        events.syncBeforeSequencing(commitMode);
+        syncSegmentFilesBeforeSequencing(commitMode);
+    }
 }

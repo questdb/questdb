@@ -107,6 +107,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
+import static io.questdb.cairo.wal.seq.TableSequencer.FENCE_REJECTED;
 import static io.questdb.cairo.wal.seq.TableSequencer.NO_TXN;
 
 public class WalWriter extends WalWriterBase implements TableWriterAPI {
@@ -477,6 +478,27 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 replaceRangeLowTs,
                 replaceRangeHiTs,
                 dedupMode
+        );
+    }
+
+    /**
+     * Commits a cleanup range replacement only when {@code expectedSeqTxn} is still the table's latest
+     * sequencer transaction. The WAL event and row data are prepared and synced before the sequencer makes
+     * the atomic check-and-allocation decision, so the sequencer lock never covers filesystem I/O. A rejected
+     * event remains unsequenced and this writer discards it before moving to a fresh WAL segment.
+     *
+     * @return true when the sequencer accepted the transaction, false when the fence rejected it
+     */
+    public boolean commitWithParamsIfSeqTxn(long expectedSeqTxn, long replaceRangeLowTs, long replaceRangeHiTs, byte dedupMode) {
+        return commit0(
+                WalTxnType.DATA,
+                WAL_DEFAULT_BASE_TABLE_TXN,
+                WAL_DEFAULT_LAST_REFRESH_TIMESTAMP,
+                WAL_DEFAULT_LAST_PERIOD_HI,
+                replaceRangeLowTs,
+                replaceRangeHiTs,
+                dedupMode,
+                expectedSeqTxn
         );
     }
 
@@ -1215,6 +1237,28 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             long replaceRangeHiTs,
             byte dedupMode
     ) {
+        commit0(
+                txnType,
+                lastRefreshBaseTxn,
+                lastRefreshTimestamp,
+                lastPeriodHi,
+                replaceRangeLowTs,
+                replaceRangeHiTs,
+                dedupMode,
+                Long.MAX_VALUE
+        );
+    }
+
+    private boolean commit0(
+            byte txnType,
+            long lastRefreshBaseTxn,
+            long lastRefreshTimestamp,
+            long lastPeriodHi,
+            long replaceRangeLowTs,
+            long replaceRangeHiTs,
+            byte dedupMode,
+            long expectedSeqTxn
+    ) {
         checkDistressed();
         throwIfInColumnarWrite("commit");
         try {
@@ -1252,14 +1296,25 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         replaceRangeHiTs,
                         dedupMode
                 );
-                // Flush before getting the next txn. Under ADAPTIVE with no window, syncIfRequired and getSequencerTxn
-                // fdatasync data, events and sequencer in order; with a window they msync, and flushPendingDurable
-                // does the batch's device flush.
+                // Flush before asking the sequencer. A conditional cleanup commit does not hold the sequencer lock
+                // across append and fsync, so a fence rejection rolls back this unsequenced event. Under ADAPTIVE,
+                // syncIfRequired puts the column and event files on the medium ahead of the sequencer record, and
+                // getSequencerTxn does the same for a changed segment _meta before it asks. With no window,
+                // getSequencerTxn also fdatasyncs the sequencer log; with a window, flushPendingDurable does the
+                // batch's device flush.
                 final int commitMode = walCommitMode();
                 // Read the test hook once per commit: it is a static volatile on the hot path.
                 final DeferredCommitInterceptor commitInterceptor = deferredCommitInterceptor;
                 syncIfRequired(commitMode);
-                final long seqTxn = getSequencerTxn();
+                final long seqTxn = getSequencerTxn(expectedSeqTxn);
+                // A rejected txn leaves before the ADAPTIVE block, so it is never recorded as pending or durable.
+                if (seqTxn == FENCE_REJECTED) {
+                    events.rollback();
+                    lastSegmentTxn--;
+                    rollback0();
+                    openNewSegment();
+                    return false;
+                }
                 if (commitMode == CommitMode.ADAPTIVE) {
                     if (isDeviceFlushDeferred()) {
                         // Test hook: the txn is sequenced and the sequencer pinned it with the assignment, so a peer's
@@ -1322,6 +1377,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     );
                 }
             }
+            return true;
         } catch (CairoException | TableReferenceOutOfDateException ex) {
             distressed = true;
             if (sequencer.isDataSyncFailureFatal(ex)) {
@@ -1729,15 +1785,27 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private long getSequencerTxn() {
+        return getSequencerTxn(Long.MAX_VALUE);
+    }
+
+    /**
+     * Sequences the pending transaction. {@code Long.MAX_VALUE} sequences it unconditionally; any other
+     * {@code expectedSeqTxn} sequences it only while that is still the table's latest txn, and returns
+     * {@code FENCE_REJECTED} otherwise.
+     */
+    private long getSequencerTxn(long expectedSeqTxn) {
         try {
             long seqTxn;
             do {
-                seqTxn = nextSeqTxn(getColumnStructureVersion(), txnMinTimestamp, txnMaxTimestamp, segmentRowCount - currentTxnStartRowNum);
+                final long txnRowCount = segmentRowCount - currentTxnStartRowNum;
+                seqTxn = expectedSeqTxn == Long.MAX_VALUE
+                        ? nextSeqTxn(getColumnStructureVersion(), txnMinTimestamp, txnMaxTimestamp, txnRowCount)
+                        : nextSeqTxnIfLastTxn(expectedSeqTxn, getColumnStructureVersion(), txnMinTimestamp, txnMaxTimestamp, txnRowCount);
                 if (seqTxn == NO_TXN) {
                     applyMetadataChangeLog(Long.MAX_VALUE);
                 }
             } while (seqTxn == NO_TXN);
-            return lastSeqTxn = seqTxn;
+            return seqTxn == FENCE_REJECTED ? seqTxn : (lastSeqTxn = seqTxn);
         } catch (Throwable failure) {
             if (sequencer.isDataSyncFailureFatal(failure)) {
                 distressed = true;

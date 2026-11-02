@@ -30,6 +30,8 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.view.ViewCompilerJob;
+import io.questdb.cairo.view.ViewCompilerTask;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -43,8 +45,10 @@ import io.questdb.test.cairo.fuzz.AbstractFuzzTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.sql.RandomSelectGenerator;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class ViewFuzzTest extends AbstractFuzzTest {
@@ -91,6 +95,61 @@ public class ViewFuzzTest extends AbstractFuzzTest {
         final String tableName = testName.getMethodName();
         final String viewName = testName.getMethodName() + "_v";
         testViewFuzz(selectGenerator, rnd, tableName, viewName);
+    }
+
+    /**
+     * Reads a random view from inside a random nest of sub-queries, in a statement that fails to
+     * compile, and checks that the failure queues one recompile for that view and for each view it
+     * reads, directly or through other views. The expected views come from each view's recorded
+     * dependencies, which CREATE VIEW collects on its own.
+     */
+    private static void assertFailedReadQueuesViewClosure(Rnd rnd, String tableName, String[] viewNames) throws Exception {
+        final ViewCompilerTask task = new ViewCompilerTask();
+        // the fuzz run may leave recompile signals behind; they are not part of the check
+        while (engine.getViewStateStore().tryDequeueCompilerTask(task)) {
+            // discard
+        }
+        for (int round = 0; round < 20; round++) {
+            final String viewName = viewNames[rnd.nextInt(viewNames.length)];
+            final int depth = 1 + rnd.nextInt(12);
+            String q = "SELECT * FROM " + viewName;
+            for (int i = 0; i < depth; i++) {
+                q = switch (rnd.nextInt(4)) {
+                    case 0 -> "SELECT * FROM " + tableName + " WHERE EXISTS (" + q + ")";
+                    case 1 -> "SELECT * FROM " + tableName + " WHERE (SELECT count() FROM (" + q + ")) >= 0";
+                    case 2 -> "SELECT * FROM (" + q + ")";
+                    default -> "SELECT a.* FROM " + tableName + " a JOIN LATERAL (" + q + ") l ON true";
+                };
+            }
+            final String sql = "SELECT no_such_col FROM (" + q + ")";
+            LOG.info().$("failing read [sql=").$(sql).I$();
+            assertExceptionNoLeakCheck(sql, 7, "Invalid column: no_such_col");
+
+            final TreeMap<String, Integer> expected = new TreeMap<>();
+            collectViewClosure(viewName, expected);
+            final TreeMap<String, Integer> actual = new TreeMap<>();
+            while (engine.getViewStateStore().tryDequeueCompilerTask(task)) {
+                actual.merge(task.tableToken.getTableName(), 1, Integer::sum);
+            }
+            Assert.assertEquals(sql, expected, actual);
+        }
+    }
+
+    /**
+     * Adds {@code name} to {@code out} with a count of 1 when it names a view, then does the same
+     * for every table and view that view's definition reads.
+     */
+    private static void collectViewClosure(CharSequence name, TreeMap<String, Integer> out) {
+        final TableToken token = engine.getTableTokenIfExists(name);
+        if (token == null || !token.isView() || out.putIfAbsent(token.getTableName(), 1) != null) {
+            return;
+        }
+        final ViewDefinition definition = engine.getViewGraph().getViewDefinition(token);
+        Assert.assertNotNull(name.toString(), definition);
+        final ObjList<CharSequence> dependencies = definition.getDependencies().keys();
+        for (int i = 0, n = dependencies.size(); i < n; i++) {
+            collectViewClosure(dependencies.getQuick(i), out);
+        }
     }
 
     private static void createView(String viewName, String viewSql) throws SqlException {
@@ -287,6 +346,8 @@ public class ViewFuzzTest extends AbstractFuzzTest {
             }
 
             drainWalQueue();
+            // no compiler job runs from here on, so the queue holds only what a failing read adds
+            assertFailedReadQueuesViewClosure(rnd, tableName, viewNames);
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 for (int i = 0, n = viewNames.length; i < n; i++) {

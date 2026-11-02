@@ -675,6 +675,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getMatViewRowExpiryCleanupMaxCachedPartitions() {
+        return 16_384;
+    }
+
+    @Override
+    public double getMatViewRowExpiryCleanupMinExpiredFraction() {
+        return 0.5;
+    }
+
+    @Override
     public long getMatViewRowsPerQueryEstimate() {
         return 10_000_000L;
     }
@@ -1928,6 +1938,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     @Override
     public boolean isMatViewRefreshMissingWalFilesFatal() {
         return false;
+    }
+
+    @Override
+    public boolean isMatViewRowExpiryCleanupEnabled() {
+        return true;
     }
 
     @Override

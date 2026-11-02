@@ -136,6 +136,10 @@ public class NoOpMatViewStateStore implements MatViewStateStore {
     }
 
     @Override
+    public void requestPendingIncrementalRefreshReenqueue(MatViewState viewState) {
+    }
+
+    @Override
     public void requestPendingInvalidationReenqueue(MatViewState viewState) {
     }
 
