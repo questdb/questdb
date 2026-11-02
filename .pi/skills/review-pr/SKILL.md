@@ -125,6 +125,9 @@ PR='<PR number or URL from $ARGUMENTS, with any level token removed>'
 gh pr view "$PR" --json number,title,body,labels,state
 gh pr diff "$PR"
 gh pr view "$PR" --comments
+# Review-thread replies on the diff, which --comments leaves out:
+PR_API=$(gh pr view "$PR" --json url --jq .url | sed -E 's#https://github.com/([^/]+/[^/]+)/pull/#repos/\1/pulls/#')
+gh api "$PR_API/comments" --paginate --jq '.[] | "\(.user.login) on \(.path):\(.line // .original_line): \(.body)"'
 BASE=$(gh pr view "$PR" --json baseRefOid --jq .baseRefOid)
 ```
 
@@ -185,7 +188,7 @@ Check the title, body and labels against CLAUDE.md "Git & PR Conventions". With 
 - **Labels** match the title (`perf(sql)` gets SQL and Performance).
 - Bundled related fixes are allowed; do not demand a split.
 
-Write the replacement for every problem: a ready-to-paste title and body. Finish the body check once the review knows what the diff does, and report the result in the **Title and description** section of Step 4.
+Leave out a problem that a person already declined on the PR (Step 2.5f). Write the replacement for every other problem: a ready-to-paste title and body. Finish the body check once the review knows what the diff does, and report the result in the **Title and description** section of Step 4.
 
 ## Step 2.4: Submodule provenance (mandatory at every level)
 
@@ -279,7 +282,11 @@ Run this only when the PR adds or changes test code. It is the test-code counter
 
 ### 2.5f Earlier findings
 
-This sub-step runs at every level. Collect the findings of earlier reviews of this change: those in the PR's comments and reviews, and those in every `--prior` file. Give each one line in the surface map under "Earlier findings": its trigger, the symptom and size it claimed, and the commit that claims to fix it, if any. A claimed fix is a hypothesis, not evidence, so re-run every trigger at the reviewed revision and at the base. At level 1 and above, the Step 3 agent whose domain the finding touches re-runs it, such as Agent 3 for a slowdown and Agent 1 for wrong rows; at level 0, re-run it inline. A finding that still reproduces is a candidate like any other. One that no longer reproduces needs no line in the report.
+This sub-step runs at every level. Collect the items of earlier reviews of this change: those in the PR's comments, reviews and review threads, and those in every `--prior` file. Then read the replies to them.
+
+**An item a person pushed back on is settled.** A reply or later comment that declines it (won't fix, by design, accepted as is, out of scope, left for a follow-up) or disputes it with a reason settles it. Never re-test a settled item, and never raise it again in any section of the report, Title and description and Adjacent findings included, even when it still reproduces and you disagree with the reply. The same goes for a candidate that restates it: the same problem at the same place, however it is worded or found (Step 3b). Only a defect with another symptom, or one that a later commit makes worse than what the reply answered, is a new item. List settled items in the surface map under "Settled", each with a link to its reply.
+
+Give every other earlier finding one line in the surface map under "Earlier findings": its trigger, the symptom and size it claimed, and the commit that claims to fix it, if any. A claimed fix is a hypothesis, not evidence, so re-run every trigger at the reviewed revision and at the base. At level 1 and above, the Step 3 agent whose domain the finding touches re-runs it, such as Agent 3 for a slowdown and Agent 1 for wrong rows; at level 0, re-run it inline. A finding that still reproduces is a candidate like any other. One that no longer reproduces needs no line in the report.
 
 ## Step 2.6: Test coverage map (mandatory at every level)
 
@@ -352,7 +359,7 @@ Run this step with the `subagent` tool using fresh-context `review-prober` agent
 
 Every selected agent receives:
 1. The PR or local-range diff
-2. The full change surface map from Step 2.5 (semantic deltas, callsite inventory, implicit contracts, cross-context exposure list, earlier findings), with the earlier findings it must re-test
+2. The full change surface map from Step 2.5 (semantic deltas, callsite inventory, implicit contracts, cross-context exposure list, earlier findings, settled items), with the earlier findings it must re-test
 3. The test coverage map from Step 2.6, with the path of its coverage report
 
 The diff plus surface map can be large — write them to a shared file (e.g., under a temp/chain dir) and point each task at it via its `reads`/task text, rather than pasting the whole payload into every task. Agents 10 and 11 are deliberate exceptions and receive reduced context (see their entries).
@@ -368,6 +375,7 @@ The diff plus surface map can be large — write them to a shared file (e.g., un
 - A proposition with no independent consequence is evidence for its parent candidate, not a standalone candidate. If the parent falls, its dependent propositions fall with it.
 - Pre-existing bugs and residual hardening whose same-trigger behavior is unchanged or better than base are outside this PR's findings and verdict. Never file them as findings and never propose them as changes to this PR. A fully proved one leaves as a Step 4 adjacent issue draft; an unproved one stays in the private ledger.
 - Two agents repeating the same reasoning are one hypothesis, not corroboration. Corroboration requires independent evidence types and still does not bypass Step 3b.
+- Never return a candidate that restates a settled item of 2.5f. A defect with another symptom, or one that a later commit made worse than the reply answered, is new: say how it differs.
 - Returning no candidate is valid and preferred to returning a speculative one.
 
 ### Agents
@@ -597,6 +605,7 @@ After a candidate satisfies this admission schema, apply the domain-specific che
     - **OMITTED hostile-input-only** — every applicable field is proved, and the Step 4 hostile-input rule covers the failure, whether or not this PR introduced it
     - **OMITTED false** — counterevidence disproves the proposition
     - **OMITTED unverified** — any required producer, reachability, observation, artifact, or dependency is missing
+    - **OMITTED settled** — it restates an item a person pushed back on (Step 2.5f)
 
 **Enumerated candidates are admitted per item.** Never sample N instances and publish the unverified remainder. Every rendered item needs its own producer/trigger and evidence; otherwise omit that item.
 
@@ -965,12 +974,13 @@ If a behavioral candidate cannot name and execute a supported trigger with one o
 - **The PR's own claim.** When the PR says it fixes or hardens against a class of input, a failure on that class tests the claim and is classified as usual.
 - A changed line that breaks a written coding rule, such as CLAUDE.md's ban on `unwrap()` on external input in Rust, is still a static finding on that line.
 
-**Out of scope — these are not findings.** Three classes get reported constantly and are worth nothing. Drop them before they reach the report:
+**Out of scope — these are not findings.** These classes get reported constantly and are worth nothing. Drop them before they reach the report:
 
 - **Merge mechanics.** The reviewed artifact is the code change, not the merge event. Submodule pin position, merge order between repos, branch existence, labels, and anything true only of the PR's in-flight state are properties of *how it lands*, not of *what it does*. A PR that bumps a vendored submodule pointer necessarily pins whatever commit it was built against — that is a property of the pointer, not a defect in the change.
 - **Tautologies.** Before filing, ask: *"would this finding appear on every PR of this shape?"* If yes, it describes the workflow, not this change. A finding that can never be absent is not a defect, and reporting it teaches the author to skim the report.
 - **Overridden project decisions.** When the project's own tooling explicitly permits something — a CI check that passes by design, a documented exception, a convention the PR body already names — that is a decision, not an oversight. Overriding it requires evidence the decision is *wrong*, not merely that it is permissive. "CI allows this but I would not" is not a finding. A slowdown or tradeoff the PR body states is such a decision only when the body gives its measured size: measure it again (Agent 3, item 10), and treat one stated without a size, or one larger than stated, like any other candidate. Never tell discovery agents to skip what the body states; give them its stated sizes to check.
 - **Upstream submodule content.** Anything inside a submodule whose pointer move Step 2.4 classified **UPSTREAM-SYNC**. That code already landed on the submodule's default branch; this PR did not write it, did not review it, and cannot be asked to fix it. A breaking change discovered there is upstream's, released independently, and belongs in an issue against that repository — never a Critical against this PR. The one exception is an integration defect at a callsite *inside this diff*, which is filed against that callsite with its own symptom and trigger.
+- **Settled items.** An item a person pushed back on, and any candidate that restates it (Step 2.5f). A probe that shows it still reproduces does not reopen it.
 
 **Moderate.** Admitted, attributable defects with bounded or developer-facing impact: a concrete changed-line standards violation, proved weak test, missing internal-path coverage on the main path, documentation defect, or bounded off-data-path cost. An unreachable runtime theory, unchanged residual hardening opportunity, or proposition that only supports another candidate is not Moderate; omit it.
 
