@@ -2820,11 +2820,17 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                     new String[]{"ts IN '2024-01-01'", "ts IN '2024-01-02'"},
                     new String[]{"", "s IN ('k1', 'k2')", "s NOT IN ('k0')", "s IN ('k0', 'k1', 'k2') AND id > 0"}
             );
+            // the few rows leave the collection no budget, so each key reads the pieces of the composite day in a pass
+            final String limitTail = "* FROM g WHERE ts IN '2024-01-02' AND s IN ('k0', 'k1', 'k2') AND id > 0 ORDER BY s, ts LIMIT 17, 18";
+            final StringSink limitExpected = new StringSink();
+            printSql("SELECT /*+ no_index(g) */ " + limitTail, limitExpected);
+            assertQuery("SELECT " + limitTail).noLeakCheck().sizeMayVary().inferTimestamp().returns(limitExpected);
             // the read of the Parquet day returns the rows of the three keys by row id: each key holds rows in each of the
             // twelve row groups, more than the decode cache keeps, so each key decodes each of them once
             assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-01' ORDER BY s, ts", null, ParquetDecodeHint.SCATTERED, 36);
-            // a filter leaves the read to the gather, whose windows decode as many
-            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-01' AND s IN ('k0', 'k1', 'k2') AND id > 0 ORDER BY s, ts", null, ParquetDecodeHint.MONOTONIC, 36);
+            // a filter leaves the read to the pass of each key, which holds no rows: its windows would decode as many,
+            // and the decode cache keeps a row group across the passes of the keys that a window would decode again
+            assertKeyOrderedDecodes("SELECT * FROM g WHERE ts IN '2024-01-01' AND s IN ('k0', 'k1', 'k2') AND id > 0 ORDER BY s, ts", null, ParquetDecodeHint.CYCLIC, 34);
         });
     }
 

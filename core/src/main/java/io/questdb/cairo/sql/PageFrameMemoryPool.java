@@ -304,7 +304,6 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     /**
      * The number of Parquet frame decodes since the pool was last bound to an address cache.
      */
-    @TestOnly
     public long getDecodeCount() {
         return decodeCount;
     }

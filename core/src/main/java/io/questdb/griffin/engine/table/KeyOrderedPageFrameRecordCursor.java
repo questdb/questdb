@@ -77,12 +77,13 @@ import org.jetbrains.annotations.Nullable;
  * window key by key. A window holds what the budget of the gather allows, see {@link #getGatherBudget(long)}, so a read
  * whose rows fit it gathers them in one pass.
  * The windows rest on estimates of the bytes of the rows, which the gather measures row by row: a window ends where its
- * rows outgrow the memory of the record chain, see {@link #gatherWindow(long, int, long)}. A filtered read over page
- * frames that stay decoded collects the row indexes of its keys in one pass over the page frames instead of a pass per
- * key, see {@link #collectNextRows()}, and returns the rows of its first key while the pass goes on. The collection
- * takes no more memory than its budget, see {@link #getCollectionBudget()}, and each key reads its rows past the page
- * frames the collection went over in a pass of its own. A filtered read whose outer cursor reads only its last rows,
- * see {@link #expectLastRows(long)}, finds them key by key from its last key back instead, see
+ * rows outgrow the memory of the record chain, see {@link #gatherWindow(long, int, long)}, and the passes of the keys
+ * take over where they decode fewer page frames than the windows, see {@link #isKeyPassCheaper(int, long)}. A filtered
+ * read over page frames that stay decoded collects the row indexes of its keys in one pass over the page
+ * frames instead of a pass per key, see {@link #collectNextRows()}, and returns the rows of its first key while the
+ * pass goes on. The collection takes no more memory than its budget, see {@link #getCollectionBudget()}, and each key
+ * reads its rows past the page frames the collection went over in a pass of its own. A filtered read whose outer cursor
+ * reads only its last rows, see {@link #expectLastRows(long)}, finds them key by key from its last key back instead, see
  * {@link #collectTailRows(long)}.
  */
 final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
@@ -151,6 +152,10 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     private long directPosition;
     private int directRun;
     private long directRowLo;
+    // The Parquet page frames that the passes of the windows of this read decoded before their rows outgrew the memory
+    // of the record chain, see gatherWindow(long, int, long), which count against its windows, see
+    // isKeyPassCheaper(int, long).
+    private long discardedFrameCount;
     // The bytes a window of the gathered read holds by the plan of its windows, see planWindows().
     private long gatherBudget;
     // The position in key order that the next read of a gathered read starts at.
@@ -575,7 +580,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             }
             case COLLECT -> {
                 readHi = addRows(rowCount.get(), requestedMaxRowsAfterSkip);
-                skipCollectedRows(rowCount);
+                skipCollectedRows(rowCount, keyCount);
             }
             case PASSES -> {
                 if (keyCount > 1) {
@@ -759,7 +764,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             counter.add(collectedRows.size() - collectedReadCount);
         } else {
             countCounter.set(Long.MAX_VALUE);
-            skipCollectedRows(countCounter);
+            skipCollectedRows(countCounter, keyCount);
             counter.add(Long.MAX_VALUE - countCounter.get());
         }
         isExhausted = true;
@@ -1240,22 +1245,34 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
      * gathers again when its rows lack their row ids, which the windows after it need, or when it holds no row up to
      * the key it ends within, then taking no key after that one, so that the first row it takes is a row of that key,
      * which it holds whatever its bytes. Its passes decode under MONOTONIC, since each decodes a page frame at most
-     * once.
+     * once. A read whose rows from the window on, in windows of the bytes its rows took, would decode more page frames
+     * than the passes of its keys from there, see {@link #isKeyPassCheaper(int, long)}, or whose Parquet page frames stay
+     * decoded across those passes, which then decode each of them once, takes those passes instead, see
+     * {@link #startKeyPasses(long, int, long)}, and reports false.
      */
-    private void gatherWindow(long position, int keyLo, long rankLo) {
+    private boolean gatherWindow(long position, int keyLo, long rankLo) {
         frameMemoryPool.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
         int keyLimit = keyCount;
+        long decodeCountLo = frameMemoryPool.getDecodeCount();
         while (!gatherWindowRows(position, keyLo, rankLo, keyLimit)) {
+            final long decodeCount = frameMemoryPool.getDecodeCount();
+            discardedFrameCount += decodeCount - decodeCountLo;
+            decodeCountLo = decodeCount;
             final boolean hasRowIds = gatheredRows.isWindowed;
             replanWindows();
+            if (isParquetCached || isKeyPassCheaper(keyLo, rankLo)) {
+                startKeyPasses(position, keyLo, rankLo);
+                return false;
+            }
             if (hasRowIds) {
                 final int gapKey = endFilledWindow(position, keyLo, rankLo);
                 if (gapKey < 0) {
-                    return;
+                    return true;
                 }
                 keyLimit = gapKey + 1;
             }
         }
+        return true;
     }
 
     /**
@@ -1266,8 +1283,8 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
      * their rows. They count the rows of a read that the index orders, and a filtered read takes as many of them as hold
      * the rows the window may hold by the share of them it is estimated to keep. The window takes no keys from
      * {@code keyLimit} on. Reports false, which leaves the window open, when its rows outgrow the memory of the record
-     * chain before the pass ends: twice the budget of the gather when the index counts the rows of the read, and no
-     * more than {@link #getMemoryCap()} when the window starts.
+     * chain before the pass ends: the budget of the gather, by the bytes the rows take rather than by their estimate,
+     * and no more than {@link #getMemoryCap()} when the window starts.
      */
     private boolean gatherWindowRows(long position, int keyLo, long rankLo, int keyLimit) {
         int keyHi = keyLimit;
@@ -1303,9 +1320,8 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         }
 
         gatheredRows.reset(keyLo, keyHi);
-        final long memoryCap = getMemoryCap();
-        gatheredRows.maxBytes = isReadRowCountExact ? Math.min(2 * gatherBudget, memoryCap) : memoryCap;
-        gatheredRows.reserve((long) (windowRowEstimate * (gatherRowBytes + (gatheredRows.isWindowed ? Long.BYTES : 0))));
+        gatheredRows.maxBytes = Math.min(gatherBudget, getMemoryCap());
+        gatheredRows.reserve((long) (windowRowEstimate * (gatherRowBytes + (gatheredRows.isWindowed ? Long.BYTES : 0))), !isReadRowCountExact || varSizeColumns.size() > 0);
         final boolean isByIndex = isKeyOrderedByIndex();
         final boolean isDenseScanAllowed = isDenseScanAllowed(keyLo, keyHi);
         final long remainingLo = remaining;
@@ -1316,6 +1332,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         PageFrame frame;
         while (remaining > 0 && keyLo < keyHi && (frame = frameCursor.next()) != null) {
             final int frameIndex = addFrame(frame);
+            gatheredRows.startFrame();
             final long frameRowCount = frame.getPartitionHi() - frame.getPartitionLo();
             final boolean isDenseScan = isDenseScanAllowed && keyHi - keyLo > getDenseScanCost(frameRowCount);
             final boolean isFrameChecked = isByIndex && (!isDenseScan || varSizeColumns.size() > 0 || keyHi - keyLo <= getDecodeCost(frameRowCount));
@@ -1643,17 +1660,23 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
 
     /**
      * Moves the gathered read on to its next row, gathering the windows after the window it holds until one holds a
-     * row, and reports whether there is one.
+     * row, and reports whether there is one. A read that moved on to the passes of its keys, see
+     * {@link #startKeyPasses(long, int, long)}, reads those.
      */
     private boolean hasNextGatheredRow() {
         if (!isGatherPositioned) {
             positionGatheredRows();
         }
+        if (readMode != ReadMode.GATHER) {
+            return hasNext();
+        }
         while (!gatheredRows.hasNext()) {
             if (gatheredHi >= readHi) {
                 return false;
             }
-            gatherWindow(gatheredHi, nextWindowKey, nextWindowRank);
+            if (!gatherWindow(gatheredHi, nextWindowKey, nextWindowRank)) {
+                return hasNext();
+            }
             gatheredRows.toTop();
         }
         if (isDelegatingRecords) {
@@ -1867,6 +1890,72 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     }
 
     /**
+     * True when the passes of the keys from the key {@code key} on, past the first {@code rank} rows of that key, decode
+     * no more Parquet page frames than the windows of the gather. A pass of a key decodes the page frames where the
+     * index finds a row of the key, see {@link #nextPassFrame()}. A pass of a window decodes those where it finds a row
+     * of a key of the window, which holds for a filtered read, since the index does not count the rows the filter keeps,
+     * and overcounts the windows of a read that the index orders, which skip the page frames before their rows by those
+     * counts. Such a read therefore asks only once a window outgrew its record chain, see
+     * {@link #startGatherOrPasses()}. The windows take the rows of the index their rows may hold, see windowBoundScale,
+     * so the counts of the index place the keys of each. The model stops once the page frames it did not count cannot
+     * change its answer.
+     * <p>
+     * The page frames that windows already discarded count against the windows, although they are sunk, as a hedge
+     * against further windows outgrowing their record chains. So the read keeps its windows only while those page frames
+     * and the decodes of the windows stay below the passes of the keys, and what it wastes can reach what the passes cost
+     * over the windows, plus the pass of the window that crossed it. A read whose keys the index cannot count has no such
+     * model and would keep its windows forever, so it takes the passes once its windows discarded a scan of page frames.
+     */
+    private boolean isKeyPassCheaper(int key, long rank) {
+        if (windowRowCount == Long.MAX_VALUE) {
+            return false;
+        }
+        final long rowHi = getCumulativeIndexRowCount(keyCount - 1);
+        if (rowHi < 0) {
+            return discardedFrameCount >= parquetFrameCount;
+        }
+        final double windowIndexRowCount = windowRowCount * windowBoundScale;
+        final long rowLo = getKeyPosition(key) + rank;
+        final long windowCount = (long) (Math.max(rowHi - rowLo, 0) / windowIndexRowCount) + 1;
+        long keyDecodes = 0;
+        long windowDecodes = discardedFrameCount;
+        long uncountedFrameCount = parquetFrameCount;
+        toTopFrames();
+        try {
+            while (uncountedFrameCount > 0) {
+                if (windowDecodes + uncountedFrameCount * windowCount < keyDecodes) {
+                    return false;
+                }
+                if (keyDecodes + uncountedFrameCount * (keyCount - key) <= windowDecodes) {
+                    return true;
+                }
+                final PageFrame frame = frameCursor.next();
+                assert frame != null : "a read ordered by keys scans one partition, whose page frames isGatherRequired() counted";
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                uncountedFrameCount--;
+                long lastWindow = -1;
+                for (int k = key; k < keyCount; k++) {
+                    if (keyOrderedFactory.getIndexRowCount(frame, k, k + 1, frame.getPartitionLo(), frame.getPartitionHi() - 1, 0) == 0) {
+                        continue;
+                    }
+                    keyDecodes++;
+                    final long keyRowLo = Math.max(getKeyPosition(k), rowLo);
+                    final long keyRowHi = Math.max(getCumulativeIndexRowCount(k), keyRowLo + 1);
+                    final long windowLo = Math.max((long) ((keyRowLo - rowLo) / windowIndexRowCount), lastWindow + 1);
+                    final long windowHi = (long) ((keyRowHi - 1 - rowLo) / windowIndexRowCount);
+                    if (windowHi >= windowLo) {
+                        windowDecodes += windowHi - windowLo + 1;
+                        lastWindow = windowHi;
+                    }
+                }
+            }
+            return keyDecodes <= windowDecodes;
+        } finally {
+            toTopFrames();
+        }
+    }
+
+    /**
      * True when the lists of the collection may grow to {@code rowCapacity} rows and {@code runCapacity} longs of runs
      * within the budget of the collection, see {@link #getCollectionBudget()}, and within the capacity of an int list.
      */
@@ -2063,7 +2152,8 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     /**
      * Moves the pass of the key of the collected read over the page frames on to its next page frame, whose rows of the
      * key its row cursor returns, and reports whether there is one. The pass of a key starts at the page frame after
-     * the last run the collection holds of the key, and at {@link #passFrameLo} at the earliest.
+     * the last run the collection holds of the key, and at {@link #passFrameLo} at the earliest, and decodes no page
+     * frame where the index finds no row of the key.
      */
     private boolean nextPassFrame() {
         rowCursor = Misc.free(rowCursor);
@@ -2076,15 +2166,19 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
                 frameCount++;
             }
         }
-        final PageFrame frame = frameCursor.next();
-        if (frame == null) {
-            return false;
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            final int frameIndex = addFrame(frame);
+            if (isCompositePartition(frame)
+                    || keyOrderedFactory.getIndexRowCount(frame, collectedKey, collectedKey + 1, frame.getPartitionLo(), frame.getPartitionHi() - 1, 0) != 0) {
+                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+                recordA.init(frameMemory);
+                rowCursor = keyOrderedFactory.getCursor(frame, frameMemory, collectedKey, collectedKey + 1);
+                countReadFrame();
+                return true;
+            }
         }
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(addFrame(frame));
-        recordA.init(frameMemory);
-        rowCursor = keyOrderedFactory.getCursor(frame, frameMemory, collectedKey, collectedKey + 1);
-        countReadFrame();
-        return true;
+        return false;
     }
 
     /**
@@ -2112,9 +2206,8 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
      * fewest windows that each fit it share the rows evenly. The rows of a read of more than one window carry their row
      * ids. A read that fits whose rows the index does not count leaves that to its first window, see
      * {@link ReadMode#PENDING}.
-     * The record chain doubles its memory as it grows, so that the chain of a window whose rows outgrow the estimate of
-     * their bytes takes up to twice the budget, and never more than {@link #getMemoryCap()}. The budget of a filtered
-     * read rests on an estimate of its rows, so that only the limit bounds its chain.
+     * The record chain of a window takes no more memory than the budget, and than {@link #getMemoryCap()}, by the bytes
+     * its rows take: a window whose rows outgrow it plans the windows anew, see {@link #gatherWindow(long, int, long)}.
      */
     private void planWindows() {
         sampleGatheredRows();
@@ -2166,7 +2259,8 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     /**
      * Positions the gathered rows at the row {@code gatherLo}, gathering the window that starts there first unless the
      * window the read holds holds that row. The row of a read that the index orders lands by the row counts of the
-     * keys, and any other read moves its window only from its first row on.
+     * keys, and any other read moves its window only from its first row on. A read that moves on to the passes of its
+     * keys from the window on, see {@link #startKeyPasses(long, int, long)}, skips their rows up to the row there.
      */
     private void positionGatheredRows() {
         resolveReadMode(0, RecordCursor.UNBOUNDED_ROW_COUNT);
@@ -2174,7 +2268,10 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             if (isReadRowCountExact) {
                 final int key = gatherLo > 0 ? findKeyOfPosition(gatherLo) : 0;
                 assert key >= 0 : "a skip moves a read that the index counts by the counts of its keys";
-                gatherWindow(gatherLo, key, gatherLo - getKeyPosition(key));
+                if (!gatherWindow(gatherLo, key, gatherLo - getKeyPosition(key))) {
+                    isGatherPositioned = true;
+                    return;
+                }
             } else {
                 // a filtered read moves its window only from its first row or from a window its passes went over
                 long entry = -1;
@@ -2187,10 +2284,19 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
                         hi = mid - 1;
                     }
                 }
-                if (entry < 0) {
-                    gatherWindow(0, 0, 0);
-                } else {
-                    gatherWindow(windowStarts.get(entry), (int) windowStarts.get(entry + 1), windowStarts.get(entry + 2));
+                final long windowLo = entry < 0 ? 0 : windowStarts.get(entry);
+                final boolean isGathered = entry < 0
+                        ? gatherWindow(0, 0, 0)
+                        : gatherWindow(windowLo, (int) windowStarts.get(entry + 1), windowStarts.get(entry + 2));
+                if (!isGathered) {
+                    isGatherPositioned = true;
+                    countCounter.set(gatherLo - windowLo);
+                    if (readMode == ReadMode.PASSES) {
+                        skipKeyOrderedRows(countCounter);
+                    } else {
+                        skipCollectedRows(countCounter, keyCount);
+                    }
+                    return;
                 }
             }
         }
@@ -2345,15 +2451,14 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
 
     /**
      * Plans the windows of the read anew after a window filled the memory of the record chain before it held its rows,
-     * by the bytes its rows took: each window holds as many rows as fit the budget at those bytes, with their row ids,
-     * within the memory of the chain, which a window of a filtered read fills, since its budget rests on an estimate of
-     * its rows. A window of a filtered read takes no more rows of the index than the rows it may hold.
+     * by the bytes its rows took, see {@link KeyOrderedRowChain#getMeasuredRowBytes()}: each window holds as many rows
+     * as fit the memory of the chain at those bytes, with their row ids. A window of a filtered read takes no more rows
+     * of the index than the rows it may hold.
      */
     private void replanWindows() {
         gatherRowBytes = Math.max(gatherRowBytes, gatheredRows.getMeasuredRowBytes());
         windowBoundScale = 1;
-        final long windowBytes = isReadRowCountExact ? Math.min(gatherBudget, gatheredRows.maxBytes) : gatheredRows.maxBytes;
-        windowRowCount = Math.max(1, (long) (windowBytes / (gatherRowBytes + Long.BYTES)));
+        windowRowCount = Math.max(1, (long) (Math.max(gatheredRows.maxBytes, gatheredRows.pageSize) / (gatherRowBytes + Long.BYTES)));
         setWindowed(true);
     }
 
@@ -2501,10 +2606,10 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
 
     /**
      * Skips the collected rows run by run, and the rows of the passes of the keys past the page frames the collection
-     * went over row by row.
+     * went over row by row, up to the first row of the key {@code keyHi}.
      */
-    private void skipCollectedRows(Counter rowCount) {
-        while (rowCount.get() > 0) {
+    private void skipCollectedRows(Counter rowCount, int keyHi) {
+        while (rowCount.get() > 0 && collectedKey < keyHi) {
             if (collectedRow < collectedRowHi) {
                 final long skipCount = Math.min(rowCount.get(), collectedRowHi - collectedRow);
                 collectedRow += skipCount;
@@ -2713,20 +2818,61 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     }
 
     /**
+     * Drops the window of the gather, whose rows outgrew the memory of its record chain, and reads the keys from the
+     * window on in a pass of each over the page frames: the row {@code rank} of the key {@code key}, at the row
+     * {@code position} in key order. A read that the index orders lands on that row by its counts. A filtered read, whose
+     * rank may lie past the rows the filter keeps of the key, takes the passes of its collection, see
+     * {@link #nextPassFrame()}, which decode no page frame without a row of their key, where a collection of the rows of
+     * all keys would decode every page frame once more. The passes hold only the decode cache, under the memory that the
+     * limit of the query leaves, see {@link #getMemoryCap()}. The records of the read delegate to the page frames.
+     */
+    private void startKeyPasses(long position, int key, long rank) {
+        assert isDelegatingRecords : "a window fills its record chain only under records that delegate, see startGatherOrPasses()";
+        gatheredRows.reset(keyCount, keyCount);
+        readMode = getKeyReadMode();
+        frameMemoryPool.setParquetDecodeHint(walkHint, getMemoryCap());
+        windowRecord.of(recordA);
+        windowRecordB.of(recordB);
+        rowCursor = Misc.free(rowCursor);
+        toTopFrames();
+        if (readMode == ReadMode.PASSES) {
+            keyLo = 0;
+            keyHi = Math.min(keyCount, 1);
+            scanFrameCount = -1;
+            countCounter.set(position);
+            skipKeyOrderedRows(countCounter);
+        } else {
+            endCollection(0);
+            toTopCollectedRows();
+            collectedKey = key;
+            countCounter.set(rank);
+            skipCollectedRows(countCounter, key + 1);
+        }
+    }
+
+    /**
      * Starts the gather of a read ordered by keys, or leaves a read in windows to the passes of its keys over Parquet
-     * page frames that stay decoded, which decode them once where each window would decode them. A gather whose rows
-     * the index does not count and that fits one window waits for the layout of its rows, see {@link ReadMode#PENDING}.
-     * The records of a gather delegate to the rows that hold the row, see {@link #delegateRecords()}, when its rows may
-     * split into windows: a read in windows, a read whose rows are an estimate, and a read of var-size values, whose
-     * bytes may outgrow their sample.
+     * page frames that stay decoded, which decode them once where each window would decode them, or a filtered read to
+     * a pass of each key over page frames that its windows would decode more often, see
+     * {@link #isKeyPassCheaper(int, long)}. A gather whose rows the index does not count and that fits one window waits
+     * for the layout of its rows, see {@link ReadMode#PENDING}. The records of a gather delegate to the rows that hold
+     * the row, see {@link #delegateRecords()}, when its rows may split into windows: a read in windows, a read whose
+     * rows are an estimate, a read of var-size values, whose bytes may outgrow their sample, and a read under a query
+     * memory limit, which may leave its record chain less than the budget it planned by.
      */
     private void startGatherOrPasses() {
         if (windowRowCount < Long.MAX_VALUE && isParquetCached) {
             readMode = getKeyReadMode();
             return;
         }
+        if (!isKeyOrderedByIndex() && isKeyPassCheaper(0, 0)) {
+            readMode = ReadMode.COLLECT;
+            endCollection(0);
+            frameMemoryPool.setParquetDecodeHint(walkHint, getMemoryCap());
+            return;
+        }
         readMode = isReadRowCountExact || windowRowCount < Long.MAX_VALUE ? ReadMode.GATHER : ReadMode.PENDING;
-        if (gatheredRows.isWindowed || !isReadRowCountExact || varSizeColumns.size() > 0) {
+        if (gatheredRows.isWindowed || !isReadRowCountExact || varSizeColumns.size() > 0 || getMemoryCap() < Long.MAX_VALUE) {
             delegateRecords();
         }
     }
@@ -2749,6 +2895,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
     }
 
     private void toTopGatheredRows() {
+        discardedFrameCount = 0;
         gatherLo = 0;
         isGatherPositioned = false;
     }
@@ -2763,6 +2910,8 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         // the first and the last record of a key, and the rows of the key the pass went over
         private static final int KEY_ENTRY_SIZE = 3;
         private final DirectLongList keyEntries;
+        // The memory of the chain grows by pages of this size, a power of two, so that it holds at least one.
+        private final long pageSize;
         // The rows of a read that one window holds whole, whose row ids are their offsets in the chain.
         private final RecordChain rows;
         // The rows of a window of a read that other windows follow, each with its row id in the page frames, which
@@ -2772,12 +2921,18 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         private long bytes;
         private long capacity;
         private RecordChain chain;
+        // The bytes and the rows of the chain when the pass reached the last page frame that it took rows from, and the
+        // page frame before that one, see startFrame().
+        private long frameBytesLo;
+        private long frameRowCountLo;
         private boolean isWindowed;
         private int key;
         private int keyHi;
         private int keyLo;
         // The memory the chain may take.
         private long maxBytes = Long.MAX_VALUE;
+        private long recentBytesLo;
+        private long recentRowCountLo;
         // The bytes of the row the chain did not take for want of memory, 0 while it takes every row.
         private long rejectedRowBytes;
         private long rowCount;
@@ -2793,7 +2948,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             }
             windowColumnTypes.add(ColumnType.LONG);
             // the chain reserves the memory of a window up front, which pages of the OS page size round the least
-            final long pageSize = Numbers.ceilPow2(Math.min(configuration.getSqlSortValuePageSize(), Files.PAGE_SIZE));
+            pageSize = Numbers.ceilPow2(Math.min(configuration.getSqlSortValuePageSize(), Files.PAGE_SIZE));
             final int maxPages = (int) Math.min(Math.max(1L, configuration.getSqlSortValueMaxBytes() / pageSize), Integer.MAX_VALUE);
             final String maxBytesKey = PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath();
             rows = new RecordChain(metadata, rowSink, pageSize, maxPages, maxBytesKey);
@@ -2818,9 +2973,17 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
             clearBytes();
         }
 
+        private long ceilPage(long bytes) {
+            return (bytes + pageSize - 1) & -pageSize;
+        }
+
         private void clearBytes() {
             bytes = 0;
             capacity = 0;
+            frameBytesLo = 0;
+            frameRowCountLo = 0;
+            recentBytesLo = 0;
+            recentRowCountLo = 0;
             rejectedRowBytes = 0;
             rowCount = 0;
         }
@@ -2837,10 +3000,14 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         }
 
         /**
-         * The bytes a row took in the chain, past its row id, on average over its rows and the row it did not take.
+         * The bytes a row took in the chain, past its row id, on average over its rows and the row it did not take, or
+         * over those of the last two page frames it took rows from, when more: rows that grow wider along the pass
+         * take more than the rows before them.
          */
         private double getMeasuredRowBytes() {
-            return (double) (bytes + rejectedRowBytes) / (rowCount + 1) - (isWindowed ? Long.BYTES : 0);
+            final double rowBytes = (double) (bytes + rejectedRowBytes) / (rowCount + 1);
+            final double recentRowBytes = (double) (bytes - recentBytesLo + rejectedRowBytes) / (rowCount - recentRowCountLo + 1);
+            return Math.max(rowBytes, recentRowBytes) - (isWindowed ? Long.BYTES : 0);
         }
 
         private long getRank(int key) {
@@ -2894,7 +3061,7 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         private boolean put(int key, Record record, long rowBytes) {
             final long storedBytes = rowBytes + (isWindowed ? Long.BYTES : 0);
             if (bytes + storedBytes > capacity) {
-                final long grownCapacity = Math.max(capacity * 2, bytes + storedBytes);
+                final long grownCapacity = ceilPage(Math.max(capacity * 2, bytes + storedBytes));
                 if (grownCapacity > maxBytes && rowCount > 0) {
                     rejectedRowBytes = storedBytes;
                     return false;
@@ -2918,11 +3085,13 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
         }
 
         /**
-         * Reserves the memory of rows of {@code bytes} bytes in all, and no more than maxBytes.
+         * Reserves the memory of rows of {@code bytes} bytes in all, and no more than maxBytes. Rows that may outgrow
+         * their estimate take maxBytes up front once a doubling of their memory would pass it, which leaves them all of it.
          */
-        private void reserve(long bytes) {
-            capacity = Math.min(bytes, maxBytes);
-            chain.reserve(capacity);
+        private void reserve(long bytes, boolean isEstimate) {
+            final long reservedBytes = isEstimate && bytes > maxBytes / 2 ? maxBytes : Math.min(bytes, maxBytes);
+            chain.reserve(reservedBytes);
+            capacity = ceilPage(reservedBytes);
         }
 
         /**
@@ -2950,6 +3119,18 @@ final class KeyOrderedPageFrameRecordCursor extends PageFrameRecordCursorImpl {
 
         private void setRank(int key, long rank) {
             keyEntries.set(entryOf(key) + 2, rank);
+        }
+
+        /**
+         * Notes the start of the next page frame of the pass, once the chain took rows from the page frame before.
+         */
+        private void startFrame() {
+            if (rowCount > frameRowCountLo) {
+                recentBytesLo = frameBytesLo;
+                recentRowCountLo = frameRowCountLo;
+                frameBytesLo = bytes;
+                frameRowCountLo = rowCount;
+            }
         }
 
         private void toTop() {

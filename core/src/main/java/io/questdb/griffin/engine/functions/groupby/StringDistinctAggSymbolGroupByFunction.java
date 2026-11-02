@@ -201,4 +201,10 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
         UnaryFunction.super.toTop();
         sinkIndex = 0;
     }
+
+    @Override
+    public void toTopAtPoolSlot(int slot) {
+        toTop();
+        sinkIndex = slot;
+    }
 }

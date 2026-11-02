@@ -202,4 +202,10 @@ class StringAggVarcharGroupByFunction extends VarcharFunction implements UnaryFu
         UnaryFunction.super.toTop();
         sinkIndex = 0;
     }
+
+    @Override
+    public void toTopAtPoolSlot(int slot) {
+        toTop();
+        sinkIndex = slot;
+    }
 }

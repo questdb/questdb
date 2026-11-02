@@ -58,6 +58,13 @@ import org.junit.Test;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
 public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
+    // the memory a sort of the 8_000 rows of the table w takes: an entry of 16 bytes for each, and the 256 KiB decode
+    // cache that it reads their payloads back through
+    private static final long SORT_BYTES = 8_000 * 16 + 256 * 1024;
+    // one-byte payloads, then wider ones in steps, the last far wider than the windows of the steps before it expect
+    private static final String STAIRCASE_PAYLOAD = """
+            CASE WHEN x <= 200 THEN 'a' WHEN x <= 4_700 THEN rpad('w', 46, 'w') WHEN x <= 7_400 THEN rpad('w', 88, 'w') ELSE rpad('w', 1_024, 'w') END""";
+
     @Test
     public void testCachedRowGroupsOfManyKeysGatherInOneWindow() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
@@ -477,6 +484,115 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExactGatherOfFixedSizeRowsPastQueryMemoryLimitKeepsItsRecords() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 64 * 1024L);
+        assertMemoryLeak(() -> {
+            createWidePayloadTable("x % 4", "true");
+            final String tail = "s FROM w WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2', 'k3') ORDER BY s";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            final StringSink actual = new StringSink();
+            try (RecordCursorFactory factory = select("SELECT " + tail)) {
+                // a link, the SYMBOL and the designated timestamp take 20 bytes a row, 160_000 in all: the first limit
+                // leaves the read room for its rows, and the second leaves the record chain fewer of them, so that it holds
+                // the record the consumer took before the read moves on to the passes of the keys
+                for (long limit : new long[]{1024 * 1024, 96 * 1024}) {
+                    node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, actual);
+                    } finally {
+                        node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testExactWindowOfWideKeysHandsReadToKeyPasses() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            // no filter, so the index orders the read and counts its rows; the widths are those of the filtered reads of
+            // testGatherOfRowsWiderThanTheirSampleReadsKeysWithinBudget and testWindowOfWideKeysHandsReadToKeyPasses
+            final String[] keys = {"x % 4", "x % 8"};
+            final String[] areNarrow = {"x <= 100", "x % 8 < 6"};
+            final int[] widths = {256, 512};
+            final String[] filters = {" AND s IN ('k0', 'k1', 'k2', 'k3')", " AND s IN ('k0', 'k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'k7')"};
+            final long[] heldRowCounts = {-1, 100};
+            final long[] maxDecodes = {5 * 80, 9 * 80};
+            for (int i = 0; i < keys.length; i++) {
+                createWidePayloadTable(keys[i], areNarrow[i], widths[i]);
+                final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01'" + filters[i] + " ORDER BY s, ts";
+                final StringSink expected = new StringSink();
+                for (String limit : new String[]{"", " LIMIT 6_395, 6_405", " LIMIT -7"}) {
+                    printSql("SELECT /*+ no_index(w) */ " + tail + limit, expected);
+                    assertQuery("SELECT " + tail + limit).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+                }
+                final String descendingTail = tail.replace("ORDER BY s, ts", "ORDER BY s DESC, ts DESC");
+                printSql("SELECT /*+ no_index(w) */ " + descendingTail, expected);
+                assertQuery("SELECT " + descendingTail).noLeakCheck().sizeMayVary().returns(expected);
+                printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+                final String expectedRows = expected.toString();
+                printSql("SELECT /*+ no_index(w) */ " + tail + " LIMIT 6_000, 8_000", expected);
+                final String expectedSkippedRows = expected.toString();
+                final long chainBytesLo = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
+                try (RecordCursorFactory factory = select("SELECT " + tail)) {
+                    try (RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                        final LongList rowIds = new LongList();
+                        assertRowIds(expectedRows, factory, cursor, rowIds, heldRowCounts[i], chainBytesLo);
+                        Assert.assertEquals("the passes of the keys hold no record chain", chainBytesLo, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN));
+                        final long decodeCount = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool().getDecodeCount();
+                        Assert.assertTrue("decodes: " + decodeCount, decodeCount <= maxDecodes[i]);
+                        assertRecordAt(expectedRows, factory, cursor, rowIds);
+                        assertRereads(expectedRows, expectedSkippedRows, factory, cursor, 6_000, 8_000);
+                    }
+                    assertFreshCursors(expectedRows, expectedSkippedRows, factory, 6_000, 8_000);
+                }
+                execute("DROP TABLE w");
+            }
+        });
+    }
+
+    @Test
+    public void testDiscardedRowGroupsOfGatherRestartWithItsRead() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            // the first row group samples one-byte payloads, and the keys k2 and k3 hold wider ones after it: the first
+            // pass outgrows its record chain about 40 row groups in, the first window then holds the narrow rows of k0 and
+            // k1, and the second window, of the wide rows, outgrows its record chain about 50 row groups in
+            createWidePayloadTable("x % 4", "x <= 100 OR x % 4 < 2", 101);
+            final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2', 'k3') AND id > 0 ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            final String expectedRows = expected.toString();
+            final StringSink actual = new StringSink();
+            try (RecordCursorFactory factory = select("SELECT " + tail)) {
+                // the row groups that the two passes of one read discarded and the windows it has left outweigh the passes
+                // of its last three keys
+                try (RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                    TestUtils.assertCursor(expectedRows, cursor, factory.getMetadata(), true, actual);
+                    final PageFrameMemoryPool pool = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool();
+                    Assert.assertEquals("the read moves on to the passes of its keys", ParquetDecodeHint.CYCLIC, pool.getDecodeHint());
+                }
+                // the read that a first row started does not count towards the read from the top: it keeps its windows
+                try (RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    cursor.toTop();
+                    TestUtils.assertCursor(expectedRows, cursor, factory.getMetadata(), true, actual);
+                    final PageFrameMemoryPool pool = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool();
+                    Assert.assertEquals("the read keeps gathering its rows", ParquetDecodeHint.MONOTONIC, pool.getDecodeHint());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testExhaustedGatherAfterWarmRead() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 1024L);
@@ -586,6 +702,54 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
                 Assert.assertNotEquals("the read collects its rows", stateSize, cursor.preComputedStateSize());
                 Assert.assertFalse("the read returns its rows from the page frames", cursor.getRecord() instanceof DelegatingRecord);
             }
+        });
+    }
+
+    @Test
+    public void testFilteredGatherOfClusteredKeysPassesOnlyTheirRowGroups() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            // each key holds 20 of the 80 row groups in turn; the first row group holds one-byte payloads, which the
+            // gather samples, and the 79 after it 256-byte ones
+            createWidePayloadTable("(x - 1) / 2_000", "x <= 100");
+            final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2', 'k3') AND id > 0"
+                    + " AND test_latched_counter() ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+            final ChainPeak chainPeak = new ChainPeak();
+            TestLatchedCounterFunctionFactory.reset(chainPeak);
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, new StringSink());
+                Assert.assertTrue("record chain peak: " + chainPeak.peak, chainPeak.peak <= SORT_BYTES);
+                // the gather passes over row groups until its rows outgrow its budget, and the pass of each key then
+                // decodes only the 20 row groups that hold its rows
+                final long decodeCount = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool().getDecodeCount();
+                Assert.assertTrue("decodes: " + decodeCount, decodeCount <= 80 + 80);
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+        });
+    }
+
+    @Test
+    public void testFilteredGatherPassLandsPastKeptRowsOfItsFirstKey() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            // the filter keeps every row of the row group that samples it, and half of the others, so the first of the
+            // five windows the sample plans ends at the row 600 of the key k1, which the filter keeps 506 rows of; the key
+            // k2 holds wide rows, so the second window outgrows its budget, and the read lands on the first row of k2
+            createWidePayloadTable("x % 8", "x % 8 != 2", 1_016);
+            final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01'"
+                    + " AND s IN ('k0', 'k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'k7') AND (id <= 100 OR id % 16 < 8)"
+                    + " AND test_latched_counter() ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
         });
     }
 
@@ -768,6 +932,43 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilteredWindowsOfManyKeysSurviveRowsWiderThanTheirSample() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            // payloads of one byte, then 64, then 256, so that the rows outgrow the window their sample plans, and then the
+            // windows that the first rows to outgrow it plan; 100 of the 256 keys hold rows in each of the 80 row groups
+            execute("CREATE TABLE w (id LONG, s SYMBOL INDEX, payload VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO w
+                    SELECT x, ('k' || lpad((x % 256)::STRING, 3, '0'))::SYMBOL,
+                        (CASE WHEN x <= 1_000 THEN 'a' WHEN x <= 4_000 THEN rpad('m', 64, 'm') ELSE rpad('w', 256, 'w') END)::VARCHAR,
+                        timestamp_sequence(0, 1_000)
+                    FROM long_sequence(8_000)
+                    """);
+            execute("INSERT INTO w VALUES (8_001, 'k000', 'x', '1970-01-02')");
+            execute("ALTER TABLE w CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
+            final StringSink keys = new StringSink();
+            keys.put("'k000'");
+            for (int i = 1; i < 256; i++) {
+                keys.put(", 'k").put(i / 100).put(i / 10 % 10).put(i % 10).put('\'');
+            }
+            final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01' AND s IN (" + keys + ") AND id > 0 ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, new StringSink());
+                final PageFrameMemoryPool pool = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool();
+                Assert.assertEquals("the read keeps gathering its rows", ParquetDecodeHint.MONOTONIC, pool.getDecodeHint());
+                // a pass of each key would decode each row group once for each of the 100 keys that hold rows in it
+                Assert.assertTrue("decodes: " + pool.getDecodeCount(), pool.getDecodeCount() < 100 * 80);
+            }
+        });
+    }
+
+    @Test
     public void testFilteredWindowsLandSkipAfterSize() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 16 * 1024L);
@@ -877,6 +1078,263 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
                 if (i == 0 || i == tails.length - 1) {
                     assertQuery("SELECT id, s, payload, ts FROM " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expectedRows);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testGatherOfRowsWiderThanTheirSampleOverCachedRowGroupsPassesItsKeys() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            // the 40 keys outnumber a third of the rows of each of the 12 row groups, so the read gathers them, in the one
+            // window that the one-byte payloads of the first row group plan; the row groups of 187-byte payloads after it
+            // outgrow that window, but they stay decoded across the passes of the keys, as they do under a sort of the rows
+            execute("CREATE TABLE w (id LONG, s SYMBOL INDEX, payload VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO w
+                    SELECT x, ('k' || lpad((x % 40)::STRING, 2, '0'))::SYMBOL,
+                        (CASE WHEN x <= 100 THEN 'a' ELSE rpad('w', 187, 'w') END)::VARCHAR, timestamp_sequence(0, 1_000)
+                    FROM long_sequence(1_200)
+                    """);
+            execute("INSERT INTO w VALUES (1_201, 'k00', 'x', '1970-01-02')");
+            execute("ALTER TABLE w CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
+            final StringSink keys = new StringSink();
+            keys.put("'k00'");
+            for (int i = 1; i < 40; i++) {
+                keys.put(", 'k").put(i / 10).put(i % 10).put('\'');
+            }
+            final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01' AND s IN (" + keys + ") AND id > 0 ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            final String expectedRows = expected.toString();
+            assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expectedRows);
+            final StringSink actual = new StringSink();
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                TestUtils.assertCursor(expectedRows, cursor, factory.getMetadata(), true, actual);
+                final PageFrameMemoryPool pool = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool();
+                final long decodeCount = pool.getDecodeCount();
+                // the pass that outgrew its window, and one pass over the 12 row groups
+                Assert.assertTrue("decodes: " + decodeCount, decodeCount <= 2 * 12);
+                cursor.toTop();
+                TestUtils.assertCursor(expectedRows, cursor, factory.getMetadata(), true, actual);
+                Assert.assertEquals("the row groups stay decoded", decodeCount, pool.getDecodeCount());
+            }
+        });
+    }
+
+    @Test
+    public void testGatherOfRowsWiderThanTheirSampleReadsKeysWithinBudget() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            // the first of the 80 row groups holds one-byte payloads, which the gather samples, and the 79 after it hold
+            // 256-byte ones, so that the rows take seven windows of the budget the sample plans one for
+            createWidePayloadTable("x % 4", "x <= 100");
+            final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2', 'k3') AND id > 0"
+                    + " AND test_latched_counter() ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            for (String limit : new String[]{"", " LIMIT 3_000, 3_005", " LIMIT -7"}) {
+                printSql("SELECT /*+ no_index(w) */ " + tail + limit, expected);
+                assertQuery("SELECT " + tail + limit).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+            }
+            final String descendingTail = tail.replace("ORDER BY s, ts", "ORDER BY s DESC, ts DESC");
+            printSql("SELECT /*+ no_index(w) */ " + descendingTail, expected);
+            assertQuery("SELECT " + descendingTail).noLeakCheck().sizeMayVary().returns(expected);
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            final String expectedRows = expected.toString();
+            printSql("SELECT /*+ no_index(w) */ " + tail + " LIMIT 5_000, 8_000", expected);
+            final String expectedSkippedRows = expected.toString();
+            final ChainPeak chainPeak = new ChainPeak();
+            TestLatchedCounterFunctionFactory.reset(chainPeak);
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                final LongList rowIds = new LongList();
+                assertRowIds(expectedRows, factory, cursor, rowIds, -1, chainPeak.chainBytesLo);
+                Assert.assertTrue("record chain peak: " + chainPeak.peak, chainPeak.peak <= SORT_BYTES);
+                Assert.assertEquals("the passes of the keys hold no record chain", chainPeak.chainBytesLo, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN));
+                // a sort filters each of the 80 row groups once and reads the rows of each of the 4 keys back from them
+                final long decodeCount = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool().getDecodeCount();
+                Assert.assertTrue("decodes: " + decodeCount, decodeCount <= 5 * 80);
+                assertRecordAt(expectedRows, factory, cursor, rowIds);
+                assertRereads(expectedRows, expectedSkippedRows, factory, cursor, 5_000, 8_000);
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+            try (RecordCursorFactory factory = select("SELECT " + tail)) {
+                assertFreshCursors(expectedRows, expectedSkippedRows, factory, 5_000, 8_000);
+            }
+        });
+    }
+
+    @Test
+    public void testGatherOfRowsWiderThanTheirSampleReleasesMemoryWhenPassFails() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            createWidePayloadTable("x % 4", "x <= 100");
+            final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2', 'k3') AND id > 0"
+                    + " AND test_latched_counter() ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            // the record chain fills within 1_500 rows, so the filter fails in the pass of the second key
+            final long chainBytesLo = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
+            TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+                @Override
+                public boolean onGet(Record rec, int count) {
+                    if (count == 4_000) {
+                        throw CairoException.nonCritical().put("filter failed");
+                    }
+                    return true;
+                }
+            });
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                try {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                        // read until the filter fails
+                    }
+                    Assert.fail("expected the filter to fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "filter failed");
+                }
+                Assert.assertEquals("the passes of the keys hold no record chain", chainBytesLo, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN));
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+            assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+        });
+    }
+
+    @Test
+    public void testGatherOfStaircaseRowsCountsDiscardedRowGroupsAgainstItsWindows() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            // each step of the payloads comes after the windows that the step before it plans take few enough row groups
+            // to keep gathering, so that each window outgrows its record chain late in its pass over the 80 row groups
+            createPayloadTable("s SYMBOL INDEX", "x % 4", STAIRCASE_PAYLOAD);
+            for (String filter : new String[]{" AND id > 0", ""}) {
+                final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2', 'k3')" + filter + " ORDER BY s, ts";
+                final StringSink expected = new StringSink();
+                printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+                final String expectedRows = expected.toString();
+                assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expectedRows);
+                final StringSink actual = new StringSink();
+                long decodeCount = -1;
+                try (RecordCursorFactory factory = select("SELECT " + tail)) {
+                    for (int i = 0; i < 2; i++) {
+                        try (RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                            TestUtils.assertCursor(expectedRows, cursor, factory.getMetadata(), true, actual);
+                            final PageFrameMemoryPool pool = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool();
+                            // the row groups that the windows discarded move the read on to the passes of its 4 keys
+                            // before it decodes more than a sort, which scans the 80 row groups once and reads back the
+                            // rows of each key from them
+                            Assert.assertTrue("decodes: " + pool.getDecodeCount(), pool.getDecodeCount() <= (4 + 1) * 80);
+                            Assert.assertTrue("a new read counts anew", i == 0 || pool.getDecodeCount() == decodeCount);
+                            decodeCount = pool.getDecodeCount();
+                            cursor.toTop();
+                            TestUtils.assertCursor(expectedRows, cursor, factory.getMetadata(), true, actual);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGatherOfStaircaseRowsWithoutCountsOfIndexStopsAtScanOfDiscardedRowGroups() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            // the index cannot count the rows of a key in a partition of a posting index, so the model of the windows
+            // cannot place them, and the read moves on to the passes of its keys once they discarded a scan of row groups
+            createPayloadTable("s SYMBOL INDEX TYPE POSTING", "x % 4", STAIRCASE_PAYLOAD);
+            final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2', 'k3') ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            final String expectedRows = expected.toString();
+            assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expectedRows);
+            printSql("SELECT /*+ no_index(w) */ " + tail + " LIMIT 5_000, 8_000", expected);
+            final String expectedSkippedRows = expected.toString();
+            final long chainBytesLo = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                TestUtils.assertCursor(expectedRows, cursor, factory.getMetadata(), true, new StringSink());
+                Assert.assertEquals("the passes of the keys hold no record chain", chainBytesLo, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN));
+                assertRereads(expectedRows, expectedSkippedRows, factory, cursor, 5_000, 8_000);
+            }
+        });
+    }
+
+    @Test
+    public void testGatherOfUniformRowsKeepsOneWindow() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            // every payload takes one byte, as the first row group samples, so the rows fit the one window it plans
+            createWidePayloadTable("x % 4", "true");
+            final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2', 'k3') AND id > 0 ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+            final long chainBytesLo = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, new StringSink());
+                Assert.assertTrue("the gather holds the rows", Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN) > chainBytesLo);
+                // the sample decodes the first of the 80 row groups, and the one pass of the gather decodes the others
+                Assert.assertEquals(80, ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool().getDecodeCount());
+            }
+        });
+    }
+
+    @Test
+    public void testGatherOfUniformRowsTakesFewerWindowsThanKeys() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            // every payload takes 49 bytes, so the rows take three windows of the budget, fewer than the four keys
+            createWidePayloadTable("x % 4", "false", 49);
+            final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2', 'k3') AND id > 0 ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, new StringSink());
+                // each of the three windows decodes each of the 80 row groups once, the first of them after the sample
+                Assert.assertEquals(3 * 80, ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool().getDecodeCount());
+            }
+        });
+    }
+
+    @Test
+    public void testGatherOfUniformRowsTiesWindowsWithKeyPasses() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            // every payload takes 93 bytes, so the rows take four windows of the budget, as many as the keys: both decode
+            // each of the 80 row groups four times, and the passes copy no payload
+            createWidePayloadTable("x % 4", "false", 93);
+            final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01' AND s IN ('k0', 'k1', 'k2', 'k3') AND id > 0"
+                    + " AND test_latched_counter() ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+            final ChainPeak chainPeak = new ChainPeak();
+            TestLatchedCounterFunctionFactory.reset(chainPeak);
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, new StringSink());
+                Assert.assertEquals("the passes copy no row", 0, chainPeak.peak);
+                final long decodeCount = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool().getDecodeCount();
+                Assert.assertTrue("decodes: " + decodeCount, decodeCount <= 4 * 80);
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
             }
         });
     }
@@ -1282,6 +1740,52 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowOfWideKeysHandsReadToKeyPasses() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_VALUE_PAGE_SIZE, 4 * 1024L);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 256 * 1024L);
+        assertMemoryLeak(() -> {
+            // the last two of the 8 keys hold 512-byte payloads and the others one-byte ones, so the sample of the first
+            // row group plans five windows: the first four hold the narrow rows, and the fifth, which starts at the row
+            // 400 of the key k6, outgrows its budget
+            createWidePayloadTable("x % 8", "x % 8 < 6", 512);
+            final String tail = "id, s, payload, ts FROM w WHERE ts IN '1970-01-01'"
+                    + " AND s IN ('k0', 'k1', 'k2', 'k3', 'k4', 'k5', 'k6', 'k7') AND id > 0 AND test_latched_counter() ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            for (String limit : new String[]{"", " LIMIT 6_395, 6_405", " LIMIT -7"}) {
+                printSql("SELECT /*+ no_index(w) */ " + tail + limit, expected);
+                assertQuery("SELECT " + tail + limit).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+            }
+            final String descendingTail = tail.replace("ORDER BY s, ts", "ORDER BY s DESC, ts DESC");
+            printSql("SELECT /*+ no_index(w) */ " + descendingTail, expected);
+            assertQuery("SELECT " + descendingTail).noLeakCheck().sizeMayVary().returns(expected);
+            printSql("SELECT /*+ no_index(w) */ " + tail, expected);
+            final String expectedRows = expected.toString();
+            printSql("SELECT /*+ no_index(w) */ " + tail + " LIMIT 6_000, 8_000", expected);
+            final String expectedSkippedRows = expected.toString();
+            final ChainPeak chainPeak = new ChainPeak();
+            TestLatchedCounterFunctionFactory.reset(chainPeak);
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                // the rows of the first four windows carry their row ids, and those of the passes their own
+                final LongList rowIds = new LongList();
+                assertRowIds(expectedRows, factory, cursor, rowIds, 100, chainPeak.chainBytesLo);
+                Assert.assertTrue("record chain peak: " + chainPeak.peak, chainPeak.peak <= SORT_BYTES);
+                Assert.assertEquals("the passes of the keys hold no record chain", chainPeak.chainBytesLo, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN));
+                // a sort filters each of the 80 row groups once and reads the rows of each of the 8 keys back from them
+                final long decodeCount = ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool().getDecodeCount();
+                Assert.assertTrue("decodes: " + decodeCount, decodeCount <= 9 * 80);
+                assertRecordAt(expectedRows, factory, cursor, rowIds);
+                assertRereads(expectedRows, expectedSkippedRows, factory, cursor, 6_000, 8_000);
+            } finally {
+                TestLatchedCounterFunctionFactory.reset(null);
+            }
+            try (RecordCursorFactory factory = select("SELECT " + tail)) {
+                assertFreshCursors(expectedRows, expectedSkippedRows, factory, 6_000, 8_000);
+            }
+        });
+    }
+
+    @Test
     public void testWindowedGatherDecodesEachRowGroupOncePerWindow() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 64 * 1024L);
@@ -1340,6 +1844,95 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
         throw new AssertionError("expected a cached window over the read");
     }
 
+    /**
+     * Moves a cursor that did not read a row yet to the read of its keys by its size, and another by a skip.
+     */
+    private static void assertFreshCursors(
+            String expected,
+            String expectedSkipped,
+            RecordCursorFactory factory,
+            long skipCount,
+            long rowCount
+    ) throws SqlException {
+        final StringSink actual = new StringSink();
+        final RecordCursor.Counter counter = new RecordCursor.Counter();
+        try (RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+            cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+            Assert.assertEquals(rowCount, counter.get());
+            cursor.toTop();
+            TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, actual);
+        }
+        try (RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+            counter.set(skipCount);
+            cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
+            Assert.assertEquals(0, counter.get());
+            TestUtils.assertCursor(expectedSkipped, cursor, factory.getMetadata(), true, actual);
+        }
+    }
+
+    private static void assertRecordAt(String expected, RecordCursorFactory factory, RecordCursor cursor, LongList rowIds) {
+        Assert.assertTrue(factory.recordCursorSupportsRandomAccess());
+        final StringSink actual = new StringSink();
+        final Record recordB = cursor.getRecordB();
+        CursorPrinter.println(factory.getMetadata(), actual);
+        for (int i = 0, n = rowIds.size(); i < n; i++) {
+            cursor.recordAt(recordB, rowIds.getQuick(i));
+            CursorPrinter.println(recordB, factory.getMetadata(), actual);
+        }
+        TestUtils.assertEquals(expected, actual);
+    }
+
+    private static void assertRereads(
+            String expected,
+            String expectedSkipped,
+            RecordCursorFactory factory,
+            RecordCursor cursor,
+            long skipCount,
+            long rowCount
+    ) {
+        final StringSink actual = new StringSink();
+        cursor.toTop();
+        TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, actual);
+        cursor.toTop();
+        final RecordCursor.Counter counter = new RecordCursor.Counter();
+        cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+        Assert.assertEquals(rowCount, counter.get());
+        cursor.toTop();
+        counter.set(skipCount);
+        cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
+        Assert.assertEquals(0, counter.get());
+        TestUtils.assertCursor(expectedSkipped, cursor, factory.getMetadata(), true, actual);
+        final LongList rowIds = new LongList();
+        cursor.toTop();
+        assertRowIds(expected, factory, cursor, rowIds, -1, 0);
+        assertRecordAt(expected, factory, cursor, rowIds);
+    }
+
+    /**
+     * Reads the rows of the cursor and their row ids, and checks, after {@code heldRowCount} rows, that the record chain
+     * holds more than {@code chainBytesLo}.
+     */
+    private static void assertRowIds(
+            String expected,
+            RecordCursorFactory factory,
+            RecordCursor cursor,
+            LongList rowIds,
+            long heldRowCount,
+            long chainBytesLo
+    ) {
+        final StringSink actual = new StringSink();
+        final Record record = cursor.getRecord();
+        CursorPrinter.println(factory.getMetadata(), actual);
+        while (cursor.hasNext()) {
+            if (rowIds.size() == heldRowCount) {
+                Assert.assertTrue("the first window holds its rows", Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN) > chainBytesLo);
+            }
+            rowIds.add(record.getRowId());
+            CursorPrinter.println(record, factory.getMetadata(), actual);
+        }
+        TestUtils.assertEquals(expected, actual);
+    }
+
     private static void createGatherTable() throws Exception {
         execute("""
                 CREATE TABLE t AS (
@@ -1381,6 +1974,30 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
         execute("ALTER TABLE r CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
     }
 
+    /**
+     * Creates the table w of 8_000 rows over 80 row groups of a Parquet partition, the key of each row the symbol 'k'
+     * followed by {@code key}, and its payload {@code payload}.
+     */
+    private static void createPayloadTable(String symbolColumn, String key, String payload) throws Exception {
+        execute("CREATE TABLE w (id LONG, " + symbolColumn + ", payload VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO w SELECT x, ('k' || (" + key + "))::SYMBOL, (" + payload + ")::VARCHAR, timestamp_sequence(0, 1_000) FROM long_sequence(8_000)");
+        execute("INSERT INTO w VALUES (8_001, 'k0', 'x', '1970-01-02')");
+        execute("ALTER TABLE w CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
+    }
+
+    private static void createWidePayloadTable(String key, String isNarrow) throws Exception {
+        createWidePayloadTable(key, isNarrow, 256);
+    }
+
+    /**
+     * Creates the table w of 8_000 rows over 80 row groups of a Parquet partition, the key of each row the symbol 'k'
+     * followed by {@code key}, and its payload one byte long where {@code isNarrow} holds and {@code width} bytes long
+     * elsewhere.
+     */
+    private static void createWidePayloadTable(String key, String isNarrow, int width) throws Exception {
+        createPayloadTable("s SYMBOL INDEX", key, "CASE WHEN " + isNarrow + " THEN 'a' ELSE rpad('w', " + width + ", 'w') END");
+    }
+
     private static void createWindowTable() throws Exception {
         execute("""
                 CREATE TABLE t AS (
@@ -1390,6 +2007,21 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
                 """);
         execute("INSERT INTO t VALUES (40_001, 'k1', '1970-01-02')");
         execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
+    }
+
+    /**
+     * Samples the memory of the record chains each time the filter reads a row, which the passes of a gather do as
+     * they append rows to their record chain.
+     */
+    private static class ChainPeak implements TestLatchedCounterFunctionFactory.Callback {
+        private final long chainBytesLo = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN);
+        private long peak;
+
+        @Override
+        public boolean onGet(Record rec, int count) {
+            peak = Math.max(peak, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_RECORD_CHAIN) - chainBytesLo);
+            return true;
+        }
     }
 
     /**

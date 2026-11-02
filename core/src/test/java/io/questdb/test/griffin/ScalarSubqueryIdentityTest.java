@@ -29,7 +29,8 @@ import org.junit.Test;
 
 /**
  * Expressions that differ only in their scalar sub-queries are different expressions wherever the
- * engine matches or deduplicates expressions: grouping keys, DISTINCT, aggregates and ORDER BY.
+ * engine matches or deduplicates expressions: grouping keys, DISTINCT, aggregates, ORDER BY and
+ * window functions.
  * The same sub-query, written twice with the same tokens or read twice from one declaration, stays
  * one expression, whatever the case of its keywords and identifiers and the spacing between them.
  */
@@ -59,6 +60,21 @@ public class ScalarSubqueryIdentityTest extends AbstractCairoTest {
                             true\t0\t0
                             """);
         });
+    }
+
+    @Test
+    public void testAggregatesOverCaseKeepDistinctSubqueries() throws Exception {
+        assertMemoryLeak(() -> assertQuery("""
+                SELECT sum(CASE WHEN x = (SELECT 1L) THEN x ELSE 0 END) a, sum(CASE WHEN x = (SELECT 2L) THEN x ELSE 0 END) b
+                FROM long_sequence(3)
+                """)
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        a\tb
+                        1\t2
+                        """));
     }
 
     @Test
@@ -128,6 +144,28 @@ public class ScalarSubqueryIdentityTest extends AbstractCairoTest {
                     SELECT x = @q p, x = @r q, count() n
                     FROM long_sequence(3)
                     GROUP BY x = @q, x = @r
+                    ORDER BY p, q
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("""
+                    DECLARE @q := (SELECT x FROM long_sequence(3) ORDER BY x LIMIT 1),
+                            @r := (SELECT x FROM long_sequence(3) ORDER BY x DESC LIMIT 1)
+                    SELECT x = @q p, x = @r q, count() n
+                    FROM long_sequence(3)
+                    GROUP BY x = @q, x = @r
+                    ORDER BY p, q
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            execute("CREATE TABLE t (s SYMBOL, x LONG)");
+            execute("INSERT INTO t VALUES ('a', 1), ('b', 2), ('c', 3)");
+            assertQuery("""
+                    SELECT s IN (SELECT 'a'::SYMBOL) p, s IN (SELECT 'b'::SYMBOL) q, count() n
+                    FROM t
+                    GROUP BY s IN (SELECT 'a'::SYMBOL), s IN (SELECT 'b'::SYMBOL)
                     ORDER BY p, q
                     """)
                     .noLeakCheck()
@@ -210,6 +248,15 @@ public class ScalarSubqueryIdentityTest extends AbstractCairoTest {
                             false\tfalse\t3
                             false\ttrue\t2
                             true\tfalse\t1
+                            """);
+            assertQuery("SELECT x FROM long_sequence(3) ORDER BY x = (SELECT 1L), x = (SELECT 2L)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x
+                            3
+                            2
+                            1
                             """);
         });
     }
@@ -330,6 +377,98 @@ public class ScalarSubqueryIdentityTest extends AbstractCairoTest {
                             false\ttrue\t1
                             true\tfalse\t1
                             """);
+        });
+    }
+
+    @Test
+    public void testWindowArgumentsKeepDistinctDeclaredSubqueries() throws Exception {
+        assertMemoryLeak(() -> assertQuery("""
+                DECLARE @q1 := (SELECT 1L x), @q2 := (SELECT 3L x)
+                SELECT x, sum(CASE WHEN x = @q1 THEN x ELSE 0 END) OVER () a, sum(CASE WHEN x = @q2 THEN x ELSE 0 END) OVER () b
+                FROM long_sequence(3)
+                """)
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        x\ta\tb
+                        1\t1.0\t3.0
+                        2\t1.0\t3.0
+                        3\t1.0\t3.0
+                        """));
+    }
+
+    @Test
+    public void testWindowKeysKeepDistinctDeclaredSubqueries() throws Exception {
+        final String declared = "DECLARE @q1 := (SELECT 1L x), @q2 := (SELECT 3L x) ";
+        final String windows = """
+                SELECT x, sum(x) OVER (PARTITION BY x = @q1) a, sum(x) OVER (PARTITION BY x = @q2) b
+                FROM long_sequence(3)
+                """;
+        final String expected = """
+                x\ta\tb
+                1\t1.0\t3.0
+                2\t5.0\t3.0
+                3\t5.0\t3.0
+                """;
+        assertMemoryLeak(() -> {
+            assertQuery(declared + windows)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery(declared + """
+                    SELECT x, sum(x) OVER (PARTITION BY x = @q1 ORDER BY x) a, sum(x) OVER (PARTITION BY x = @q2 ORDER BY x) b
+                    FROM long_sequence(3)
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb
+                            1\t1.0\t1.0
+                            2\t2.0\t3.0
+                            3\t5.0\t3.0
+                            """);
+            assertQuery(declared + """
+                    SELECT x, row_number() OVER (PARTITION BY x = @q1 ORDER BY x DESC) a, row_number() OVER (PARTITION BY x = @q2 ORDER BY x DESC) b
+                    FROM long_sequence(3)
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb
+                            1\t1\t2
+                            2\t2\t1
+                            3\t1\t1
+                            """);
+            assertQuery("""
+                    DECLARE @q1 := (SELECT x FROM long_sequence(3) ORDER BY x LIMIT 1),
+                            @q2 := (SELECT x FROM long_sequence(3) ORDER BY x DESC LIMIT 1)
+                    SELECT x, sum(x) OVER (PARTITION BY x = @q1) a, sum(x) OVER (PARTITION BY x = @q2) b
+                    FROM (SELECT * FROM @q1 UNION ALL SELECT * FROM @q2 UNION ALL SELECT 2L x UNION ALL SELECT 2L x)
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta\tb
+                            1\t1.0\t5.0
+                            3\t7.0\t3.0
+                            2\t7.0\t5.0
+                            2\t7.0\t5.0
+                            """);
+            assertQuery("WITH c AS (" + declared + windows + ") SELECT * FROM c")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            execute("CREATE VIEW v AS (" + declared + windows + ")");
+            assertQuery("SELECT * FROM v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            execute("CREATE TABLE t (x LONG, a DOUBLE, b DOUBLE)");
+            execute("INSERT INTO t SELECT * FROM (" + declared + windows + ")");
+            assertQuery("SELECT * FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 }

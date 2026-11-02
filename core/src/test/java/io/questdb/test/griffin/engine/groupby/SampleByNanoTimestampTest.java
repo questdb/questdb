@@ -5393,6 +5393,33 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFromToSubDayTimeZoneMatchesGroupBy() throws Exception {
+        // see SampleByTest.testSampleByFromToSubDayTimeZoneMatchesGroupBy()
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT (100 + (x % 7))::DOUBLE v, timestamp_sequence('2021-10-29T20:15:00', 37 * 60_000_000L)::TIMESTAMP_NS ts
+                        FROM long_sequence(240)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            assertSampleByCursorMatchesGroupBy(
+                    "t",
+                    " SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31' ALIGN TO CALENDAR TIME ZONE '+02:00'",
+                    null,
+                    """
+                            ts\tc\ts
+                            2021-10-29T18:00:00.000000000Z\t5\t515.0
+                            2021-10-29T23:00:00.000000000Z\t8\t827.0
+                            2021-10-30T04:00:00.000000000Z\t8\t821.0
+                            2021-10-30T09:00:00.000000000Z\t8\t822.0
+                            2021-10-30T14:00:00.000000000Z\t8\t823.0
+                            2021-10-30T19:00:00.000000000Z\t5\t518.0
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testSampleByLastIndexFilterByNullConcurrent() throws Exception {
         testSampleByFirstLastIndexedConcurrent(
                 """

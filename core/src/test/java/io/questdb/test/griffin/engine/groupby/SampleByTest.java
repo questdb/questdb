@@ -10337,6 +10337,86 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFromToSubDayTimeZoneMatchesGroupBy() throws Exception {
+        // Code generation converts FROM and TO to UTC for a stride shorter than a day, and the cursor must not add
+        // the time zone offset on top of them: without LIMIT, it returns the rows of the GROUP BY path. The expected
+        // rows bucket the table at the bounds in UTC, 2021-10-28T22:00Z and 2021-10-30T22:00Z.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT (100 + (x % 7))::DOUBLE v, timestamp_sequence('2021-10-29T20:15:00', 37 * 60_000_000L) ts
+                        FROM long_sequence(240)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            final String fromTo = " SAMPLE BY 5h FROM '2021-10-29' TO '2021-10-31'";
+            final String rows = """
+                    ts\tc\ts
+                    2021-10-29T18:00:00.000000Z\t5\t515.0
+                    2021-10-29T23:00:00.000000Z\t8\t827.0
+                    2021-10-30T04:00:00.000000Z\t8\t821.0
+                    2021-10-30T09:00:00.000000Z\t8\t822.0
+                    2021-10-30T14:00:00.000000Z\t8\t823.0
+                    2021-10-30T19:00:00.000000Z\t5\t518.0
+                    """;
+            assertSampleByCursorMatchesGroupBy("t", fromTo + " ALIGN TO CALENDAR TIME ZONE '+02:00'", null, rows);
+            assertSampleByCursorMatchesGroupBy("t", fromTo + " ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'", null, rows);
+            assertSampleByCursorMatchesGroupBy(
+                    "t",
+                    fromTo + " ALIGN TO CALENDAR TIME ZONE '+02:00' WITH OFFSET '00:30'",
+                    null,
+                    """
+                            ts\tc\ts
+                            2021-10-29T18:30:00.000000Z\t6\t621.0
+                            2021-10-29T23:30:00.000000Z\t8\t821.0
+                            2021-10-30T04:30:00.000000Z\t8\t822.0
+                            2021-10-30T09:30:00.000000Z\t8\t823.0
+                            2021-10-30T14:30:00.000000Z\t8\t824.0
+                            2021-10-30T19:30:00.000000Z\t4\t415.0
+                            """
+            );
+            // TO alone: the buckets stay on the local grid, and the fill ends at the converted TO
+            final String toRows = """
+                    ts\tc\ts
+                    2021-10-29T17:00:00.000000Z\t3\t306.0
+                    2021-10-29T22:00:00.000000Z\t8\t825.0
+                    2021-10-30T03:00:00.000000Z\t9\t932.0
+                    2021-10-30T08:00:00.000000Z\t8\t821.0
+                    2021-10-30T13:00:00.000000Z\t8\t822.0
+                    2021-10-30T18:00:00.000000Z\t6\t620.0
+                    """;
+            final String to = " SAMPLE BY 5h TO '2021-10-31' FILL(%s) ALIGN TO CALENDAR TIME ZONE '+02:00'";
+            assertSampleByCursorMatchesGroupBy("t", to.formatted("NULL"), "fill: null\n", toRows);
+            assertSampleByCursorMatchesGroupBy("t", to.formatted("42"), "fill: value\n", toRows);
+            // the 21:30Z bucket is a gap
+            final String gap = " SAMPLE BY 30m FROM '2021-10-29T22:00' TO '2021-10-30T01:00' FILL(%s) ALIGN TO CALENDAR TIME ZONE '+02:00'";
+            final String gapRows = """
+                    ts\tc\ts
+                    2021-10-29T20:00:00.000000Z\t1\t101.0
+                    2021-10-29T20:30:00.000000Z\t1\t102.0
+                    2021-10-29T21:00:00.000000Z\t1\t103.0
+                    2021-10-29T21:30:00.000000Z\t%s\t%s
+                    2021-10-29T22:00:00.000000Z\t1\t104.0
+                    2021-10-29T22:30:00.000000Z\t1\t105.0
+                    """;
+            assertSampleByCursorMatchesGroupBy("t", gap.formatted("NULL"), "fill: null\n", gapRows.formatted("null", "null"));
+            assertSampleByCursorMatchesGroupBy("t", gap.formatted("PREV"), "fill: prev\n", gapRows.formatted("1", "103.0"));
+            assertSampleByCursorMatchesGroupBy("t", gap.formatted("42"), "fill: value\n", gapRows.formatted("42", "42.0"));
+            // a day or more keeps FROM in local time, here 11:00Z, and WITH OFFSET anchors the buckets at 10:00Z
+            assertSampleByCursorMatchesGroupBy(
+                    "t",
+                    " SAMPLE BY 1d FROM '2021-10-30T10:00' ALIGN TO CALENDAR TIME ZONE '-01:00' WITH OFFSET '-01:00' LIMIT 3",
+                    null,
+                    """
+                            ts\tc\ts
+                            2021-10-30T10:00:00.000000Z\t38\t3920.0
+                            2021-10-31T10:00:00.000000Z\t39\t4011.0
+                            2021-11-01T10:00:00.000000Z\t39\t4020.0
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testSampleByFromToScalarSubQuery() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE k (sym SYMBOL, s SYMBOL, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -12845,6 +12925,67 @@ public class SampleByTest extends AbstractCairoTest {
                         1970-01-03T06:42:00.000000Z\t18
                         1970-01-03T08:12:00.000000Z\t1
                         """);
+    }
+
+    @Test
+    public void testSampleByNotKeyedStringDistinctAggVarchar() throws Exception {
+        // the not-keyed cursor clears string_distinct_agg() over VARCHAR when it closes, after its factory closed
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T02:00:00.000000Z', 'a', 'a1'),
+                        ('2024-01-01T02:10:00.000000Z', 'c', 'c3'),
+                        ('2024-01-01T04:30:00.000000Z', 'a', 'a4'),
+                        ('2024-01-01T06:30:00.000000Z', 'c', 'c5')
+                    """);
+            assertQuery("SELECT ts, string_distinct_agg(s, ',') sa FROM t SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns("""
+                            ts\tsa
+                            2024-01-01T02:00:00.000000Z\ta1,c3
+                            2024-01-01T04:00:00.000000Z\ta4
+                            2024-01-01T06:00:00.000000Z\tc5
+                            """);
+            assertQuery("SELECT ts, string_distinct_agg(s, ',') sa FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns("""
+                            ts\tsa
+                            2024-01-01T02:00:00.000000Z\ta1,c3
+                            2024-01-01T03:00:00.000000Z\ta1,c3
+                            2024-01-01T04:00:00.000000Z\ta4
+                            2024-01-01T05:00:00.000000Z\ta4
+                            2024-01-01T06:00:00.000000Z\tc5
+                            """);
+            assertQuery("SELECT ts, string_distinct_agg(s, ',') sa, count() c FROM (SELECT * FROM t WHERE sym = 'a') SAMPLE BY 1h FILL(PREV, 0)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns("""
+                            ts\tsa\tc
+                            2024-01-01T02:00:00.000000Z\ta1\t1
+                            2024-01-01T03:00:00.000000Z\ta1\t0
+                            2024-01-01T04:00:00.000000Z\ta4\t1
+                            """);
+            assertQuery("SELECT ts, string_distinct_agg(s, ',') sa, count() c FROM (SELECT * FROM t WHERE sym = 'a') SAMPLE BY 1h FILL(PREV, LINEAR)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("fill: value\n")
+                    .returns("""
+                            ts\tsa\tc
+                            2024-01-01T02:00:00.000000Z\ta1\t1
+                            2024-01-01T03:00:00.000000Z\ta1\t1
+                            2024-01-01T04:00:00.000000Z\ta4\t1
+                            """);
+        });
     }
 
     @Test
@@ -16842,13 +16983,8 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleBySubDayToWithoutFromEndFillAfterGap() throws Exception {
-        // With TO but no FROM, code generation converts TO alone to UTC, and the FILL(NULL) and FILL(value)
-        // cursor samples on a local grid but ends its fill at a UTC TO (#7743). That cursor skips the end fill
-        // repairs that assume one time coordinate for the grid and TO, see
-        // SampleByFillValueNotKeyedRecordCursor.hasNext(): when the cursor reads the last bucket with rows
-        // ahead, after a gap, the end fill does not start. Here TO, 2020-12-31T22:00 at -05:00 or 03:00Z,
-        // ends the fill right after that bucket, so the rows equal those of the GROUP BY path. The test pins that
-        // kept behaviour: no end fill runs after that bucket.
+        // TO, 2020-12-31T22:00 at -05:00 or 03:00Z, ends the fill right after the last bucket with rows, which follows
+        // a gap, so no end fill runs after that bucket and the rows equal those of the GROUP BY path.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""

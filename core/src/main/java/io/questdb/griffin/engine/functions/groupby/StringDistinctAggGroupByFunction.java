@@ -192,6 +192,12 @@ class StringDistinctAggGroupByFunction extends StrFunction implements UnaryFunct
         setIndex = 0;
     }
 
+    @Override
+    public void toTopAtPoolSlot(int slot) {
+        toTop();
+        setIndex = slot;
+    }
+
     private CharSequence getStr(Record rec, DirectUtf16Sink sink) {
         final int setIndex = rec.getInt(valueIndex);
         if (setIndex == -1) {

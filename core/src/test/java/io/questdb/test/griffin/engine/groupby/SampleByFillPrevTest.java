@@ -1598,6 +1598,75 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevKeyedStringAggregatesCursorMatchesGroupBy() throws Exception {
+        // Key a has no row in the 06:00 bucket, where key c has c5
+        assertMemoryLeak(() -> {
+            for (String type : new String[]{"VARCHAR", "STRING"}) {
+                execute("DROP TABLE IF EXISTS n");
+                execute("CREATE TABLE n (ts TIMESTAMP, sym SYMBOL, s " + type + ") TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO n VALUES
+                        ('2024-01-01T02:00:00.000000Z', 'a', 'a1'),
+                        ('2024-01-01T02:10:00.000000Z', 'c', 'c3'),
+                        ('2024-01-01T04:30:00.000000Z', 'a', 'a4'),
+                        ('2024-01-01T06:30:00.000000Z', 'c', 'c5')
+                        """);
+                final String select = "SELECT ts, sym, %s(s, ',') sa, first(s) fs FROM n SAMPLE BY 1h FILL(PREV)";
+                for (String function : new String[]{"string_agg", "string_distinct_agg"}) {
+                    final String groupBy = select.formatted(function) + " ORDER BY ts, sym";
+                    final String cursor = select.formatted(function) + " ALIGN TO FIRST OBSERVATION ORDER BY ts, sym";
+                    assertQuery(cursor)
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .returns("""
+                                    ts\tsym\tsa\tfs
+                                    2024-01-01T02:00:00.000000Z\ta\ta1\ta1
+                                    2024-01-01T02:00:00.000000Z\tc\tc3\tc3
+                                    2024-01-01T03:00:00.000000Z\ta\ta1\ta1
+                                    2024-01-01T03:00:00.000000Z\tc\tc3\tc3
+                                    2024-01-01T04:00:00.000000Z\ta\ta4\ta4
+                                    2024-01-01T04:00:00.000000Z\tc\tc3\tc3
+                                    2024-01-01T05:00:00.000000Z\ta\ta4\ta4
+                                    2024-01-01T05:00:00.000000Z\tc\tc3\tc3
+                                    2024-01-01T06:00:00.000000Z\ta\ta4\ta4
+                                    2024-01-01T06:00:00.000000Z\tc\tc5\tc5
+                                    """);
+                    assertSqlCursors(groupBy, cursor);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFillPrevLinearResetsArgumentsEveryBucket() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'), (2.0, '2024-01-01T00:10:00.000000Z'),
+                    (3.0, '2024-01-01T01:00:00.000000Z'), (4.0, '2024-01-01T01:10:00.000000Z'),
+                    (5.0, '2024-01-01T03:00:00.000000Z'), (6.0, '2024-01-01T03:10:00.000000Z'),
+                    (7.0, '2024-01-01T04:00:00.000000Z'), (8.0, '2024-01-01T04:10:00.000000Z')
+                    """);
+            final String sa = "1970-01-01T00:00:00.000000Z,1970-01-01T00:00:00.000001Z";
+            assertQuery("""
+                    SELECT ts, first(timestamp_sequence(0, 1)) f, string_agg(timestamp_sequence(0, 1)::varchar, ',') sa, avg(v) a
+                    FROM (SELECT * FROM t WHERE v > 0) SAMPLE BY 1h FILL(PREV, PREV, LINEAR)
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("fill: value\n")
+                    .returns("ts\tf\tsa\ta\n"
+                            + "2024-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t" + sa + "\t1.5\n"
+                            + "2024-01-01T01:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t" + sa + "\t3.5\n"
+                            + "2024-01-01T02:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t" + sa + "\t4.5\n"
+                            + "2024-01-01T03:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t" + sa + "\t5.5\n"
+                            + "2024-01-01T04:00:00.000000Z\t1970-01-01T00:00:00.000000Z\t" + sa + "\t7.5\n");
+        });
+    }
+
+    @Test
     public void testFillPrevLong() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1861,6 +1930,127 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                             2.0\t2024-01-01T02:00:00.000000Z
                             2.0\t2024-01-01T03:00:00.000000Z
                             3.0\t2024-01-01T04:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillPrevNonKeyedPooledStringAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL, s STRING, vc VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 'a1', 'a1', '2024-01-01T02:00:00.000000Z'),
+                    ('c', 'c3', 'c3', '2024-01-01T02:10:00.000000Z'),
+                    ('a', 'a4', 'a4', '2024-01-01T04:30:00.000000Z'),
+                    ('c', 'c5', 'c5', '2024-01-01T06:30:00.000000Z')
+                    """);
+            final String select = """
+                    SELECT ts, string_agg(s, ',') sa, string_agg(vc, ',') va, string_distinct_agg(s, ',') sd,
+                    string_distinct_agg(vc, ',') vd, count() c FROM""";
+            final String sampleBy = " SAMPLE BY 1h FILL(PREV, PREV, PREV, PREV, 0)";
+            final String groupBy = select + " t WHERE sym = 'a'" + sampleBy;
+            final String cursor = select + " (SELECT * FROM t WHERE sym = 'a')" + sampleBy;
+            final String expected = """
+                    ts\tsa\tva\tsd\tvd\tc
+                    2024-01-01T02:00:00.000000Z\ta1\ta1\ta1\ta1\t1
+                    2024-01-01T03:00:00.000000Z\ta1\ta1\ta1\ta1\t0
+                    2024-01-01T04:00:00.000000Z\ta4\ta4\ta4\ta4\t1
+                    """;
+            assertQuery(groupBy)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanNotContaining("Sample By\n")
+                    .returns(expected);
+            assertQuery(cursor)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns(expected);
+            assertSqlCursors(groupBy, cursor);
+            assertQuery(select + " t SAMPLE BY 1h FILL(PREV, PREV, PREV, PREV, 0) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("Sample By\n")
+                    .returns("""
+                            ts\tsa\tva\tsd\tvd\tc
+                            2024-01-01T02:00:00.000000Z\ta1,c3\ta1,c3\ta1,c3\ta1,c3\t2
+                            2024-01-01T03:00:00.000000Z\ta1,c3\ta1,c3\ta1,c3\ta1,c3\t0
+                            2024-01-01T04:00:00.000000Z\ta4\ta4\ta4\ta4\t1
+                            2024-01-01T05:00:00.000000Z\ta4\ta4\ta4\ta4\t0
+                            2024-01-01T06:00:00.000000Z\tc5\tc5\tc5\tc5\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillPrevNonKeyedPooledStringAggregatesWithLinear() throws Exception {
+        // With a LINEAR column, the cursor aggregates the bucket after a gap while the gap still reads the bucket before it
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL, s STRING, vc VARCHAR, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 'a1', 'a1', 10.0, '2024-01-01T02:00:00.000000Z'),
+                    ('c', 'c3', 'c3', 20.0, '2024-01-01T02:10:00.000000Z'),
+                    ('a', 'a4', 'a4', 10.0, '2024-01-01T04:30:00.000000Z'),
+                    ('c', 'c5', 'c5', 50.0, '2024-01-01T06:30:00.000000Z'),
+                    ('e', 'e9', 'e9', 80.0, '2024-01-01T09:10:00.000000Z'),
+                    ('f', 'f10', 'f10', 100.0, '2024-01-01T10:05:00.000000Z'),
+                    ('g', 'g12', 'g12', 120.0, '2024-01-01T12:20:00.000000Z')
+                    """);
+            final String columns = "ts, sa, va, sd, vd, yd, cs, cv, fv";
+            final String select = """
+                    SELECT ts, string_agg(s, ',') sa, string_agg(vc, ',') va, string_distinct_agg(s, ',') sd, string_distinct_agg(vc, ',') vd,
+                    string_distinct_agg(sym, ',') yd, count_distinct(s) cs, count_distinct(vc) cv, first(vc) fv, sum(v) sm
+                    FROM (SELECT * FROM t WHERE v > 0) SAMPLE BY 1h""";
+            final String fillLinear = " FILL(PREV, PREV, PREV, PREV, PREV, PREV, PREV, PREV, LINEAR)";
+            assertQuery(select + fillLinear)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("fill: value\n")
+                    .returns("""
+                            ts\tsa\tva\tsd\tvd\tyd\tcs\tcv\tfv\tsm
+                            2024-01-01T02:00:00.000000Z\ta1,c3\ta1,c3\ta1,c3\ta1,c3\ta,c\t2\t2\ta1\t30.0
+                            2024-01-01T03:00:00.000000Z\ta1,c3\ta1,c3\ta1,c3\ta1,c3\ta,c\t2\t2\ta1\t20.0
+                            2024-01-01T04:00:00.000000Z\ta4\ta4\ta4\ta4\ta\t1\t1\ta4\t10.0
+                            2024-01-01T05:00:00.000000Z\ta4\ta4\ta4\ta4\ta\t1\t1\ta4\t30.0
+                            2024-01-01T06:00:00.000000Z\tc5\tc5\tc5\tc5\tc\t1\t1\tc5\t50.0
+                            2024-01-01T07:00:00.000000Z\tc5\tc5\tc5\tc5\tc\t1\t1\tc5\t60.0
+                            2024-01-01T08:00:00.000000Z\tc5\tc5\tc5\tc5\tc\t1\t1\tc5\t70.0
+                            2024-01-01T09:00:00.000000Z\te9\te9\te9\te9\te\t1\t1\te9\t80.0
+                            2024-01-01T10:00:00.000000Z\tf10\tf10\tf10\tf10\tf\t1\t1\tf10\t100.0
+                            2024-01-01T11:00:00.000000Z\tf10\tf10\tf10\tf10\tf\t1\t1\tf10\t110.0
+                            2024-01-01T12:00:00.000000Z\tg12\tg12\tg12\tg12\tg\t1\t1\tg12\t120.0
+                            """);
+            assertSqlCursors(
+                    "SELECT " + columns + " FROM (" + select + " FILL(PREV))",
+                    "SELECT " + columns + " FROM (" + select + fillLinear + ")"
+            );
+            final String range = " FROM '2024-01-01T01:00:00.000000Z' TO '2024-01-01T14:00:00.000000Z'";
+            assertQuery(select + range + fillLinear)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlanContaining("fill: value\n")
+                    .returns("""
+                            ts\tsa\tva\tsd\tvd\tyd\tcs\tcv\tfv\tsm
+                            2024-01-01T01:00:00.000000Z\t\t\t\t\t\tnull\tnull\t\tnull
+                            2024-01-01T02:00:00.000000Z\ta1,c3\ta1,c3\ta1,c3\ta1,c3\ta,c\t2\t2\ta1\t30.0
+                            2024-01-01T03:00:00.000000Z\ta1,c3\ta1,c3\ta1,c3\ta1,c3\ta,c\t2\t2\ta1\t20.0
+                            2024-01-01T04:00:00.000000Z\ta4\ta4\ta4\ta4\ta\t1\t1\ta4\t10.0
+                            2024-01-01T05:00:00.000000Z\ta4\ta4\ta4\ta4\ta\t1\t1\ta4\t30.0
+                            2024-01-01T06:00:00.000000Z\tc5\tc5\tc5\tc5\tc\t1\t1\tc5\t50.0
+                            2024-01-01T07:00:00.000000Z\tc5\tc5\tc5\tc5\tc\t1\t1\tc5\t60.0
+                            2024-01-01T08:00:00.000000Z\tc5\tc5\tc5\tc5\tc\t1\t1\tc5\t70.0
+                            2024-01-01T09:00:00.000000Z\te9\te9\te9\te9\te\t1\t1\te9\t80.0
+                            2024-01-01T10:00:00.000000Z\tf10\tf10\tf10\tf10\tf\t1\t1\tf10\t100.0
+                            2024-01-01T11:00:00.000000Z\tf10\tf10\tf10\tf10\tf\t1\t1\tf10\t110.0
+                            2024-01-01T12:00:00.000000Z\tg12\tg12\tg12\tg12\tg\t1\t1\tg12\t120.0
+                            2024-01-01T13:00:00.000000Z\tg12\tg12\tg12\tg12\tg\t1\t1\tg12\t120.0
                             """);
         });
     }

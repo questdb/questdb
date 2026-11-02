@@ -54,6 +54,7 @@ import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class SqlCompilerPoolTest extends AbstractCairoTest {
     private static final String CLOSE_FAILURE = "injected in-flight close failure";
@@ -97,12 +98,19 @@ public class SqlCompilerPoolTest extends AbstractCairoTest {
     public void testReleaseInactiveClosesCompilerItCannotTrim() throws Exception {
         assertMemoryLeak(() -> {
             final LogCapture capture = new LogCapture();
+            final AtomicInteger closedCompilers = new AtomicInteger();
             capture.start();
             try (
                     CairoEngine idleEngine = new CairoEngine(inactiveTtlConfiguration()) {
                         @Override
                         public SqlCompilerFactory getSqlCompilerFactory() {
                             return compilerEngine -> new SqlCompilerImpl(compilerEngine) {
+                                @Override
+                                public void close() {
+                                    super.close();
+                                    closedCompilers.incrementAndGet();
+                                }
+
                                 @Override
                                 public void releaseRetainedCapacity() {
                                     throw new IllegalStateException(TRIM_FAILURE);
@@ -116,8 +124,10 @@ public class SqlCompilerPoolTest extends AbstractCairoTest {
                 try (SqlCompiler compiler = idleEngine.getSqlCompiler()) {
                     compileAndClose(compiler, "SELECT 1", context);
                 }
+                Assert.assertEquals(0, closedCompilers.get());
                 setCurrentMicros(1_000_000 + INACTIVE_TTL_MILLIS * 1000 + 1);
                 Assert.assertTrue(idleEngine.releaseInactive());
+                Assert.assertEquals(1, closedCompilers.get());
                 capture.drain();
                 capture.assertLoggedRE("could not trim idle compiler, closing it \\[error=.*" + TRIM_FAILURE);
                 Assert.assertEquals(0, idleEngine.getSqlCompilerPool().getBusyCount());

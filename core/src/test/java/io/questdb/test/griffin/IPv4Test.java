@@ -6188,7 +6188,9 @@ public class IPv4Test extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             assertQuery("SELECT rnd_ipv4('1.1.1.1/32', 0) a, rnd_ipv4('1.1.1.1/32'::varchar, 0) b, rnd_ipv4('1.1.1.1/32'::symbol, 0) c")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             a\tb\tc
                             1.1.1.1\t1.1.1.1\t1.1.1.1
                             """);

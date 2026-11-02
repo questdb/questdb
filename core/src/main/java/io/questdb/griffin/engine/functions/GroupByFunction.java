@@ -472,4 +472,13 @@ public interface GroupByFunction extends Function, Mutable {
     default boolean supportsParallelism() {
         return false;
     }
+
+    /**
+     * Rewinds the function as {@link #toTop()} does, and keeps the state of the next group in {@code slot} of the pool
+     * of group states that the function reads its value from, for a consumer that still reads the group before it. A
+     * function that reads its value from its map value keeps no such pool.
+     */
+    default void toTopAtPoolSlot(int slot) {
+        toTop();
+    }
 }

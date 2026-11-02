@@ -108,9 +108,9 @@ public class SampleByFillNoneNotKeyedRecordCursorFactory extends AbstractSampleB
         final AbstractNoRecordSampleByCursor cursor = detachRawCursor();
         final SimpleMapValue value = this.value;
         this.value = null;
-        Throwable failure = closeSampleByOwnersBestEffort(null);
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = closeSampleByOwnersBestEffort(failure);
         failure = Misc.freeBestEffort(failure, value);
-        failure = Misc.freeBestEffort(failure, cursor);
         CairoException.rethrowCleanupFailure(failure);
     }
 

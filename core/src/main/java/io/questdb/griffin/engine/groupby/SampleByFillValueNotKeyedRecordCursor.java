@@ -41,6 +41,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
     private boolean endFill = false;
     private boolean firstRun = true;
     private boolean gapFill = false;
+    private int nextBucketPoolSlot = 0;
     private long upperBound = Long.MAX_VALUE;
 
     public SampleByFillValueNotKeyedRecordCursor(
@@ -155,6 +156,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
         super.of(baseCursor, executionContext);
         endFill = false;
         gapFill = false;
+        nextBucketPoolSlot = 0;
         upperBound = Long.MAX_VALUE;
         firstRun = true;
         peeker.clear();
@@ -167,11 +169,23 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
         super.toTop();
         endFill = false;
         gapFill = false;
+        nextBucketPoolSlot = 0;
         upperBound = Long.MAX_VALUE;
         firstRun = true;
         peeker.clear();
         setValuesToNull();
         record.setActiveA();
+    }
+
+    // A gap reads the bucket before it after peek() aggregated the bucket after it, so the group state that functions
+    // such as string_agg() keep in a pool alternates between two slots.
+    @Override
+    protected void nextSamplePeriod(long timestamp) {
+        moveToSamplePeriod(timestamp);
+        nextBucketPoolSlot = 1 - nextBucketPoolSlot;
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            groupByFunctions.getQuick(i).toTopAtPoolSlot(nextBucketPoolSlot);
+        }
     }
 
     // peeker.reset() restores the bucket start that the loop left

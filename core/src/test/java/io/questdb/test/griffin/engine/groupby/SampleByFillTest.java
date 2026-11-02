@@ -2092,6 +2092,73 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillLinearDayStrideTimezoneOverSubQuery() throws Exception {
+        // a +05:30 day starts at 18:30Z of the previous UTC day, in FILL(LINEAR) as in the other fill modes
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('a', 1.0, '2024-01-01T10:00:00.000000Z'),
+                        ('b', 2.0, '2024-01-01T12:00:00.000000Z'),
+                        ('a', 4.0, '2024-01-01T19:00:00.000000Z'),
+                        ('b', 8.0, '2024-01-01T20:00:00.000000Z'),
+                        ('a', 16.0, '2024-01-02T19:00:00.000000Z')
+                    """);
+            final String select = "SELECT ts, sum(price) FROM (SELECT ts, price FROM trades)";
+            final String selectKeyed = "SELECT ts, sym, sum(price) FROM (SELECT ts, sym, price FROM trades)";
+            for (String zone : new String[]{"'+05:30'", "'Asia/Kolkata'"}) {
+                final String linear = " SAMPLE BY 1d FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE " + zone;
+                assertQuery(select + linear)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .withPlanContaining("fill: linear\n")
+                        .returns("""
+                                ts\tsum
+                                2023-12-31T18:30:00.000000Z\t3.0
+                                2024-01-01T18:30:00.000000Z\t12.0
+                                2024-01-02T18:30:00.000000Z\t16.0
+                                """);
+                assertSqlCursors(select + " SAMPLE BY 1d FILL(NULL) ALIGN TO CALENDAR TIME ZONE " + zone, select + linear);
+                assertSqlCursors("SELECT ts, sum(price) FROM trades" + linear, select + linear);
+                assertQuery(select + linear + " LIMIT 1")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .withPlanContaining("fill: linear\n")
+                        .returns("""
+                                ts\tsum
+                                2023-12-31T18:30:00.000000Z\t3.0
+                                """);
+                // key b has no row in the last bucket, and its line through 2.0 and 8.0 reaches 14.0 there
+                assertQuery(selectKeyed + linear)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .withPlanContaining("fill: linear\n")
+                        .returns("""
+                                ts\tsym\tsum
+                                2023-12-31T18:30:00.000000Z\ta\t1.0
+                                2023-12-31T18:30:00.000000Z\tb\t2.0
+                                2024-01-01T18:30:00.000000Z\ta\t4.0
+                                2024-01-01T18:30:00.000000Z\tb\t8.0
+                                2024-01-02T18:30:00.000000Z\ta\t16.0
+                                2024-01-02T18:30:00.000000Z\tb\t14.0
+                                """);
+                assertSqlCursors("SELECT ts, sym, sum(price) FROM trades" + linear, selectKeyed + linear);
+                assertQuery(selectKeyed + linear + " LIMIT 2")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .withPlanContaining("fill: linear\n")
+                        .returns("""
+                                ts\tsym\tsum
+                                2023-12-31T18:30:00.000000Z\ta\t1.0
+                                2023-12-31T18:30:00.000000Z\tb\t2.0
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testFillLinearNumericTimezoneKeyedOverSampleByCursor() throws Exception {
         // Keyed FILL(LINEAR) over a SAMPLE BY cursor aligns its buckets as the non-keyed and table routes do.
         assertMemoryLeak(() -> {

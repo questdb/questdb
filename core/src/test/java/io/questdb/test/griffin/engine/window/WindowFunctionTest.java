@@ -22592,6 +22592,67 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowInheritanceInlineOverClause() throws Exception {
+        final String written = """
+                x\ta
+                1\t1.0
+                2\t2.0
+                3\t4.0
+                4\t6.0
+                5\t9.0
+                """;
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT x, sum(x) OVER (PARTITION BY x % 2 ORDER BY x) a FROM long_sequence(5)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(written);
+            assertQuery("SELECT x, sum(x) OVER w2 a FROM long_sequence(5) WINDOW w1 AS (PARTITION BY x % 2), w2 AS (w1 ORDER BY x)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(written);
+            assertQuery("SELECT x, sum(x) OVER (w1 ORDER BY x) a FROM long_sequence(5) WINDOW w1 AS (PARTITION BY x % 2)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(written);
+            assertQuery("SELECT x, sum(x) OVER (w1) a FROM long_sequence(5) WINDOW w1 AS (PARTITION BY x % 2 ORDER BY x)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(written);
+            assertQuery("SELECT x, 1 + sum(x) OVER (w1 ORDER BY x) a FROM long_sequence(5) WINDOW w1 AS (PARTITION BY x % 2)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta
+                            1\t2.0
+                            2\t3.0
+                            3\t5.0
+                            4\t7.0
+                            5\t10.0
+                            """);
+            assertQuery("SELECT x, sum(x) OVER (w1 ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) a FROM long_sequence(5) WINDOW w1 AS (PARTITION BY x % 2 ORDER BY x)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ta
+                            1\t1.0
+                            2\t2.0
+                            3\t4.0
+                            4\t6.0
+                            5\t8.0
+                            """);
+            assertQuery("SELECT x, sum(x) OVER (nosuch ORDER BY x) a FROM long_sequence(5)")
+                    .noLeakCheck()
+                    .fails(23, "window 'nosuch' is not defined");
+            assertQuery("SELECT x, sum(x) OVER (nosuch) a FROM long_sequence(5)")
+                    .noLeakCheck()
+                    .fails(23, "window 'nosuch' is not defined");
+            assertQuery("SELECT x, sum(x) OVER (w1 PARTITION BY x) a FROM long_sequence(5) WINDOW w1 AS (ORDER BY x)")
+                    .noLeakCheck()
+                    .fails(26, "PARTITION BY not allowed in window referencing another window");
+        });
+    }
+
+    @Test
     public void testWindowInheritanceInSubquery() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table t (x int, ts timestamp) timestamp(ts)");

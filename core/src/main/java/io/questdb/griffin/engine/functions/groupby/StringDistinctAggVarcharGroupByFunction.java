@@ -193,6 +193,12 @@ class StringDistinctAggVarcharGroupByFunction extends VarcharFunction implements
         setIndex = 0;
     }
 
+    @Override
+    public void toTopAtPoolSlot(int slot) {
+        toTop();
+        setIndex = slot;
+    }
+
     private Utf8Sequence getVarchar(Record rec, DirectUtf8Sink sink) {
         final int setIndex = rec.getInt(valueIndex);
         if (setIndex == -1) {

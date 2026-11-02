@@ -221,4 +221,10 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
         UnaryFunction.super.toTop();
         sinkIndex = 0;
     }
+
+    @Override
+    public void toTopAtPoolSlot(int slot) {
+        toTop();
+        sinkIndex = slot;
+    }
 }
