@@ -3628,7 +3628,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Gives a delta-active partition without a Delta catalog an empty one, keeping the WAL seqTxn.
      * Returns false when the partition is gone, not delta-active, or already has a catalog. On an adaptive
-     * table it returns once every save point covers the commit, and throws when one cannot be taken.
+     * table it returns before the save points cover the commit: it arms the required completion, which
+     * Delta retention waits on, and asks the apply job for the save point.
      */
     public boolean initDeltaPartition(long partitionTimestamp) {
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
@@ -3639,13 +3640,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (deltaWriter == null) {
             return false;
         }
+        // The commit moves no seqTxn, so no replay redoes it, and a save point before it reads the native base,
+        // which an eviction deletes once the catalog serves the partition. Arm before the commit: the flag holds
+        // the eviction back until the apply job takes both save points.
+        final boolean isCompletionDeferred = defersPartitionMoves();
+        if (isCompletionDeferred) {
+            engine.getTableSequencerAPI().getTxnTracker(tableToken).setDurableEpochCompletionRequired(true);
+        }
         deltaWriter.initialize(this, partitionIndex);
         txWriter.setPartitionHasDelta(partitionIndex, true);
         txWriter.bumpPartitionTableVersion();
         commitTxWriter();
-        // The commit moves no seqTxn, so no replay redoes it, and a save point before it reads the native base,
-        // which an eviction deletes once the catalog serves the partition. Both save points must cover it first.
-        completeDurableEpochAfter("Delta catalog initialization");
+        if (isCompletionDeferred) {
+            engine.getTableSequencerAPI().getTxnTracker(tableToken).requestIdleEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+            engine.notifyWalTxnCommitted(tableToken);
+        }
         return true;
     }
 
