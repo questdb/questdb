@@ -242,7 +242,9 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
     // towards the bucket after the gap, which peeker.peek() aggregates. The end fill, from the last bucket with
     // rows up to TO, has no bucket to interpolate towards, and an interpolation without one read a NULL record.
     // A FILL(LINEAR) column of the end fill therefore starts no interpolation, and it shows the value of the
-    // last bucket with rows, which the record still reads.
+    // last bucket with rows, which the record still reads. Each subsequent bucket of a gap passes its start
+    // timestamp to the interpolation, so the interpolated values depend neither on bucket lengths (month and
+    // year strides) nor on how many times, if at all, the getters run for a bucket (#7932).
     private void setActiveB(long expectedLocalEpoch) {
         if (!gapFill) {
             if (endFill) {
@@ -252,6 +254,8 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
                 record.setInterpolationTarget(peeker.peek());
             }
             gapFill = true;
+        } else if (!endFill) {
+            record.setInterpolationTimestamp(expectedLocalEpoch);
         }
     }
 

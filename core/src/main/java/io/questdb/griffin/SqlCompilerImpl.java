@@ -6099,7 +6099,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         case PartitionAction.DETACH -> isDeltaActive
                                 ? "cannot detach partition, partition is delta-active [table="
                                 : "cannot detach partition, partition is read-only [table=";
-                        case PartitionAction.CONVERT_TO_PARQUET -> "cannot convert partition to parquet, partition is delta-active [table=";
+                        case PartitionAction.CONVERT_TO_PARQUET ->
+                                "cannot convert partition to parquet, partition is delta-active [table=";
                         default -> "cannot convert parquet partition to native, partition is delta-active [table=";
                     })
                     .put(tableToken.getTableName())
