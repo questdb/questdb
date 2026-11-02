@@ -818,7 +818,8 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
     @Test
     public void testParquetAttachFailsCleanlyOnAReadOnlyPm() throws Exception {
         // A parquet ATTACH stamps its seqTxn into the _pm, so it needs a writable one, as a soft link's
-        // target. Without it the ATTACH fails and leaves the directory to attach as it was.
+        // target. Without it the ATTACH fails and leaves the directory to attach as it was,
+        // and the WAL table keeps applying.
         Assume.assumeFalse(Os.isWindows());
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -840,9 +841,15 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
             try {
                 execute("ALTER TABLE t ATTACH PARTITION LIST '2024-01-01'");
                 drainWalQueue();
+                // The failed ATTACH skips the statement and does not suspend the table
+                assertQuery("SELECT suspended FROM wal_tables() WHERE name = 't'").noLeakCheck().noRandomAccess().returns("suspended\nfalse\n");
                 Assert.assertTrue("the failed ATTACH keeps the directory to attach", attachable.isDirectory());
                 Assert.assertArrayEquals("and its _pm", pmBytes, Files.readAllBytes(pm.toPath()));
                 assertQuery("SELECT x FROM t ORDER BY ts").expectSize().returns("x\n3\n");
+                execute("INSERT INTO t VALUES ('2024-01-03T01:00:00', 4)");
+                drainWalQueue();
+                assertQuery("SELECT suspended FROM wal_tables() WHERE name = 't'").noLeakCheck().noRandomAccess().returns("suspended\nfalse\n");
+                assertQuery("SELECT x FROM t ORDER BY ts").expectSize().returns("x\n3\n4\n");
             } finally {
                 Assert.assertTrue(pm.setWritable(true));
             }

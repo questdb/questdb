@@ -1568,7 +1568,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (parquetFileSize > -1 && tableToken.isWal()
                             && !attachPartitionStampParquetSeqTxn(partitionPathLen, parquetFileSize, txWriter.getSeqTxn())) {
                         if (!isSoftLink) {
-                            return AttachDetachStatus.ATTACH_ERR_CREATE_PM_FILE;
+                            // Recoverable: fails the ATTACH, not the WAL table
+                            return AttachDetachStatus.ATTACH_ERR_STAMP_PM_FILE;
                         }
                         LOG.info().$("keeping the footer stamp of a soft-linked parquet partition [path=").$(path).I$();
                     }
