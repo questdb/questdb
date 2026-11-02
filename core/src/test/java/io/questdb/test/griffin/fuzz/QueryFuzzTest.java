@@ -148,8 +148,9 @@ import java.nio.file.Paths;
  *         GROUP BY disabled and compare the two materializations (default
  *         true). The JIT, storage and bind axes run the fused plan on both of
  *         their sides, so only this axis sees a fused plan that returns wrong
- *         rows. The run asserts that the fused plan actually ran on a minimum
- *         share of the comparisons whose query compiled.</li>
+ *         rows. The run asserts that the fused plan ran on enough of the
+ *         comparisons whose query compiled to rule out a planner that has
+ *         stopped selecting it.</li>
  *     <li>{@code -Dquestdb.fuzz.hashjoin.payload=row_ids|copied} &mdash; force
  *         every fused hash join GROUP BY to read its build's payload columns
  *         where they live, or from the copy its build makes (default: neither,
@@ -184,6 +185,24 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // Per-constant chance, in percent, of substituting a bindable literal
     // with a bind variable inside the bind variant.
     private static final int CONSTANT_BIND_PROBABILITY_PCT = 50;
+    // Share of the fused on/off axis's completed comparisons (the pivot compiled and ran) that a
+    // working planner runs on the fused hash join GROUP BY, as runFuzz's guard models it. The share
+    // is well below 100% because the generator sends a minority of its queries through features the
+    // fused planner refuses, and a RIGHT join takes the fused plan only under the conditions that
+    // HashJoinGroupByClause describes. Sixty default runs, each on its own random schema, measured
+    // 44% over 1_872 completed comparisons, with per-run shares from 21% to 62% over 16 to 46
+    // comparisons that scatter around the mean as binomial draws do; eight 5_000-query runs measured
+    // 42% to 52%. The baseline sits below the measured share, so that a small drift in the
+    // generator's mix does not raise the guard's false-alarm rate.
+    private static final double FUSED_SHARE_BASELINE = 0.4;
+    // Chance, at FUSED_SHARE_BASELINE, that a run's fused count falls low enough for runFuzz's guard
+    // to fail it. No fixed percentage floor stays both safe and useful over the default budget's 20
+    // to 45 comparisons: the old 15% floor failed about one run in 3_000 at the measured share, and
+    // CI ran into it with 2 fused of 26. The exact binomial tail fails a run at the measured share
+    // less than once in a million, still fails every guarded run of a planner that stops fusing
+    // (0.6^25 = 2.8e-6 at the smallest guarded sample), and on a 5_000-query soak of about 170
+    // comparisons fails a share of 24% or less.
+    private static final double FUSED_SHARE_FALSE_ALARM = 1e-5;
     // Lowest share, in percent, of a shape's differential queries that must actually run rather
     // than be skipped on an expected error. Skips are normal - a fuzzed expression can overflow, a
     // cast can be inconvertible - and how often they happen swings with the randomly generated
@@ -205,19 +224,6 @@ public class QueryFuzzTest extends AbstractCairoTest {
     // measured per-arm fire rates run 49-88% by type, so at a pessimistic 30% it takes 20 arms for
     // an all-miss run to drop below 1e-3. See the guard in runFuzz.
     private static final int MIN_FAULT_QUERIES_PER_TYPE_FOR_FIRE_FLOOR = 20;
-    // Lowest share, in percent, of the fused on/off axis's completed comparisons (the pivot compiled
-    // and ran) whose pivot must have used the fused hash join GROUP BY. Without it a planner that
-    // stops selecting the fused plan leaves the axis comparing the ordinary plan with itself while
-    // the run stays green. The share is well below 100% because the generator sends a minority of
-    // its queries through features the fused planner refuses, and a RIGHT join takes the fused plan
-    // only under the conditions that HashJoinGroupByClause describes. Eight 5_000-query runs, each on
-    // its own random schema, measured 42% to 52% over 159 to 187 completed comparisons, 46% over
-    // all of them, and ten default runs 32% to 62% over 23 to 39. At the smallest guarded sample of
-    // MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR (25) comparisons and a 46% share, a run falls below this
-    // floor (3 or fewer fused) with an exact binomial probability of about 3.4e-4; the integer step
-    // makes 27 comparisons the worst guarded sample, at about 6.7e-4. A planner that stops fusing
-    // (a 0% share) fails every guarded run.
-    private static final int MIN_FUSED_SELECTED_PCT = 15;
     // Differential queries a run needs before runFuzz asserts that a shape it could draw generated
     // at least one query. The rarest such shape takes ~4% of the differential queries, so at this
     // sample size an all-miss run sits below 1e-8; under it a zero is small-sample noise and
@@ -245,6 +251,22 @@ public class QueryFuzzTest extends AbstractCairoTest {
     private static final String QUERY_POOL_NAME = "fuzzQuery";
     // Per-query chance, in percent, of running with parallel SQL execution disabled.
     private static final int SERIAL_PROBABILITY_PCT = 5;
+
+    @Test
+    public void testBinomialLowerTail() {
+        // Exact rational arithmetic computed the expected values, outside the code under test.
+        assertBinomialLowerTail(2.84302880299297e-06, 0, 25);
+        assertBinomialLowerTail(5.022684218620914e-05, 1, 25);
+        assertBinomialLowerTail(2.7766914642564675e-04, 2, 26);
+        assertBinomialLowerTail(1.5917802375868418e-03, 3, 26);
+        assertBinomialLowerTail(9.416824245541328e-06, 41, 170);
+        assertBinomialLowerTail(1.9811797371565857e-05, 42, 170);
+        // The first term, 0.6^2000, underflows a double, and the terms near k carry the tail.
+        assertBinomialLowerTail(2.371628584995946e-06, 700, 2_000);
+        assertBinomialLowerTail(0.5097100085964106, 800, 2_000);
+        Assert.assertEquals(0.0, binomialLowerTail(0, 2_000, 0.4), 0.0);
+        Assert.assertEquals(1.0, binomialLowerTail(26, 26, 0.4), 1e-12);
+    }
 
     @Test
     public void testDecimalAggregationOverflowToleratedByOracle() throws Exception {
@@ -290,6 +312,22 @@ public class QueryFuzzTest extends AbstractCairoTest {
             Assert.assertFalse(okResult.isSkipped());
             Assert.assertFalse(okResult.isFailed());
         });
+    }
+
+    @Test
+    public void testFusedShareGuard() {
+        // A working planner drew 2 fused of 26 completed comparisons on CI, which the old 15% floor
+        // failed. Every share at or above the baseline passes.
+        Assert.assertFalse(isFusedShareImplausible(2, 26));
+        Assert.assertFalse(isFusedShareImplausible(1, 26));
+        Assert.assertFalse(isFusedShareImplausible(11, 26));
+        Assert.assertFalse(isFusedShareImplausible(26, 26));
+        // A planner that stops fusing fails at the smallest guarded sample.
+        Assert.assertTrue(isFusedShareImplausible(0, MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR));
+        Assert.assertFalse(isFusedShareImplausible(1, MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR));
+        // A soak's larger sample holds the share to more: 41 of 170 (24%) fails and 42 passes.
+        Assert.assertTrue(isFusedShareImplausible(41, 170));
+        Assert.assertFalse(isFusedShareImplausible(42, 170));
     }
 
     @Test
@@ -692,6 +730,36 @@ public class QueryFuzzTest extends AbstractCairoTest {
         }
         // Chain the first cause so the stack trace still points at real source.
         return new AssertionError(sb.toString(), failures.getQuick(0).getFailure());
+    }
+
+    private static void assertBinomialLowerTail(double expected, int k, int n) {
+        Assert.assertEquals(expected, binomialLowerTail(k, n, 0.4), expected * 1e-9);
+    }
+
+    /**
+     * Returns the exact binomial lower tail: the chance that {@code n} independent draws, each a
+     * success with probability {@code p}, yield at most {@code k} successes. The loop builds each
+     * term from the one before in log space, because the first term, (1 - p)^n, underflows a double
+     * at a few thousand draws, while the terms near {@code k} still carry the sum.
+     */
+    private static double binomialLowerTail(int k, int n, double p) {
+        final double logOdds = Math.log(p) - Math.log1p(-p);
+        double logTerm = n * Math.log1p(-p);
+        double tail = Math.exp(logTerm);
+        for (int i = 1; i <= k; i++) {
+            logTerm += Math.log((double) (n - i + 1) / i) + logOdds;
+            tail += Math.exp(logTerm);
+        }
+        return tail;
+    }
+
+    /**
+     * Says whether a working planner, one that runs FUSED_SHARE_BASELINE of the completed
+     * comparisons on the fused plan, would run {@code selected} or fewer of {@code completed} on it
+     * with a chance below FUSED_SHARE_FALSE_ALARM.
+     */
+    private static boolean isFusedShareImplausible(int selected, int completed) {
+        return binomialLowerTail(selected, completed, FUSED_SHARE_BASELINE) < FUSED_SHARE_FALSE_ALARM;
     }
 
     private static String planOf(String sql) throws SqlException {
@@ -1126,8 +1194,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
         // when the pivot selected the fused hash join GROUP BY, and a planner change that stops
         // selecting it leaves every comparison ordinary against ordinary. The share counts only
         // completed comparisons: the serial arm and the fault branch never run the axis, and a
-        // query that fails to compile fails in both plans. It is held to the same sample floor as
-        // the accepted rate above, and logged below it.
+        // query that fails to compile fails in both plans. The guard fails a run only when a working
+        // planner would select the fused plan this rarely with a chance below FUSED_SHARE_FALSE_ALARM.
+        // It holds the run to the same sample floor as the accepted rate above, and logs below it.
         final int fusedCompleted = runner.getFusedAxisCompletedRuns();
         if (config.isDiffFusedEnabled() && generatedByShape[QueryShape.HASH_JOIN_GROUP_BY.ordinal()] > 0) {
             if (fusedCompleted < MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
@@ -1136,10 +1205,14 @@ public class QueryFuzzTest extends AbstractCairoTest {
                         .$(" completed comparisons; raise -D").$(FuzzConfig.QUERIES_PROP).$(" to guard it")
                         .$();
             } else {
-                Assert.assertTrue(
-                        "the fused hash join GROUP BY ran on only " + runner.getFusedAxisSelected() + " of "
-                                + fusedCompleted + " completed comparisons; the fused on/off axis looks vacuous",
-                        100L * runner.getFusedAxisSelected() >= (long) MIN_FUSED_SELECTED_PCT * fusedCompleted
+                final int fusedSelected = runner.getFusedAxisSelected();
+                Assert.assertFalse(
+                        "the fused hash join GROUP BY ran on only " + fusedSelected + " of " + fusedCompleted
+                                + " completed comparisons, which a planner that fuses " + Math.round(100 * FUSED_SHARE_BASELINE)
+                                + "% of them does with probability "
+                                + binomialLowerTail(fusedSelected, fusedCompleted, FUSED_SHARE_BASELINE)
+                                + "; the fused on/off axis looks vacuous",
+                        isFusedShareImplausible(fusedSelected, fusedCompleted)
                 );
             }
         }
