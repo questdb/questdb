@@ -11560,9 +11560,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * A covering sidecar file name carries the name txn of the column it covers, and readers resolve it from the
      * column's current name txn. RENAME, DROP INDEX and UPDATE move a column to a new name txn without changing its
-     * data, UPDATE the column of an index it rebuilds, so this links every sidecar of every posting index that covers
+     * data, UPDATE the column of an index it rebuilds, so this links the sidecars of every posting index that covers
      * the column in the partition under the new txn.
-     * The old names stay for readers of earlier txns; a seal purge removes both once the generation is superseded.
+     * <p>
+     * Only the live generation is linked, the seal the chain head names, or seal 0 before the first seal, as
+     * {@link #linkPostingIndexAuxFiles} does: readers of the new txn read no other, and readers of earlier txns use
+     * the old names. A superseded generation must not be linked: its seal purge may have listed the directory
+     * already and would leave the new name behind for good. The writer lock keeps the live generation out of any
+     * seal purge. The old names stay for readers of earlier txns; a seal purge removes both once the generation is
+     * superseded.
      * Expects {@code path} and {@code other} to point at the partition directory.
      */
     private void linkCoveringSidecars(
@@ -11582,32 +11588,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 continue;
             }
             final CharSequence indexColumnName = metadata.getColumnName(i);
-            final long indexColumnNameTxn = PostingIndexUtils.coverFilePostingColumnNameTxn(columnVersionWriter.getColumnNameTxn(partitionTimestamp, i));
-            PostingIndexUtils.scanSealedFiles(ff, path, plen, indexColumnName, new PostingIndexUtils.SealedFileVisitor() {
-                @Override
-                public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long fileCoveredColumnNameTxn, long sealTxn) {
-                    if (postingColumnNameTxn != indexColumnNameTxn
-                            || fileCoveredColumnNameTxn != coveredColumnNameTxn
-                            || includeIdx >= coveredColumns.size()
-                            || coveredColumns.getQuick(includeIdx) != coveredColumnIndex) {
-                        return;
-                    }
-                    final LPSZ src = PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexColumnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
-                    final LPSZ dst = PostingIndexUtils.coverDataFileName(other.trimTo(plen), indexColumnName, includeIdx, postingColumnNameTxn, newCoveredColumnNameTxn, sealTxn);
-                    try {
-                        linkFile(ff, src, dst);
-                    } catch (CairoException e) {
-                        // A seal purge may remove a superseded generation concurrently; nobody reads it then.
-                        if (ff.exists(src)) {
-                            throw e;
-                        }
-                    }
+            final long indexColumnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, i);
+            final LPSZ keyFile = PostingIndexUtils.keyFileName(other.trimTo(plen), indexColumnName, indexColumnNameTxn);
+            final long liveSealTxn = PostingIndexUtils.readLiveSealTxnFromKeyFileOrThrow(
+                    ff, path, plen, indexColumnName, indexColumnNameTxn, keyFile);
+            final long sealTxn = liveSealTxn >= 0 ? liveSealTxn : 0L;
+            for (int includeIdx = 0, n = coveredColumns.size(); includeIdx < n; includeIdx++) {
+                if (coveredColumns.getQuick(includeIdx) != coveredColumnIndex) {
+                    continue;
                 }
-
-                @Override
-                public void onValueFile(long postingColumnNameTxn, long sealTxn) {
+                final LPSZ src = PostingIndexUtils.coverDataFileName(path.trimTo(plen), indexColumnName, includeIdx, indexColumnNameTxn, coveredColumnNameTxn, sealTxn);
+                if (ff.exists(src)) {
+                    linkFile(ff, src, PostingIndexUtils.coverDataFileName(other.trimTo(plen), indexColumnName, includeIdx, indexColumnNameTxn, newCoveredColumnNameTxn, sealTxn));
                 }
-            });
+            }
         }
         path.trimTo(plen);
         other.trimTo(plen);

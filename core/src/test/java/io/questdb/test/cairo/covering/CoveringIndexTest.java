@@ -18220,6 +18220,49 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRenameCoveredColumnSkipsSupersededSeals() throws Exception {
+        // RENAME links the covered values of the live seal only. A superseded seal that an open reader keeps from its
+        // seal purge gets no new name: the purge may have listed the directory already and would leave it behind.
+        setProperty(PropertyKey.CAIRO_POSTING_SEAL_GEN_THRESHOLD, 2);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_rename_cov_superseded (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (val),
+                        val DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("INSERT INTO t_rename_cov_superseded VALUES ('2024-01-01T00:00:00', 'A', 1.0), ('2024-01-02T00:00:00', 'A', 2.0)");
+            try (TableReader ignore = getReader("t_rename_cov_superseded")) {
+                commitRowsThenOpenNextPartition("t_rename_cov_superseded", "3.0", "4.0", "5.0", "6.0", "300.0");
+                execute("ALTER TABLE t_rename_cov_superseded RENAME COLUMN val TO price");
+
+                final String[] names = partitionFileNames("t_rename_cov_superseded", "2024-01-02");
+                // val has no name txn, so its cover files carry none: sym.pc0.<sym txn>.<seal>
+                Assert.assertTrue(Arrays.toString(names), countFiles(names, "sym\\.pc0\\.0\\.\\d+") > 1);
+                // price has the rename's name txn: sym.pc0.<sym txn>.<price txn>.<seal>, for the live seal only
+                Assert.assertEquals(Arrays.toString(names), 1, countFiles(names, "sym\\.pc0\\.0\\.\\d+\\.\\d+"));
+            }
+
+            assertQuery("SELECT sym, price, ts FROM t_rename_cov_superseded WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: price, ts")
+                    .returns("""
+                            sym\tprice\tts
+                            A\t1.0\t2024-01-01T00:00:00.000000Z
+                            A\t2.0\t2024-01-02T00:00:00.000000Z
+                            A\t3.0\t2024-01-02T00:00:01.000000Z
+                            A\t4.0\t2024-01-02T00:00:02.000000Z
+                            A\t5.0\t2024-01-02T00:00:03.000000Z
+                            A\t6.0\t2024-01-02T00:00:04.000000Z
+                            A\t300.0\t2024-01-03T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testRenameCoveredColumnThenSealBypassWal() throws Exception {
         // RENAME moves the covered column to a new name txn, so the live index that INCLUDEs it must write the covered
         // values of its next seal, which the commits after RENAME trigger at the generation threshold, under that txn.
