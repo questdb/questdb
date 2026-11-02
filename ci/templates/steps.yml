@@ -5,6 +5,11 @@ parameters:
   - name: isHetznerAptMirrorEnabled
     type: boolean
     default: true
+  # Name of a pipeline artifact holding this platform's prebuilt Rust library
+  # (rust-build-job.yml). Empty: Maven compiles the crate in this job.
+  - name: prebuiltRustArtifact
+    type: string
+    default: ''
   - name: testTimeoutInMinutes
     type: number
     default: 55
@@ -228,9 +233,26 @@ steps:
       destinationFolder: "$(build.sourcesdirectory)/maven"
     condition: and(ne(variables['MAVEN_VERSION_OPTION'], 'Default'), ne(variables.MVN_CACHE_RESTORED, 'true'))
 
-  - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
-    displayName: "Ensure Rust is installed"
-    # Note, the `prepare_rust_env.py` script exports a number of variables.
+  # Where the Rust library comes from. With prebuiltRustArtifact, the leg tests against the
+  # library a rust-build-job.yml job published instead of compiling the crate; RUST_NATIVE_ARGS
+  # carries the Maven flags for that. It is set on every agent, empty where Maven compiles the
+  # crate itself, because an undefined $(VAR) would reach Maven as literal text. Coverage legs
+  # never pass an artifact: they need the library instrumented for coverage (qdbr-coverage).
+  - ${{ if ne(parameters.prebuiltRustArtifact, '') }}:
+      - task: DownloadPipelineArtifact@2
+        displayName: "Download prebuilt Rust library"
+        inputs:
+          buildType: current
+          artifactName: ${{ parameters.prebuiltRustArtifact }}
+          targetPath: $(Pipeline.Workspace)/qdbr-native
+      - bash: echo "##vso[task.setvariable variable=RUST_NATIVE_ARGS]-DskipNative -Dqdbr.prebuilt.dir=$(Pipeline.Workspace)/qdbr-native"
+        displayName: "Use prebuilt Rust library"
+  - ${{ else }}:
+      - bash: echo "##vso[task.setvariable variable=RUST_NATIVE_ARGS]"
+        displayName: "Use Maven-built Rust library"
+      - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
+        displayName: "Ensure Rust is installed"
+        # Note, the `prepare_rust_env.py` script exports a number of variables.
 
   - template: install-llvm.yml
     parameters:
@@ -255,7 +277,7 @@ steps:
       mavenPomFile: "pom.xml"
       mavenOptions: "$(MAVEN_OPTS)"
       goals: "compile"
-      options: "-s $(MAVEN_SETTINGS_FILE) $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+      options: "-s $(MAVEN_SETTINGS_FILE) $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS)"
       jdkVersionOption: $(jdk)
     # succeeded() explicitly: a bare variable condition replaces Azure's implicit
     # succeeded() guard, so without it this step runs after an earlier step (e.g.
@@ -268,6 +290,35 @@ steps:
           eq(variables['testset'], 'none'),
           eq(variables['SOURCE_CODE_CHANGED'], 'false')
         )
+      )
+  - task: Maven@3
+    displayName: "Run tests (prebuilt Rust library)"
+    inputs:
+      mavenVersionOption: "$(MAVEN_VERSION_OPTION)"
+      mavenDirectory: '$(build.sourcesdirectory)/maven/apache-maven-$(MAVEN_VERSION)'
+      mavenPomFile: "pom.xml"
+      mavenOptions: "-Xlog:gc -Dfile.encoding=UTF-8 $(MAVEN_OPTS)"
+      goals: "clean test"
+      options: "-s $(MAVEN_SETTINGS_FILE) --batch-mode --quiet $(TEST_REACTOR_ARGS) -Dtest.include=$(includeTests)
+        -Dtest.exclude=$(excludeTests)
+        -Dout=$(Build.SourcesDirectory)/ci/qlog.conf
+        -DfailIfNoTests=false
+        -Dsurefire.failIfNoSpecifiedTests=false
+        $(WEB_CONSOLE_PROFILE)
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS) $(TEST_COMMIT_MODE_OPT)"
+      jdkVersionOption: $(jdk)
+      ${{ if ne(parameters.testCommitModeGroup, '') }}:
+        testRunTitle: "$(TEST_RUN_TITLE)"
+    env:
+      QDB_TEST_WINDOWS_SYMLINKS: "1"
+    timeoutInMinutes: ${{ parameters.testTimeoutInMinutes }}
+    # succeeded() explicitly: see "Compile with Maven" above.
+    condition: |
+      and(
+        succeeded(),
+        eq(variables['testset'], 'all'),
+        eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+        or(eq(variables['os'], 'Windows'), eq(variables['os'], 'macOS'))
       )
   - task: Maven@3
     displayName: "Run tests"
@@ -283,7 +334,7 @@ steps:
         -DfailIfNoTests=false
         -Dsurefire.failIfNoSpecifiedTests=false
         $(WEB_CONSOLE_PROFILE)
-        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(TEST_COMMIT_MODE_OPT)"
+        $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS) $(RUST_NATIVE_ARGS) $(TEST_COMMIT_MODE_OPT)"
       jdkVersionOption: $(jdk)
       ${{ if ne(parameters.testCommitModeGroup, '') }}:
         testRunTitle: "$(TEST_RUN_TITLE)"
@@ -297,7 +348,8 @@ steps:
       and(
         succeeded(),
         eq(variables['testset'], 'all'),
-        eq(variables['SOURCE_CODE_CHANGED'], 'true')
+        eq(variables['SOURCE_CODE_CHANGED'], 'true'),
+        eq(variables['os'], 'Linux')
       )
   - ${{ if ne(parameters.testCommitModeGroup, '') }}:
       - template: verify-test-commit-mode.yml

@@ -816,7 +816,7 @@ stages:
               run_phase build-artifacts 30 \
                 mvn -f pom.xml -s ci/maven-settings-hetzner.xml \
                   --batch-mode -pl benchmarks,core -am package \
-                  -P build-binaries $(CLIENT_PROFILE) -P qdbr-release \
+                  -P build-binaries $(CLIENT_PROFILE) \
                   -Dmaven.test.skip=true $(MAVEN_RUN_OPTS) || exit 1
 
               test -f benchmarks/target/benchmarks.jar || {
