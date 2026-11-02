@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.view.ViewCompilerJob;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
@@ -63,6 +64,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.IntSupplier;
 
 public class PivotTest extends AbstractSqlParserTest {
 
@@ -1386,6 +1388,180 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotSubqueryRejectsAdministrativeScalarAtViewName() throws Exception {
+        // Code generation creates a PIVOT IN subquery's scalars on a compiler of its own, which sees the subquery
+        // only. A function written in a view still surfaces its requirements at the view's name in the compiled SQL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (cat VARCHAR, val INT)");
+            execute("INSERT INTO data VALUES ('a', 42)");
+            final AtomicInteger requirements = new AtomicInteger(SqlExecutionRequirements.NONE);
+            final AtomicInteger constructionCount = new AtomicInteger();
+            registerAdminScalar(requirements, constructionCount);
+            try {
+                // stored while the function needs no caller, as a definition stored before the restriction: pv_direct
+                // calls it in its own IN subquery, pv_nested through the view its IN subquery reads, and pv_subquery
+                // in the IN subquery of a PIVOT that a WHERE subquery of the view reads
+                execute("CREATE VIEW names AS (SELECT admin_scalar() cat FROM long_sequence(1))");
+                execute("CREATE VIEW pv_direct AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT admin_scalar() FROM long_sequence(1))))");
+                execute("CREATE VIEW pv_nested AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM names)))");
+                execute("""
+                        CREATE VIEW pv_subquery AS (
+                            SELECT * FROM data WHERE val > (
+                                SELECT count() FROM (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT admin_scalar() FROM long_sequence(1))))
+                            )
+                        )""");
+                execute("CREATE VIEW other AS (SELECT 1 x FROM long_sequence(1))");
+                requirements.set(SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT);
+                constructionCount.set(0);
+                for (String pivotView : new String[]{"pv_direct", "pv_nested", "pv_subquery"}) {
+                    for (String sql : new String[]{
+                            "CREATE VIEW reader AS (SELECT * FROM " + pivotView + ")",
+                            "ALTER VIEW other AS SELECT * FROM " + pivotView,
+                            "CREATE OR REPLACE VIEW other AS SELECT * FROM " + pivotView
+                    }) {
+                        assertQuery(sql)
+                                .noLeakCheck()
+                                .fails(
+                                        sql.lastIndexOf(pivotView),
+                                        "administrative function cannot be used in view PIVOT IN subquery: admin_scalar"
+                                );
+                    }
+                }
+                Assert.assertEquals(0, constructionCount.get());
+                Assert.assertNull(engine.getTableTokenIfExists("reader"));
+                assertViewSql("other", "SELECT 1 x FROM long_sequence(1)");
+                assertViewCompileFlagsClear();
+                assertNothingBusy();
+            } finally {
+                TableFunctionTestUtils.unregister(engine, "admin_scalar");
+            }
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryRejectsAdministrativeScalarAtViewNameInLiveView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (cat VARCHAR, val INT)");
+            execute("INSERT INTO data VALUES ('a', 42)");
+            execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final AtomicInteger requirements = new AtomicInteger(SqlExecutionRequirements.NONE);
+            final AtomicInteger constructionCount = new AtomicInteger();
+            registerAdminScalar(requirements, constructionCount);
+            try {
+                execute("CREATE VIEW pv AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT admin_scalar() FROM long_sequence(1))))");
+                requirements.set(SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT);
+                constructionCount.set(0);
+                final String select = "SELECT ts, v, count(*) OVER (PARTITION BY k ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS rn "
+                        + "FROM base WHERE v < (SELECT a FROM pv)";
+                // CREATE LIVE VIEW compiles the SELECT on its own, so the position is relative to it
+                assertQuery("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + select)
+                        .noLeakCheck()
+                        .fails(select.lastIndexOf("pv"), "administrative function cannot be used in live view: admin_scalar");
+                Assert.assertEquals(0, constructionCount.get());
+                Assert.assertNull(engine.getTableTokenIfExists("lv"));
+                assertNothingBusy();
+            } finally {
+                TableFunctionTestUtils.unregister(engine, "admin_scalar");
+            }
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryRejectsAdministrativeScalarAtViewNameInMatView() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (cat VARCHAR, val INT)");
+            execute("INSERT INTO data VALUES ('a', 42)");
+            execute("CREATE TABLE base (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO base VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            final AtomicInteger requirements = new AtomicInteger(SqlExecutionRequirements.NONE);
+            final AtomicInteger constructionCount = new AtomicInteger();
+            registerAdminScalar(requirements, constructionCount);
+            try {
+                execute("CREATE VIEW pv AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT admin_scalar() FROM long_sequence(1))))");
+                final String matViewSql = "SELECT base.ts, count() c FROM base CROSS JOIN pv SAMPLE BY 1h";
+                execute("CREATE MATERIALIZED VIEW mv WITH BASE base AS (" + matViewSql + ") PARTITION BY DAY");
+                // the first refresh compiles the stored SQL, after the function started to need a caller
+                requirements.set(SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT);
+                constructionCount.set(0);
+                drainWalAndMatViewQueues();
+                assertQuery("SELECT view_status, invalidation_reason FROM materialized_views() WHERE view_name = 'mv'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(
+                                "view_status\tinvalidation_reason\n"
+                                        + "invalid\t[" + matViewSql.lastIndexOf("pv")
+                                        + "]: administrative function cannot be used in materialized view: admin_scalar\n"
+                        );
+                Assert.assertEquals(0, constructionCount.get());
+            } finally {
+                TableFunctionTestUtils.unregister(engine, "admin_scalar");
+            }
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryRejectsAdministrativeScalarInNestedPivot() throws Exception {
+        // the IN subquery of a PIVOT nested in another PIVOT's IN subquery runs while the view compile derives metadata too
+        assertViewPivotRejectsAdministrativeScalar(
+                "SELECT 'a' FROM (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT admin_scalar() FROM long_sequence(1))))"
+        );
+    }
+
+    @Test
+    public void testPivotSubqueryRejectsAdministrativeScalarInStoredView() throws Exception {
+        // COMPILE VIEW, the view compiler job and the compile of every view at startup derive the view's columns
+        // detached from any caller, so they reject the function as CREATE VIEW does
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (cat VARCHAR, val INT)");
+            execute("INSERT INTO data VALUES ('a', 42)");
+            final AtomicInteger requirements = new AtomicInteger(SqlExecutionRequirements.NONE);
+            final AtomicInteger constructionCount = new AtomicInteger();
+            registerAdminScalar(requirements, constructionCount);
+            try {
+                // stored while the function needs no caller, as a definition stored before the restriction
+                execute("CREATE VIEW pv AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT admin_scalar() FROM long_sequence(1))))");
+                drainViewQueue();
+                assertViewStatus("valid", "");
+                final String message = "administrative function cannot be used in view PIVOT IN subquery: admin_scalar";
+                requirements.set(SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT);
+                constructionCount.set(0);
+                // COMPILE VIEW fails at the view's name, and queues the view compiler job, which invalidates the view
+                assertQuery("COMPILE VIEW pv").noLeakCheck().fails(13, message);
+                drainViewQueue();
+                assertViewStatus("invalid", message);
+                Assert.assertEquals(0, constructionCount.get());
+
+                requirements.set(SqlExecutionRequirements.NONE);
+                execute("COMPILE VIEW pv");
+                drainViewQueue();
+                assertViewStatus("valid", "");
+                requirements.set(SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT);
+                constructionCount.set(0);
+                try (SqlExecutionContext startupContext = engine.createViewCompilerContext(1)) {
+                    ViewCompilerJob.compileAllViews(engine, startupContext, new ObjList<>());
+                }
+                assertViewStatus("invalid", message);
+                Assert.assertEquals(0, constructionCount.get());
+
+                // a read of the view runs the subquery as its reader
+                assertQuery("SELECT * FROM pv")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                a
+                                42
+                                """);
+                Assert.assertTrue(constructionCount.get() > 0);
+                assertViewCompileFlagsClear();
+                assertNothingBusy();
+            } finally {
+                TableFunctionTestUtils.unregister(engine, "admin_scalar");
+            }
+        });
+    }
+
+    @Test
     public void testPivotSubqueryRejectsAdministrativeScalarInViewSelect() throws Exception {
         assertViewPivotRejectsAdministrativeScalar("SELECT admin_scalar() FROM long_sequence(1)");
     }
@@ -1400,46 +1576,32 @@ public class PivotTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE sales (region VARCHAR, product VARCHAR, amount INT)");
             execute("INSERT INTO sales VALUES ('East', 'p1', 10)");
-            final String functionName = "admin_cursor";
             final ObjList<TableFunctionTestUtils.CloseCountingRecordCursorFactory> factories = new ObjList<>();
             TableFunctionTestUtils.register(
                     engine,
-                    functionName,
+                    "admin_cursor",
                     SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
                     factories
             );
             try {
                 // The optimiser creates a FROM-clause table function before code generation, so the view
                 // compile flags the IN subquery while it optimises it, here that of the second FOR column.
-                final String query = """
-                        SELECT * FROM sales
-                        PIVOT (SUM(amount) FOR region IN ('East') product IN (
-                            SELECT 'p1' FROM long_sequence(1) UNION ALL SELECT permission FROM %s()
-                        ))
-                        """.formatted(functionName);
-                final String sql = "CREATE VIEW pv AS (" + query + ")";
-                assertQuery(sql)
-                        .noLeakCheck()
-                        .fails(
-                                sql.indexOf(functionName),
-                                "administrative function cannot be used in view PIVOT IN subquery: " + functionName
-                        );
-                Assert.assertEquals(0, factories.size());
-                Assert.assertNull(engine.getTableTokenIfExists("pv"));
-                Assert.assertFalse(sqlExecutionContext.isViewCompile());
-                Assert.assertFalse(sqlExecutionContext.isViewMetadataSubquery());
-                assertQuery(query)
-                        .noLeakCheck()
-                        .noRandomAccess()
-                        .expectSize()
-                        .returns("""
+                assertViewPivotRejects(
+                        "admin_cursor",
+                        """
+                                SELECT * FROM sales
+                                PIVOT (SUM(amount) FOR region IN ('East') product IN (
+                                    SELECT 'p1' FROM long_sequence(1) UNION ALL SELECT permission FROM admin_cursor()
+                                ))
+                                """,
+                        factories::size,
+                        """
                                 East_p1
                                 10
-                                """);
-                Assert.assertTrue(factories.size() > 0);
-                assertNothingBusy();
+                                """
+                );
             } finally {
-                TableFunctionTestUtils.unregister(engine, functionName);
+                TableFunctionTestUtils.unregister(engine, "admin_cursor");
             }
         });
     }
@@ -2413,7 +2575,11 @@ public class PivotTest extends AbstractSqlParserTest {
                 // Only a PIVOT IN subquery runs while the view compiler derives a view's columns. Every other
                 // subquery of a view runs when the view is read, as its reader.
                 final String count = "(SELECT count() FROM " + functionName + "())";
-                execute("CREATE VIEW v_pivot AS (SELECT * FROM data WHERE val > " + count + " PIVOT (SUM(val) FOR cat IN ('a')))");
+                execute("""
+                        CREATE VIEW v_pivot AS (
+                            SELECT * FROM data WHERE val > %s
+                            PIVOT (SUM(val) FOR cat IN (SELECT cat FROM data))
+                        )""".formatted(count));
                 execute("CREATE VIEW v_where AS (SELECT * FROM data WHERE val > " + count + ")");
                 execute("COMPILE VIEW v_pivot");
                 execute("COMPILE VIEW v_where");
@@ -4506,6 +4672,15 @@ public class PivotTest extends AbstractSqlParserTest {
         Assert.assertEquals(0, engine.getBusyWriterCount());
     }
 
+    private static void assertViewCompileFlagsClear() {
+        Assert.assertFalse(sqlExecutionContext.isViewCompile());
+        Assert.assertFalse(sqlExecutionContext.isViewMetadataSubquery());
+    }
+
+    private static void assertViewSql(String viewName, String expectedSql) {
+        Assert.assertEquals(expectedSql, engine.getViewGraph().getViewDefinition(engine.verifyTableName(viewName)).getViewSql());
+    }
+
     private static String columnNames(RecordMetadata metadata) {
         final StringSink sink = new StringSink();
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -4528,6 +4703,38 @@ public class PivotTest extends AbstractSqlParserTest {
                     ('B', 'X', 30),
                     ('B', 'Y', 40)
                 """);
+    }
+
+    // admin_scalar() returns 'a' and declares the given requirements, as an Enterprise administrative function such as
+    // backup_instance_name() declares REQUIRES_ENTERPRISE_SECURITY_CONTEXT; it counts its constructions
+    private static void registerAdminScalar(AtomicInteger requirements, AtomicInteger constructionCount) throws SqlException {
+        final ObjList<FunctionFactoryDescriptor> descriptors = new ObjList<>();
+        descriptors.add(new FunctionFactoryDescriptor(new FunctionFactory() {
+            @Override
+            public int getExecutionRequirements() {
+                return requirements.get();
+            }
+
+            @Override
+            public String getSignature() {
+                return "admin_scalar()";
+            }
+
+            @Override
+            public Function newInstance(
+                    int position,
+                    ObjList<Function> args,
+                    IntList argPositions,
+                    CairoConfiguration configuration,
+                    SqlExecutionContext executionContext
+            ) {
+                constructionCount.incrementAndGet();
+                return new VarcharConstant("a");
+            }
+        }));
+        final var functionFactories = engine.getFunctionFactoryCache().getFactories();
+        Assert.assertNull(functionFactories.get("admin_scalar"));
+        functionFactories.put("admin_scalar", descriptors);
     }
 
     /**
@@ -4609,13 +4816,7 @@ public class PivotTest extends AbstractSqlParserTest {
             execute("CREATE VIEW pv AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (" + inQuery + ")))");
             execute("COMPILE VIEW pv");
             drainViewQueue();
-            assertQuery("SELECT view_status, invalidation_reason FROM views() WHERE view_name = 'pv'")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .returns("""
-                            view_status\tinvalidation_reason
-                            valid\t
-                            """);
+            assertViewStatus("valid", "");
             assertQuery("SELECT * FROM pv")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -4627,69 +4828,68 @@ public class PivotTest extends AbstractSqlParserTest {
         });
     }
 
+    // CREATE VIEW, ALTER VIEW and CREATE OR REPLACE VIEW reject the administrative function in the query's PIVOT IN
+    // subquery before they construct it, and restore the view compile flags; the query still runs ad hoc, as its caller
+    private void assertViewPivotRejects(
+            String functionName,
+            String query,
+            IntSupplier constructionCount,
+            String expectedAdHoc
+    ) throws Exception {
+        final String message = "administrative function cannot be used in view PIVOT IN subquery: " + functionName;
+        final String create = "CREATE VIEW pv AS (" + query + ")";
+        assertQuery(create).noLeakCheck().fails(create.indexOf(functionName), message);
+        Assert.assertNull(engine.getTableTokenIfExists("pv"));
+
+        execute("CREATE VIEW pv AS (SELECT 1 x FROM long_sequence(1))");
+        for (String sql : new String[]{"ALTER VIEW pv AS " + query, "CREATE OR REPLACE VIEW pv AS " + query}) {
+            assertQuery(sql).noLeakCheck().fails(sql.indexOf(functionName), message);
+        }
+        Assert.assertEquals(0, constructionCount.getAsInt());
+        assertViewSql("pv", "SELECT 1 x FROM long_sequence(1)");
+        assertViewCompileFlagsClear();
+        execute("ALTER VIEW pv AS (SELECT 2 x FROM long_sequence(1))");
+        assertViewCompileFlagsClear();
+
+        assertQuery(query)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns(expectedAdHoc);
+        Assert.assertTrue(constructionCount.getAsInt() > 0);
+        assertNothingBusy();
+    }
+
     private void assertViewPivotRejectsAdministrativeScalar(String inQuery) throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE data (cat VARCHAR, val INT)");
             execute("INSERT INTO data VALUES ('a', 42)");
-            final String functionName = "admin_scalar";
             final AtomicInteger constructionCount = new AtomicInteger();
-            final ObjList<FunctionFactoryDescriptor> descriptors = new ObjList<>();
-            descriptors.add(new FunctionFactoryDescriptor(new FunctionFactory() {
-                @Override
-                public int getExecutionRequirements() {
-                    return SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT;
-                }
-
-                @Override
-                public String getSignature() {
-                    return functionName + "()";
-                }
-
-                @Override
-                public Function newInstance(
-                        int position,
-                        ObjList<Function> args,
-                        IntList argPositions,
-                        CairoConfiguration configuration,
-                        SqlExecutionContext executionContext
-                ) {
-                    constructionCount.incrementAndGet();
-                    return new VarcharConstant("a");
-                }
-            }));
-            final var functionFactories = engine.getFunctionFactoryCache().getFactories();
-            Assert.assertNull(functionFactories.get(functionName));
-            functionFactories.put(functionName, descriptors);
+            registerAdminScalar(new AtomicInteger(SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT), constructionCount);
             try {
                 // Code generation constructs these scalars, after the optimiser's metadata-subquery scope ends.
-                final String query = """
-                        SELECT * FROM data
-                        PIVOT (SUM(val) FOR cat IN (%s))
-                        """.formatted(inQuery);
-                final String sql = "CREATE VIEW pv AS (" + query + ")";
-                assertQuery(sql)
-                        .noLeakCheck()
-                        .fails(
-                                sql.indexOf(functionName),
-                                "administrative function cannot be used in view PIVOT IN subquery: " + functionName
-                        );
-                Assert.assertEquals(0, constructionCount.get());
-                Assert.assertNull(engine.getTableTokenIfExists("pv"));
-                Assert.assertFalse(sqlExecutionContext.isViewCompile());
-                Assert.assertFalse(sqlExecutionContext.isViewMetadataSubquery());
-                assertQuery(query)
-                        .noLeakCheck()
-                        .noRandomAccess()
-                        .expectSize()
-                        .returns("""
+                assertViewPivotRejects(
+                        "admin_scalar",
+                        """
+                                SELECT * FROM data
+                                PIVOT (SUM(val) FOR cat IN (%s))
+                                """.formatted(inQuery),
+                        constructionCount::get,
+                        """
                                 a
                                 42
-                                """);
-                Assert.assertTrue(constructionCount.get() > 0);
-                assertNothingBusy();
+                                """
+                );
             } finally {
-                functionFactories.remove(functionName);
+                TableFunctionTestUtils.unregister(engine, "admin_scalar");
             }
         });
+    }
+
+    private void assertViewStatus(String status, String invalidationReason) throws Exception {
+        assertQuery("SELECT view_status, invalidation_reason FROM views() WHERE view_name = 'pv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_status\tinvalidation_reason\n" + status + '\t' + invalidationReason + '\n');
     }
 }

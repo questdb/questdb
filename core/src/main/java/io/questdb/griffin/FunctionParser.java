@@ -559,6 +559,14 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         return previousPosition;
     }
 
+    /**
+     * Returns the position the functions created now report their execution requirements at, or -1 when
+     * each reports its own, see {@link #enterExecutionRequirementPosition(int)}.
+     */
+    int getExecutionRequirementPosition() {
+        return executionRequirementPosition;
+    }
+
     void restoreExecutionRequirementPosition(int position) {
         executionRequirementPosition = position;
     }

@@ -96,6 +96,18 @@ public final class SqlExecutionRequirements implements Mutable {
         checkStoredView0(requirements, position, name, isStatement, viewNameOf(view), isAlterable(view), executionContext);
     }
 
+    /**
+     * Throws when a PIVOT IN subquery that derives an ordinary view's metadata may not use a function, or a
+     * SHOW statement, with the given requirements: one that needs the Enterprise security context of the
+     * caller, see {@link #REQUIRES_ENTERPRISE_SECURITY_CONTEXT}. The view compiler runs that subquery
+     * again, detached from any caller, whenever it recompiles the view. Other requirements pass.
+     *
+     * @param requirements the requirements of the function or statement
+     * @param position     where the requirements surface in the compiled SQL
+     * @param name         the name of the function, or the SHOW statement
+     * @param isStatement  whether name is a SHOW statement rather than a function
+     * @throws SqlException when the subquery may not use the function or statement
+     */
     public static void checkViewMetadataSubquery(
             int requirements,
             int position,

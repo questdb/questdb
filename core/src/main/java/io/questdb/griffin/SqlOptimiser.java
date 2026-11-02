@@ -8009,18 +8009,30 @@ public class SqlOptimiser implements Mutable {
                 }
             }
 
+            // A function written in a view surfaces its execution requirements at the name of the outermost view in
+            // the compiled SQL, see FunctionParser.enterExecutionRequirementPosition(). optimiseExpressionModels()
+            // enters that name while it optimises a sub-query of a view; otherwise this PIVOT carries the name of
+            // the view it is expanded from, if any.
+            final ExpressionNode viewNameExpr = model.getViewNameExpr();
+            final int enteredRequirementPosition = functionParser.getExecutionRequirementPosition();
+            final int requirementPosition = enteredRequirementPosition > -1
+                    ? enteredRequirementPosition
+                    : viewNameExpr != null ? viewNameExpr.position : -1;
+
             for (int i = 0, n = pivotForColumns.size(); i < n; i++) {
                 PivotForColumn pivotForColumn = pivotForColumns.getQuick(i);
                 if (!pivotForColumn.isValueList()) {
                     ExpressionNode subQueryNode = pivotForColumn.getSelectSubqueryExpr();
                     assert subQueryNode != null;
                     assert compiler != null;
+                    // Code generation creates the sub-query's scalar functions after optimiseExpressionModels()
+                    // has left the sub-query, so a view compile flags the sub-query again for them.
+                    final boolean wasViewMetadataSubquery = sqlExecutionContext.isViewMetadataSubquery();
+                    sqlExecutionContext.setViewMetadataSubquery(wasViewMetadataSubquery || sqlExecutionContext.isViewCompile());
                     // The borrowed compiler did not parse this model, so it must not retry: a retry
                     // re-parses its lexer, which holds the statement it compiled last. When a table
                     // the sub-query reads goes out of date, the exception propagates to whatever
                     // compiles this statement, which holds the statement's text and can retry it.
-                    final boolean wasViewMetadataSubquery = sqlExecutionContext.isViewMetadataSubquery();
-                    sqlExecutionContext.setViewMetadataSubquery(wasViewMetadataSubquery || sqlExecutionContext.isViewCompile());
                     try (RecordCursorFactory inListFactory = compiler.generateSelectWithoutRetries(subQueryNode.queryModel, sqlExecutionContext, true)) {
                         final RecordMetadata inListMetadata = inListFactory.getMetadata();
                         final int columnCount = inListMetadata.getColumnCount();
@@ -8081,6 +8093,13 @@ public class SqlOptimiser implements Mutable {
                         if (valueCount == 0) {
                             throw SqlException.$(subQueryNode.position, "PIVOT IN subquery returned empty result set");
                         }
+                    } catch (SqlException e) {
+                        // The borrowed compiler sees the sub-query only, so it reports a function that a view's
+                        // definition writes at its position in that definition, not in the compiled SQL.
+                        if (e.isFunctionNotAllowed() && requirementPosition > -1) {
+                            e.setPosition(requirementPosition);
+                        }
+                        throw e;
                     } finally {
                         sqlExecutionContext.setViewMetadataSubquery(wasViewMetadataSubquery);
                     }
