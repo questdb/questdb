@@ -55,6 +55,7 @@ import org.jetbrains.annotations.Nullable;
  * heap stays bounded by the live entries.
  */
 public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
+    static final long VAR_ENTRY_LEN_OFFSET = 16;
     // Pre-size cap: presizing the full trigger for huge limits would allocate
     // gigabytes upfront; beyond this the buffer falls back to doubling growth.
     private static final long MAX_PRESIZE_ENTRIES = 1024 * 1024;
@@ -63,7 +64,6 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
     private static final long MIN_COMPACTION_TRIGGER = 4096;
     // Variable entry layout: (k1, k2, len, heap offset, rowId) - encoded_var in ooo.cpp.
     private static final long VAR_ENTRY_KEY_OFFSET = 24;
-    private static final long VAR_ENTRY_LEN_OFFSET = 16;
     private static final long VAR_ENTRY_ROWID_OFFSET = 32;
     // Marker byte plus the six inline-prefix value bytes that the prefix-6 reject compares.
     private static final long VAR_PREFIX6_KEY_BYTES = 7;
@@ -394,7 +394,7 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
     }
 
     // memcmp over [aAddr, aAddr+len) vs [bAddr, bAddr+len).
-    private static int compareMemory(long aAddr, long bAddr, long len) {
+    static int compareMemory(long aAddr, long bAddr, long len) {
         long i = 0;
         for (; i + 8 <= len; i += 8) {
             final long a = Long.reverseBytes(Unsafe.getLong(aAddr + i));

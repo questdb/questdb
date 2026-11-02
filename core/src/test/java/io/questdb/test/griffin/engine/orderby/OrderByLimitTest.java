@@ -306,25 +306,93 @@ public class OrderByLimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE seq AS (SELECT x v FROM long_sequence(60_000))");
             final String[][] cases = {
-                    {"v", "3_000", "v > 57_000", "3"},
+                    {"CASE WHEN v = 1 THEN 1_000_000 ELSE v END", "3_000", "v = 1 OR v > 57_001", "3"},
                     {"CASE WHEN v % 3 = 0 THEN v ELSE -v END", "1_000", "v % 3 = 0 AND v > 57_000", "7"},
-                    {"v", "300", "v > 59_700", "13"},
-                    {"v", "100", "v > 59_900", "14"}
+                    {"CASE WHEN v = 1 THEN 1_000_000 ELSE v END", "300", "v = 1 OR v > 59_701", "13"},
+                    {"CASE WHEN v = 1 THEN 1_000_000 ELSE v END", "100", "v = 1 OR v > 59_901", "14"}
             };
             for (String[] c : cases) {
                 final String sql = "SELECT * FROM (SELECT " + c[0] + " id FROM seq WHERE v <= 30_000 UNION ALL SELECT "
                         + c[0] + " id FROM seq WHERE v > 30_000) ORDER BY id DESC LIMIT " + c[1];
                 assertMatchesReference(sql, "SELECT " + c[0] + " id FROM seq WHERE " + c[2] + " ORDER BY id DESC");
-                try (RecordCursorFactory factory = select(sql)) {
-                    final EncodedSortLimitedLightRecordCursorFactory topK = (EncodedSortLimitedLightRecordCursorFactory) factory.getBaseFactory();
-                    for (int pass = 0; pass < 2; pass++) {
-                        final long compactions = topK.getCompactionCount();
-                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                            while (cursor.hasNext()) {
-                            }
-                        }
-                        Assert.assertEquals(sql, Long.parseLong(c[3]), topK.getCompactionCount() - compactions);
-                    }
+                assertCompactionsPerPass(sql, Long.parseLong(c[3]));
+            }
+        });
+    }
+
+    @Test
+    public void testCopyingTopKKeepsTailOfBestFirstRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE seq AS (SELECT x v, ('s' || (100_000 + x))::SYMBOL s FROM long_sequence(60_000))");
+            final String[][] cases = {
+                    {"v id", "id DESC", "3_000"},
+                    {"v / 7 id", "id DESC", "20"},
+                    {"v / 1_000 id", "id DESC", "300"},
+                    {"v % 25_000 id", "id DESC", "3_000"},
+                    {"CASE WHEN v = 59_990 THEN 59_000 ELSE v END id", "id DESC", "3_000"},
+                    {"CASE WHEN v <= 100 THEN NULL ELSE v END id", "id DESC", "50"},
+                    {"60_001 - v id", "id", "40"},
+                    {"v id", "id", "30"},
+                    {"v::DOUBLE / 3 id", "id DESC", "100"},
+                    {"s id", "id DESC", "40"},
+                    {"v / 100 g, v", "g DESC, v", "150"},
+                    {"v / 30_000 g, v", "g DESC, v DESC", "40"},
+                    {"CASE WHEN v <= 4_096 THEN 5_001 - v WHEN v = 4_097 THEN 920 ELSE 910 END id, v", "id", "40"},
+                    {"v id", "id DESC", "10, 25"},
+                    {"1 id, v", "id DESC", "10"}
+            };
+            for (String[] c : cases) {
+                assertMatchesReference(
+                        "SELECT * FROM (SELECT " + c[0] + " FROM seq WHERE v <= 30_000 UNION ALL SELECT " + c[0]
+                                + " FROM seq WHERE v > 30_000) ORDER BY " + c[1] + " LIMIT " + c[2],
+                        "SELECT " + c[0] + " FROM seq ORDER BY " + c[1] + " LIMIT " + c[2]
+                );
+            }
+            assertCompactionsPerPass(
+                    "SELECT * FROM (SELECT v id FROM seq WHERE v <= 30_000 UNION ALL SELECT v id FROM seq WHERE v > 30_000) "
+                            + "ORDER BY id DESC LIMIT 3_000",
+                    0
+            );
+            assertCompactionsPerPass(
+                    "SELECT * FROM (SELECT v / 7 id FROM seq WHERE v <= 30_000 UNION ALL SELECT v / 7 id FROM seq WHERE v > 30_000) "
+                            + "ORDER BY id DESC LIMIT 20",
+                    0
+            );
+            // The window compares whole keys, so a leading column shared by 30_000 rows keeps it open,
+            // and it holds fewer rows than the compaction trigger.
+            assertCompactionsPerPass(
+                    "SELECT * FROM (SELECT v / 30_000 g, v FROM seq WHERE v <= 30_000 UNION ALL SELECT v / 30_000 g, v FROM seq WHERE v > 30_000) "
+                            + "ORDER BY g DESC, v DESC LIMIT 40",
+                    0
+            );
+        });
+    }
+
+    @Test
+    public void testCopyingTopKKeepsTailOfBestFirstVarSizeKeys() throws Exception {
+        // The scan encodes every row's key to check the order, so the key heap must not
+        // keep those keys: 60_000 long keys need far more than this budget.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_PAGE_SIZE, 4_096);
+        node1.setProperty(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES, 524_288);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE seq AS (SELECT x v FROM long_sequence(60_000))");
+            // The fourth column is the compactions per pass, absent where a row breaks the order.
+            final String[][] cases = {
+                    {"('v' || (100_000 + v))::VARCHAR id", "id DESC", "v > 59_960", "0"},
+                    {"((100_000 + v) || '_with_a_long_suffix')::VARCHAR id", "id DESC", "v > 59_960", "0"},
+                    {"((100_000 + v) || '_with_a_long_suffix')::STRING id", "id DESC", "v > 59_960", "0"},
+                    {"('v' || (200_000 - v) || '_with_a_long_suffix')::VARCHAR id", "id", "v > 59_960", "0"},
+                    {"('sensor_' || (100_000 + v) || '_with_a_long_suffix')::VARCHAR id", "id DESC", "v > 59_960", "0"},
+                    {"(CASE WHEN v = 30_500 THEN 'z' ELSE (100_000 + v) || '_with_a_long_suffix' END)::VARCHAR id", "id DESC", "v = 30_500 OR v > 59_961", null},
+                    {"(CASE WHEN v <= 100 THEN 'key_' || (200_000 - v) WHEN v = 101 THEN 'key_199950' ELSE 'key_199920' END)::VARCHAR id", "id", "v BETWEEN 81 AND 100 OR v BETWEEN 102 AND 121", null}
+            };
+            for (String[] c : cases) {
+                final String sql = "SELECT * FROM (SELECT " + c[0] + " FROM seq WHERE v <= 30_000 UNION ALL SELECT " + c[0]
+                        + " FROM seq WHERE v > 30_000) ORDER BY " + c[1] + " LIMIT 40";
+                assertMatchesReference(sql, "SELECT " + c[0] + " FROM seq WHERE " + c[2] + " ORDER BY " + c[1]);
+                // Keys that share a long prefix stay in the window, which holds fewer rows than the compaction trigger.
+                if (c[3] != null) {
+                    assertCompactionsPerPass(sql, Long.parseLong(c[3]));
                 }
             }
         });
@@ -785,6 +853,20 @@ public class OrderByLimitTest extends AbstractCairoTest {
         final StringSink sink = new StringSink();
         printSql(query, sink);
         return sink.toString();
+    }
+
+    private void assertCompactionsPerPass(String sql, long expected) throws Exception {
+        try (RecordCursorFactory factory = select(sql)) {
+            final EncodedSortLimitedLightRecordCursorFactory topK = (EncodedSortLimitedLightRecordCursorFactory) factory.getBaseFactory();
+            for (int pass = 0; pass < 2; pass++) {
+                final long compactions = topK.getCompactionCount();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    while (cursor.hasNext()) {
+                    }
+                }
+                Assert.assertEquals(sql, expected, topK.getCompactionCount() - compactions);
+            }
+        }
     }
 
     private void assertLimit(String limit, String expected) throws Exception {

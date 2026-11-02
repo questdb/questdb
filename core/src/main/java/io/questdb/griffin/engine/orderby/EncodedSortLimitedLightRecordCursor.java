@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.DirectLongList;
@@ -60,9 +61,11 @@ import org.jetbrains.annotations.TestOnly;
  * For a FIRST N selection over a base presorted by its designated timestamp,
  * the scan additionally stops once a completed timestamp group pushes the
  * cumulative row count past the limit. When the base scans its timestamp
- * against the order, the newest timestamp groups that cover the limit hold
- * the top-K: the copying build keeps only those groups and encodes them once
- * the scan ends.
+ * against the order, or the leading key word of the copied rows never
+ * increases, the newest groups of equal leading key that cover the limit
+ * hold the top-K: the copying build keeps only those groups and encodes them
+ * once the scan ends. A row that breaks that order hands the kept rows, itself
+ * included, and the rest of the scan to the regular copying build.
  * <p>
  * Given a record sink, the cursor serves a base without random access: it copies
  * each row the buffer keeps into a record array and encodes the row's index in
@@ -82,6 +85,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
     private final RecordArray records;
     // Compaction re-stores the surviving rows here, then copies them back to records.
     private final RecordArray spareRecords;
+    private final long[] tailKeyWords = new long[4];
     private final int timestampIndex;
     private RecordCursor baseCursor;
     private Record baseRecord;
@@ -94,11 +98,13 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
     private boolean isEarlyStopEnabled;
     private boolean isFirstN;
     private boolean isOpen;
-    private boolean isTailBuild;
+    private MemoryCARW keyHeap;
+    private int keyLongs;
     private long limit;
     private int rowIdOffset;
     private long skipFirst;
     private long skipLast;
+    private long tailKeyLen;
 
     EncodedSortLimitedLightRecordCursor(
             CairoConfiguration configuration,
@@ -261,8 +267,10 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         entries.of(keyType, isFirstN, limit);
         // Variable-length keys spill into the buffer's key heap; the encoder
         // writes the full key bytes there during the build pass.
-        if (keyType.isVariable()) {
-            encoder.setKeyHeap(entries.getKeyHeap());
+        keyHeap = keyType.isVariable() ? entries.getKeyHeap() : null;
+        keyLongs = keyType.isVariable() ? 0 : keyType.keyLength() / Long.BYTES;
+        if (keyHeap != null) {
+            encoder.setKeyHeap(keyHeap);
         }
         circuitBreaker = executionContext.getCircuitBreaker();
         isBuilt = false;
@@ -301,7 +309,6 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         this.skipFirst = Math.max(skipFirst, 0);
         this.skipLast = Math.max(skipLast, 0);
         this.isEarlyStopEnabled = isFirstN && timestampIndex != -1 && !isScanAgainstOrder;
-        this.isTailBuild = isFirstN && isScanAgainstOrder;
     }
 
     @Override
@@ -365,6 +372,24 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         spareRecords.reset();
     }
 
+    private int compareTailKey(Record record, long scratch) {
+        if (keyHeap == null) {
+            encoder.encode(record, scratch, 0);
+            for (int i = 0; i < keyLongs; i++) {
+                final int cmp = Long.compareUnsigned(Unsafe.getLong(scratch + 8L * i), tailKeyWords[i]);
+                if (cmp != 0) {
+                    return cmp;
+                }
+            }
+            return 0;
+        }
+        keyHeap.jumpTo(tailKeyLen);
+        encoder.encode(record, scratch, 0);
+        final long len = Unsafe.getLong(scratch + EncodedTopKBuffer.VAR_ENTRY_LEN_OFFSET);
+        final int cmp = EncodedTopKBuffer.compareMemory(keyHeap.addressOf(tailKeyLen), keyHeap.addressOf(0), Math.min(len, tailKeyLen));
+        return cmp != 0 ? cmp : Long.compare(len, tailKeyLen);
+    }
+
     private void computeEmitWindow() {
         final long count = entries.getCount();
         // The slice the LIMIT selects before skips: head for FIRST N, tail for LAST N.
@@ -387,9 +412,9 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         }
     }
 
-    private void encodeCopies() {
+    private void encodeCopies(long from) {
         final Record record = records.getRecordB();
-        for (long i = 0, n = records.size(); i < n; i++) {
+        for (long i = from, n = records.size(); i < n; i++) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             records.recordAtRowIndex(record, i);
             encoder.encodeTopK(record, i, entries);
@@ -415,14 +440,18 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         }
     }
 
-    private long findTailStart(RecordArray rows) {
+    private long findTailStart(RecordArray rows, long scratch) {
         final Record record = rows.getRecordB();
         long start = rows.size() - limit;
         rows.recordAtRowIndex(record, start);
-        final long timestamp = record.getTimestamp(timestampIndex);
+        final long timestamp = isScanAgainstOrder ? record.getTimestamp(timestampIndex) : 0;
+        if (!isScanAgainstOrder) {
+            compareTailKey(record, scratch);
+            saveTailKey(scratch);
+        }
         while (start > 0) {
             rows.recordAtRowIndex(record, start - 1);
-            if (record.getTimestamp(timestampIndex) != timestamp) {
+            if (isScanAgainstOrder ? record.getTimestamp(timestampIndex) != timestamp : compareTailKey(record, scratch) != 0) {
                 break;
             }
             start--;
@@ -430,12 +459,30 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         return start;
     }
 
+    // Fixed keys encode from the base row; var-size keys encode from the copy, so a computed string is read once.
+    private boolean putInOrder(RecordArray rows, long scratch) {
+        final int cmp;
+        if (keyHeap == null) {
+            cmp = compareTailKey(baseRecord, scratch);
+            rows.put(baseRecord);
+        } else {
+            final Record row = rows.getRecordB();
+            rows.recordAt(row, rows.put(baseRecord));
+            cmp = compareTailKey(row, scratch);
+        }
+        if (cmp > 0 && rows.size() > 1) {
+            return false;
+        }
+        saveTailKey(scratch);
+        return true;
+    }
+
     private void runBuild() {
         if (isEarlyStopEnabled) {
             runBuildTimestampEarlyStop();
             return;
         }
-        if (isTailBuild) {
+        if (records != null && isFirstN) {
             runTailBuild();
             return;
         }
@@ -519,15 +566,24 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
     }
 
     private void runTailBuild() {
-        final long trigger = limit > Long.MAX_VALUE >> 2 ? Long.MAX_VALUE : Math.max(limit << 2, MIN_TAIL_ROWS);
+        final int shift = isScanAgainstOrder ? 2 : 4;
+        final long trigger = limit > Long.MAX_VALUE >> shift ? Long.MAX_VALUE : Math.max(limit << shift, MIN_TAIL_ROWS);
+        final long scratch = isScanAgainstOrder ? 0 : entries.beginAppend();
         RecordArray rows = records;
         RecordArray spare = spareRecords;
         boolean isGroupBound = true;
+        boolean isOrdered = true;
+        tailKeyLen = 0;
         while (isGroupBound && baseCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-            rows.put(baseRecord);
+            if (isScanAgainstOrder) {
+                rows.put(baseRecord);
+            } else if (!putInOrder(rows, scratch)) {
+                isOrdered = false;
+                break;
+            }
             if (rows.size() == trigger) {
-                final long start = findTailStart(rows);
+                final long start = findTailStart(rows, scratch);
                 if (start == 0) {
                     isGroupBound = false;
                 } else {
@@ -536,16 +592,45 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
                     final RecordArray swap = rows;
                     rows = spare;
                     spare = swap;
+                    if (!isScanAgainstOrder) {
+                        final Record row = rows.getRecordB();
+                        rows.recordAtRowIndex(row, rows.size() - 1);
+                        compareTailKey(row, scratch);
+                        saveTailKey(scratch);
+                    }
                 }
             }
         }
+        long from = isOrdered && isGroupBound && rows.size() > limit ? findTailStart(rows, scratch) : 0;
         if (rows != records) {
-            copyRows(rows, 0, records);
+            copyRows(rows, from, records);
             rows.reset();
+            from = 0;
         }
-        encodeCopies();
-        if (!isGroupBound) {
+        encodeCopies(from);
+        if (!isOrdered || !isGroupBound) {
             runCopyingBuild();
         }
+    }
+
+    private void saveTailKey(long scratch) {
+        if (keyHeap == null) {
+            for (int i = 0; i < keyLongs; i++) {
+                tailKeyWords[i] = Unsafe.getLong(scratch + 8L * i);
+            }
+            return;
+        }
+        // Keys are a few dozen bytes, so a Java copy beats a native call.
+        final long len = Unsafe.getLong(scratch + EncodedTopKBuffer.VAR_ENTRY_LEN_OFFSET);
+        final long src = keyHeap.addressOf(tailKeyLen);
+        final long dst = keyHeap.addressOf(0);
+        long i = 0;
+        for (; i + Long.BYTES <= len; i += Long.BYTES) {
+            Unsafe.putLong(dst + i, Unsafe.getLong(src + i));
+        }
+        for (; i < len; i++) {
+            Unsafe.putByte(dst + i, Unsafe.getByte(src + i));
+        }
+        tailKeyLen = len;
     }
 }
