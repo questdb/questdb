@@ -126,8 +126,6 @@ public class RelationCoverageTest extends AbstractCairoTest {
                 FLOAT -> CHAR
                 LONG -> CHAR
                 SHORT -> CHAR
-                SYMBOL -> TIMESTAMP
-                SYMBOL -> TIMESTAMP_NS
                 TIMESTAMP -> CHAR
                 TIMESTAMP_NS -> CHAR
                 """, gaps);

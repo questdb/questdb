@@ -1552,7 +1552,6 @@ public class InsertTest extends AbstractCairoTest {
                             UNION ALL SELECT tn::CHAR, ts FROM src
                             UNION ALL SELECT f::CHAR, ts FROM src
                             UNION ALL SELECT db::CHAR, ts FROM src""");
-                    execute("INSERT INTO dst(t, tn, ts) SELECT sym::TIMESTAMP, sym::TIMESTAMP_NS, ts FROM src");
                     drainWalQueue();
                     assertQuery("SELECT c, t, tn FROM dst")
                             .noLeakCheck()
@@ -1567,7 +1566,6 @@ public class InsertTest extends AbstractCairoTest {
                                     A\t\t
                                     A\t\t
                                     A\t\t
-                                    \t1970-01-02T00:00:00.000000Z\t1970-01-02T00:00:00.000000000Z
                                     """);
                     execute("DROP TABLE dst");
                     execute("DROP TABLE src");
@@ -1583,8 +1581,7 @@ public class InsertTest extends AbstractCairoTest {
         // mid-insert. The statement is refused before it runs, under every copier, into WAL and
         // non-WAL tables, and stores nothing
         final String[][] pairs = {
-                {"c", "b"}, {"c", "s"}, {"c", "l"}, {"c", "d"}, {"c", "t"}, {"c", "tn"}, {"c", "f"}, {"c", "db"},
-                {"t", "sym"}, {"tn", "sym"}
+                {"c", "b"}, {"c", "s"}, {"c", "l"}, {"c", "d"}, {"c", "t"}, {"c", "tn"}, {"c", "f"}, {"c", "db"}
         };
         assertMemoryLeak(() -> {
             for (int copierType : COPIER_TYPES) {
@@ -1608,10 +1605,38 @@ public class InsertTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInsertSelectSymbolIntoTimestamp() throws Exception {
+        // the copiers parse a SYMBOL into either timestamp, so INSERT ... SELECT admits the pair
+        // without a cast, under every copier and into WAL and non-WAL tables, and so does
+        // INSERT ... VALUES
+        assertMemoryLeak(() -> {
+            for (int copierType : COPIER_TYPES) {
+                node1.setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                for (String wal : new String[]{"WAL", "BYPASS WAL"}) {
+                    createCopierGapTables(wal);
+                    execute("INSERT INTO dst(t, tn, ts) SELECT sym, sym, ts FROM src");
+                    execute("INSERT INTO dst(t, tn, ts) VALUES ('1970-01-03'::SYMBOL, '1970-01-03'::SYMBOL, 1::TIMESTAMP)");
+                    drainWalQueue();
+                    assertQuery("SELECT t, tn FROM dst")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    t\ttn
+                                    1970-01-02T00:00:00.000000Z\t1970-01-02T00:00:00.000000000Z
+                                    1970-01-03T00:00:00.000000Z\t1970-01-03T00:00:00.000000000Z
+                                    """);
+                    execute("DROP TABLE dst");
+                    execute("DROP TABLE src");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testInsertValuesPairWithoutCopierArm() throws Exception {
         // INSERT ... VALUES admits a value of such a pair only through the implicit cast, since no
-        // copier has its arm: a SYMBOL parses into either timestamp, and a number has no implicit
-        // cast into CHAR, so it is refused, as an INT is
+        // copier has its arm, and a number has no implicit cast into CHAR, so it is refused, as an
+        // INT is
         assertMemoryLeak(() -> {
             for (int copierType : COPIER_TYPES) {
                 node1.setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
@@ -1625,14 +1650,7 @@ public class InsertTest extends AbstractCairoTest {
                             "inconvertible types"
                     );
                 }
-                execute("INSERT INTO dst(t, tn, ts) VALUES ('1970-01-02'::SYMBOL, '1970-01-02'::SYMBOL, 0::TIMESTAMP)");
-                assertQuery("SELECT c, t, tn FROM dst")
-                        .noLeakCheck()
-                        .expectSize()
-                        .returns("""
-                                c\tt\ttn
-                                \t1970-01-02T00:00:00.000000Z\t1970-01-02T00:00:00.000000000Z
-                                """);
+                assertQuery("SELECT count() FROM dst").noLeakCheck().expectSize().noRandomAccess().returns("count\n0\n");
                 execute("DROP TABLE dst");
                 execute("DROP TABLE src");
             }

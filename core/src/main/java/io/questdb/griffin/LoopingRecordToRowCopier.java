@@ -168,7 +168,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
             case ColumnType.CHAR ->
                     copyFromChar(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType);
             case ColumnType.SYMBOL ->
-                    copyFromSymbol(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag);
+                    copyFromSymbol(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType);
             case ColumnType.VARCHAR ->
                     copyFromVarchar(record, row, fromColumnIndex, toColumnWriterIndex, toColumnTypeTag, toColumnType);
             case ColumnType.STRING ->
@@ -466,12 +466,14 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
         }
     }
 
-    private void copyFromSymbol(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag) {
+    private void copyFromSymbol(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType) {
         CharSequence value = record.getSymA(fromIndex);
         switch (toTypeTag) {
             case ColumnType.SYMBOL -> row.putSym(toIndex, value);
             case ColumnType.STRING -> row.putStr(toIndex, value);
             case ColumnType.VARCHAR -> RecordToRowCopierUtils.transferStrToVarcharCol(row, toIndex, value);
+            case ColumnType.TIMESTAMP ->
+                    row.putTimestamp(toIndex, ColumnType.getTimestampDriver(toType).implicitCast(value, ColumnType.SYMBOL));
             default -> throw new IllegalStateException("Unexpected value: " + toTypeTag);
         }
     }

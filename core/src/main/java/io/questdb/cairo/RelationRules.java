@@ -80,8 +80,8 @@ public final class RelationRules {
     // E: {from, other, result} cells that override the rule: LONG with FLOAT is FLOAT (the rule
     // gives DOUBLE), both ways; SYMBOL then CHAR is STRING (the rule gives SYMBOL)
     private static final int[][] CASE_REPLACE = {{LONG, FLOAT, FLOAT}, {FLOAT, LONG, FLOAT}, {SYMBOL, CHAR, STRING}};
-    // K: BYTE has a BOOLEAN arm
-    private static final short[][] COPIER_ADD = {{BYTE, BOOLEAN}};
+    // K: BYTE has a BOOLEAN arm, and SYMBOL parses into TIMESTAMP as text does
+    private static final short[][] COPIER_ADD = {{BYTE, BOOLEAN}, {SYMBOL, TIMESTAMP}};
     private static final short[][] NARROWING_REMOVE = {{INT, CHAR}, {DOUBLE, DATE}, {DOUBLE, TIMESTAMP}};
     private static final short[][] NO_CELLS = {};
     // CASE's text order: two of them meet at the later one
