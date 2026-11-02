@@ -720,6 +720,24 @@ public class OrderByLimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyingTopKWithSmallestMapPage() throws Exception {
+        // The row offsets of var-size columns page at a 16th of the row page, which this page size rounds to nothing.
+        node1.setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_PAGE_SIZE, 8);
+        assertMemoryLeak(() -> {
+            createSmallTable();
+            assertQuery("SELECT id, s, v FROM " + UNION + " ORDER BY id DESC LIMIT 3")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts\tv
+                            10\t\tv1
+                            9\ts1\tv0
+                            8\ts0\tv2
+                            """);
+        });
+    }
+
+    @Test
     public void testCopyingTopKWithinSortKeyBudget() throws Exception {
         // A full sort of the input needs more entries than the budget holds, while
         // the top-K keeps at most its compaction trigger of entries.

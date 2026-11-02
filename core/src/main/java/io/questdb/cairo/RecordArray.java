@@ -52,15 +52,7 @@ public class RecordArray extends RecordChain {
     private long size = 0L;
 
     public RecordArray(@NotNull ColumnTypes columnTypes, RecordSink recordSink, long pageSize, int maxPages) {
-        super(columnTypes, recordSink, pageSize, maxPages);
-        try {
-            this.auxMem = varOffset > 0
-                    ? Vm.getCARWInstance(pageSize >> 4, maxPages, MemoryTag.NATIVE_RECORD_CHAIN)
-                    : null;
-        } catch (Throwable th) {
-            super.close();
-            throw th;
-        }
+        this(columnTypes, recordSink, pageSize, maxPages, null);
     }
 
     public RecordArray(
@@ -73,7 +65,7 @@ public class RecordArray extends RecordChain {
         super(columnTypes, recordSink, pageSize, maxPages, maxPagesConfigKey);
         try {
             this.auxMem = varOffset > 0
-                    ? Vm.getCARWInstance(pageSize >> 4, maxPages, MemoryTag.NATIVE_RECORD_CHAIN, maxPagesConfigKey)
+                    ? Vm.getCARWInstance(Math.max(pageSize >> 4, Long.BYTES), maxPages, MemoryTag.NATIVE_RECORD_CHAIN, maxPagesConfigKey)
                     : null;
         } catch (Throwable th) {
             super.close();
