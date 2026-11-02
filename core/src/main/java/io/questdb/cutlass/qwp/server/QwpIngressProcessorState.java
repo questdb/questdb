@@ -747,6 +747,15 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return size;
     }
 
+    /**
+     * Number of tables this connection's update-details cache currently holds,
+     * each with its WAL writer.
+     */
+    @TestOnly
+    public int getCachedTableCount() {
+        return tudCache.size();
+    }
+
     public int getDeferredCloseCode() {
         return deferredCloseCode;
     }

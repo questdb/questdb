@@ -24,8 +24,6 @@
 
 package io.questdb.test.cutlass.websocket;
 
-import io.questdb.cairo.CairoEngine;
-import io.questdb.cairo.pool.WalWriterPool;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -33,7 +31,6 @@ import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
-import io.questdb.cutlass.qwp.server.QwpTudCache;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -45,8 +42,6 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.qwp.QwpWireTestFixtures;
 import org.junit.Assert;
 import org.junit.Test;
-
-import java.lang.reflect.Field;
 
 import static io.questdb.test.cutlass.websocket.QwpIngressWireHarness.*;
 
@@ -78,12 +73,12 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
                 Assert.assertEquals(1, f.clock.calls);
                 Assert.assertEquals(101_000_000, f.state.getLastDataPassEndMicros());
                 Assert.assertEquals(0, f.state.getRecvBufferLen());
-                Assert.assertEquals(1, f.tudCache.size());
+                Assert.assertEquals(1, f.state.getCachedTableCount());
 
                 f.onSend = null;
                 f.clock.nowMicros = 131_000_000;
                 f.drive(PING.length);
-                Assert.assertEquals("resumed pass must reset its activity flag", 0, f.tudCache.size());
+                Assert.assertEquals("resumed pass must reset its activity flag", 0, f.state.getCachedTableCount());
             }
             drainWalQueue();
             assertQuery("SELECT count() FROM tab").expectSize().noRandomAccess().returns("count\n2\n");
@@ -137,7 +132,7 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
                 f.drive(data.length * 3);
                 Assert.assertEquals("one idle timestamp per receive pass", 1, f.clock.calls);
                 Assert.assertEquals("timestamp must include the final ACK send", 61_000_000, f.state.getLastDataPassEndMicros());
-                Assert.assertEquals(1, f.tudCache.size());
+                Assert.assertEquals(1, f.state.getCachedTableCount());
             }
             drainWalQueue();
             assertQuery("SELECT count() FROM tab").expectSize().noRandomAccess().returns("count\n3\n");
@@ -161,8 +156,8 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
                 f.clock.nowMicros = 31_000_000;
                 f.drive(PING.length);
                 Assert.assertEquals("PING-only pass needs only its idle check", 1, f.clock.calls);
-                Assert.assertEquals(0, f.tudCache.size());
-                Assert.assertEquals(0, f.walWriterPool.getBusyCount());
+                Assert.assertEquals(0, f.state.getCachedTableCount());
+                Assert.assertEquals(0, engine.getBusyWalWriterCount());
             }
         });
     }
@@ -176,15 +171,15 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
                 // the second PING in the same receive pass.
                 f.onSend = () -> f.clock.nowMicros = 61_000_000;
                 f.drive(data.length + PING.length * 2);
-                Assert.assertEquals("same-pass PING must retain the active writer", 1, f.tudCache.size());
-                Assert.assertEquals(1, f.walWriterPool.getBusyCount());
+                Assert.assertEquals("same-pass PING must retain the active writer", 1, f.state.getCachedTableCount());
+                Assert.assertEquals(1, engine.getBusyWalWriterCount());
                 Assert.assertEquals(1, f.clock.calls);
                 Assert.assertEquals(61_000_000, f.state.getLastDataPassEndMicros());
                 f.onSend = null;
                 f.clock.nowMicros = 91_000_000;
                 f.drive(PING.length);
-                Assert.assertEquals(0, f.tudCache.size());
-                Assert.assertEquals(0, f.walWriterPool.getBusyCount());
+                Assert.assertEquals(0, f.state.getCachedTableCount());
+                Assert.assertEquals(0, engine.getBusyWalWriterCount());
             }
         });
     }
@@ -198,7 +193,7 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
                 f.clock.nowMicros = 3_601_000_000L;
                 f.drive(PING.length);
                 Assert.assertEquals("disabled idle release must not sample its clock", 0, f.clock.calls);
-                Assert.assertEquals(1, f.tudCache.size());
+                Assert.assertEquals(1, f.state.getCachedTableCount());
             }
         });
     }
@@ -235,7 +230,7 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
                 f.clock.nowMicros = 31_000_000;
                 f.drive(PING.length - 1);
                 Assert.assertEquals(1, f.clock.calls);
-                Assert.assertEquals(0, f.tudCache.size());
+                Assert.assertEquals(0, f.state.getCachedTableCount());
             }
         });
     }
@@ -249,15 +244,15 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
                 f.clock.calls = 0;
                 f.clock.nowMicros = 31_000_000;
                 f.onSend = () -> {
-                    Assert.assertEquals("PING before data must release the idle writer", 0, f.tudCache.size());
-                    Assert.assertEquals(0, f.walWriterPool.getBusyCount());
+                    Assert.assertEquals("PING before data must release the idle writer", 0, f.state.getCachedTableCount());
+                    Assert.assertEquals(0, engine.getBusyWalWriterCount());
                     f.onSend = null;
                 };
                 f.drive(PING.length * 2 + data.length);
                 Assert.assertEquals("one early PING check and one pass-end sample", 2, f.clock.calls);
                 Assert.assertEquals(31_000_000, f.state.getLastDataPassEndMicros());
-                Assert.assertEquals(1, f.tudCache.size());
-                Assert.assertEquals(1, f.walWriterPool.getBusyCount());
+                Assert.assertEquals(1, f.state.getCachedTableCount());
+                Assert.assertEquals(1, engine.getBusyWalWriterCount());
             }
         });
     }
@@ -276,12 +271,12 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
             );
             try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, concat(data, PING))) {
                 f.drive(data.length);
-                Assert.assertEquals(4, f.tudCache.size());
-                Assert.assertEquals(4, f.walWriterPool.getBusyCount());
+                Assert.assertEquals(4, f.state.getCachedTableCount());
+                Assert.assertEquals(4, engine.getBusyWalWriterCount());
                 f.clock.nowMicros += 30_000_000;
                 f.drive(PING.length);
-                Assert.assertEquals("one idle PING must release every cached table", 0, f.tudCache.size());
-                Assert.assertEquals(0, f.walWriterPool.getBusyCount());
+                Assert.assertEquals("one idle PING must release every cached table", 0, f.state.getCachedTableCount());
+                Assert.assertEquals(0, engine.getBusyWalWriterCount());
             }
         });
     }
@@ -300,7 +295,7 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
                 Assert.assertEquals(1_000_000, f.state.getLastDataPassEndMicros());
                 f.drive(PING.length);
                 Assert.assertEquals(1, f.clock.calls);
-                Assert.assertEquals(0, f.tudCache.size());
+                Assert.assertEquals(0, f.state.getCachedTableCount());
             }
             drainWalQueue();
             assertQuery("SELECT count() FROM tab").expectSize().noRandomAccess().returns("count\n1\n");
@@ -323,8 +318,6 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
         private final PhasedNetworkFacade network;
         private final QwpIngressUpgradeProcessor processor;
         private final QwpIngressProcessorState state;
-        private final QwpTudCache tudCache;
-        private final WalWriterPool walWriterPool;
         private TestableContext context;
         private boolean isSendBlocked;
         private boolean isSendDisconnected;
@@ -390,12 +383,6 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
                 state = new QwpIngressProcessorState(RECV_BUFFER_SIZE, SEND_BUFFER_SIZE, engine, lineConfig);
                 state.of(-1, AllowAllSecurityContext.INSTANCE);
                 localValue.set(context, state);
-                Field cacheField = QwpIngressProcessorState.class.getDeclaredField("tudCache");
-                cacheField.setAccessible(true);
-                tudCache = (QwpTudCache) cacheField.get(state);
-                Field poolField = CairoEngine.class.getDeclaredField("walWriterPool");
-                poolField.setAccessible(true);
-                walWriterPool = (WalWriterPool) poolField.get(engine);
             } catch (Throwable e) {
                 close();
                 throw e;

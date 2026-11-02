@@ -27,7 +27,6 @@ package io.questdb.test.cutlass.websocket;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.pool.WalWriterPool;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
@@ -37,7 +36,6 @@ import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
-import io.questdb.cutlass.qwp.server.QwpTudCache;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
@@ -50,7 +48,6 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -324,16 +321,16 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                 QwpIngressProcessorState state = openIdleWriterReleaseState(httpConfig, context);
 
                 drive(processor, context, nf, first.length);
-                Assert.assertEquals(1, tudCacheSize(state));
-                Assert.assertEquals(1, busyWalWriterCount());
+                Assert.assertEquals(1, state.getCachedTableCount());
+                Assert.assertEquals(1, engine.getBusyWalWriterCount());
 
                 nowMicros[0] += 30_000_000;
                 drive(processor, context, nf, ping.length);
-                Assert.assertEquals("idle writer must leave the connection cache", 0, tudCacheSize(state));
-                Assert.assertEquals("idle writer must return to the pool", 0, busyWalWriterCount());
+                Assert.assertEquals("idle writer must leave the connection cache", 0, state.getCachedTableCount());
+                Assert.assertEquals("idle writer must return to the pool", 0, engine.getBusyWalWriterCount());
 
                 drive(processor, context, nf, second.length);
-                Assert.assertEquals(1, tudCacheSize(state));
+                Assert.assertEquals(1, state.getCachedTableCount());
                 Assert.assertEquals(1, maxCumulativeOkAck(rawSocket.sentFrames));
             } finally {
                 Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -377,13 +374,13 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                 QwpIngressProcessorState state = openIdleWriterReleaseState(httpConfig, context);
 
                 drive(processor, context, nf, data.length);
-                Assert.assertEquals(1, tudCacheSize(state));
+                Assert.assertEquals(1, state.getCachedTableCount());
                 Assert.assertEquals(-1, maxCumulativeOkAck(rawSocket.sentFrames));
 
                 nowMicros[0] += 60_000_000;
                 drive(processor, context, nf, ping.length);
-                Assert.assertEquals("writer with uncommitted deferred rows must stay cached", 1, tudCacheSize(state));
-                Assert.assertEquals(1, busyWalWriterCount());
+                Assert.assertEquals("writer with uncommitted deferred rows must stay cached", 1, state.getCachedTableCount());
+                Assert.assertEquals(1, engine.getBusyWalWriterCount());
 
                 drive(processor, context, nf, commit.length);
                 Assert.assertEquals(1, maxCumulativeOkAck(rawSocket.sentFrames));
@@ -433,13 +430,13 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                 // 40s since the first frame, but only 20s since the second one
                 nowMicros[0] += 20_000_000;
                 drive(processor, context, nf, ping.length);
-                Assert.assertEquals("PING before the idle threshold must not release", 1, tudCacheSize(state));
-                Assert.assertEquals(1, busyWalWriterCount());
+                Assert.assertEquals("PING before the idle threshold must not release", 1, state.getCachedTableCount());
+                Assert.assertEquals(1, engine.getBusyWalWriterCount());
 
                 nowMicros[0] += 10_000_000;
                 drive(processor, context, nf, ping.length);
-                Assert.assertEquals(0, tudCacheSize(state));
-                Assert.assertEquals(0, busyWalWriterCount());
+                Assert.assertEquals(0, state.getCachedTableCount());
+                Assert.assertEquals(0, engine.getBusyWalWriterCount());
             } finally {
                 Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -468,8 +465,8 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
                 drive(processor, context, nf, data.length);
                 nowMicros[0] += 3_600_000_000L;
                 drive(processor, context, nf, ping.length);
-                Assert.assertEquals("release disabled: writer must stay cached", 1, tudCacheSize(state));
-                Assert.assertEquals(1, busyWalWriterCount());
+                Assert.assertEquals("release disabled: writer must stay cached", 1, state.getCachedTableCount());
+                Assert.assertEquals(1, engine.getBusyWalWriterCount());
             } finally {
                 Unsafe.free(recvBuf, RECV_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -934,12 +931,6 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         });
     }
 
-    private static int busyWalWriterCount() throws Exception {
-        Field f = CairoEngine.class.getDeclaredField("walWriterPool");
-        f.setAccessible(true);
-        return ((WalWriterPool) f.get(engine)).getBusyCount();
-    }
-
     /**
      * True if any server-to-client BINARY frame is a STATUS_DURABLE_ACK frame.
      * Durable acks carry per-table watermarks rather than a sequence, so there
@@ -989,12 +980,6 @@ public class QwpIngressAckLeapfrogTest extends AbstractCairoTest {
         state.of(-1, AllowAllSecurityContext.INSTANCE);
         getLV().set(context, state);
         return state;
-    }
-
-    private static int tudCacheSize(QwpIngressProcessorState state) throws Exception {
-        Field f = QwpIngressProcessorState.class.getDeclaredField("tudCache");
-        f.setAccessible(true);
-        return ((QwpTudCache) f.get(state)).size();
     }
 
     private ObjList<byte[]> ingestOnFreshConnection(
