@@ -64,7 +64,6 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
     public void testColdPartitionsAreSkipped() throws Exception {
         assertMemoryLeak(() -> {
             createTable(false);
-            execute("alter table t convert partition to parquet list '2024-01-01'");
             // Cold: parquet served from the object store, no local data
             try (TableWriter writer = getWriter("t")) {
                 writer.getTxWriter().setPartitionParquetGenerated(0, false);
@@ -74,22 +73,26 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
             }
             final String[] before = partitionDirs();
 
-            final String coldOnly = "alter table t force reindex partition list '2024-01-01'";
+            final String coldOnly = "alter table t force reindex parquet partition list '2024-01-01'";
             assertExceptionNoLeakCheck(coldOnly, coldOnly.indexOf("'2024-01-01'"), "cannot reindex cold partitions, they have no local data");
             Assert.assertArrayEquals(before, partitionDirs());
 
             // a cold partition next to others is skipped
-            execute("alter table t force reindex partition list '2024-01-01', '2024-01-02'");
+            execute("alter table t force reindex parquet partition list '2024-01-01', '2024-01-02'");
+            releaseSavePointHolds("t");
             String[] after = partitionDirs();
             Assert.assertEquals(before[0], after[0]);
             Assert.assertNotEquals(before[1], after[1]);
             Assert.assertEquals(before[2], after[2]);
 
-            execute("alter table t force reindex");
+            execute("alter table t force reindex parquet");
+            releaseSavePointHolds("t");
             after = partitionDirs();
             Assert.assertEquals(before[0], after[0]);
+            Assert.assertNotEquals(before[1], after[1]);
             Assert.assertNotEquals(before[2], after[2]);
-            Assert.assertNotEquals(before[3], after[3]);
+            // native
+            Assert.assertEquals(before[3], after[3]);
         });
     }
 
@@ -102,7 +105,8 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
             final String query = "select ts, x, v from t where b = 'k1'";
             assertExceptionNoLeakCheck(query, -1, "could not open");
 
-            execute("alter table t force reindex column b partition list '2024-01-02', '2024-01-02'");
+            execute("alter table t force reindex parquet column b partition list '2024-01-02', '2024-01-02'");
+            releaseSavePointHolds("t");
             final String[] after = partitionDirs();
             Assert.assertEquals(before[0], after[0]);
             Assert.assertNotEquals(before[1], after[1]);
@@ -121,12 +125,12 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
     public void testEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table e (ts timestamp, s symbol index) timestamp(ts) partition by day wal");
-            execute("alter table e force reindex");
+            execute("alter table e force reindex parquet");
             execute("create table n (ts timestamp, s symbol) timestamp(ts) partition by day wal");
             execute("insert into n values ('2024-01-01', 'a')");
             drainWalQueue();
             // no index to rebuild
-            execute("alter table n force reindex");
+            execute("alter table n force reindex parquet");
             // the writer is left fit for the next commit: a new partition and an O3 row
             execute("insert into n values ('2024-01-03', 'c'), ('2024-01-01T05', 'b')");
             drainWalQueue();
@@ -140,7 +144,7 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
 
             execute("create table nn (ts timestamp, s symbol) timestamp(ts) partition by day");
             execute("insert into nn values ('2024-01-01', 'a')");
-            execute("alter table nn force reindex");
+            execute("alter table nn force reindex parquet");
             execute("insert into nn values ('2024-01-03', 'c'), ('2024-01-01T05', 'b')");
             assertQuery("select ts, s from nn").timestamp("ts").expectSize().returns("""
                     ts\ts
@@ -155,21 +159,29 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
     public void testErrors() throws Exception {
         assertMemoryLeak(() -> {
             createTable(false);
-            String sql = "alter table t force reindex column zz";
+            String sql = "alter table t force reindex";
+            assertExceptionNoLeakCheck(sql, sql.length(), "'parquet' expected");
+            sql = "alter table t force reindex column b";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("column"), "'parquet' expected");
+            sql = "alter table t force reindex parquet column zz";
             assertExceptionNoLeakCheck(sql, sql.indexOf("zz"), "Invalid column: zz");
-            sql = "alter table t force reindex column x";
+            sql = "alter table t force reindex parquet column x";
             assertExceptionNoLeakCheck(sql, sql.lastIndexOf('x'), "column is not indexed");
-            sql = "alter table t force reindex partition list '2025-01-01'";
+            sql = "alter table t force reindex parquet partition list '2025-01-01'";
             assertExceptionNoLeakCheck(sql, sql.indexOf("'2025"), "partition does not exist");
-            sql = "alter table t force reindex partition";
+            final String[] before = partitionDirs();
+            sql = "alter table t force reindex parquet partition list '2024-01-01', '2024-01-04'";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("'2024-01-04'"), "partition is not parquet, use REINDEX TABLE ... LOCK EXCLUSIVE for native partitions");
+            Assert.assertArrayEquals(before, partitionDirs());
+            sql = "alter table t force reindex parquet partition";
             assertExceptionNoLeakCheck(sql, sql.length(), "'list' expected");
-            sql = "alter table t force reindex now";
+            sql = "alter table t force reindex parquet now";
             assertExceptionNoLeakCheck(sql, sql.indexOf("now"), "'partition' expected");
             sql = "alter table t force rebuild";
             assertExceptionNoLeakCheck(sql, sql.indexOf("rebuild"), "'drop' or 'reindex' expected");
 
             execute("create table np (ts timestamp, s symbol index) timestamp(ts)");
-            sql = "alter table np force reindex";
+            sql = "alter table np force reindex parquet";
             assertExceptionNoLeakCheck(sql, -1, "table is not partitioned, use REINDEX TABLE ... LOCK EXCLUSIVE");
         });
     }
@@ -181,7 +193,7 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
             final File day1 = new File(tableDir(), partitionDirs()[0]);
             try (RecordCursorFactory factory = select("select ts, x, v from t where b = 'k1'")) {
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    execute("alter table t force reindex");
+                    execute("alter table t force reindex parquet");
                     Assert.assertTrue(day1.exists());
                     println(factory, cursor);
                     TestUtils.assertEquals(K1_ROWS, sink);
@@ -201,13 +213,13 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRebuildsNativeAndParquetPartitions() throws Exception {
-        assertRebuildsAllPartitions(false);
+    public void testRebuildsParquetPartitions() throws Exception {
+        assertRebuildsParquetPartitions(false);
     }
 
     @Test
-    public void testRebuildsNativeAndParquetPartitionsWal() throws Exception {
-        assertRebuildsAllPartitions(true);
+    public void testRebuildsParquetPartitionsWal() throws Exception {
+        assertRebuildsParquetPartitions(true);
     }
 
     private static void deleteIndexKeyFile(String partitionDir, String column) {
@@ -254,7 +266,7 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
             try (InterruptingCircuitBreaker breaker = new InterruptingCircuitBreaker(state)) {
                 context.with(breaker);
                 try {
-                    execute("alter table t force reindex", context);
+                    execute("alter table t force reindex parquet", context);
                     Assert.fail();
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), message);
@@ -273,28 +285,38 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
         });
     }
 
-    private void assertRebuildsAllPartitions(boolean isWal) throws Exception {
+    // The WAL table's active partition is parquet too, the non-WAL table's stays native and keeps its version
+    private void assertRebuildsParquetPartitions(boolean isWal) throws Exception {
         assertMemoryLeak(() -> {
             createTable(isWal);
-            execute("alter table t convert partition to parquet list '2024-01-02'");
-            drainWalQueue();
-            releaseSavePointHolds("t");
+            if (isWal) {
+                execute("alter table t convert partition to parquet list '2024-01-04'");
+                drainWalQueue();
+                releaseSavePointHolds("t");
+            }
             final String[] before = partitionDirs();
             Assert.assertEquals(4, before.length);
-            // a broken native index, the active partition's included
+            // a broken parquet index, the active partition's included on the WAL table
             deleteIndexKeyFile(before[0], "b");
-            deleteIndexKeyFile(before[3], "b");
+            if (isWal) {
+                deleteIndexKeyFile(before[3], "b");
+            }
 
-            execute("alter table t force reindex");
+            execute("alter table t force reindex parquet");
             releaseSavePointHolds("t");
             final String[] after = partitionDirs();
             Assert.assertEquals(4, after.length);
-            for (int i = 0; i < 4; i++) {
+            for (int i = 0; i < 3; i++) {
                 Assert.assertNotEquals(before[i], after[i]);
+            }
+            if (isWal) {
+                Assert.assertNotEquals(before[3], after[3]);
+            } else {
+                Assert.assertEquals(before[3], after[3]);
             }
             assertIndexQueries(K1_ROWS);
 
-            // the writer appends into the new version of the active partition
+            // the writer appends into the active partition
             execute("insert into t values ('2024-01-04T10:00:00.000000Z', 10, 10, 'k1', 'k1', 'k1')");
             drainWalQueue();
             assertIndexQueries(K1_AFTER_INSERT);
@@ -313,6 +335,9 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
                 from long_sequence(9)
                 """);
         drainWalQueue();
+        execute("alter table t convert partition to parquet list '2024-01-01', '2024-01-02', '2024-01-03'");
+        drainWalQueue();
+        releaseSavePointHolds("t");
     }
 
     // Reports state from the second check on: the first one runs before the first partition, the second after it

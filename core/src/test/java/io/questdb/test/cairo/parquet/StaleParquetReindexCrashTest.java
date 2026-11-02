@@ -47,8 +47,8 @@ import java.util.Arrays;
 
 /**
  * Durability of the parquet partition reindex that repairs stale {@code _cv} column tops: the one an
- * {@code ADD INDEX} runs in its transaction, and {@code ALTER TABLE ... FORCE REINDEX}, which commits outside the WAL
- * so no WAL replay redoes it.
+ * {@code ADD INDEX} runs in its transaction, and {@code ALTER TABLE ... FORCE REINDEX PARQUET}, which commits
+ * outside the WAL so no WAL replay redoes it.
  * <ul>
  *     <li>Under ADAPTIVE, FORCE REINDEX must end with a save point: otherwise a power loss rewinds the table to
  *     the save point before it, and the stale tops come back.</li>
@@ -81,7 +81,7 @@ public class StaleParquetReindexCrashTest extends AbstractAdaptiveCrashTest {
             markDurableBaseline();
             assertExceptionNoLeakCheck(INDEX_QUERY, -1, "index does not cover parquet partition data");
 
-            execute("alter table bitmap_top force reindex");
+            execute("alter table bitmap_top force reindex parquet");
             assertQuery(INDEX_QUERY).timestamp("ts").returns(ROW_A);
 
             recoverAfterCrash(new TableToken[]{token});
@@ -109,7 +109,7 @@ public class StaleParquetReindexCrashTest extends AbstractAdaptiveCrashTest {
             ff.isArmed = true;
             Throwable failure = null;
             try {
-                execute("alter table x force reindex");
+                execute("alter table x force reindex parquet");
             } catch (Throwable th) {
                 failure = th;
             } finally {
@@ -158,7 +158,7 @@ public class StaleParquetReindexCrashTest extends AbstractAdaptiveCrashTest {
 
             ff.isArmed = true;
             try {
-                assertExceptionNoLeakCheck("alter table x force reindex", -1, "injected hard link failure");
+                assertExceptionNoLeakCheck("alter table x force reindex parquet", -1, "injected hard link failure");
             } finally {
                 ff.isArmed = false;
             }
@@ -229,7 +229,7 @@ public class StaleParquetReindexCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testSyncForceReindexFailedDirFsyncIsFailStop() throws Exception {
         assertSyncReindexFsyncFailureIsFailStop(
-                () -> execute("alter table bitmap_top force reindex"),
+                () -> execute("alter table bitmap_top force reindex parquet"),
                 new FsyncFailureFacade("fsyncConvertedPartitionDir", 0, false),
                 true
         );
@@ -238,7 +238,7 @@ public class StaleParquetReindexCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testSyncForceReindexFailedTxnMsyncIsFailStop() throws Exception {
         assertSyncReindexFsyncFailureIsFailStop(
-                () -> execute("alter table bitmap_top force reindex"),
+                () -> execute("alter table bitmap_top force reindex parquet"),
                 new FsyncFailureFacade("commitTxWriter", 0, true),
                 true
         );
@@ -258,7 +258,7 @@ public class StaleParquetReindexCrashTest extends AbstractAdaptiveCrashTest {
             markDurableBaseline();
             assertExceptionNoLeakCheck(INDEX_QUERY, -1, "index does not cover parquet partition data");
 
-            execute("alter table bitmap_top force reindex");
+            execute("alter table bitmap_top force reindex parquet");
             assertQuery(INDEX_QUERY).timestamp("ts").returns(ROW_A);
 
             recoverAfterCrash(new TableToken[]{token});
