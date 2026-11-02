@@ -3545,7 +3545,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testUnsupportedSymbolIntComparison() throws Exception {
-        assertSerializeDeclined("asymbol >= anint", 22, "non-symbol column in symbol expression: SYMBOL");
+        assertSerializeDeclined("asymbol >= anint", 30, "unsupported JIT filter expression");
     }
 
     @Test

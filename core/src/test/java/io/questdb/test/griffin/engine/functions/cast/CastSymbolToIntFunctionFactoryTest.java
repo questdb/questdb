@@ -33,8 +33,8 @@ public class CastSymbolToIntFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSymbolArgumentOfIntParameterReadsItsValue() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (sym SYMBOL, d DECIMAL(10,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("INSERT INTO t VALUES ('5', 1.25m, 0), ('7', 2.5m, 1), (null, 3.75m, 2), ('-3', 1.0m, 3)");
+            execute("CREATE TABLE t (sym SYMBOL, i INT, d DECIMAL(10,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('5', 5, 1.25m, 0), ('7', 8, 2.5m, 1), (null, 0, 3.75m, 2), ('-3', -4, 1.0m, 3)");
             assertQuery("SELECT sym + 1 a, abs(sym) b, sym * 2 c, -sym n FROM t")
                     .noLeakCheck()
                     .expectSize()
@@ -73,6 +73,13 @@ public class CastSymbolToIntFunctionFactoryTest extends AbstractCairoTest {
                                 sym
                                 5
                                 7
+                                """);
+                assertQuery("SELECT sym, i FROM t WHERE sym >= i")
+                        .noLeakCheck()
+                        .returns("""
+                                sym\ti
+                                5\t5
+                                -3\t-4
                                 """);
             }
         });

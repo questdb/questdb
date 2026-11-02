@@ -337,7 +337,8 @@ public final class PhysicalProperties {
         final Capability isLongSequence = switch (aggregate.getSharedRead()) {
             case SOURCE -> Capability.NO;
             case SET_OPERATION_HEAD, NONE -> capability(input, LONG_SEQUENCE);
-            case null -> aggregate.getSharedSource() == null ? capability(input, LONG_SEQUENCE) : and(Capability.UNKNOWN, capability(input, LONG_SEQUENCE));
+            case null ->
+                    aggregate.getSharedSource() == null ? capability(input, LONG_SEQUENCE) : and(Capability.UNKNOWN, capability(input, LONG_SEQUENCE));
         };
         if (factory == PlanToFactoryRules.AggregateFactory.COUNT) {
             return computed(Capability.NO, ScanDirection.FORWARD, isLongSequence);
@@ -559,10 +560,12 @@ public final class PhysicalProperties {
             case FOLDED_TRUE -> input;
             case FOLDED_FALSE -> EMPTY;
             case GATE -> with(input, ORDER_ADVICE, Capability.NO);
-            case PARALLEL -> properties(Capability.YES, Capability.NO, Capability.of(hasLimit), Capability.NO, direction(input),
-                    capability(input, LONG_SEQUENCE));
-            case SERIAL, WINDOW_KEEP_FLAG -> properties(capability(input, RANDOM_ACCESS), Capability.NO, Capability.NO, Capability.NO,
-                    direction(input), capability(input, LONG_SEQUENCE));
+            case PARALLEL ->
+                    properties(Capability.YES, Capability.NO, Capability.of(hasLimit), Capability.NO, direction(input),
+                            capability(input, LONG_SEQUENCE));
+            case SERIAL, WINDOW_KEEP_FLAG ->
+                    properties(capability(input, RANDOM_ACCESS), Capability.NO, Capability.NO, Capability.NO,
+                            direction(input), capability(input, LONG_SEQUENCE));
             case null -> unknown(ScanDirection.UNKNOWN, Capability.UNKNOWN);
         };
     }
@@ -904,7 +907,8 @@ public final class PhysicalProperties {
             return null;
         }
         return switch (scan.getAccessPath()) {
-            case PAGE_FRAMES -> scan.getResidual() == null ? table : filteredTableToken(scan.getResidualAlgorithm(), table);
+            case PAGE_FRAMES ->
+                    scan.getResidual() == null ? table : filteredTableToken(scan.getResidualAlgorithm(), table);
             case SORTED_SYMBOL_INDEX, EXCLUDED_SYMBOL_INDEX, SYMBOL_SUBQUERY, LATEST_BY_SUBQUERY, LATEST_BY_ALL_INDEXED,
                  LATEST_BY_STATIC_SYMBOL, LATEST_BY_SYMBOLS, LATEST_BY_ALL -> table;
             case SYMBOL_INDEX -> scan.getIndexRead() == ScanPlan.IndexRead.COVERING ? null : table;
@@ -1093,7 +1097,7 @@ public final class PhysicalProperties {
             }
             case FilterPlan filter -> PlanToFactoryRules.isFusedFilter(filter) ? Capability.NO
                     : filter.getAlgorithm() == FilterPlan.Algorithm.FOLDED_TRUE ? supportsLongTopK(filter.getChild(), null, columnIndex)
-                    : wrapped(filter.getAlgorithm(), Capability.NO);
+                      : wrapped(filter.getAlgorithm(), Capability.NO);
             case SortPlan sort -> {
                 final Capability isPassedThrough = isSortPassedThrough(sort, sortedLimit);
                 yield isPassedThrough == Capability.YES ? supportsLongTopK(sort.getChild(), null, columnIndex) : isPassedThrough;
