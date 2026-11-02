@@ -2548,6 +2548,47 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testParquetExportViewOverConvertedColumn() throws Exception {
+        // Regression test for #7807. An export through a view over a Parquet partition with a
+        // column whose type changed since took the zero-copy path, which hands the encoder the
+        // column in its old layout: here, the raw STRING bytes as LONG values.
+        getExportTester()
+                .run((engine, sqlExecutionContext) -> {
+                    engine.execute(
+                            "CREATE TABLE converted_t (c STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                            sqlExecutionContext
+                    );
+                    engine.execute("""
+                            INSERT INTO converted_t
+                            SELECT (x * 1_000_003)::STRING, timestamp_sequence('2024-01-01T00:00:00.000000Z', 28_800_000_000)
+                            FROM long_sequence(6)""", sqlExecutionContext);
+                    engine.execute("ALTER TABLE converted_t CONVERT PARTITION TO PARQUET LIST '2024-01-01'", sqlExecutionContext);
+                    engine.execute("ALTER TABLE converted_t ALTER COLUMN c TYPE LONG", sqlExecutionContext);
+                    engine.execute("CREATE VIEW converted_v AS (SELECT * FROM converted_t)", sqlExecutionContext);
+
+                    final String query = "SELECT * FROM converted_v";
+                    try (
+                            TestHttpClient httpClient = new TestHttpClient();
+                            var sink = new DirectUtf8Sink(16_384)
+                    ) {
+                        exportParquet(httpClient, sink, query);
+                        assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "converted_view.parquet");
+                        final StringSink parquetSink = new StringSink();
+                        TestUtils.printSql(engine, sqlExecutionContext, "SELECT * FROM read_parquet('converted_view.parquet')", parquetSink);
+                        TestUtils.assertEquals("""
+                                c\tts
+                                1000003\t2024-01-01T00:00:00.000000Z
+                                2000006\t2024-01-01T08:00:00.000000Z
+                                3000009\t2024-01-01T16:00:00.000000Z
+                                4000012\t2024-01-02T00:00:00.000000Z
+                                5000015\t2024-01-02T08:00:00.000000Z
+                                6000018\t2024-01-02T16:00:00.000000Z
+                                """, parquetSink);
+                    }
+                });
+    }
+
+    @Test
     public void testParquetExportWithMultipleDataTypes() throws Exception {
         getExportTester()
                 .run((engine, sqlExecutionContext) -> {

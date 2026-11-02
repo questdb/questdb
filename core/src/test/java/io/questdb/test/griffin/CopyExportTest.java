@@ -635,6 +635,37 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetExportFixedToVarConvertedColumnThroughView() throws Exception {
+        // Regression test for #7807. The plan of a query over a view does not show the pending
+        // fixed->var conversion (INT->VARCHAR) to the export mode check unless the view's wrapper
+        // asks its own base. The DIRECT_PAGE_FRAME path then handed the encoder the raw INT
+        // bytes as VARCHAR, and the encoder panicked and aborted the JVM.
+        assertMemoryLeak(() -> assertParquetExportOfConvertedColumn("INT", "(x * 3)::INT", "VARCHAR", """
+                s\tts
+                3\t2024-01-01T00:00:00.000000Z
+                6\t2024-01-01T00:10:00.000000Z
+                9\t2024-01-01T00:20:00.000000Z
+                12\t2024-01-01T00:30:00.000000Z
+                15\t2024-01-01T00:40:00.000000Z
+                18\t2024-01-01T00:50:00.000000Z
+                """, ConvertedColumnExportSource.VIEW_CREATED_AFTER_TYPE_CHANGE));
+    }
+
+    @Test
+    public void testCopyParquetExportFixedToVarConvertedColumnThroughViewCreatedBeforeTypeChange() throws Exception {
+        // Same as above with INT->STRING, through a view that exists before the type change.
+        assertMemoryLeak(() -> assertParquetExportOfConvertedColumn("INT", "(x * 3)::INT", "STRING", """
+                s\tts
+                3\t2024-01-01T00:00:00.000000Z
+                6\t2024-01-01T00:10:00.000000Z
+                9\t2024-01-01T00:20:00.000000Z
+                12\t2024-01-01T00:30:00.000000Z
+                15\t2024-01-01T00:40:00.000000Z
+                18\t2024-01-01T00:50:00.000000Z
+                """, ConvertedColumnExportSource.VIEW_CREATED_BEFORE_TYPE_CHANGE));
+    }
+
+    @Test
     public void testCopyParquetExportSymbolToFixedConvertedColumn() throws Exception {
         // symbol->fixed lazy conversion (SYMBOL->LONG; parquet stores the symbol as a UTF-8
         // BYTE_ARRAY decoded as VARCHAR_SLICE) over a parquet partition, exported via the
@@ -652,6 +683,21 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetExportSymbolToFixedConvertedColumnThroughView() throws Exception {
+        // Regression test for #7807: SYMBOL->LONG through a view. The DIRECT_PAGE_FRAME path
+        // failed the export, since the parquet partition stores the column as a symbol.
+        assertMemoryLeak(() -> assertParquetExportOfConvertedColumn("SYMBOL", "(x * 3)::STRING", "LONG", """
+                s\tts
+                3\t2024-01-01T00:00:00.000000Z
+                6\t2024-01-01T00:10:00.000000Z
+                9\t2024-01-01T00:20:00.000000Z
+                12\t2024-01-01T00:30:00.000000Z
+                15\t2024-01-01T00:40:00.000000Z
+                18\t2024-01-01T00:50:00.000000Z
+                """, ConvertedColumnExportSource.VIEW_CREATED_AFTER_TYPE_CHANGE));
+    }
+
+    @Test
     public void testCopyParquetExportVarToFixedConvertedColumnSurvivesEmptyMetadataCacheWindow() throws Exception {
         // var->fixed lazy conversion (STRING->LONG) over a parquet partition, exported via the
         // TEMP_TABLE path. The empty cache forces determineExportMode() to hydrate the table
@@ -665,6 +711,36 @@ public class CopyExportTest extends AbstractCairoTest {
                 15\t2024-01-01T00:40:00.000000Z
                 18\t2024-01-01T00:50:00.000000Z
                 """, true));
+    }
+
+    @Test
+    public void testCopyParquetExportVarToFixedConvertedColumnThroughView() throws Exception {
+        // Regression test for #7807: STRING->LONG through a view. The DIRECT_PAGE_FRAME path
+        // exported the raw STRING bytes, length prefix included, as LONG values.
+        assertMemoryLeak(() -> assertParquetExportOfConvertedColumn("STRING", "(x * 1_000_003)::STRING", "LONG", """
+                s\tts
+                1000003\t2024-01-01T00:00:00.000000Z
+                2000006\t2024-01-01T00:10:00.000000Z
+                3000009\t2024-01-01T00:20:00.000000Z
+                4000012\t2024-01-01T00:30:00.000000Z
+                5000015\t2024-01-01T00:40:00.000000Z
+                6000018\t2024-01-01T00:50:00.000000Z
+                """, ConvertedColumnExportSource.VIEW_CREATED_AFTER_TYPE_CHANGE));
+    }
+
+    @Test
+    public void testCopyParquetExportVarcharToIntConvertedColumnThroughViewCreatedBeforeTypeChange() throws Exception {
+        // Regression test for #7807: VARCHAR->INT through a view that exists before the type
+        // change. The DIRECT_PAGE_FRAME path exported the ASCII digits as INT values.
+        assertMemoryLeak(() -> assertParquetExportOfConvertedColumn("VARCHAR", "lpad((x * 3)::VARCHAR, 12, '0')", "INT", """
+                s\tts
+                3\t2024-01-01T00:00:00.000000Z
+                6\t2024-01-01T00:10:00.000000Z
+                9\t2024-01-01T00:20:00.000000Z
+                12\t2024-01-01T00:30:00.000000Z
+                15\t2024-01-01T00:40:00.000000Z
+                18\t2024-01-01T00:50:00.000000Z
+                """, ConvertedColumnExportSource.VIEW_CREATED_BEFORE_TYPE_CHANGE));
     }
 
     @Test
@@ -4490,7 +4566,17 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     private void assertParquetExportOfConvertedColumn(String srcType, String srcValueExpr, String dstType, String expectedReadback) throws Exception {
-        assertParquetExportOfConvertedColumn(srcType, srcValueExpr, dstType, expectedReadback, false);
+        assertParquetExportOfConvertedColumn(srcType, srcValueExpr, dstType, expectedReadback, false, ConvertedColumnExportSource.TABLE);
+    }
+
+    private void assertParquetExportOfConvertedColumn(
+            String srcType,
+            String srcValueExpr,
+            String dstType,
+            String expectedReadback,
+            ConvertedColumnExportSource exportSource
+    ) throws Exception {
+        assertParquetExportOfConvertedColumn(srcType, srcValueExpr, dstType, expectedReadback, false, exportSource);
     }
 
     private void assertParquetExportOfConvertedColumn(
@@ -4499,6 +4585,17 @@ public class CopyExportTest extends AbstractCairoTest {
             String dstType,
             String expectedReadback,
             boolean isMetadataCacheClearedBeforeCompile
+    ) throws Exception {
+        assertParquetExportOfConvertedColumn(srcType, srcValueExpr, dstType, expectedReadback, isMetadataCacheClearedBeforeCompile, ConvertedColumnExportSource.TABLE);
+    }
+
+    private void assertParquetExportOfConvertedColumn(
+            String srcType,
+            String srcValueExpr,
+            String dstType,
+            String expectedReadback,
+            boolean isMetadataCacheClearedBeforeCompile,
+            ConvertedColumnExportSource exportSource
     ) throws Exception {
         // Seed a WAL table, convert its single partition to parquet, then ALTER the column
         // type so the parquet partition carries a lazily-converted column. COPY (SELECT *)
@@ -4509,10 +4606,19 @@ public class CopyExportTest extends AbstractCairoTest {
         execute("INSERT INTO pt SELECT " + srcValueExpr + " AS s, " +
                 "timestamp_sequence('2024-01-01T00:00:00.000000Z', 600_000_000) AS ts FROM long_sequence(6)");
         drainWalQueue();
+        if (exportSource == ConvertedColumnExportSource.VIEW_CREATED_BEFORE_TYPE_CHANGE) {
+            execute("CREATE VIEW pt_v AS (SELECT * FROM pt)");
+            drainWalAndViewQueues();
+        }
         execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
         drainWalQueue();
         execute("ALTER TABLE pt ALTER COLUMN s TYPE " + dstType);
-        drainWalQueue();
+        drainWalAndViewQueues();
+        if (exportSource == ConvertedColumnExportSource.VIEW_CREATED_AFTER_TYPE_CHANGE) {
+            execute("CREATE VIEW pt_v AS (SELECT * FROM pt)");
+            drainWalAndViewQueues();
+        }
+        final String exportedSql = exportSource == ConvertedColumnExportSource.TABLE ? "SELECT * FROM pt" : "SELECT * FROM pt_v";
 
         final TableToken tableToken = engine.getTableTokenIfExists("pt");
         CopyExportRunnable stmt = () -> {
@@ -4524,7 +4630,7 @@ public class CopyExportTest extends AbstractCairoTest {
                     Assert.assertNull(metadataRO.getTable(tableToken));
                 }
             }
-            runAndFetchCopyExportID("COPY (SELECT * FROM pt) TO 'converted_col_export' WITH FORMAT parquet", sqlExecutionContext);
+            runAndFetchCopyExportID("COPY (" + exportedSql + ") TO 'converted_col_export' WITH FORMAT parquet", sqlExecutionContext);
         };
 
         CopyExportRunnable test = () ->
@@ -4603,6 +4709,12 @@ public class CopyExportTest extends AbstractCairoTest {
             long exportId = engine.getCopyExportContext().getActiveExportId();
             Assert.assertNotEquals("No active export found", -1L, exportId);
         }, 5, exceptionTypesToCatch);
+    }
+
+    private enum ConvertedColumnExportSource {
+        TABLE,
+        VIEW_CREATED_AFTER_TYPE_CHANGE,
+        VIEW_CREATED_BEFORE_TYPE_CHANGE
     }
 
     @FunctionalInterface
