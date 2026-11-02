@@ -88,8 +88,9 @@ public class CopyExportAuthorizationTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SQL_COPY_EXPORT_ROOT, exportRoot);
         // Compilers capture the retry limit at construction; each test may override it.
         engine.getSqlCompilerPool().releaseAll();
-        final File output = new File(exportRoot, "out.parquet");
-        Assert.assertTrue(!output.exists() || output.delete());
+        // Both WAL modes share the export directory. Empty it so that a file an earlier run wrote
+        // cannot stand in for one this run failed to write.
+        TestUtils.removeTestPath(exportRoot);
     }
 
     @Test
