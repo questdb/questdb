@@ -28,6 +28,7 @@ import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -1012,6 +1013,58 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             k
                             1
                             """);
+        });
+    }
+
+    @Test
+    public void testInDayFilterImpreciseBracketExpansionWithDateVariable() throws Exception {
+        // A date variable compiles the list. Its month and week elements have no date precision, so
+        // the compiler expands them into their matching days: filtering each month by its first day
+        // would keep January whole, as 2024-01-01 is a Monday. One row per hour from Monday
+        // 2023-12-25 to Sunday 2024-04-07; the references select the rows by their calendar fields.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE t (tm #TIMESTAMP, d DATE, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("""
+                    INSERT INTO t
+                    SELECT '2023-12-25'::TIMESTAMP + (x - 1) * 3_600_000_000L,
+                           ('2023-12-25'::TIMESTAMP + (x - 1) * 3_600_000_000L)::DATE,
+                           '2023-12-25'::TIMESTAMP + (x - 1) * 3_600_000_000L
+                    FROM long_sequence(2_520)
+                    """);
+            final String q1Mondays = "year(ts) = 2024 AND month(ts) <= 3 AND day_of_week(ts) = 1";
+            // $today, the Monday 2024-01-08, is one of the static days
+            setCurrentMicros(Micros.toMicros(2024, 1, 8, 1, 0));
+            assertInOnEveryColumn("[$today,2024-[01..03]]#mon", q1Mondays, 13 * 24);
+            // ISO week 1 of 2024 starts on Monday 2024-01-01, and week 13 ends on Sunday 2024-03-31
+            assertInOnEveryColumn("[$today,2024-W[01..13]]#mon", q1Mondays, 13 * 24);
+            // 23 + 21 + 21 weekdays, the leap day 2024-02-29 among them
+            assertInOnEveryColumn("[$today,2024-[01..03]]#workday", "year(ts) = 2024 AND month(ts) <= 3 AND day_of_week(ts) <= 5", (23 + 21 + 21) * 24);
+            final String janFebMondays = "[$today,2024-[01..02]]#mon";
+            assertInOnEveryColumn(janFebMondays, "year(ts) = 2024 AND month(ts) <= 2 AND day_of_week(ts) = 1", 9 * 24);
+            // The 9 Mondays and $today make 10 range checks, the default limit of the JIT for an IN
+            // list, so the JIT filters tm and d. The 14 range checks of the Q1 lists exceed it, and
+            // the Java filter runs them.
+            final int callerJitMode = sqlExecutionContext.getJitMode();
+            try {
+                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+                for (String column : new String[]{"tm", "d"}) {
+                    assertQuery("SELECT ts FROM t WHERE " + column + " IN '" + janFebMondays + "'")
+                            .noLeakCheck()
+                            .assertsPlanContaining("Async JIT Filter");
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(callerJitMode);
+            }
+            assertQuery("SELECT ts FROM t WHERE ts IN '" + janFebMondays + "'")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Interval forward scan on: t");
+            // $today, the Monday 2024-04-01, adds a day after the static ones
+            setCurrentMicros(Micros.toMicros(2024, 4, 1, 3, 0));
+            assertInOnEveryColumn(
+                    "[$today,2024-[01..03]]#mon",
+                    "year(ts) = 2024 AND ((month(ts) <= 3 AND day_of_week(ts) = 1) OR (month(ts) = 4 AND day(ts) = 1))",
+                    14 * 24
+            );
         });
     }
 
@@ -2371,6 +2424,28 @@ public class IntervalFilterTest extends AbstractCairoTest {
         // the predicate written last reaches the interval model builder first
         assertQuery("SELECT k FROM x WHERE " + runtimePredicate + " AND " + staticPredicate).noLeakCheck().returns(expected);
         assertQuery("SELECT k FROM x WHERE " + staticPredicate + " AND " + runtimePredicate).noLeakCheck().returns(expected);
+    }
+
+    // Expects the rows of the reference predicate from the tick string on each column of table t:
+    // the designated ts, the non-designated tm and the DATE d, with the JIT on and off.
+    private void assertInOnEveryColumn(String tick, String referencePredicate, int expectedRowCount) throws Exception {
+        final String reference = "SELECT ts FROM t WHERE " + referencePredicate;
+        assertQuery("SELECT count() FROM (" + reference + ")")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("count\n" + expectedRowCount + "\n");
+        final int callerJitMode = sqlExecutionContext.getJitMode();
+        try {
+            for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                sqlExecutionContext.setJitMode(jitMode);
+                for (String column : new String[]{"ts", "tm", "d"}) {
+                    assertSqlCursors(reference, "SELECT ts FROM t WHERE " + column + " IN '" + tick + "'");
+                }
+            }
+        } finally {
+            sqlExecutionContext.setJitMode(callerJitMode);
+        }
     }
 
     private void assertOrInBothOrders(String staticPredicate, String runtimePredicate, String expected) throws Exception {

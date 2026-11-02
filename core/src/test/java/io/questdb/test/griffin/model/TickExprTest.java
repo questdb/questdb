@@ -741,6 +741,34 @@ public class TickExprTest {
     }
 
     @Test
+    public void testCompiledDayFilterImpreciseBracketExpansion() throws SqlException {
+        // A bracketed element without date precision (year, month or ISO week) leaves the day filter
+        // holder of compileStaticElement unarmed, so the element takes the expanding filter, which
+        // turns each year, month or week into its matching days. CompiledTickExpression filters
+        // again at run time, but only by the first day of each interval: it would keep January 2024
+        // whole, since it starts on a Monday, and drop February and March. $today, the Monday
+        // 2024-01-08, lies in every range.
+        assertCompiledFullDayMondays(configuration, "[$today,2024-[01..03]]#mon", LocalDate.of(2024, 1, 1), LocalDate.of(2024, 3, 31));
+        // ISO week 1 of 2024 starts on Monday 2024-01-01, and week 13 ends on Sunday 2024-03-31
+        assertCompiledFullDayMondays(configuration, "[$today,2024-W[01..13]]#mon", LocalDate.of(2024, 1, 1), LocalDate.of(2024, 3, 31));
+        assertCompiledFullDayMondays(configuration, "[$today,[2023..2024]]#mon", LocalDate.of(2023, 1, 1), LocalDate.of(2024, 12, 31));
+        // at merge threshold 4 the expansion joins the months into blocks before the filter expands
+        // the blocks
+        assertCompiledFullDayMondays(mergeThreshold4Configuration, "[$today,2024-[01..12]]#mon", LocalDate.of(2024, 1, 1), LocalDate.of(2024, 12, 31));
+
+        assertCompiledTickExpr("[$today,2024-[01..03]]#mon");
+        assertCompiledTickExpr("[$today,2024-[01..03]]#workday");
+        // none of the three months starts on a weekend day, so the run-time filter alone would drop
+        // them all
+        assertCompiledTickExpr("[$today,2024-[01..03]]#weekend");
+        // the filter judges local days; New York moves its clocks on 2024-03-10
+        assertCompiledTickExpr("[$today,2024-[01..03]]@America/New_York#workday");
+        // after the holder of a date-precise element, and after an element without brackets
+        assertCompiledTickExpr("[$today,2024-05-[01..31],2024-[01..03]]#mon");
+        assertCompiledTickExpr("[$today,2024-01,2024-[02..03]]#workday");
+    }
+
+    @Test
     public void testCompiledImpreciseDateWithTimeDayFilterControl() throws SqlException {
         // compileImpreciseDateWithTime expands the months with no pending day filter and then filters
         // every day of every month: one 09:00 interval per Monday of 2000-2024, with no cap.
@@ -6622,6 +6650,23 @@ public class TickExprTest {
         } catch (SqlException e) {
             TestUtils.assertContains(e.getFlyweightMessage(), expectedError);
         }
+    }
+
+    // Compiles the expression, evaluates it at mondayNow() and expects one full-day interval for
+    // every Monday from first to last, as java.time lists them.
+    private void assertCompiledFullDayMondays(CairoConfiguration cfg, String expression, LocalDate first, LocalDate last) throws SqlException {
+        final LongList expected = new LongList();
+        for (LocalDate day = first; !day.isAfter(last); day = day.plusDays(1)) {
+            if (day.getDayOfWeek() == DayOfWeek.MONDAY) {
+                addLocalDays(expected, day, day.plusDays(1), ZoneOffset.UTC);
+            }
+        }
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        out.clear();
+        try (CompiledTickExpression compiled = IntervalUtils.compileTickExpr(timestampDriver, cfg, expression, 0, expression.length(), 0)) {
+            compiled.evaluate(out, mondayNow());
+        }
+        TestUtils.assertEquals(intervalToString(timestampDriver, expected).toString(), intervalToString(timestampDriver, out));
     }
 
     /**
