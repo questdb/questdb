@@ -35,13 +35,16 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
 /**
  * Owns the Java side of one prepared partition-frame window. The native cursor
  * borrows the base views, so this object closes the cursor before releasing the
- * Parquet base backing.
+ * Parquet base backing. Decode resources may point into the base views: a native
+ * base stays mapped for the query, and a Parquet base's {@link ParquetBaseLease}
+ * is retained by the decoded frame buffers with every resource built from it.
  */
 final class PartitionFrameWindowContext implements QuietCloseable {
     private final BaseViewLease baseViewLease;
@@ -89,6 +92,15 @@ final class PartitionFrameWindowContext implements QuietCloseable {
         preparedWindow = -1;
     }
 
+    /**
+     * The Parquet base lease of the prepared window, or {@code null} for a native or
+     * empty base. A decode resource built from the window points into it.
+     */
+    @Nullable
+    ParquetBaseLease baseLease() {
+        return baseViewLease.lease;
+    }
+
     boolean bind(long state) {
         if (this.state == state) {
             return false;
@@ -134,12 +146,16 @@ final class PartitionFrameWindowContext implements QuietCloseable {
                     frameState,
                     window
             );
+            // Both bases outlive every decode resource built from the window: a native base
+            // stays mapped for the query, and the decoded frame buffers retain a Parquet
+            // base's lease with each resource, so slices may point into either.
             decoder.prepareWindow(
                     window,
                     projectionPlan.pairs(),
                     projectionPlan.primaryColumnCount(),
                     baseViewLease.viewAddress(),
                     baseViewLease.viewCount(),
+                    true,
                     trackerAddress
             );
             preparedPlanRevision = projectionPlan.revision();
@@ -179,39 +195,55 @@ final class PartitionFrameWindowContext implements QuietCloseable {
     private static final class BaseViewLease implements QuietCloseable {
         private static final int BASE_VIEW_LONGS = 7;
         private final CairoConfiguration configuration;
-        private final RowGroupBuffers parquetBuffers;
+        // Released leases, kept for reuse while the window context is open.
+        private final ObjList<ParquetBaseLease> freeLeases = new ObjList<>();
         private final DirectIntList parquetColumns;
         private final DirectLongList views;
+        private boolean isClosed;
+        // The prepared window's Parquet base, or null for a native or empty base.
+        private ParquetBaseLease lease;
         private ParquetPartitionDecoder parquetDecoder;
-        private long parquetResource;
 
         private BaseViewLease(CairoConfiguration configuration) {
             this.configuration = configuration;
-            RowGroupBuffers parquetBuffers = null;
             DirectIntList parquetColumns = null;
             DirectLongList views = null;
             try {
-                parquetBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
                 parquetColumns = new DirectIntList(32, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 views = new DirectLongList(64, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
             } catch (Throwable th) {
-                Misc.free(parquetBuffers);
                 Misc.free(parquetColumns);
                 Misc.free(views);
                 throw th;
             }
-            this.parquetBuffers = parquetBuffers;
             this.parquetColumns = parquetColumns;
             this.views = views;
         }
 
+        // The pool releases every decoded frame buffer, and so every retained lease,
+        // before it closes the window context, so the decoder freed here has released
+        // every chunk resource it handed out.
         @Override
         public void close() {
             clear();
-            Misc.free(parquetBuffers);
+            isClosed = true;
+            Misc.freeObjListAndClear(freeLeases);
             Misc.free(parquetColumns);
             parquetDecoder = Misc.free(parquetDecoder);
             Misc.free(views);
+        }
+
+        private ParquetBaseLease acquireLease() {
+            final int freeCount = freeLeases.size();
+            final ParquetBaseLease acquired;
+            if (freeCount > 0) {
+                acquired = freeLeases.getQuick(freeCount - 1);
+                freeLeases.remove(freeCount - 1);
+            } else {
+                acquired = new ParquetBaseLease(this);
+            }
+            acquired.refCount = 1;
+            return acquired;
         }
 
         private void addView(
@@ -233,11 +265,11 @@ final class PartitionFrameWindowContext implements QuietCloseable {
         }
 
         private void clear() {
-            parquetBuffers.close();
-            if (parquetResource != 0 && parquetDecoder != null) {
-                parquetDecoder.releaseDecodeResource(parquetResource);
+            if (lease != null) {
+                final ParquetBaseLease released = lease;
+                lease = null;
+                released.release();
             }
-            parquetResource = 0;
             parquetColumns.clear();
             views.clear();
         }
@@ -335,8 +367,10 @@ final class PartitionFrameWindowContext implements QuietCloseable {
                 final int columnId = requiredColumns.get(i);
                 final int parquetColumn = findParquetColumn(parquetDecoder, columnId);
                 if (parquetColumn >= 0) {
+                    // Lend VARCHAR as slices, so base rows reach the output without a copy.
+                    final int type = requiredColumns.get(i + 1);
                     parquetColumns.add(parquetColumn);
-                    parquetColumns.add(requiredColumns.get(i + 1));
+                    parquetColumns.add(ColumnType.tagOf(type) == ColumnType.VARCHAR ? ColumnType.VARCHAR_SLICE : type);
                 }
             }
 
@@ -344,9 +378,12 @@ final class PartitionFrameWindowContext implements QuietCloseable {
             if (count == 0) {
                 return;
             }
+            lease = acquireLease();
+            final RowGroupBuffers parquetBuffers = lease.buffers;
             parquetBuffers.copyMemoryTrackerFrom(targetBuffers);
-            parquetBuffers.reopen();
             try {
+                parquetBuffers.reopen();
+                lease.releaser = parquetDecoder;
                 parquetDecoder.decodeRowGroup(
                         parquetBuffers,
                         parquetColumns,
@@ -354,13 +391,13 @@ final class PartitionFrameWindowContext implements QuietCloseable {
                         0,
                         Math.toIntExact(baseRows)
                 );
-                parquetResource = parquetDecoder.takeDecodeResource();
+                lease.resource = parquetDecoder.takeDecodeResource();
             } catch (Throwable th) {
-                final long resource = parquetDecoder.takeDecodeResource();
-                parquetBuffers.close();
-                parquetDecoder.releaseDecodeResource(resource);
+                lease.resource = parquetDecoder.takeDecodeResource();
+                clear();
                 throw th;
             }
+            lease.bytes = parquetBuffers.sumChunkBytes(0, count);
             for (int slot = 0; slot < count; slot++) {
                 final int columnId = parquetDecoder.getColumnId(parquetColumns.get(2L * slot));
                 final int type = parquetColumns.get(2L * slot + 1);
@@ -380,12 +417,73 @@ final class PartitionFrameWindowContext implements QuietCloseable {
             }
         }
 
+        private void recycle(ParquetBaseLease released) {
+            if (isClosed) {
+                released.close();
+            } else {
+                freeLeases.add(released);
+            }
+        }
+
         private long viewAddress() {
             return views.size() == 0 ? 0 : views.getAddress();
         }
 
         private int viewCount() {
             return (int) (views.size() / BASE_VIEW_LONGS);
+        }
+    }
+
+    /**
+     * The decoded Parquet base of one window and the chunk resource its slices point
+     * into. The window holds one reference; each decoded frame buffer that retains a
+     * decode resource built from the window holds another. The last release frees the
+     * buffers and the chunk resource, and returns the lease for reuse.
+     */
+    static final class ParquetBaseLease implements QuietCloseable {
+        private final RowGroupBuffers buffers;
+        private final BaseViewLease owner;
+        // Decoded bytes the lease keeps alive, counted by every buffer that retains it.
+        private long bytes;
+        private int refCount;
+        private ParquetPartitionDecoder releaser;
+        private long resource;
+
+        private ParquetBaseLease(BaseViewLease owner) {
+            this.owner = owner;
+            this.buffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_DECODER, true);
+        }
+
+        @Override
+        public void close() {
+            Misc.free(buffers);
+        }
+
+        long bytes() {
+            return bytes;
+        }
+
+        void release() {
+            assert refCount > 0 : "parquet base lease released more often than retained";
+            if (--refCount == 0) {
+                freeContents();
+                owner.recycle(this);
+            }
+        }
+
+        void retain() {
+            assert refCount > 0 : "parquet base lease retained after its last release";
+            refCount++;
+        }
+
+        private void freeContents() {
+            buffers.close();
+            if (resource != 0 && releaser != null) {
+                releaser.releaseDecodeResource(resource);
+            }
+            resource = 0;
+            releaser = null;
+            bytes = 0;
         }
     }
 
@@ -497,7 +595,7 @@ final class PartitionFrameWindowContext implements QuietCloseable {
             candidatePairs.clear();
             for (long i = 0, n = primaryPairs.size(); i < n; i += 2) {
                 candidatePairs.add(primaryPairs.get(i));
-                candidatePairs.add(normalizeType(primaryPairs.get(i + 1)));
+                candidatePairs.add(toDecodeType(primaryPairs.get(i + 1)));
             }
             candidatePrimaryColumnCount = (int) (candidatePairs.size() / 2);
             if (primaryColumnIndexes != null) {
@@ -516,7 +614,7 @@ final class PartitionFrameWindowContext implements QuietCloseable {
                     }
                     if (!isPresent) {
                         candidatePairs.add(columnId);
-                        candidatePairs.add(normalizeType(columnTypes.getQuick(i)));
+                        candidatePairs.add(toDecodeType(columnTypes.getQuick(i)));
                     }
                 }
             }
@@ -533,6 +631,11 @@ final class PartitionFrameWindowContext implements QuietCloseable {
 
         private long revision() {
             return revision;
+        }
+
+        // A custom frame reads every VARCHAR column as VARCHAR_SLICE entries.
+        private static int toDecodeType(int type) {
+            return ColumnType.tagOf(type) == ColumnType.VARCHAR ? ColumnType.VARCHAR_SLICE : type;
         }
     }
 }
