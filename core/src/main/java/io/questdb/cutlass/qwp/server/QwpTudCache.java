@@ -51,6 +51,7 @@ import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.IntList;
+import io.questdb.std.LowerCaseUtf8SequenceIntHashMap;
 import io.questdb.std.LowerCaseUtf8SequenceObjHashMap;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -68,6 +69,9 @@ import io.questdb.tasks.TelemetryTask;
  */
 public class QwpTudCache implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(QwpTudCache.class);
+    // States of a releasedTables entry.
+    private static final int TABLE_REACQUIRED = 0;
+    private static final int TABLE_RELEASED = 1;
     private final boolean autoCreateNewColumns;
     private final boolean autoCreateNewTables;
     private final long commitInterval;
@@ -75,6 +79,13 @@ public class QwpTudCache implements QuietCloseable {
     private final int defaultPartitionBy;
     private final CairoEngine engine;
     private final long maxUncommittedRows;
+    // Every table whose writer releaseIdleWriters() returned to the pool. Until a lookup
+    // takes it back, a table is in state TABLE_RELEASED and counts against the table
+    // limit like a cached table: releasing a writer must not let the connection write to
+    // more distinct tables than the limit allows. A lookup that takes the table back sets
+    // TABLE_REACQUIRED instead of removing the entry, because removal scans the map's key
+    // list. The limit bounds the entries; reset() and a distressed clear() forget them.
+    private final LowerCaseUtf8SequenceIntHashMap releasedTables = new LowerCaseUtf8SequenceIntHashMap();
     private final StringSink tableNameUtf16 = new StringSink();
     private final LowerCaseUtf8SequenceObjHashMap<WalTableUpdateDetails> tableUpdateDetails = new LowerCaseUtf8SequenceObjHashMap<>();
     private final Telemetry<TelemetryTask> telemetry;
@@ -92,6 +103,8 @@ public class QwpTudCache implements QuietCloseable {
     private MemoryMARW ddlMem;
     private boolean isDistressed = false;
     private Path path;
+    // Number of releasedTables entries in state TABLE_RELEASED.
+    private int releasedTableCount;
     private WeakClosableObjectPool<SymbolCache> symbolCachePool;
 
     public QwpTudCache(
@@ -179,6 +192,10 @@ public class QwpTudCache implements QuietCloseable {
             tableUpdateDetails.clear();
             cachedTableCount = 0;
             isDistressed = false;
+            // Freeing every cached table frees its slot under the table limit;
+            // released tables give theirs up too.
+            releasedTables.clear();
+            releasedTableCount = 0;
         }
     }
 
@@ -589,7 +606,14 @@ public class QwpTudCache implements QuietCloseable {
             key = tableUpdateDetails.keyIndex(tableNameUtf8);
         }
 
-        if (tableUpdateDetails.size() >= maxTables) {
+        final int releasedIndex = releasedTables.keyIndex(tableNameUtf8);
+        if (releasedIndex < 0 && releasedTables.valueAtQuick(releasedIndex) == TABLE_RELEASED) {
+            // The table already counts against the limit and moves back into the
+            // cache. Should the lookup fail, the table stops counting, as does a
+            // stale entry evicted above.
+            releasedTables.putAt(releasedIndex, tableNameUtf8, TABLE_REACQUIRED);
+            releasedTableCount--;
+        } else if (tableUpdateDetails.size() + releasedTableCount >= maxTables) {
             throw CairoException.nonCritical()
                     .put("too many distinct tables, limit: ").put(maxTables);
         }
@@ -644,7 +668,8 @@ public class QwpTudCache implements QuietCloseable {
      * WAL segments they hold) indefinitely. A table with uncommitted rows (an
      * open FLAG_DEFER_COMMIT group) keeps its entry: freeing it would roll its
      * rows back. The next data frame for a released table acquires a fresh
-     * writer through {@link #getTableUpdateDetails}.
+     * writer through {@link #getTableUpdateDetails}. A released table keeps
+     * counting against the table limit, see {@link #releasedTables}.
      */
     public void releaseIdleWriters() {
         ObjList<Utf8Sequence> keys = tableUpdateDetails.keys();
@@ -653,6 +678,13 @@ public class QwpTudCache implements QuietCloseable {
             int keyIndex = tableUpdateDetails.keyIndex(tableName);
             WalTableUpdateDetails tud = tableUpdateDetails.valueAt(keyIndex);
             if (tud.isFirstRow()) {
+                // The entry takes over the cache's immutable key instance instead of
+                // copying it. A cached table is never TABLE_RELEASED.
+                final Utf8String releasedName = tud.getTableNameUtf8();
+                final int releasedIndex = releasedTables.keyIndex(releasedName);
+                assert releasedIndex > -1 || releasedTables.valueAtQuick(releasedIndex) == TABLE_REACQUIRED;
+                releasedTables.putAt(releasedIndex, releasedName, TABLE_RELEASED);
+                releasedTableCount++;
                 tableUpdateDetails.removeAtQuick(keyIndex, i);
                 cachedTableCount = tableUpdateDetails.size();
                 Misc.free(tud);
@@ -681,6 +713,8 @@ public class QwpTudCache implements QuietCloseable {
         }
         tableUpdateDetails.clear();
         cachedTableCount = 0;
+        releasedTables.clear();
+        releasedTableCount = 0;
     }
 
     /**

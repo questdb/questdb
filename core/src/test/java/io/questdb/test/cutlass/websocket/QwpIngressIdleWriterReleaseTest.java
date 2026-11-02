@@ -221,6 +221,97 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDisconnectForgetsReleasedTables() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab1 (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            byte[] first = clientEncodedFrame(1, "tab");
+            byte[] second = clientEncodedFrame(1, "tab1");
+            try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, 1, concat(first, PING, second))) {
+                f.drive(first.length);
+                f.clock.nowMicros += 30_000_000;
+                f.drive(PING.length);
+                Assert.assertEquals(0, f.state.getCachedTableCount());
+
+                // The next connection on this state starts with the whole table limit.
+                f.state.onDisconnected();
+                f.state.of(-1, AllowAllSecurityContext.INSTANCE);
+                f.sentFrames.clear();
+                f.drive(second.length);
+                Assert.assertFalse(hasErrorResponseForSeq(f.sentFrames, 0));
+                Assert.assertEquals(0, maxCumulativeOkAck(f.sentFrames));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM tab1").expectSize().noRandomAccess().returns("count\n1\n");
+        });
+    }
+
+    @Test
+    public void testIdleReleaseCountsEachTableOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int i = 1; i < 4; i++) {
+                execute("CREATE TABLE tab" + i + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            }
+            byte[] first = concat(clientEncodedFrame(1, "tab"), clientEncodedFrame(1, "tab1"));
+            byte[] second = concat(clientEncodedFrame(1, "tab"), clientEncodedFrame(1, "tab2"));
+            byte[] third = concat(clientEncodedFrame(1, "tab1"), clientEncodedFrame(1, "tab3"));
+            try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, 3, concat(first, PING, second, PING, third))) {
+                f.drive(first.length);
+                f.clock.nowMicros += 30_000_000;
+                f.drive(PING.length);
+                Assert.assertEquals(0, f.state.getCachedTableCount());
+
+                // Taking back released tab adds no table: tab2 is the third.
+                f.drive(second.length);
+                Assert.assertEquals(2, f.state.getCachedTableCount());
+                f.clock.nowMicros += 30_000_000;
+                f.drive(PING.length);
+                Assert.assertEquals(0, f.state.getCachedTableCount());
+
+                // tab, released twice, still counts once; tab3 is the fourth table.
+                f.drive(third.length);
+                Assert.assertEquals(4, maxCumulativeOkAck(f.sentFrames));
+                int refusal = indexOfBinaryFrame(f.sentFrames, QwpConstants.STATUS_WRITE_ERROR, 5);
+                Assert.assertTrue("a fourth distinct table must be refused", refusal > -1);
+                Assert.assertEquals("too many distinct tables, limit: 3", errorMessage(f.sentFrames.getQuick(refusal)));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM tab").expectSize().noRandomAccess().returns("count\n2\n");
+            assertQuery("SELECT count() FROM tab1").expectSize().noRandomAccess().returns("count\n2\n");
+            assertQuery("SELECT count() FROM tab2").expectSize().noRandomAccess().returns("count\n1\n");
+            assertQuery("SELECT count() FROM tab3").expectSize().noRandomAccess().returns("count\n0\n");
+        });
+    }
+
+    @Test
+    public void testIdleReleaseCountsTablesWithUncommittedRows() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int i = 1; i < 3; i++) {
+                execute("CREATE TABLE tab" + i + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            }
+            byte[] committed = clientEncodedFrame(1, "tab1");
+            byte[] uncommitted = createMaskedFrame(WebSocketOpcode.BINARY, deferred(oneRowMessage("tab", 1, 1_000_000)));
+            byte[] third = clientEncodedFrame(1, "tab2");
+            try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, 2, concat(committed, uncommitted, PING, third))) {
+                f.drive(committed.length + uncommitted.length);
+                f.clock.nowMicros += 30_000_000;
+                f.drive(PING.length);
+                Assert.assertEquals("tab keeps its writer for the open deferred group", 1, f.state.getCachedTableCount());
+
+                // Cached tab and released tab1 fill the limit of 2.
+                f.drive(third.length);
+                Assert.assertEquals(0, maxCumulativeOkAck(f.sentFrames));
+                int refusal = indexOfBinaryFrame(f.sentFrames, QwpConstants.STATUS_WRITE_ERROR, 2);
+                Assert.assertTrue("a third distinct table must be refused", refusal > -1);
+                Assert.assertEquals("too many distinct tables, limit: 2", errorMessage(f.sentFrames.getQuick(refusal)));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM tab").expectSize().noRandomAccess().returns("count\n0\n");
+            assertQuery("SELECT count() FROM tab1").expectSize().noRandomAccess().returns("count\n1\n");
+            assertQuery("SELECT count() FROM tab2").expectSize().noRandomAccess().returns("count\n0\n");
+        });
+    }
+
+    @Test
     public void testIdleReleaseKeepsDistinctTableLimit() throws Exception {
         // qwp.max.tables.per.connection caps the distinct tables one connection
         // writes (QwpConstants, server.conf). Returning idle writers to the pool
@@ -249,6 +340,27 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
             }
             drainWalQueue();
             assertQuery("SELECT count() FROM tab3").expectSize().noRandomAccess().returns("count\n0\n");
+        });
+    }
+
+    @Test
+    public void testIdleReleaseMatchesTableNamesIgnoringCase() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] lower = clientEncodedFrame(1, "tab");
+            byte[] upper = clientEncodedFrame(1, "TAB");
+            try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, 1, concat(lower, PING, upper))) {
+                f.drive(lower.length);
+                f.clock.nowMicros += 30_000_000;
+                f.drive(PING.length);
+                Assert.assertEquals(0, f.state.getCachedTableCount());
+
+                // TAB names released tab, so it takes the table back within the limit of 1.
+                f.drive(upper.length);
+                Assert.assertFalse(hasErrorResponseForSeq(f.sentFrames, 1));
+                Assert.assertEquals(1, maxCumulativeOkAck(f.sentFrames));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM tab").expectSize().noRandomAccess().returns("count\n2\n");
         });
     }
 
