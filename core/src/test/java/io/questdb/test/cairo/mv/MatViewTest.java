@@ -9860,6 +9860,9 @@ public class MatViewTest extends AbstractCairoTest {
         // leaves the refresh boundary permanently over-pinned (the frontier is a monotonic
         // CAS-max with no rollback). The frontier must advance only on the WAL apply path
         // (ApplyWal2TableJob.reconstructBackfillFrontier), after the data is committed.
+        // The composite randomiser drains the WAL queue after every execute(), which would apply
+        // the backfill INSERT before the assertion that it is still unapplied.
+        disableCompositePartitionRandomisation();
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "create table base_price (" +
