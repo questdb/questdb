@@ -1016,9 +1016,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         // Existing rows get a column top, so only delta-active partitions block a new index.
-        // A Delta switch applied after WalWriter's check still suspends WAL apply here.
+        // A Delta switch applied after WalWriter's check reaches a WAL table here through WAL apply,
+        // where a throw would suspend it for good, so add the column without the index.
         if (indexType != IndexType.NONE && txWriter.hasAnyDeltaActive()) {
-            throw CairoException.invalidMetadataRecoverable("cannot create index, table has a delta-active partition", columnName);
+            if (!tableToken.isWal()) {
+                throw CairoException.invalidMetadataRecoverable("cannot create index, table has a delta-active partition", columnName);
+            }
+            LOG.error().$("index not created on this instance [table=").$(tableToken)
+                    .$(", column=").$safe(columnName)
+                    .$(", seqTxn=").$(txWriter.getSeqTxn())
+                    .$(", reason=table has a delta-active partition]")
+                    .$();
+            indexType = IndexType.NONE;
         }
 
         commit();
@@ -2550,6 +2559,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+        // Unlike native-to-parquet, this conversion does not squash split siblings. Compare the
+        // physical timestamps so converting a parquet prefix does not close the active native tail.
         boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         int newPartitionDirLen = 0;

@@ -33,6 +33,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
 import org.junit.Assert;
 
@@ -123,7 +124,7 @@ public final class QueryFuzzDriver {
                 logSchema(tables.getQuick(i).getShadow());
             }
         }
-        QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled(), config.isDiffShadowEnabled(), config.isDiffFusedEnabled(), config.isVerifyCursorEnabled(), tables, queryWorkerNamePrefix);
+        QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, config.isDiffJitEnabled(), config.isDiffShadowEnabled(), config.isDiffFusedEnabled(), config.isDiffMapPageEnabled() ? AbstractCairoTest.staticOverrides : null, config.isVerifyCursorEnabled(), tables, queryWorkerNamePrefix);
         // Snapshot the parallel-execution flags so the per-query serial
         // override can restore them. Snapshotting once outside the loop also
         // preserves any global override the user passed via system properties.
@@ -301,6 +302,7 @@ public final class QueryFuzzDriver {
                 .$(generatedByShape[QueryShape.HASH_JOIN_GROUP_BY.ordinal()]).$(" equi-join GROUP BY queries; ")
                 .$(runner.getBuildChoiceRuns()).$(" runs picked the build per execution")
                 .$();
+        LOG.info().$("fuzz map page axis: ").$(runner.getMapPageAxisRuns()).$(" comparisons").$();
 
         if (failures.size() > 0) {
             throw buildFailure(failures);

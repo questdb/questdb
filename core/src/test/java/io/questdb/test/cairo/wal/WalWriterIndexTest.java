@@ -157,12 +157,6 @@ public class WalWriterIndexTest extends AbstractCairoTest {
             final TableToken token = createTable();
             try (TableWriter writer = getWriter("t")) {
                 writer.getTxWriter().setPartitionDeltaActiveByTimestamp(0);
-                final CairoException error = Assert.assertThrows(CairoException.class, () -> writer.addColumn(
-                        "k", ColumnType.SYMBOL, configuration.getDefaultSymbolCapacity(),
-                        configuration.getDefaultSymbolCacheFlag(), indexType, configuration.getIndexValueBlockSize(),
-                        false, false, sqlExecutionContext.getSecurityContext()));
-                Assert.assertEquals(CairoException.METADATA_VALIDATION_RECOVERABLE, error.getErrno());
-                Assert.assertEquals(-1, writer.getMetadata().getColumnIndexQuiet("k"));
                 writer.bumpPartitionTableVersion();
                 writer.commit();
             }
