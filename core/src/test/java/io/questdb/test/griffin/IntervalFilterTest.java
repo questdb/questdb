@@ -2236,7 +2236,9 @@ public class IntervalFilterTest extends AbstractCairoTest {
     private static String randomTickString(Rnd rnd, StringSink sink, boolean canHaveDayFilter) {
         sink.clear();
         final int day = 1 + rnd.nextInt(20);
-        switch (rnd.nextInt(4)) {
+        boolean hasTime = rnd.nextBoolean();
+        int listDurationMinutes = 0;
+        switch (rnd.nextInt(5)) {
             case 0 -> sink.put("2024-01-").put(twoDigits(day));
             case 1 -> {
                 sink.put("2024-01-[").put(twoDigits(day));
@@ -2246,6 +2248,16 @@ public class IntervalFilterTest extends AbstractCairoTest {
                 sink.put(']');
             }
             case 2 -> sink.put("2024-01-[").put(twoDigits(day)).put("..").put(twoDigits(day + rnd.nextInt(5))).put(']');
+            case 3 -> {
+                // The hourly values of the two elements together reach the incremental merge
+                // threshold (256), mostly within the second element. The elements carry the time.
+                final int split = 2 + rnd.nextInt(17);
+                sink.put("[2024-01-[01..").put(twoDigits(split)).put("]T[00..23]:").put(twoDigits(rnd.nextInt(60)))
+                        .put(",2024-01-[").put(twoDigits(split + 1)).put("..20]T[00..23]:").put(twoDigits(rnd.nextInt(60)))
+                        .put(']');
+                hasTime = false;
+                listDurationMinutes = rnd.nextBoolean() ? 1 + rnd.nextInt(90) : 0;
+            }
             default -> {
                 sink.put("[2024-01-").put(twoDigits(day));
                 for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
@@ -2254,7 +2266,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
                 sink.put(']');
             }
         }
-        final boolean hasTime = rnd.nextBoolean();
         if (hasTime) {
             sink.put('T').put(twoDigits(rnd.nextInt(24))).put(":00");
         }
@@ -2279,6 +2290,8 @@ public class IntervalFilterTest extends AbstractCairoTest {
                 default -> {
                 }
             }
+        } else if (listDurationMinutes > 0) {
+            sink.put(';').put(listDurationMinutes).put('m');
         }
         return sink.toString();
     }
