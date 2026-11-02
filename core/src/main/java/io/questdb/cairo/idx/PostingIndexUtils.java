@@ -1931,7 +1931,7 @@ public final class PostingIndexUtils {
      * Files that do not match (different column, .pk, .pci, partition data, etc.)
      * are silently ignored.
      */
-    private static void parseSealedFileName(CharSequence fileName, CharSequence columnName, SealedFileVisitor visitor) {
+    public static void parseSealedFileName(CharSequence fileName, CharSequence columnName, SealedFileVisitor visitor) {
         int nameLen = columnName.length();
         int fileLen = fileName.length();
         if (fileLen < nameLen + 4) {
