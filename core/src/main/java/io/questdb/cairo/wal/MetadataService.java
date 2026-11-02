@@ -168,10 +168,12 @@ public interface MetadataService {
     boolean enableDeduplicationWithUpsertKeys(LongList columnsIndexes);
 
     /**
-     * {@code ALTER TABLE ... FORCE REINDEX}: rebuilds the indexes of the given partitions outside the WAL.
+     * {@code ALTER TABLE ... FORCE REINDEX PARQUET}: rebuilds the indexes of the given parquet partitions outside the
+     * WAL.
      *
      * @param columnName        the indexed column to rebuild, or null for every index
-     * @param partitions        (partition timestamp, partition name position in SQL) pairs, empty for every partition
+     * @param partitions        (partition timestamp, partition name position in SQL) pairs, empty for every parquet
+     *                          partition
      * @param tableNamePosition SQL position of the table name, for errors without a partition of their own
      * @param circuitBreaker    consulted between partitions for a cancel or a dropped connection, or null
      */

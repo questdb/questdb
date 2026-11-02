@@ -970,7 +970,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         if (!txFile.isPartitionRemotelyServed(partitionIndex)) {
                             e.put(", rebuild it with ALTER TABLE ")
                                     .put(tableToken.getTableName())
-                                    .put(" FORCE REINDEX PARTITION LIST '");
+                                    .put(" FORCE REINDEX PARQUET PARTITION LIST '");
                             formatErrorPartitionDirName(partitionIndex, e.message);
                             e.put('\'');
                         }

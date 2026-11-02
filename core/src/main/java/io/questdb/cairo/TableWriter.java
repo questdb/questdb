@@ -3031,11 +3031,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * {@code ALTER TABLE ... FORCE REINDEX}: rebuilds the indexes of the given partitions, every partition when the
-     * list is empty, outside the WAL. Each partition gets a new directory version: its files are hard-linked and its
-     * indexes are rebuilt from the column data, from the parquet file for a parquet partition, whose stale column
-     * tops (QuestDB 9.3.4 - 10.0.1) are repaired too. Readers of the old version keep it until they let go. Commits one
-     * node-local transaction per partition, so it runs on a replica as well.
+     * {@code ALTER TABLE ... FORCE REINDEX PARQUET}: rebuilds the indexes of the given parquet partitions, every
+     * parquet partition when the list is empty, outside the WAL, and repairs their stale column tops (QuestDB
+     * 9.3.4 - 10.0.1). Each partition gets a new directory version: its files are hard-linked and its indexes are
+     * rebuilt from the parquet file. Readers of the old version keep it until they let go. Commits one node-local
+     * transaction per partition, so it runs on a replica as well.
+     * <p>
+     * Native partitions are left alone: a native directory version that hard-links the live column files would let
+     * a later in-place write, such as a squash, change the rows that readers and checkpoints of the old version see.
+     * A listed partition with no parquet part fails the command.
      * <p>
      * Cold partitions have no local data and are skipped; the command fails when every selected partition is cold.
      * Partitions attached from a soft link are skipped too: a new directory version would move them off their volume.
@@ -3074,7 +3078,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int partitionCount = txWriter.getPartitionCount();
         final boolean[] isSelected = new boolean[partitionCount];
         if (partitions.size() == 0) {
-            Arrays.fill(isSelected, true);
+            for (int i = 0; i < partitionCount; i++) {
+                isSelected[i] = txWriter.isPartitionParquet(i);
+            }
         } else {
             for (int i = 0, n = partitions.size(); i < n; i += 2) {
                 // a logical partition: the base partition and its split parts
@@ -3084,17 +3090,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     partitionIndex = -partitionIndex - 1;
                 }
                 boolean isFound = false;
+                boolean isParquetFound = false;
                 for (; partitionIndex < partitionCount; partitionIndex++) {
                     final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
                     if (txWriter.getLogicalPartitionTimestamp(partitionTimestamp) != logicalTimestamp) {
                         break;
                     }
-                    isSelected[partitionIndex] = true;
                     isFound = true;
+                    if (txWriter.isPartitionParquet(partitionIndex)) {
+                        isSelected[partitionIndex] = true;
+                        isParquetFound = true;
+                    }
                 }
                 if (!isFound) {
                     throw CairoException.nonCritical().position((int) partitions.getQuick(i + 1))
                             .put("partition does not exist [table=").put(tableToken.getTableName())
+                            .put(", partition=").put(formatPartitionForTimestamp(logicalTimestamp, -1)).put(']');
+                }
+                if (!isParquetFound) {
+                    throw CairoException.nonCritical().position((int) partitions.getQuick(i + 1))
+                            .put("partition is not parquet, use REINDEX TABLE ... LOCK EXCLUSIVE for native partitions [table=")
+                            .put(tableToken.getTableName())
                             .put(", partition=").put(formatPartitionForTimestamp(logicalTimestamp, -1)).put(']');
                 }
             }
@@ -8354,8 +8370,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             path,
                             srcDirLen,
                             other,
-                            dstDirLen,
-                            false
+                            dstDirLen
                     );
                 } else {
                     // colTop == 0: no NULL prefix to materialise, just hard-link the
@@ -10361,32 +10376,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Called whenever {@code columns[]} is closed. {@code lastOpenPartitionTs} names the partition columns[] maps, and
-     * code that reopens or rebinds "the open partition" (squash, RENAME COLUMN, the posting-indexer restore) trusts it.
-     * Left behind after a close, it names a partition that may since have stopped being the last one, or gone
-     * composite, and those callers would map it again at a stale offset that the next truncating close cuts to.
-     */
-    /**
-     * Writes a new directory version of one partition with rebuilt indexes and commits it, see {@link #forceReindex}.
-     * The partition's files are hard-linked; the index files of every indexed column are dropped from the new
-     * directory and either rebuilt, for the columns in scope, or linked again from their live generation.
+     * Writes a new directory version of one parquet partition with rebuilt indexes and commits it, see
+     * {@link #forceReindex}. The partition's files are hard-linked; the index files of every indexed column are
+     * dropped from the new directory and either rebuilt from the parquet file, for the columns in scope, or linked
+     * again from their live generation.
      *
      * @param columnIndex the indexed column to rebuild, or -1 for every index
      */
     private void forceReindexPartition(int partitionIndex, int columnIndex) {
+        assert txWriter.isPartitionParquet(partitionIndex);
         final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
         final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         final long partitionSize = txWriter.getPartitionSize(partitionIndex);
-        final boolean isParquet = txWriter.isPartitionParquet(partitionIndex);
-        final long parquetFileSize = isParquet ? txWriter.getPartitionParquetFileSize(partitionIndex) : -1;
+        final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
 
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         final int srcDirLen = path.size();
-        boolean topsChanged = false;
+        final boolean topsChanged;
         try {
-            if (isParquet) {
-                topsChanged = normalizeParquetColumnTops(partitionTimestamp, partitionSize, srcDirLen, parquetFileSize, false);
-            }
+            topsChanged = normalizeParquetColumnTops(partitionTimestamp, partitionSize, srcDirLen, parquetFileSize, false);
         } finally {
             // back at the table root before the early return below: the writer reuses path
             path.trimTo(pathSize);
@@ -10404,9 +10412,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        LOG.info().$("reindexing partition [table=").$(tableToken)
+        LOG.info().$("reindexing parquet partition [table=").$(tableToken)
                 .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                .$(", parquet=").$(isParquet)
                 .$(", columnTopsChanged=").$(topsChanged)
                 .$(", indexCount=").$(reindexColumnIndexes.size())
                 .I$();
@@ -10447,34 +10454,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
                 if (reindexColumnIndexes.size() > 0) {
-                    if (isParquet) {
-                        rebuildParquetRewriteIndexes(partitionTimestamp, newPartitionNameTxn, parquetFileSize, dstDirLen, reindexColumnIndexes, false);
-                    } else {
-                        // The whole DIRECTORY's shared frame - see getPartitionPhysicalRowCount
-                        final long rowCount = getPartitionPhysicalRowCount(partitionIndex);
-                        for (int i = 0, n = reindexColumnIndexes.size(); i < n; i++) {
-                            final int reindexColumnIndex = reindexColumnIndexes.getQuick(i);
-                            final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, reindexColumnIndex);
-                            // an absent column, or one without rows in the partition, has no index files
-                            if (columnTop > -1 && columnTop < rowCount) {
-                                rebuildColumnIndex(
-                                        reindexColumnIndex,
-                                        metadata.getColumnName(reindexColumnIndex),
-                                        getColumnNameTxn(partitionTimestamp, reindexColumnIndex),
-                                        metadata.getColumnIndexType(reindexColumnIndex),
-                                        columnTop,
-                                        0,
-                                        rowCount,
-                                        partitionTimestamp,
-                                        other,
-                                        dstDirLen,
-                                        other,
-                                        dstDirLen,
-                                        true
-                                );
-                            }
-                        }
-                    }
+                    rebuildParquetRewriteIndexes(partitionTimestamp, newPartitionNameTxn, parquetFileSize, dstDirLen, reindexColumnIndexes, false);
                 }
                 // The index files are the last write into the new directory; the commit that names it comes next
                 fsyncConvertedPartitionDir(partitionTimestamp);
@@ -10521,6 +10501,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Called whenever {@code columns[]} is closed. {@code lastOpenPartitionTs} names the partition columns[] maps, and
+     * code that reopens or rebinds "the open partition" (squash, RENAME COLUMN, the posting-indexer restore) trusts it.
+     * Left behind after a close, it names a partition that may since have stopped being the last one, or gone
+     * composite, and those callers would map it again at a stale offset that the next truncating close cuts to.
+     */
     private void forgetLastOpenPartition() {
         lastOpenPartitionTs = Long.MIN_VALUE;
         lastOpenPartitionTxnName = -1;
@@ -17326,8 +17312,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             Path dataDir,
             int dataDirLen,
             Path indexDir,
-            int indexDirLen,
-            boolean isSyncRequired
+            int indexDirLen
     ) {
         final int indexValueBlockCapacity = metadata.getIndexValueBlockCapacity(columnIndex);
         final long dataSize = (partitionRowCount - columnTop) * Integer.BYTES;
@@ -17359,13 +17344,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             iw.setMaxValue(partitionRowCount - 1);
             iw.seal();
-            if (isSyncRequired) {
-                // A closed index writer leaves its files to the kernel's writeback, flush them at the table's grade
-                final int flushCommitMode = getFlushCommitMode();
-                if (CommitMode.appliesColumnSync(flushCommitMode)) {
-                    iw.sync(flushCommitMode == CommitMode.ASYNC);
-                }
-            }
         } finally {
             // munmap first: Misc.free(iw) can throw out of close().
             if (dataAddr != 0) {
@@ -18471,8 +18449,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         other,
                         dstDirLen,
                         other,
-                        dstDirLen,
-                        false
+                        dstDirLen
                 );
             }
         } catch (CairoException e) {

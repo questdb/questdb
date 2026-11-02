@@ -1884,10 +1884,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * {@code ALTER TABLE t FORCE REINDEX [COLUMN c] [PARTITION LIST 'p1', ...]}: rebuilds the indexes of the
-     * partitions, every partition when there is no list, into new partition directory versions through the table
-     * writer. FORCE: it bypasses the WAL and is a node-local maintenance command, so it runs at parse time, like
-     * REINDEX, and on a replica too.
+     * {@code ALTER TABLE t FORCE REINDEX PARQUET [COLUMN c] [PARTITION LIST 'p1', ...]}: rebuilds the indexes of the
+     * parquet partitions, every parquet partition when there is no list, into new partition directory versions
+     * through the table writer. FORCE: it bypasses the WAL and is a node-local maintenance command, so it runs at
+     * parse time, like REINDEX, and on a replica too.
      */
     private void alterTableForceReindex(
             SqlExecutionContext executionContext,
@@ -1896,7 +1896,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableToken tableToken,
             TableRecordMetadata tableMetadata
     ) throws SqlException {
-        CharSequence tok = SqlUtil.fetchNext(lexer);
+        CharSequence tok = expectToken(lexer, "'parquet'");
+        if (!isParquetKeyword(tok)) {
+            throw SqlException.$(lexer.lastTokenPosition(), "'parquet' expected");
+        }
+        tok = SqlUtil.fetchNext(lexer);
         String columnName = null;
         if (tok != null && isColumnKeyword(tok)) {
             tok = expectToken(lexer, "column name");

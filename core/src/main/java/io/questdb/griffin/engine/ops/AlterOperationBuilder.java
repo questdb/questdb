@@ -231,8 +231,8 @@ public class AlterOperationBuilder implements Mutable {
     }
 
     /**
-     * {@code ALTER TABLE t FORCE REINDEX [COLUMN c] [PARTITION LIST ...]}. The partitions follow through
-     * {@link #addPartitionToList}; no partition means every partition.
+     * {@code ALTER TABLE t FORCE REINDEX PARQUET [COLUMN c] [PARTITION LIST ...]}. The partitions follow through
+     * {@link #addPartitionToList}; no partition means every parquet partition.
      */
     public AlterOperationBuilder ofForceReindex(int tableNamePosition, TableToken tableToken, int tableId, @Nullable CharSequence columnName) {
         this.command = FORCE_REINDEX;
