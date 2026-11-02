@@ -191,6 +191,50 @@ public class CopyExportAuthorizationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExportJobAuthorizesEachExportsOwnColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            final String walClause = isWal ? "WAL" : "BYPASS WAL";
+            execute("CREATE TABLE t1 (ts TIMESTAMP, a INT) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+            execute("CREATE TABLE t2 (ts TIMESTAMP, b INT) TIMESTAMP(ts) PARTITION BY DAY " + walClause);
+            execute("INSERT INTO t1 VALUES ('2024-01-01', 1)");
+            execute("INSERT INTO t2 VALUES ('2024-01-02', 2)");
+            drainWalQueue();
+            final StringSink checks = new StringSink();
+            final AllowAllSecurityContext securityContext = new AllowAllSecurityContext() {
+                @Override
+                public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+                    checks.put(tableToken.getTableName()).put(columnNames.toString()).put('\n');
+                }
+            };
+            // One job, and so one exporter, runs both exports, as an export worker does.
+            try (
+                    SqlExecutionContextImpl context = newContext(securityContext);
+                    CopyExportRequestJob job = new CopyExportRequestJob(engine)
+            ) {
+                for (String tableName : new String[]{"t1", "t2"}) {
+                    try (
+                            RecordCursorFactory factory = select("COPY " + tableName + " TO 'out_" + tableName + "' WITH FORMAT PARQUET", context);
+                            RecordCursor cursor = factory.getCursor(context)
+                    ) {
+                        Assert.assertTrue(cursor.hasNext());
+                    }
+                    Assert.assertTrue("the export must reach the job", job.run());
+                }
+            }
+            // COPY checks each table when it compiles, and the job checks it again, on that table's columns only
+            TestUtils.assertEquals("t1[ts,a]\nt1[ts,a]\nt2[ts,b]\nt2[ts,b]\n", checks);
+            assertQuery("SELECT * FROM read_parquet('" + exportRoot + File.separator + "out_t2.parquet')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tb
+                            2024-01-02T00:00:00.000000Z\t2
+                            """);
+        });
+    }
+
+    @Test
     public void testExportJobDeniesColumnAddedAfterCompile() throws Exception {
         assertMemoryLeak(() -> {
             createReplacementTable();
