@@ -1399,8 +1399,9 @@ public class PivotTest extends AbstractSqlParserTest {
             registerAdminScalar(requirements, constructionCount);
             try {
                 // stored while the function needs no caller, as a definition stored before the restriction: pv_direct
-                // calls it in its own IN subquery, pv_nested through the view its IN subquery reads, and pv_subquery
-                // in the IN subquery of a PIVOT that a WHERE subquery of the view reads
+                // calls it in its own IN subquery, pv_nested through the view its IN subquery reads, pv_subquery in the
+                // IN subquery of a PIVOT that a WHERE subquery of the view reads, and pv_outer through pv_direct, which
+                // its WHERE subquery reads: the error names pv_outer, not pv_direct at its position in pv_outer's body
                 execute("CREATE VIEW names AS (SELECT admin_scalar() cat FROM long_sequence(1))");
                 execute("CREATE VIEW pv_direct AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT admin_scalar() FROM long_sequence(1))))");
                 execute("CREATE VIEW pv_nested AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM names)))");
@@ -1410,10 +1411,11 @@ public class PivotTest extends AbstractSqlParserTest {
                                 SELECT count() FROM (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT admin_scalar() FROM long_sequence(1))))
                             )
                         )""");
+                execute("CREATE VIEW pv_outer AS (SELECT * FROM data WHERE val > (SELECT count() FROM pv_direct))");
                 execute("CREATE VIEW other AS (SELECT 1 x FROM long_sequence(1))");
                 requirements.set(SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT);
                 constructionCount.set(0);
-                for (String pivotView : new String[]{"pv_direct", "pv_nested", "pv_subquery"}) {
+                for (String pivotView : new String[]{"pv_direct", "pv_nested", "pv_subquery", "pv_outer"}) {
                     for (String sql : new String[]{
                             "CREATE VIEW reader AS (SELECT * FROM " + pivotView + ")",
                             "ALTER VIEW other AS SELECT * FROM " + pivotView,
@@ -4867,7 +4869,8 @@ public class PivotTest extends AbstractSqlParserTest {
             final AtomicInteger constructionCount = new AtomicInteger();
             registerAdminScalar(new AtomicInteger(SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT), constructionCount);
             try {
-                // Code generation constructs these scalars, after the optimiser's metadata-subquery scope ends.
+                // Code generation constructs these scalars after the optimiser's metadata-subquery scope ends, except in
+                // a PIVOT nested in the IN subquery, which the optimiser prepares, and generates, inside that scope.
                 assertViewPivotRejects(
                         "admin_scalar",
                         """
