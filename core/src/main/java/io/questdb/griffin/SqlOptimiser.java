@@ -212,18 +212,20 @@ public class SqlOptimiser implements Mutable {
     private final ObjectPool<IntHashSet> intHashSetPool = new ObjectPool<>(IntHashSet::new, 16);
     private final ObjList<JoinContext> joinClausesSwap1 = new ObjList<>();
     private final ObjList<JoinContext> joinClausesSwap2 = new ObjList<>();
-    // While the columns of a query propagate in kept-whole mode, see setUnkeyedJoinKeptWhole(): per column of
+    // While the columns of a query propagate in kept-whole mode, see setSubQueryKeptWhole(): per column of
     // the projection emitKeptWholeProjection() emits, the join models of its nested model the column reaches.
     private final ObjList<IntHashSet> keptWholeColumnJoins = new ObjList<>();
     // and the outputs of the view the column serves, null when every read of the view needs it
     private final ObjList<IntHashSet> keptWholeColumnOrigins = new ObjList<>();
-    // the outputs of the view whose columns need a join model, see isLeftWithoutColumnsBySomeRead()
+    // the outputs of the view whose columns need a join model, see collectWithholdingOutputs()
     private final IntHashSet keptWholeNeededBy = new IntHashSet();
     private final ObjectPool<LowerCaseCharSequenceObjHashMap<IntHashSet>> keptWholeOriginMapPool = new ObjectPool<>(LowerCaseCharSequenceObjHashMap::new, 16);
     // per model, the outputs of the view each top-down column serves, see recordKeptWholeOrigins()
     private final ObjObjHashMap<IQueryModel, LowerCaseCharSequenceObjHashMap<IntHashSet>> keptWholeOrigins = new ObjObjHashMap<>();
     // the models whose columns are the outputs of the view: its SELECT and the branches of its set operation
     private final ObjHashSet<IQueryModel> keptWholeOutputLayers = new ObjHashSet<>();
+    // the outputs of the view the columns of a projection serve, see collectWithholdingOutputs()
+    private final IntHashSet keptWholeServedBy = new IntHashSet();
     // the join models of projectionJoinHolder that addTopDownColumn() gives no column of the projection
     private final IntHashSet keptWholeWithheldJoins = new IntHashSet();
     private final LowerCaseCharSequenceIntHashMap lateralCountCarrierRefCounts = new LowerCaseCharSequenceIntHashMap(8, 0.4, 0);
@@ -312,9 +314,9 @@ public class SqlOptimiser implements Mutable {
     private boolean isKeptWholeDryRun;
     // True when the execution-order anchors are valid (ordered join models are a full permutation).
     private boolean isNullingExecOrderValid;
-    // True while the columns of a query propagate in kept-whole mode, see setUnkeyedJoinKeptWhole(), and, set by
+    // True while the columns of a query propagate in kept-whole mode, see setSubQueryKeptWhole(), and, set by
     // the caller, until optimise() starts.
-    private boolean isUnkeyedJoinKeptWhole;
+    private boolean isSubQueryKeptWhole;
     // the outputs of the view the projection column emitKeptWholeProjection() emits serves, null otherwise
     private IntHashSet keptWholeEmittedOrigins;
     // the number of outputs of the view while the columns of a query propagate in kept-whole mode
@@ -1911,6 +1913,9 @@ public class SqlOptimiser implements Mutable {
                     return;
                 }
                 if (model == projectionJoinHolder && isWithheldFromProjection(modelIndex)) {
+                    if (!isKeptWholeDryRun) {
+                        recordWithheldColumn(model.getJoinModels().getQuick(modelIndex), node.token.subSequence(dotIndex + 1, node.token.length()), null);
+                    }
                     return;
                 }
 
@@ -1931,6 +1936,9 @@ public class SqlOptimiser implements Mutable {
             final QueryColumn column = m.getAliasToColumnMap().get(columnName);
             if (column != null) {
                 if (model == projectionJoinHolder && isWithheldFromProjection(i)) {
+                    if (!isKeptWholeDryRun) {
+                        recordWithheldColumn(m, columnName, column);
+                    }
                     break;
                 }
                 switch (m.getSelectModelType()) {
@@ -1939,7 +1947,7 @@ public class SqlOptimiser implements Mutable {
                         break;
                     case IQueryModel.SELECT_MODEL_VIRTUAL:
                         tempCharSequenceHashSet.clear();
-                        collectSameModelProjectionColumns(column.getAst(), m);
+                        collectSameModelProjectionColumns(column.getAst(), m, true);
                         m.addTopDownColumn(column, columnName);
                         break;
                     default:
@@ -3000,7 +3008,9 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void collectSameModelProjectionColumns(ExpressionNode node, IQueryModel model) {
+    // Adds the columns of the model the expression reads to the top-down columns of the model, unless isAdding is
+    // false, as it is for a model a projection withholds, see recordWithheldColumn().
+    private void collectSameModelProjectionColumns(ExpressionNode node, IQueryModel model, boolean isAdding) {
         if (node == null) {
             return;
         }
@@ -3009,11 +3019,11 @@ public class SqlOptimiser implements Mutable {
             final QueryColumn dep = model.getAliasToColumnMap().get(node.token);
             IQueryModel nested = model.getNestedModel();
             if (dep != null && (nested == null || !nested.getAliasToColumnMap().contains(node.token)) && tempCharSequenceHashSet.add(node.token)) {
-                final boolean isMissing = model.isTopDownNameMissing(node.token);
+                final boolean isMissing = isAdding && model.isTopDownNameMissing(node.token);
                 // In kept-whole mode a column the model has already gets the outputs of the view the column
                 // being emitted serves, and so do the columns it reads in turn, see recordKeptWholeOrigins().
-                if (isMissing || isUnkeyedJoinKeptWhole) {
-                    collectSameModelProjectionColumns(dep.getAst(), model);
+                if (isMissing || isSubQueryKeptWhole) {
+                    collectSameModelProjectionColumns(dep.getAst(), model, isAdding);
                     if (isMissing) {
                         model.addTopDownColumn(dep, node.token);
                     }
@@ -3024,11 +3034,56 @@ public class SqlOptimiser implements Mutable {
         }
 
         if (node.paramCount < 3) {
-            collectSameModelProjectionColumns(node.lhs, model);
-            collectSameModelProjectionColumns(node.rhs, model);
+            collectSameModelProjectionColumns(node.lhs, model, isAdding);
+            collectSameModelProjectionColumns(node.rhs, model, isAdding);
         } else {
             for (int i = 0, k = node.paramCount; i < k; i++) {
-                collectSameModelProjectionColumns(node.args.getQuick(i), model);
+                collectSameModelProjectionColumns(node.args.getQuick(i), model, isAdding);
+            }
+        }
+    }
+
+    // Collects the outputs of the view a read that names one of them alone gives the join model at index of
+    // projectionJoinHolder no column of the projection emitKeptWholeProjection() emits, so that its plan computes
+    // every column of the SELECT list of the join model. Such a read gets a column of the projection, one that serves
+    // the output or one every read needs, and none of those reaches the join model. A projection that gives the join
+    // model no column, or one every read needs, leaves it to the other columns of the plan.
+    private void collectWithholdingOutputs(int joinIndex, int columnCount, IntHashSet outputs) {
+        keptWholeNeededBy.clear();
+        keptWholeServedBy.clear();
+        boolean hasColumnEveryReadNeeds = false;
+        boolean isReached = false;
+        for (int i = 0; i < columnCount; i++) {
+            final IntHashSet origins = keptWholeColumnOrigins.getQuick(i);
+            final boolean isReaching = keptWholeColumnJoins.getQuick(i).contains(joinIndex);
+            if (origins == null) {
+                if (isReaching) {
+                    return;
+                }
+                hasColumnEveryReadNeeds = true;
+            } else {
+                keptWholeServedBy.addAll(origins);
+                if (isReaching) {
+                    keptWholeNeededBy.addAll(origins);
+                    isReached = true;
+                }
+            }
+        }
+        if (!isReached) {
+            return;
+        }
+        if (hasColumnEveryReadNeeds) {
+            for (int output = 0; output < keptWholeOutputCount; output++) {
+                if (!keptWholeNeededBy.contains(output)) {
+                    outputs.add(output);
+                }
+            }
+        } else {
+            for (int i = 0, n = keptWholeServedBy.size(); i < n; i++) {
+                final int output = keptWholeServedBy.get(i);
+                if (!keptWholeNeededBy.contains(output)) {
+                    outputs.add(output);
+                }
             }
         }
     }
@@ -4502,12 +4557,12 @@ public class SqlOptimiser implements Mutable {
     }
 
     // Emits the projection of a model to its nested model while the columns of a read of a view propagate in
-    // kept-whole mode, see setUnkeyedJoinKeptWhole(). A read of the view that names only outputs whose columns
-    // do not need a sub-query the nested model joins without a key gives that sub-query no column of the
-    // projection, and its plan computes every column of the sub-query. So the projection gives no column to
-    // such a sub-query when some read leaves it without one, and to every other join model the columns the
-    // outputs need, as the reads of the view do. Each column carries the outputs it serves to the columns it
-    // reaches, see recordKeptWholeOrigins().
+    // kept-whole mode, see setSubQueryKeptWhole(). A read of the view that names only outputs whose columns do not
+    // need a sub-query only the projection gives columns, see SqlUtil.isProjectionFedSubQuery(), gives that
+    // sub-query no column of the projection, and its plan computes every column of the sub-query. So the projection
+    // gives no column to such a sub-query when some read leaves it without one, and to every other join model the
+    // columns the outputs need, as the reads of the view do. Each column carries the outputs it serves to the columns
+    // it reaches, see recordKeptWholeOrigins().
     private void emitKeptWholeProjection(IQueryModel model, IQueryModel nested) {
         final ObjList<QueryColumn> columns = model.getColumns();
         final int columnCount = columns.size();
@@ -4524,8 +4579,13 @@ public class SqlOptimiser implements Mutable {
         keptWholeWithheldJoins.clear();
         projectionJoinHolder = nested;
         try {
-            final int joinCount = nested.getJoinModels().size();
-            if (joinCount > 1) {
+            final ObjList<IQueryModel> joinModels = nested.getJoinModels();
+            final int joinCount = joinModels.size();
+            boolean hasProjectionFedSubQuery = false;
+            for (int j = 0; j < joinCount && !hasProjectionFedSubQuery; j++) {
+                hasProjectionFedSubQuery = SqlUtil.isProjectionFedSubQuery(nested, j);
+            }
+            if (hasProjectionFedSubQuery) {
                 // a dry run collects the join models each column reaches, see isWithheldFromProjection()
                 keptWholeColumnJoins.clear();
                 isKeptWholeDryRun = true;
@@ -4538,8 +4598,20 @@ public class SqlOptimiser implements Mutable {
                     isKeptWholeDryRun = false;
                 }
                 for (int j = 0; j < joinCount; j++) {
-                    if (SqlUtil.isUnkeyedJoinedSubQuery(nested, j) && isLeftWithoutColumnsBySomeRead(j, columnCount)) {
-                        keptWholeWithheldJoins.add(j);
+                    if (SqlUtil.isProjectionFedSubQuery(nested, j)) {
+                        final IntHashSet outputs = intHashSetPool.next();
+                        collectWithholdingOutputs(j, columnCount, outputs);
+                        if (outputs.size() > 0) {
+                            keptWholeWithheldJoins.add(j);
+                            // A read that names one of the outputs alone keeps the join model whole, so every column
+                            // of it serves the output, and the columns the projection gives it serve their own
+                            // outputs too, see recordWithheldColumn().
+                            final IQueryModel joinModel = joinModels.getQuick(j);
+                            final ObjList<QueryColumn> joinColumns = joinModel.getBottomUpColumns();
+                            for (int i = 0, n = joinColumns.size(); i < n; i++) {
+                                recordKeptWholeOrigins(joinModel, joinColumns.getQuick(i).getAlias(), outputs);
+                            }
+                        }
                     }
                 }
             }
@@ -4754,7 +4826,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     private void endKeptWholePropagation() {
-        isUnkeyedJoinKeptWhole = false;
+        isSubQueryKeptWhole = false;
         isKeptWholeDryRun = false;
         keptWholeColumnJoins.clear();
         keptWholeColumnOrigins.clear();
@@ -6471,23 +6543,6 @@ public class SqlOptimiser implements Mutable {
         } finally {
             sqlNodeStack.clear();
         }
-    }
-
-    // Whether a read of the view gives the join model at index of projectionJoinHolder no column of the
-    // projection emitKeptWholeProjection() emits: whether the outputs whose columns reach it leave an output
-    // out, and no column every read needs reaches it.
-    private boolean isLeftWithoutColumnsBySomeRead(int joinIndex, int columnCount) {
-        keptWholeNeededBy.clear();
-        for (int i = 0; i < columnCount; i++) {
-            if (keptWholeColumnJoins.getQuick(i).contains(joinIndex)) {
-                final IntHashSet origins = keptWholeColumnOrigins.getQuick(i);
-                if (origins == null) {
-                    return false;
-                }
-                keptWholeNeededBy.addAll(origins);
-            }
-        }
-        return keptWholeNeededBy.size() < keptWholeOutputCount;
     }
 
     /**
@@ -8523,7 +8578,7 @@ public class SqlOptimiser implements Mutable {
         retainGroupByKeysAsTopDownColumns(model);
 
         if (nestedIsFlex && nestedAllowsColumnChange) {
-            if (isUnkeyedJoinKeptWhole) {
+            if (isSubQueryKeptWhole) {
                 emitKeptWholeProjection(model, nested);
             } else {
                 emitColumnLiteralsTopDown(model.getColumns(), nested);
@@ -8927,9 +8982,11 @@ public class SqlOptimiser implements Mutable {
     }
 
     // The outputs of the view the top-down column alias of the model serves, null for every output, see
-    // recordKeptWholeOrigins(). A column no projection column or clause reached is one every read needs.
+    // recordKeptWholeOrigins(). A column no projection column or clause reached is one every read needs. Every column
+    // of a model a projection withholds serves the outputs of the reads that keep the model whole, see
+    // emitKeptWholeProjection().
     private @Nullable IntHashSet recordedKeptWholeOrigins(IQueryModel model, CharSequence alias) {
-        if (!isUnkeyedJoinKeptWhole) {
+        if (!isSubQueryKeptWhole) {
             return null;
         }
         final LowerCaseCharSequenceObjHashMap<IntHashSet> columnOrigins = keptWholeOrigins.get(model);
@@ -8941,7 +8998,7 @@ public class SqlOptimiser implements Mutable {
     // the outputs of every projection column and clause that reaches it: a read that names only the other
     // outputs gives the column nothing, and every read needs one that a clause reaches.
     private void recordKeptWholeOrigins(IQueryModel model, CharSequence alias, @Nullable IntHashSet origins) {
-        if (!isUnkeyedJoinKeptWhole) {
+        if (!isSubQueryKeptWhole) {
             return;
         }
         // a dry run withholds every column from the join models, see isWithheldFromProjection()
@@ -8989,6 +9046,18 @@ public class SqlOptimiser implements Mutable {
         tempIntList.add(parentIndex);
         tempIntList.add(childIndex);
         addOrderingConstraint(parent, parentIndex, childIndex);
+    }
+
+    // Records the outputs of the view a column of a join model the projection withholds serves, see
+    // isWithheldFromProjection(), and the columns of the model the column reads, without giving the model the
+    // column: a read that names one of those outputs gives the model the column. A column the projection names
+    // with the alias of the join model comes by name, as addTopDownColumn0() gives it, and with a null column.
+    private void recordWithheldColumn(IQueryModel joinModel, CharSequence columnName, @Nullable QueryColumn column) {
+        if (column != null && joinModel.getSelectModelType() == IQueryModel.SELECT_MODEL_VIRTUAL) {
+            tempCharSequenceHashSet.clear();
+            collectSameModelProjectionColumns(column.getAst(), joinModel, false);
+        }
+        recordKeptWholeOrigins(joinModel, columnName, keptWholeEmittedOrigins);
     }
 
     /**
@@ -14669,11 +14738,11 @@ public class SqlOptimiser implements Mutable {
         return model;
     }
 
-    // Starts the propagation of the columns of a read of a view in kept-whole mode, see setUnkeyedJoinKeptWhole().
+    // Starts the propagation of the columns of a read of a view in kept-whole mode, see setSubQueryKeptWhole().
     // The read counts the rows of the SELECT of the view: the columns of that SELECT, and of each branch of its
     // set operation, are the outputs a read of the view can name.
     private void startKeptWholePropagation(IQueryModel root) {
-        isUnkeyedJoinKeptWhole = true;
+        isSubQueryKeptWhole = true;
         final IQueryModel view = skipNoneTypeModels(root.getNestedModel());
         assert view != null : "a read of a view counts the rows of a SELECT";
         keptWholeOutputCount = view.getColumns().size();
@@ -15988,9 +16057,9 @@ public class SqlOptimiser implements Mutable {
         }
         // Kept-whole mode applies to the propagation of the columns of this query only. The sub-queries optimise()
         // compiles on the way, those of expressions and PIVOT IN lists included, compile as any query does, and
-        // the latter run, see setUnkeyedJoinKeptWhole().
-        final boolean isKeptWhole = isUnkeyedJoinKeptWhole;
-        isUnkeyedJoinKeptWhole = false;
+        // the latter run, see setSubQueryKeptWhole().
+        final boolean isKeptWhole = isSubQueryKeptWhole;
+        isSubQueryKeptWhole = false;
         IQueryModel rewrittenModel = model;
         try {
             rewrittenModel = bubbleUpOrderByAndLimitFromUnion(rewrittenModel);
@@ -16061,7 +16130,7 @@ public class SqlOptimiser implements Mutable {
             freeTableFactoriesInFlight(th);
             throw th;
         } finally {
-            isUnkeyedJoinKeptWhole = isKeptWhole;
+            isSubQueryKeptWhole = isKeptWhole;
         }
     }
 
@@ -16106,17 +16175,18 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * Makes the next optimise() of a query that counts the rows of the SELECT of a view give no column of a
-     * projection to a sub-query, CTE or view its FROM clause joins without a key, such as with a CROSS JOIN,
-     * or an ASOF, LT or SPLICE JOIN without ON, when a read of the view can name only outputs whose columns
-     * do not need the sub-query. A join condition, a filter or an ORDER BY still gives it the columns they
-     * name. Such a read gets a plan that computes every column of the sub-query, so the dependencies of the
-     * view collect the columns of such a plan too, see {@code SqlCompilerImpl.collectUnkeyedJoinDependencies()}.
-     * A sub-query every output of the view needs keeps only the columns the outputs name, as in every read of
-     * the view. The mode applies to the propagation of the columns of the query: the sub-queries optimise()
-     * compiles on the way compile as any query does. Nothing generates the model.
+     * projection to a sub-query, CTE or view only the projection gives columns, the only source of a FROM clause
+     * or one it joins without a key, such as with a CROSS JOIN, or an ASOF, LT or SPLICE JOIN without ON, when a
+     * read of the view can leave the sub-query without columns: the read names only outputs whose columns do not
+     * need it. A join condition, a filter or an ORDER BY still gives it the columns they name. Such a read gets a
+     * plan that computes every column of the sub-query, so the dependencies of the view collect the columns of
+     * such a plan too, see {@code SqlCompilerImpl.collectOtherReadDependencies()}. A sub-query every read
+     * of the view gives columns keeps only the columns the outputs name, as in every read of the view. The mode
+     * applies to the propagation of the columns of the query: the sub-queries optimise() compiles on the way
+     * compile as any query does. Nothing generates the model.
      */
-    void setUnkeyedJoinKeptWhole(boolean isUnkeyedJoinKeptWhole) {
-        this.isUnkeyedJoinKeptWhole = isUnkeyedJoinKeptWhole;
+    void setSubQueryKeptWhole(boolean isSubQueryKeptWhole) {
+        this.isSubQueryKeptWhole = isSubQueryKeptWhole;
     }
 
     void validateUpdateColumns(

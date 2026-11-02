@@ -95,8 +95,8 @@ import static org.junit.Assert.fail;
  *     compiler to generate the sub-query through {@code generateSelectWithoutRetries()}, runs it, and
  *     closes the plan. The catch block of {@code SqlOptimiser#optimise} sweeps when the statement fails
  *     afterwards ({@code testPivotInSubQuery*}).</li>
- *     <li>{@code SqlCompilerImpl#collectUnkeyedJoinDependencies}, the second compile of the SELECT of a view
- *     that joins a sub-query without a key. CREATE VIEW and ALTER VIEW optimise it and never generate it,
+ *     <li>{@code SqlCompilerImpl#collectOtherReadDependencies}, the second compile of the SELECT of a view
+ *     that joins a sub-query without a key, for one. CREATE VIEW and ALTER VIEW optimise it and never generate it,
  *     before they generate the first compile, and sweep whether it returns or throws
  *     ({@code testSubQueryJoinedWithoutKey*}).</li>
  *     <li>{@code SqlCodeGenerator#generateFunctionQuery}, which takes over a factory that projects its

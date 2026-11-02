@@ -2409,13 +2409,19 @@ public class SqlUtil {
                     collectTableColumnReads(engine, joinModel, depMap, wildcardSources, isJoinTimestampRequired);
                 }
             }
-            for (int i = 0; i < joinCount && !wildcardSources.hasUnkeyedJoinedSubQuery; i++) {
-                wildcardSources.hasUnkeyedJoinedSubQuery = isUnkeyedJoinedSubQuery(model, i);
+            for (int i = 0; i < joinCount && !wildcardSources.hasReadPlannedOtherwise; i++) {
+                wildcardSources.hasReadPlannedOtherwise = isProjectionFedSubQuery(model, i);
             }
         } else {
             // SqlCodeGenerator.generateQuery0(): a model that orders its rows requires no timestamp
             // of its source
-            collectSourceColumnReads(engine, model, depMap, wildcardSources, isTimestampRequired && model.getOrderBy().size() == 0);
+            final boolean isOrdered = model.getOrderBy().size() > 0;
+            collectSourceColumnReads(engine, model, depMap, wildcardSources, isTimestampRequired && !isOrdered);
+            // A read that counts the rows of the view drops the ORDER BY, and its plan takes the timestamp it
+            // requires from the source instead. A read may leave the source without columns too.
+            if (!wildcardSources.hasReadPlannedOtherwise) {
+                wildcardSources.hasReadPlannedOtherwise = (isTimestampRequired && isOrdered) || isSoleSourceKeptWholeBySomeRead(model);
+            }
         }
         // every branch of a set operation compiles under the requirement of the first one
         collectTableColumnReads(engine, model.getUnionModel(), depMap, wildcardSources, isTimestampRequired);
@@ -2661,6 +2667,23 @@ public class SqlUtil {
         return hasGroupByFunction(functionFactoryCache, node.lhs) || hasGroupByFunction(functionFactoryCache, node.rhs);
     }
 
+    // Whether the expression names a column. A sub-query of the expression, which reads the columns of its own
+    // sources, keeps its expressions in its model.
+    private static boolean hasLiteral(@Nullable ExpressionNode node) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasLiteral(node.args.getQuick(i))) {
+                return true;
+            }
+        }
+        return hasLiteral(node.lhs) || hasLiteral(node.rhs);
+    }
+
     // Whether a FROM clause has a WINDOW JOIN. Its aggregates leave the rows of their SELECT ungrouped:
     // each aggregates the rows of the right side that the window of one row of the left side matches.
     private static boolean hasWindowJoin(@NotNull IQueryModel fromModel) {
@@ -2728,6 +2751,29 @@ public class SqlUtil {
         return false;
     }
 
+    // Whether a read of the view may leave the sub-query, CTE or view the model selects from as the only source of
+    // its FROM clause without columns, so that the plan of the sub-query computes columns of its SELECT list the
+    // plan of the view does not: the plan of the view leaves a column of the sub-query out, and the model selects a
+    // column whose expression names no column, which a read can name alone, see
+    // SqlCompiler.collectOtherReadDependencies(). The window of a window function may name one all the same.
+    private static boolean isSoleSourceKeptWholeBySomeRead(@NotNull IQueryModel model) {
+        final IQueryModel source = model.getNestedModel();
+        if (source == null || source.getNestedModel() == null) {
+            return false;
+        }
+        final int keptColumnCount = source.getTopDownColumns().size();
+        if (keptColumnCount == 0 || keptColumnCount >= source.getBottomUpColumns().size()) {
+            return false;
+        }
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (!hasLiteral(columns.getQuick(i).getAst())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Parses the value against every implicit-cast format, in order. Signals a failed
      * parse with the flyweight {@link NumericException} rather than an
@@ -2746,13 +2792,14 @@ public class SqlUtil {
         throw NumericException.instance();
     }
 
-    // Whether the model at index in the join models of joinHolder is a sub-query, a CTE or a view that no join
-    // condition names a column of, as one a CROSS JOIN, or an ASOF, LT or SPLICE JOIN without ON, joins. A
-    // query above the join that needs none of its columns may give it no top-down columns, and the plan then
-    // computes every column of its SELECT list, see SqlOptimiser.setUnkeyedJoinKeptWhole().
-    static boolean isUnkeyedJoinedSubQuery(@NotNull IQueryModel joinHolder, int index) {
+    // Whether the model at index in the join models of joinHolder is a sub-query, a CTE or a view only the projection
+    // of the query above gives columns: the only source of the FROM clause, or one that no join condition names a
+    // column of, as one a CROSS JOIN, or an ASOF, LT or SPLICE JOIN without ON, joins. A query above that needs none
+    // of its columns may give it no top-down columns, and the plan then computes every column of its SELECT list,
+    // see SqlOptimiser.setSubQueryKeptWhole().
+    static boolean isProjectionFedSubQuery(@NotNull IQueryModel joinHolder, int index) {
         final ObjList<IQueryModel> joinModels = joinHolder.getJoinModels();
-        if (joinModels.size() < 2 || joinModels.getQuick(index).getNestedModel() == null) {
+        if (joinModels.getQuick(index).getNestedModel() == null) {
             return false;
         }
         for (int i = 1, n = joinModels.size(); i < n; i++) {
@@ -2784,9 +2831,9 @@ public class SqlUtil {
     }
 
     /**
-     * What the compile of a view's SELECT that plans it saw, and the compile that collects what a read of
-     * the view naming none of the columns of a sub-query it joins without a key reads has to see the same,
-     * see {@link SqlCompiler#collectUnkeyedJoinDependencies}. The latter takes the values each PIVOT IN
+     * What the compile of a view's SELECT that plans it saw, and the compile that collects what the reads of
+     * the view read and that plan does not has to see the same, see
+     * {@link SqlCompiler#collectOtherReadDependencies}. The latter takes the values each PIVOT IN
      * sub-query returned rather than running the sub-queries again, and finds a table of the same name with
      * another id than the one the plan scans out of date: a table that replaced it would lend its own
      * columns to the dependencies of the view.
@@ -2917,8 +2964,9 @@ public class SqlUtil {
         // where the walk of an optimised SELECT records the tables it scans, or checks them against, while the
         // walk runs, see collectTableColumnReads()
         private ViewCompileRecord compileRecord;
-        // whether the optimised SELECT joins a sub-query without a key, see isUnkeyedJoinedSubQuery()
-        private boolean hasUnkeyedJoinedSubQuery;
+        // whether a read of the view may plan the optimised SELECT otherwise than the plan of the view, see
+        // hasReadPlannedOtherwise()
+        private boolean hasReadPlannedOtherwise;
         private boolean isRecordingCompile;
         // the number of times the walks of optimised SELECTs have reached a model, for the tests of their cost
         private long visitCount;
@@ -2933,13 +2981,16 @@ public class SqlUtil {
         }
 
         /**
-         * Returns whether the optimised SELECT the last walk of the columns a view reads walked joins a
-         * sub-query, a CTE or a view without a key, such as with a CROSS JOIN. A read of the view that names
-         * none of its columns may compute every column of it, which the plan of the view's own SELECT may
-         * not read, see {@link SqlCompiler#collectUnkeyedJoinDependencies}.
+         * Returns whether a read of the view may plan the optimised SELECT the last walk of the columns a view reads
+         * walked otherwise than the plan of the view's own SELECT, and read columns that plan does not. A read may
+         * leave a sub-query, a CTE or a view of the SELECT without columns: one the SELECT joins without a key, such
+         * as with a CROSS JOIN, or selects from alone while a column of the SELECT reads no column. The plan of such
+         * a read computes every column of the sub-query. A read that counts the rows of the view drops the ORDER BY
+         * of a sub-query that gives a temporal join or a SAMPLE BY its timestamp, and the plan takes the timestamp
+         * from the source of the sub-query instead. See {@link SqlCompiler#collectOtherReadDependencies}.
          */
-        public boolean hasUnkeyedJoinedSubQuery() {
-            return hasUnkeyedJoinedSubQuery;
+        public boolean hasReadPlannedOtherwise() {
+            return hasReadPlannedOtherwise;
         }
 
         @TestOnly
@@ -2980,7 +3031,7 @@ public class SqlUtil {
             scans.clear();
             visitedModels.clear();
             visitedTimestampModels.clear();
-            hasUnkeyedJoinedSubQuery = false;
+            hasReadPlannedOtherwise = false;
         }
 
         // Whether the plan scans the source under sourceModel, and the plan reads every column the optimiser

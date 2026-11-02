@@ -215,7 +215,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
-    // what the compile of a view's SELECT that plans it saw, for the compile collectUnkeyedJoinDependencies() runs
+    // what the compile of a view's SELECT that plans it saw, for the compile collectOtherReadDependencies() runs
     private final SqlUtil.ViewCompileRecord viewCompileRecord = new SqlUtil.ViewCompileRecord();
     private final SqlUtil.ViewWildcardSources viewWildcardSources = new SqlUtil.ViewWildcardSources();
     private final ObjList<CharSequence> views = new ObjList<>();
@@ -409,7 +409,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @Override
-    public void collectUnkeyedJoinDependencies(
+    public void collectOtherReadDependencies(
             CharSequence viewSql,
             SqlExecutionContext executionContext,
             LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
@@ -425,13 +425,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             assert model.getModelType() == ExecutionModel.QUERY;
             SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, dependencies, viewWildcardSources);
             final IQueryModel queryModel;
-            optimiser.setUnkeyedJoinKeptWhole(true);
+            optimiser.setSubQueryKeptWhole(true);
             optimiser.setPivotInValueSource(compileRecord);
             try {
                 // a throw closes the table functions optimise() opened
                 queryModel = optimiser.optimise(countRowsOf((IQueryModel) model), executionContext, this);
             } finally {
-                optimiser.setUnkeyedJoinKeptWhole(false);
+                optimiser.setSubQueryKeptWhole(false);
                 optimiser.setPivotInValueSource(null);
             }
             // Nothing generates the model, so nothing takes over the table functions optimise() opened. The
@@ -650,9 +650,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 optimiser.setPivotInValueRecorder(null);
             }
             SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources, viewCompileRecord, true);
-            if (viewWildcardSources.hasUnkeyedJoinedSubQuery()) {
+            if (viewWildcardSources.hasReadPlannedOtherwise()) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    compiler.collectUnkeyedJoinDependencies(viewSql, executionContext, dependencies, viewCompileRecord);
+                    compiler.collectOtherReadDependencies(viewSql, executionContext, dependencies, viewCompileRecord);
                 }
             }
             return queryModel;
@@ -4747,10 +4747,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
                 // the optimised model resolves the columns the view reads, and which wildcards it keeps whole
                 SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources, viewCompileRecord, true);
-                if (viewWildcardSources.hasUnkeyedJoinedSubQuery()) {
+                if (viewWildcardSources.hasReadPlannedOtherwise()) {
                     // before generation, which then finds a table that changed meanwhile out of date
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        compiler.collectUnkeyedJoinDependencies(createTableOp.getSelectText(), executionContext, dependencies, viewCompileRecord);
+                        compiler.collectOtherReadDependencies(createTableOp.getSelectText(), executionContext, dependencies, viewCompileRecord);
                     } catch (SqlException e) {
                         e.setPosition(e.getPosition() + selectTextPosition);
                         throw e;

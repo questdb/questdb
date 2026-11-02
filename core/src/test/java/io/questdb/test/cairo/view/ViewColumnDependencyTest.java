@@ -28,6 +28,9 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.file.BlockFileReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -151,13 +154,19 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     "permission denied [table=x2, columns=ts]"
             );
             // A sub-query that orders its rows takes its timestamp from its ORDER BY, so the temporal join needs
-            // no timestamp of x2 the sub-query does not select.
+            // no timestamp of x2 the sub-query does not select, as long as the plan keeps the ORDER BY. A read that
+            // counts the rows of the view drops it, and the temporal join reads ts, the designated timestamp, then,
+            // unless a LIMIT needs the order of the rows.
             assertDependencies(
                     "SELECT t.a, u.c FROM (SELECT k, a, ts2 FROM x2 ORDER BY ts2) t ASOF JOIN y u ON (k)",
+                    "{x2=[a, k, ts, ts2], y=[c, k, ts]}"
+            );
+            assertDependencies(
+                    "SELECT t.a, u.c FROM (SELECT k, a, ts2 FROM x2 ORDER BY ts2 LIMIT 10) t ASOF JOIN y u ON (k)",
                     "{x2=[a, k, ts2], y=[c, k, ts]}"
             );
             assertOverrideDenied(
-                    "DECLARE OVERRIDABLE @c := a SELECT t.v, u.c FROM (SELECT k, @c AS v, ts2 FROM x2 ORDER BY ts2) t ASOF JOIN y u ON (k)",
+                    "DECLARE OVERRIDABLE @c := a SELECT t.v, u.c FROM (SELECT k, @c AS v, ts2 FROM x2 ORDER BY ts2 LIMIT 10) t ASOF JOIN y u ON (k)",
                     "DECLARE @c := ts SELECT * FROM v",
                     "permission denied [table=x2, columns=ts]"
             );
@@ -366,17 +375,24 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                     "{x=[], y=[c]}",
                     "SELECT m1 FROM v", "SELECT m2 FROM v", "SELECT count() FROM v"
             );
-            // A read that names only the key of a SELECT that groups, or one of its aggregates, prunes the other
-            // aggregates, and keeps the sub-query whole when they read none of it, so these views read d.
+            // A read that names only the key of a SELECT that groups prunes the aggregates, and keeps the sub-query
+            // whole when the key reads none of it, so this view reads d.
             assertReads(
                     "SELECT x.k, sum(p.mx) s FROM x CROSS JOIN (SELECT max(c) mx, min(d) mn FROM y) p",
                     "{x=[k], y=[c, d]}",
                     "SELECT k FROM v", "SELECT s FROM v"
             );
+            // The SELECT that only aggregates reads the sub-query through a SELECT of mx, which a read that names
+            // only count() keeps whole, so that every read gives the sub-query mx, and none reads d.
             assertReads(
                     "SELECT sum(p.mx) s, count() n FROM x CROSS JOIN (SELECT max(c) mx, min(d) mn FROM y) p",
-                    "{x=[], y=[c, d]}",
+                    "{x=[], y=[c]}",
                     "SELECT n FROM v", "SELECT s FROM v"
+            );
+            assertOverrideDenied(
+                    "DECLARE OVERRIDABLE @m := c SELECT sum(p.mx) s, count() n FROM x CROSS JOIN (SELECT max(@m) mx, min(d) mn FROM y) p",
+                    "DECLARE @m := d SELECT * FROM v",
+                    "permission denied [table=y, columns=d]"
             );
             // a branch of a set operation, which prunes its columns as the first branch does
             assertReads(
@@ -576,6 +592,81 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
+    public void testSubQueryKeptWholeByARead() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW vx AS (SELECT * FROM x)");
+            drainWalAndViewQueues();
+            // A read that names only outputs that read no column of the sub-query the FROM clause selects from alone,
+            // such as count(), gives the sub-query no column, and its plan computes every column of its SELECT list:
+            // the view reads those, and every column of a table a wildcard it keeps whole selects.
+            assertReads("SELECT count() n, sum(a) s FROM (SELECT * FROM x)", "{x=[*]}", "SELECT n FROM v", "SELECT s FROM v");
+            assertReads("SELECT count(*) n, sum(a) s FROM (SELECT * FROM x)", "{x=[*]}", "SELECT n FROM v");
+            assertReads("SELECT count() n, sum(a) s FROM (SELECT a, b FROM x)", "{x=[a, b]}", "SELECT n FROM v", "SELECT s FROM v");
+            assertReads("SELECT 1 one, a FROM (SELECT * FROM x)", "{x=[*]}", "SELECT one FROM v", "SELECT a FROM v");
+            assertReads("SELECT count() n, sum(a) s FROM vx", "{vx=[], x=[*]}", "SELECT n FROM v");
+            assertReads("WITH c AS (SELECT a, b FROM x) SELECT count() n, sum(a) s FROM c", "{x=[a, b]}", "SELECT n FROM v");
+            // through a SELECT whose every column a read of the view can name
+            assertReads("SELECT n, s FROM (SELECT count() n, sum(a) s FROM (SELECT * FROM x))", "{x=[*]}", "SELECT n FROM v");
+            // The optimiser puts a SELECT of the columns the projection reads under a projection that computes an
+            // expression. A read that names only the constant keeps that SELECT whole, and so gives the sub-query mx.
+            assertReads("SELECT 1 one, p.mx FROM (SELECT max(c) mx, min(d) mn FROM y) p CROSS JOIN x", "{x=[], y=[c]}", "SELECT one FROM v", "SELECT mx FROM v");
+            // a window function that reads no column, and a constant next to the timestamp of the view, which a read
+            // that names neither needs
+            assertReads("SELECT a, count() OVER () c FROM (SELECT * FROM x)", "{x=[*]}", "SELECT c FROM v", "SELECT a FROM v");
+            assertReads("SELECT ts, 1 one, a FROM (SELECT * FROM x)", "{x=[*]}", "SELECT one FROM v");
+            // A key, a column every output reads, and the window of a window function, read the sub-query in every read.
+            assertReads("SELECT k, count() n, sum(a) s FROM (SELECT * FROM x)", "{x=[a, k]}", "SELECT n FROM v");
+            assertReads("SELECT a, b FROM (SELECT * FROM x)", "{x=[a, b]}", "SELECT a FROM v");
+            assertReads(
+                    "SELECT k, row_number() OVER (PARTITION BY k) rn, rank() OVER (ORDER BY a) r FROM (SELECT * FROM x)",
+                    "{x=[a, k]}",
+                    "SELECT rn FROM v", "SELECT r FROM v"
+            );
+            // A read that names only an output that reads a SELECT of the view and not the sub-query the SELECT joins
+            // without a key leaves the sub-query without columns.
+            assertReads(
+                    "SELECT s.c1 o1, s.c2 o2, 1 o3 FROM (SELECT x.a + p.mx c1, x.b c2 FROM x CROSS JOIN (SELECT max(c) mx, min(d) mn FROM y) p) s",
+                    "{x=[a, b], y=[c, d]}",
+                    "SELECT o2 FROM v", "SELECT o3 FROM v"
+            );
+            // A read that names only n keeps the SELECT whole, u included, which gives the sub-query mn, and one that
+            // names only t2 gives the SELECT c2 alone, and keeps the sub-query whole, fk included.
+            assertReads(
+                    "SELECT count() n, sum(s.c1) t1, sum(s.c2) t2 FROM (SELECT x.a + p.mx c1, x.b c2, p.mn u FROM x CROSS JOIN (SELECT max(c) mx, min(d) mn, first(k) fk FROM y) p) s",
+                    "{x=[a, b], y=[c, d, k]}",
+                    "SELECT n FROM v", "SELECT t1 FROM v", "SELECT t2 FROM v"
+            );
+            // A read that names only outputs that read no column of that SELECT keeps the SELECT whole, and so gives
+            // the sub-query the columns its SELECT list reads: no read keeps the sub-query whole, and none reads d.
+            assertReads(
+                    "SELECT s.o1, 1 o2 FROM (SELECT x.a + p.mx o1 FROM x CROSS JOIN (SELECT max(c) mx, min(d) mn FROM y) p) s",
+                    "{x=[a], y=[c]}",
+                    "SELECT o2 FROM v", "SELECT o1 FROM v"
+            );
+            assertOverrideDenied(
+                    "DECLARE OVERRIDABLE @m := c SELECT s.o1, 1 o2 FROM (SELECT x.a + p.mx o1 FROM x CROSS JOIN (SELECT max(@m) mx, min(d) mn FROM y) p) s",
+                    "DECLARE @m := d SELECT * FROM v",
+                    "permission denied [table=y, columns=d]"
+            );
+            // A read that names only t computes m1, which m2 reads, so every read gives the SELECT * the column v, and
+            // no read keeps the SELECT * whole: the view reads a of x, and b for u, which a read that names only n
+            // computes as it keeps the SELECT of m1 whole.
+            assertReads(
+                    "SELECT count() n, sum(m2) t FROM (SELECT v + 1 m1, m1 * 2 m2, w u FROM (SELECT * FROM (SELECT a v, b w, ts, k FROM x) CROSS JOIN (SELECT max(c) mx, min(d) mn FROM y)))",
+                    "{x=[a, b], y=[c, d]}",
+                    "SELECT n FROM v", "SELECT t FROM v"
+            );
+            // and a read that names only t gives no column to the sub-query only u reads
+            assertReads(
+                    "SELECT count() n, sum(m2) t, sum(u) tu FROM (SELECT x.a + 1 m1, m1 * 2 m2, p.mx u FROM x CROSS JOIN (SELECT max(c) mx, min(d) mn FROM y) p)",
+                    "{x=[a], y=[c, d]}",
+                    "SELECT n FROM v", "SELECT t FROM v", "SELECT tu FROM v"
+            );
+        });
+    }
+
+    @Test
     public void testSubQueryJoinedWithoutKey() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
@@ -726,13 +817,16 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         assertMemoryLeak(() -> {
             createTables();
             // The second compile parses the SELECT as the first one does, so the top-level DECLARE block of the view
-            // may mark a variable AUDITED.
+            // may mark a variable AUDITED. A sub-query cannot declare one, so no read selects from these SELECTs
+            // inline, see assertDependenciesScanned().
             assertReads(
+                    false,
                     "DECLARE AUDITED @z := 0 SELECT x.ts, x.a, p.mx FROM x CROSS JOIN (SELECT max(c) mx, min(d) mn FROM y) p WHERE x.a > @z",
                     "{x=[a, ts], y=[c, d]}",
                     "SELECT ts, a FROM v"
             );
             assertReads(
+                    false,
                     "DECLARE OVERRIDABLE AUDITED @z := 0 SELECT x.ts, x.a, q.c FROM x ASOF JOIN (SELECT * FROM y WHERE c > @z) q",
                     "{x=[a, ts], y=[*]}",
                     "SELECT ts, a FROM v"
@@ -801,7 +895,7 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null)) {
                 for (String statement : new String[]{"CREATE VIEW v", "ALTER VIEW v_altered"}) {
                     final String sql = statement + " AS (" + viewSql + ")";
-                    // the second check of y is the one of the second compile, see testViewCompiledAgainForSubQueryJoinedWithoutKey()
+                    // the second check of y is the one of the second compile, see testViewCompiledAgainForReadsPlannedOtherwise()
                     securityContext.alterAtCheck(1, "ALTER TABLE y DROP COLUMN d");
                     final String failure = failureOf(sql, context);
                     Assert.assertFalse(statement, securityContext.isAlterPending());
@@ -927,7 +1021,7 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                         execute("CREATE VIEW v AS (SELECT x FROM long_sequence(1))");
                         drainWalAndViewQueues();
                     }
-                    // the second check of y is the one of the second compile, see testViewCompiledAgainForSubQueryJoinedWithoutKey()
+                    // the second check of y is the one of the second compile, see testViewCompiledAgainForReadsPlannedOtherwise()
                     securityContext.alterAtCheck(1, "RENAME TABLE x TO x_replaced", "RENAME TABLE x2 TO x");
                     execute(statement + " v AS (" + viewSql + ")", context);
                     drainWalAndViewQueues();
@@ -1397,14 +1491,17 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
     }
 
     @Test
-    public void testViewCompiledAgainForSubQueryJoinedWithoutKey() throws Exception {
+    public void testViewCompiledAgainForReadsPlannedOtherwise() throws Exception {
         assertMemoryLeak(() -> {
             createTables();
             execute("CREATE VIEW v_altered AS (SELECT a FROM x)");
             drainWalAndViewQueues();
             // Each compile of the SELECT checks once whether y is visible. CREATE VIEW and ALTER VIEW compile it
-            // again when it joins a sub-query without a key, and only then: a join condition names a column of
-            // the sub-queries on both of its sides.
+            // again when a read of the view may plan it otherwise, and only then: when it joins a sub-query without a
+            // key, but not when a join condition names a column of the sub-queries on both of its sides; when it
+            // selects from a sub-query alone, the plan leaves a column of the sub-query out, and the SELECT has a
+            // column that reads no column of the sub-query; and when a temporal join takes its timestamp from the
+            // ORDER BY of a sub-query, which a read that counts the rows of the view drops.
             final AlteringSecurityContext securityContext = new AlteringSecurityContext();
             try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null)) {
                 final String[] viewSqls = {
@@ -1414,8 +1511,15 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
                         "SELECT t.mb, p.mx FROM (SELECT k, max(b) mb FROM x GROUP BY k) t JOIN (SELECT k, max(c) mx FROM y GROUP BY k) p ON (k)",
                         "SELECT x.a, p.mx FROM x CROSS JOIN (SELECT max(c) mx FROM y) p",
                         "SELECT x.a, p.c FROM x ASOF JOIN (SELECT * FROM y) p",
+                        "SELECT count() n, max(c) m FROM (SELECT c, d FROM y)",
+                        "SELECT 1 one, c FROM (SELECT * FROM y)",
+                        "SELECT max(c) m FROM (SELECT c, d FROM y)",
+                        "SELECT count() n FROM (SELECT c, d FROM y)",
+                        "SELECT count() n, max(c) m FROM y",
+                        "SELECT t.a, u.c FROM x t ASOF JOIN (SELECT k, c, ts FROM y ORDER BY ts) u ON (k)",
+                        "SELECT t.a, u.c FROM x t ASOF JOIN (SELECT k, c, ts FROM y) u ON (k)",
                 };
-                final int[] expectedCompiles = {1, 1, 1, 1, 2, 2};
+                final int[] expectedCompiles = {1, 1, 1, 1, 2, 2, 2, 2, 1, 1, 1, 2, 1};
                 for (int i = 0; i < viewSqls.length; i++) {
                     execute("CREATE VIEW v AS (" + viewSqls[i] + ")", context);
                     Assert.assertEquals(viewSqls[i], expectedCompiles[i], securityContext.takeCheckCount());
@@ -1697,6 +1801,40 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         return compiler.getViewDependencyVisitCountForTesting() - visitCount;
     }
 
+    // the dependencies of the view, with the columns of a table a "*" lends listed in its place, and null for a view
+    // that reads another view
+    private static @Nullable String scannedDependenciesOf(String viewName) {
+        final ViewDefinition viewDefinition = getViewDefinition(viewName);
+        Assert.assertNotNull(viewDefinition);
+        final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = viewDefinition.getDependencies();
+        final TreeMap<String, TreeSet<String>> sorted = new TreeMap<>();
+        final ObjList<CharSequence> tableNames = dependencies.keys();
+        for (int i = 0, n = tableNames.size(); i < n; i++) {
+            final String tableName = tableNames.getQuick(i).toString();
+            if (engine.verifyTableName(tableName).isView()) {
+                return null;
+            }
+            final LowerCaseCharSequenceHashSet columnNames = dependencies.get(tableName);
+            final TreeSet<String> columns = new TreeSet<>();
+            if (columnNames.contains("*")) {
+                try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(tableName))) {
+                    for (int j = 0, m = metadata.getColumnCount(); j < m; j++) {
+                        columns.add(metadata.getColumnName(j));
+                    }
+                }
+            } else {
+                for (int j = 0, m = columnNames.getKeyCount(); j < m; j++) {
+                    final CharSequence columnName = columnNames.getKey(j);
+                    if (columnName != null) {
+                        columns.add(columnName.toString());
+                    }
+                }
+            }
+            sorted.put(tableName, columns);
+        }
+        return sorted.toString();
+    }
+
     // the dependencies in the definition file of the view, which a restart reads back
     private static String storedDependenciesOf(String viewName) {
         try (BlockFileReader reader = new BlockFileReader(configuration); Path path = new Path()) {
@@ -1711,14 +1849,51 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         assertDependencies(viewSql, expectedDependencies, null);
     }
 
-    // Asserts the dependency map CREATE VIEW, ALTER VIEW and CREATE OR REPLACE VIEW give the SELECT of a
-    // view, and that a principal with no permission on the columns of the base tables reads the view
-    // exactly as a principal with every permission does or, given expectedReadFailure, fails to read it.
+    // Asserts the dependency map CREATE VIEW, ALTER VIEW and CREATE OR REPLACE VIEW give the SELECT of a view, that
+    // it lists the columns the reads of the view scan, see assertDependenciesScanned(), and that a principal with no
+    // permission on the columns of the base tables reads the view exactly as a principal with every permission does
+    // or, given expectedReadFailure, fails to read it.
     private void assertDependencies(String viewSql, String expectedDependencies, @Nullable String expectedReadFailure) throws Exception {
+        // a view the principal fails to read reads a table as the principal, outside its dependencies
+        if (expectedReadFailure == null) {
+            assertDependenciesScanned(viewSql);
+        }
         forEachViewStatement(
                 viewSql,
                 statement -> assertViewDependencies(viewSql, expectedDependencies, expectedReadFailure, statement)
         );
+    }
+
+    // Asserts that the dependencies CREATE VIEW records for the SELECT of a view list, for each table, the columns
+    // the reads of the view scan, with every column of a table a "*" lends: the read that counts the rows of the
+    // view, and each read that names one output of it alone, which between them scan every column a read of the view
+    // scans, as a read that names several outputs scans what the reads of each of them scan, or less. The reads
+    // select from the SELECT of the view inline, so that each authorizes every column it scans as the reader. A view
+    // that reads another one authorizes the columns of the tables that view reads through it, and passes.
+    private void assertDependenciesScanned(String viewSql) throws Exception {
+        execute("CREATE VIEW v_scanned AS (" + viewSql + ")");
+        drainWalAndViewQueues();
+        final String expectedScans = scannedDependenciesOf("v_scanned");
+        execute("DROP VIEW v_scanned");
+        drainWalAndViewQueues();
+        if (expectedScans == null) {
+            return;
+        }
+        final ObjList<String> reads = new ObjList<>();
+        reads.add("SELECT count() FROM (" + viewSql + ")");
+        try (RecordCursorFactory factory = select(viewSql)) {
+            final RecordMetadata metadata = factory.getMetadata();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                reads.add("SELECT \"" + metadata.getColumnName(i) + "\" FROM (" + viewSql + ")");
+            }
+        }
+        final ScanRecordingSecurityContext securityContext = new ScanRecordingSecurityContext();
+        try (SqlExecutionContext context = new SqlExecutionContextImpl(engine, 1).with(securityContext, bindVariableService, null, -1, null)) {
+            for (int i = 0, n = reads.size(); i < n; i++) {
+                print(context, reads.getQuick(i));
+            }
+        }
+        Assert.assertEquals(viewSql, expectedScans, securityContext.toString());
     }
 
     // Asserts that a principal with no permission on the columns of the base tables cannot read through
@@ -1733,10 +1908,18 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
         });
     }
 
-    // Asserts the dependency map CREATE VIEW, ALTER VIEW and CREATE OR REPLACE VIEW give the SELECT of a view, and
-    // that a principal with no permission on the columns of the base tables runs each of the reads of the view as
-    // a principal with every permission does.
     private void assertReads(String viewSql, String expectedDependencies, String... reads) throws Exception {
+        assertReads(true, viewSql, expectedDependencies, reads);
+    }
+
+    // Asserts the dependency map CREATE VIEW, ALTER VIEW and CREATE OR REPLACE VIEW give the SELECT of a view, that,
+    // when isScanned holds, it lists the columns the reads of the view scan, see assertDependenciesScanned(), and that
+    // a principal with no permission on the columns of the base tables runs each of the reads of the view as a
+    // principal with every permission does.
+    private void assertReads(boolean isScanned, String viewSql, String expectedDependencies, String... reads) throws Exception {
+        if (isScanned) {
+            assertDependenciesScanned(viewSql);
+        }
         forEachViewStatement(viewSql, statement -> {
             assertViewDependencies(viewSql, expectedDependencies, null, statement);
             try (SqlExecutionContext context = denyBaseTableSelectContext()) {
@@ -1932,6 +2115,32 @@ public class ViewColumnDependencyTest extends AbstractViewTest {
             final int count = readCount;
             readCount = 0;
             return count;
+        }
+    }
+
+    /**
+     * Grants everything, and records the columns of each table a read authorizes: a read that selects from a table
+     * itself authorizes every column its scan reads, see {@code AbstractPartitionFrameCursorFactory.authorizeSelect()}.
+     */
+    private static final class ScanRecordingSecurityContext extends AllowAllSecurityContext {
+        private final TreeMap<String, TreeSet<String>> scannedColumns = new TreeMap<>();
+
+        @Override
+        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
+            final TreeSet<String> columns = scannedColumns.computeIfAbsent(tableToken.getTableName(), tableName -> new TreeSet<>());
+            for (int i = 0, n = columnNames.size(); i < n; i++) {
+                columns.add(columnNames.getQuick(i).toString());
+            }
+        }
+
+        @Override
+        public void authorizeSelectOnAnyColumn(TableToken tableToken) {
+            scannedColumns.computeIfAbsent(tableToken.getTableName(), tableName -> new TreeSet<>());
+        }
+
+        @Override
+        public String toString() {
+            return scannedColumns.toString();
         }
     }
 
