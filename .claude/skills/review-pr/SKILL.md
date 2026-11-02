@@ -129,14 +129,24 @@ is the most valuable part of this skill.
 
 **Skipped in `--range` mode** — a local range has no PR metadata. State that it was skipped and continue at Step 2.4.
 
-Check against CLAUDE.md conventions:
-- Title follows Conventional Commits: `type(scope): description`
-- Description repeats the verb and explains user impact
-- If fixing an issue, `Fixes #NNN` is at the top of the body
-- Tone is level-headed and analytical, with no superlatives or bold emphasis on numbers
-- Body is short: one short paragraph per fix (symptom, cause, change), breaking changes stated plainly. Flag a test plan section, investigation output (probe results, "fails without the fix" evidence, lists of covered shapes or configs, "Not changed" lists) and boilerplate Trade-offs sections. Never ask the author to add such material to the body
-- Labels match the PR scope (SQL, Performance, Core, etc.)
-- Bundled related fixes are allowed; do not demand a split
+Check the title, body and labels against CLAUDE.md "Git & PR Conventions". Read the title as a QuestDB user scanning the release notes, who never sees the code, and the body as a reviewer who has not opened the diff yet.
+
+- **Type.** A change users can see (query results, SQL, configuration, error messages, wire or on-disk format, anything breaking) takes `feat`, `fix` or `perf`. Flag a technical type (`chore`, `ci`, `test`, `build`, `refactor`, `style`) on such a change and name what users see.
+- **User-facing title** (`feat`, `fix`, `perf`, `docs`). Would that user understand it and see what they gain? Flag class and method names, internal mechanisms and jargon, and a title that describes the code change instead of its effect. The description repeats the verb.
+- **Technical title.** Technical terms are fine, but the title alone must make the reason for the change obvious. Flag a title that only says what changed.
+- **Body.** Short bullets, one per net effect against the base branch, at most 15 words each, with `Fixes #NNN` on the bullet for that issue, then the approach: one to three sentences per fix or feature. Flag:
+  - a bullet that describes a code change instead of its effect;
+  - an effect of the diff that no bullet states, above all a regression or a breaking change;
+  - a bullet or an approach the diff does not support;
+  - a fix or feature with no approach;
+  - a slowdown or tradeoff without its measured size;
+  - a change made for speed, or one on a data path, without its JMH table;
+  - a commit hash, a tandem PR's head and submodule pointers included, or a count of tests, files, lines or commits. Ask for its removal without checking it against the code: such details go stale, and the review records the revisions;
+  - anything else: a test plan, coverage, fuzz seeds, investigation output (probe results, "fails without the fix" evidence, lists of covered shapes or configs, "Not changed" lists), a file walkthrough, design narrative beyond the approach, selling. Never ask the author to add such material.
+- **Labels** match the title (`perf(sql)` gets SQL and Performance).
+- Bundled related fixes are allowed; do not demand a split.
+
+Write the replacement for every problem: a ready-to-paste title and body. Finish the body check once the review knows what the diff does, and report the result in the **Title and description** section of Step 4.
 
 ## Step 2.4: Submodule provenance (mandatory at every level)
 
@@ -331,7 +341,7 @@ that amplifies an otherwise-acceptable cost.
 
 **Agent 6 — Code quality & standards:** Code smell, member ordering, naming conventions, modern Java features, dead code, third-party dependencies. **Also check for unclosed LOG statements**: QuestDB logging uses a builder pattern (`LOG.info().$("msg").$()`) and every chain MUST end with `.$()` or `.I$()`. A missing close holds a ring buffer slot forever, causing other log producer threads to busy-wait in `nextBully()`, and the log consumer `logging_0` thread cannot progress either. Also watch for `.put()` instead of `.$()` in LOG chains — `.put()` returns `Utf16Sink`, not `LogRecord`, breaking the chain. Also flag throw-capable expressions inside LOG chains (`LOG.info().$(func()).$()`): arguments are evaluated after the ring slot is acquired, so a throwing `func()` unwinds past the terminator and leaks the slot; the call must be hoisted into a local before the chain starts.
 
-**Agent 7 — PR metadata & conventions:** Title format, description quality, commit messages, labels, SQL style in tests.
+**Agent 7 — Conventions:** Commit messages and SQL style in tests. The parent checks the title, body and labels in Step 2.
 
 **Agent 8 — Rust safety (only if PR contains .rs files):** Check for any code that can panic at runtime — `unwrap()`,
 `expect()`, array indexing without bounds checks, `panic!()`, `unreachable!()`, `todo!()`, integer overflow in release
@@ -791,7 +801,7 @@ Net impact: Ingestion stalls after ~1k failed commits.
 Evidence: WalLeakTest red at abc123, green at base def456.
 ```
 
-Open the report with the line from "Review level" that names the target, the level and the model.
+Open the report with the line from "Review level" that names the target, the level and the model, followed by the revisions reviewed: the head, `$BASE`, and the new commit of each submodule pointer the PR moves, such as a tandem PR's head. PR bodies leave commit hashes out (CLAUDE.md), so the review carries them.
 
 Structure as:
 
@@ -835,6 +845,9 @@ If a behavioral candidate cannot name and execute a supported trigger with one o
 **Minor.** Cosmetics: member ordering, naming, formatting, comment wording, import order.
 
 Do not inflate and do not deflate. Filing a real user-visible defect as Moderate is a review failure; so is filing a bounded compile-time micro-cost as Critical. Where two readings are defensible, pick the one you can evidence.
+
+### Title and description
+Follow the opening line with the Step 2 result: the title, then the body and labels, each `OK` or its problems with the ready-to-paste replacement. In `--range` mode, write "Skipped: no PR". These are not findings: they skip Step 3b, sit outside the severity rubric and the proportionality budget, and never affect the verdict. Never list one under Critical, Moderate or Minor, a body that misdescribes the change included.
 
 ### Critical
 Blocking issues introduced or exposed by this PR, ordered worst user impact first. Each must include:
