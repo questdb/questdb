@@ -64,7 +64,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Consumer;
+import java.util.function.BiConsumer;
 
 public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrameSequence implements Closeable {
     private static final AtomicLong ID_SEQ = new AtomicLong();
@@ -93,7 +93,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     // tests: runs before a group task is allocated, see reserveGroupTasks()
     private static volatile Runnable groupTaskAllocationHook;
     // tests: runs after a reduced slot is released and before its frames are counted, see releaseReducedSlot()
-    private static volatile Consumer<PageFrameReduceTask> reducedSlotReleaseHook;
+    private static volatile BiConsumer<PageFrameReduceTask, PageFrameSequence<?>> reducedSlotReleaseHook;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
     private final MillisecondClock clock;
     // native frames come without column addresses, which the threads processing them compute, see
@@ -450,10 +450,12 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     /**
      * Sets a hook that runs on the releasing thread after a reduced slot of the ordered reduce queue
      * is released and before its frames are counted, see {@link #releaseReducedSlot}. A test can hold
-     * it there until the collector has collected the slot.
+     * it there until the collector has collected the slot. The hook gets the sequence that dispatched
+     * the slot as the releaser read it before the release: the collector may collect the slot before
+     * the hook runs, and collecting clears the task's own reference.
      */
     @TestOnly
-    public static void setReducedSlotReleaseHook(Consumer<PageFrameReduceTask> hook) {
+    public static void setReducedSlotReleaseHook(BiConsumer<PageFrameReduceTask, PageFrameSequence<?>> hook) {
         reducedSlotReleaseHook = hook;
     }
 
@@ -487,9 +489,9 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             subSeq.done(cursor);
         } finally {
             try {
-                final Consumer<PageFrameReduceTask> hook = reducedSlotReleaseHook;
+                final BiConsumer<PageFrameReduceTask, PageFrameSequence<?>> hook = reducedSlotReleaseHook;
                 if (hook != null && task != null) {
-                    hook.accept(task);
+                    hook.accept(task, frameSequence);
                 }
             } finally {
                 // counted only once the slot is available to the collector; it counts frames

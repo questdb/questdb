@@ -616,7 +616,9 @@ public class PageFrameGroupTest extends AbstractCairoTest {
 
     // Holds a reduced slot's release, on any thread but the query's, until the collector has collected
     // the slot, see PageFrameSequence.setReducedSlotReleaseHook(); and holds the query's dispatch of its
-    // second group until another thread has taken the first.
+    // second group until another thread has taken the first. The slot is released before the hook runs,
+    // so the collector may have collected it already; that release counts as waited too, as the slot's
+    // frames are counted only after the hook.
     private static final class ReleaseProbe {
         private static final long WAIT_NANOS = 5_000_000_000L;
         private final AtomicInteger allocations = new AtomicInteger();
@@ -655,12 +657,10 @@ public class PageFrameGroupTest extends AbstractCairoTest {
                     isClaimTimedOut = reduceSubSeq.current() == claimedBefore;
                 }
             });
-            PageFrameSequence.setReducedSlotReleaseHook(task -> {
+            // frameSequence is the one the releaser read before the release; the task's own reference
+            // goes once the collector has collected the slot, which may happen before this hook runs
+            PageFrameSequence.setReducedSlotReleaseHook((task, frameSequence) -> {
                 if (Thread.currentThread() == queryThread) {
-                    return;
-                }
-                final PageFrameSequence<?> frameSequence = task.getFrameSequence();
-                if (frameSequence == null) {
                     return;
                 }
                 heldSequence.set(frameSequence);
