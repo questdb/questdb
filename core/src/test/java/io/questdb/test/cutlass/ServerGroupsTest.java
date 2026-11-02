@@ -36,6 +36,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
+import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.network.IODispatchers;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkError;
@@ -53,7 +54,6 @@ import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
-import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.Timeout;
@@ -86,13 +86,9 @@ public class ServerGroupsTest extends AbstractCairoTest {
             .withLookingForStuckThread(true)
             .build();
 
-    @Before
-    public void assumeLinux() {
-        Assume.assumeTrue("SO_REUSEPORT spreads connections on Linux only", Os.isLinux());
-    }
-
     @Test
     public void testHttpFailedGroupFreesEarlierGroups() throws Exception {
+        assumeSpreading();
         assertMemoryLeak(() -> {
             final int port = pickFreePort();
             final AtomicInteger binds = new AtomicInteger();
@@ -149,7 +145,42 @@ public class ServerGroupsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHttpOnPort0WithFibersLaunchesOnGroupRuntimes() throws Exception {
+        // a server on port 0 has a single dispatcher, polled by every worker, and each worker
+        // launches connection fibers on its own group's runtime
+        assertMemoryLeak(() -> {
+            final DefaultHttpServerConfiguration httpConfig = new HttpServerConfigurationBuilder()
+                    .withPort(0)
+                    .withNetwork(NetworkFacadeImpl.INSTANCE)
+                    .withFiberEnabled(true)
+                    .build(configuration);
+            final TestWorkerPool pool = new TestWorkerPool(groupedPool(WorkerPoolMode.FIBER_HOST));
+            try (HttpServer server = new HttpServer(httpConfig, pool, PlainSocketFactory.INSTANCE)) {
+                Assert.assertEquals(1, server.getGroupCount());
+                Assert.assertEquals(2, server.getSelectorPoolCountForTesting());
+                pool.start(LOG);
+                try {
+                    final long[] fds = connect(server.getPort(), CONNECTIONS);
+                    try {
+                        for (long fd : fds) {
+                            assertHttpResponds(fd);
+                        }
+                    } finally {
+                        close(fds);
+                    }
+                    final long launched = pool.getFiberRuntime(0).getLaunchCount(LaunchResult.LAUNCHED)
+                            + pool.getFiberRuntime(1).getLaunchCount(LaunchResult.LAUNCHED);
+                    Assert.assertTrue(launched >= CONNECTIONS);
+                } finally {
+                    pool.halt();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testIlpTcp() throws Exception {
+        assumeSpreading();
         assertMemoryLeak(() -> {
             final int port = pickFreePort();
             final DefaultLineTcpReceiverConfiguration lineConfig = new DefaultLineTcpReceiverConfiguration(configuration) {
@@ -217,6 +248,10 @@ public class ServerGroupsTest extends AbstractCairoTest {
         } finally {
             Unsafe.free(buf, capacity, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    private static void assumeSpreading() {
+        Assume.assumeTrue("SO_REUSEPORT spreads connections on Linux only", Os.isLinux());
     }
 
     // waits until the two groups hold `total` connections between them, and checks each holds some
@@ -309,6 +344,7 @@ public class ServerGroupsTest extends AbstractCairoTest {
     }
 
     private void assertHttp(WorkerPoolMode mode, boolean isFiberEnabled) throws Exception {
+        assumeSpreading();
         assertMemoryLeak(() -> {
             final int port = pickFreePort();
             final DefaultHttpServerConfiguration httpConfig = new HttpServerConfigurationBuilder()
@@ -327,6 +363,19 @@ public class ServerGroupsTest extends AbstractCairoTest {
                         awaitSpread(server::getGroupConnectionCount, CONNECTIONS);
                         for (long fd : fds) {
                             assertHttpResponds(fd);
+                        }
+                        if (isFiberEnabled) {
+                            // each group's connections ran on its own runtime, and its fiber steps
+                            // returned their selectors to its own pool
+                            Assert.assertEquals(2, server.getSelectorPoolCountForTesting());
+                            for (int g = 0; g < 2; g++) {
+                                final int group = g;
+                                Assert.assertTrue(pool.getFiberRuntime(group).getLaunchCount(LaunchResult.LAUNCHED) > 0);
+                                TestUtils.assertEventually(
+                                        () -> Assert.assertTrue(server.getRecycledSelectorCountForTesting(group) > 0),
+                                        10
+                                );
+                            }
                         }
                     } finally {
                         close(fds);
@@ -349,6 +398,7 @@ public class ServerGroupsTest extends AbstractCairoTest {
     }
 
     private void assertPg(WorkerPoolMode mode, boolean isFiberEnabled) throws Exception {
+        assumeSpreading();
         assertMemoryLeak(() -> {
             final int port = pickFreePort();
             final Port0PGConfiguration pgConfig = new Port0PGConfiguration() {
@@ -387,6 +437,12 @@ public class ServerGroupsTest extends AbstractCairoTest {
                             }
                         }
                         awaitSpread(server::getGroupConnectionCount, PG_CONNECTIONS);
+                        if (isFiberEnabled) {
+                            // each group's connections ran on its own runtime
+                            for (int g = 0; g < 2; g++) {
+                                Assert.assertTrue(pool.getFiberRuntime(g).getLaunchCount(LaunchResult.LAUNCHED) > 0);
+                            }
+                        }
                     } finally {
                         for (Connection connection : connections) {
                             if (connection != null) {

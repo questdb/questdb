@@ -98,13 +98,10 @@ public class PGServer implements Closeable {
         AssociativeCache<TypesAndSelect> typesAndSelectCacheLocal = null;
         PGConnectionContextFactory contextFactoryLocal = null;
         final ObjList<IODispatcher<PGConnectionContext>> dispatchersLocal = new ObjList<>();
-        FiberRuntime fiberRuntimeLocal = null;
+        final boolean isFiberEnabled = configuration.isFiberEnabled() && sharedPoolNetwork.isFiberHost();
         try {
             this.acceptOpen = acceptOpen;
             this.metrics = engine.getMetrics();
-            if (configuration.isFiberEnabled() && sharedPoolNetwork.isFiberHost()) {
-                fiberRuntimeLocal = sharedPoolNetwork.getFiberRuntime();
-            }
             if (configuration.isSelectCacheEnabled()) {
                 typesAndSelectCacheLocal = new ConcurrentAssociativeCache<>(configuration.getConcurrentCacheConfiguration());
             } else {
@@ -137,14 +134,16 @@ public class PGServer implements Closeable {
                 sharedPoolNetwork.assign(i, dispatcherJobs.getQuick(groupCount == 1 ? 0 : sharedPoolNetwork.getGroup(i)));
             }
 
-            if (fiberRuntimeLocal != null) {
-                final FiberRuntime runtime = fiberRuntimeLocal;
+            if (isFiberEnabled) {
                 for (int i = 0; i < workerCount; i++) {
+                    // a worker runs only its pool group's fibers, even when the server has a single
+                    // dispatcher on a split pool
+                    final int poolGroup = sharedPoolNetwork.getGroup(i);
                     sharedPoolNetwork.assign(i, new PGRequestJob(
                             acceptOpen,
-                            dispatchers.getQuick(groupCount == 1 ? 0 : sharedPoolNetwork.getGroup(i)),
+                            dispatchers.getQuick(groupCount == 1 ? 0 : poolGroup),
                             metrics,
-                            runtime
+                            sharedPoolNetwork.getFiberRuntime(poolGroup)
                     ));
                 }
             } else {

@@ -352,11 +352,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
      */
     public HttpConnectionFiberTask getFiberTask(
             IODispatcher<HttpConnectionContext> dispatcher,
-            HttpServer.HttpRequestProcessorSelectorFactory selectorFactory,
+            HttpServer.HttpRequestProcessorSelectorPool selectorPool,
             WaitProcessor rescheduleContext
     ) {
         if (fiberTask == null) {
-            fiberTask = new HttpConnectionFiberTask(this, dispatcher, selectorFactory, rescheduleContext);
+            fiberTask = new HttpConnectionFiberTask(this, dispatcher, selectorPool, rescheduleContext);
         }
         return fiberTask;
     }

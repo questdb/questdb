@@ -60,7 +60,9 @@ public class WorkerPool implements Closeable {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final boolean daemons;
     private final DynamicFiberWorkerPoolConfiguration dynamicFiberConfiguration;
-    private final FiberRuntime fiberRuntime;
+    // One runtime per group, so a group's fibers, fiber pool and run queues stay on its own
+    // workers; empty when the pool doesn't host fibers.
+    private final ObjList<FiberRuntime> fiberRuntimes = new ObjList<>();
     private final ObjList<Object> freeOnExit = new ObjList<>();
     private final int groupCount;
     // per group, the CPUs its workers may run on; null leaves placement to workerAffinity
@@ -81,7 +83,8 @@ public class WorkerPool implements Closeable {
     private final int[] workerAffinity;
     private final int workerCount;
     private final ObjList<ObjHashSet<Job>> workerJobs;
-    private final @Nullable WorkerWakeController workerWakeController;
+    // one per group, parallel to fiberRuntimes; empty unless the pool hosts fibers on workers
+    private final ObjList<WorkerWakeController> workerWakeControllers = new ObjList<>();
     private final ObjList<Worker> workers = new ObjList<>();
     // Guards every mutation of and iteration over the workers list so halt()'s first pass can never
     // read it torn while start() is still adding. ObjList.add reallocates a non-volatile buffer and
@@ -175,25 +178,31 @@ public class WorkerPool implements Closeable {
             threadLocalCleaners.add(new ObjList<>());
         }
 
-        this.workerWakeController = isFiberHost && workerCount > 0
-                ? new WorkerWakeController(workerCount)
-                : null;
-        this.fiberRuntime = isFiberHost
-                ? new FiberRuntime(
-                fiberRetainedCount,
-                fiberMaxLiveCount,
-                fiberMountBudget,
-                workerCount,
-                configuration.getFiberDispatchController(),
-                workerWakeController != null ? workerWakeController : FiberWakeSink.NO_OP
-        )
-                : null;
-        if (fiberRuntime != null) {
+        if (isFiberHost) {
             try {
-                if (dynamicFiberConfiguration != null) {
-                    dynamicFiberConfiguration.setFiberConfigurationListener(fiberRuntime::updateConfiguration);
+                for (int g = 0; g < groupCount; g++) {
+                    final int groupWorkerCount = getGroupStart(g + 1) - getGroupStart(g);
+                    final WorkerWakeController wakeController = groupWorkerCount > 0
+                            ? new WorkerWakeController(groupWorkerCount)
+                            : null;
+                    if (wakeController != null) {
+                        workerWakeControllers.add(wakeController);
+                    }
+                    fiberRuntimes.add(new FiberRuntime(
+                            getGroupShare(fiberRetainedCount, g),
+                            getGroupShare(fiberMaxLiveCount, g),
+                            fiberMountBudget,
+                            groupWorkerCount,
+                            configuration.getFiberDispatchController(),
+                            wakeController != null ? wakeController : FiberWakeSink.NO_OP
+                    ));
                 }
-                metrics.fiberMetrics().register(poolName, fiberRuntime);
+                if (dynamicFiberConfiguration != null) {
+                    dynamicFiberConfiguration.setFiberConfigurationListener(this::updateFiberConfiguration);
+                }
+                for (int g = 0; g < groupCount; g++) {
+                    metrics.fiberMetrics().register(poolName, groupCount > 1 ? g : -1, fiberRuntimes.getQuick(g));
+                }
             } catch (Throwable th) {
                 rollbackFiberRuntimeConstruction(th);
                 throw th;
@@ -270,23 +279,60 @@ public class WorkerPool implements Closeable {
         freeOnExit.add(resource);
     }
 
+    /**
+     * The live-fiber limit of the whole pool: the sum of its groups' limits.
+     */
     public int getFiberMaxLiveCount() {
-        return fiberRuntime != null ? fiberRuntime.getMaxLiveFiberCount() : 0;
+        int count = 0;
+        for (int g = 0, n = fiberRuntimes.size(); g < n; g++) {
+            count += fiberRuntimes.getQuick(g).getMaxLiveFiberCount();
+        }
+        return count;
     }
 
     public int getFiberMountBudget() {
-        return fiberRuntime != null ? fiberRuntime.getMountBudget() : 1;
+        return fiberRuntimes.size() > 0 ? fiberRuntimes.getQuick(0).getMountBudget() : 1;
     }
 
+    /**
+     * The retained-fiber limit of the whole pool: the sum of its groups' limits.
+     */
     public int getFiberRetainedCount() {
-        return fiberRuntime != null ? fiberRuntime.getMaxRetainedFiberCount() : 0;
+        int count = 0;
+        for (int g = 0, n = fiberRuntimes.size(); g < n; g++) {
+            count += fiberRuntimes.getQuick(g).getMaxRetainedFiberCount();
+        }
+        return count;
     }
 
+    /**
+     * The fiber runtime of a pool with one group. A pool split into groups has one runtime per
+     * group, so this throws; use {@link #getFiberRuntime(int)} there.
+     */
     public FiberRuntime getFiberRuntime() {
-        if (fiberRuntime == null) {
+        if (fiberRuntimes.size() == 0) {
             throw new IllegalStateException("worker pool does not host fibers [pool=" + poolName + ']');
         }
-        return fiberRuntime;
+        if (fiberRuntimes.size() > 1) {
+            throw new IllegalStateException("worker pool has one fiber runtime per worker group, use getFiberRuntime(group) [pool="
+                    + poolName + ", groups=" + groupCount + ']');
+        }
+        return fiberRuntimes.getQuick(0);
+    }
+
+    /**
+     * The fiber runtime that hosts the fibers of group {@code group}, and that only that group's
+     * workers run.
+     */
+    public FiberRuntime getFiberRuntime(int group) {
+        if (fiberRuntimes.size() == 0) {
+            throw new IllegalStateException("worker pool does not host fibers [pool=" + poolName + ']');
+        }
+        if (group < 0 || group >= groupCount) {
+            throw new IllegalArgumentException("worker group is out of range [pool=" + poolName
+                    + ", group=" + group + ", groups=" + groupCount + ']');
+        }
+        return fiberRuntimes.getQuick(group);
     }
 
     /**
@@ -363,57 +409,65 @@ public class WorkerPool implements Closeable {
 
     @TestOnly
     public int getReadyWorkerCountForTesting() {
-        return workerWakeController != null ? workerWakeController.getReadyCount() : 0;
+        int count = 0;
+        for (int g = 0, n = workerWakeControllers.size(); g < n; g++) {
+            count += workerWakeControllers.getQuick(g).getReadyCount();
+        }
+        return count;
     }
 
     @TestOnly
     public boolean isWorkerReadyForTesting(int workerId) {
-        return workerWakeController != null && workerWakeController.isReady(workerId);
+        return workerWakeControllers.size() > 0 && getWakeController(workerId).isReady(getOwnerIndex(workerId));
     }
 
     @TestOnly
     public boolean registerReadyWorkerForTesting(int workerId) {
-        return workerWakeController != null && workerWakeController.registerReady(workerId);
+        return workerWakeControllers.size() > 0 && getWakeController(workerId).registerReady(getOwnerIndex(workerId));
     }
 
     @TestOnly
     public void registerWakeTargetForTesting(int workerId, Thread target) {
-        if (workerWakeController == null) {
+        if (workerWakeControllers.size() == 0) {
             throw new IllegalStateException("worker pool has no wake controller");
         }
-        workerWakeController.registerTarget(workerId, target);
+        getWakeController(workerId).registerTarget(getOwnerIndex(workerId), target);
     }
 
+    /**
+     * Sets the wake cursor of the group of worker {@code wakeCursor} to that worker.
+     */
     @TestOnly
     public void setWakeCursorForTesting(int wakeCursor) {
-        if (workerWakeController == null) {
+        if (workerWakeControllers.size() == 0) {
             throw new IllegalStateException("worker pool has no wake controller");
         }
-        workerWakeController.setWakeCursorForTesting(wakeCursor);
+        getWakeController(wakeCursor).setWakeCursorForTesting(getOwnerIndex(wakeCursor));
     }
 
     @TestOnly
     public void unregisterReadyWorkerForTesting(int workerId) {
-        if (workerWakeController != null) {
-            workerWakeController.unregisterReady(workerId);
+        if (workerWakeControllers.size() > 0) {
+            getWakeController(workerId).unregisterReady(getOwnerIndex(workerId));
         }
     }
 
     @TestOnly
     public void wakeAllForTesting() {
-        if (workerWakeController != null) {
-            workerWakeController.wakeAll();
+        for (int g = 0, n = workerWakeControllers.size(); g < n; g++) {
+            workerWakeControllers.getQuick(g).wakeAll();
         }
     }
 
     @TestOnly
     public boolean wakeOneForTesting(int preferredWorkerId) {
-        return workerWakeController != null && workerWakeController.wakeOne(preferredWorkerId);
+        return workerWakeControllers.size() > 0
+                && getWakeController(preferredWorkerId).wakeOne(getOwnerIndex(preferredWorkerId));
     }
 
     @TestOnly
     public void pause() {
-        if (fiberRuntime != null) {
+        if (fiberRuntimes.size() > 0) {
             throw new IllegalStateException("fiber-host worker pool cannot pause [pool=" + poolName + ']');
         }
         if (running.compareAndSet(true, false)) {
@@ -484,10 +538,10 @@ public class WorkerPool implements Closeable {
                     if (groupCount > 1) {
                         record.$(", groups=").$(groupCount);
                     }
-                    if (fiberRuntime != null) {
-                        record.$(", maxLive=").$(fiberRuntime.getMaxLiveFiberCount())
-                                .$(", maxRetained=").$(fiberRuntime.getMaxRetainedFiberCount())
-                                .$(", mountBudget=").$(fiberRuntime.getMountBudget());
+                    if (fiberRuntimes.size() > 0) {
+                        record.$(", maxLive=").$(getFiberMaxLiveCount())
+                                .$(", maxRetained=").$(getFiberRetainedCount())
+                                .$(", mountBudget=").$(getFiberMountBudget());
                     }
                     record.I$();
                 }
@@ -498,11 +552,15 @@ public class WorkerPool implements Closeable {
 
                 for (int i = 0; i < workerCount; i++) {
                     final int index = i;
+                    final int group = getGroup(i);
+                    final FiberRuntime fiberRuntime = fiberRuntimes.size() > 0 ? fiberRuntimes.getQuick(group) : null;
+                    final WorkerWakeController wakeController = fiberRuntime != null ? workerWakeControllers.getQuick(group) : null;
+                    final int ownerIndex = getOwnerIndex(i);
                     Worker worker = new Worker(
                             poolName,
                             i,
                             workerAffinity[i],
-                            groupCpus != null ? groupCpus[getGroup(i)] : null,
+                            groupCpus != null ? groupCpus[group] : null,
                             workerJobs.getQuick(i),
                             halted,
                             _ -> Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index)),
@@ -513,12 +571,12 @@ public class WorkerPool implements Closeable {
                             sleepMs,
                             metrics,
                             fiberRuntime,
-                            fiberRuntime != null ? fiberRuntime.getOwnerContext(i) : null,
-                            workerWakeController,
+                            fiberRuntime != null ? fiberRuntime.getOwnerContext(ownerIndex) : null,
+                            wakeController,
                             log
                     );
-                    if (workerWakeController != null) {
-                        workerWakeController.registerTarget(i, worker);
+                    if (wakeController != null) {
+                        wakeController.registerTarget(ownerIndex, worker);
                     }
                     worker.setPriority(priority);
                     worker.setDaemon(daemons);
@@ -609,18 +667,6 @@ public class WorkerPool implements Closeable {
         }
     }
 
-    private static String describeRuntime(FiberRuntime runtime) {
-        return "state=" + runtime.state()
-                + ", outstanding=" + runtime.getOutstandingTaskCount()
-                + ", queued=" + runtime.getQueuedCount()
-                + ", mounted=" + runtime.getMountedCount()
-                + ", parked=" + runtime.getParkedFiberCount()
-                + ", live=" + runtime.getLiveFiberCount()
-                + ", retained=" + runtime.getRetainedFiberCount()
-                + ", finalizing=" + runtime.getFinalizerCount()
-                + ", budgetExhaustions=" + runtime.getBudgetExhaustionCount();
-    }
-
     private static long remaining(long deadline) {
         // Never hand SOCountDownLatch.await() a non-positive budget; parkNanos(<=0) returns
         // immediately, which is the intended behaviour once the overall deadline has passed.
@@ -664,6 +710,20 @@ public class WorkerPool implements Closeable {
         return true;
     }
 
+    // Begins quiescing every group's runtime before waiting on any, so all groups stop admitting
+    // work together. Returns the first group whose runtime didn't close by the deadline, or -1.
+    private int awaitRuntimesQuiesce(boolean isBounded, long deadlineNanos) {
+        for (int g = 0, n = fiberRuntimes.size(); g < n; g++) {
+            fiberRuntimes.getQuick(g).beginQuiesce();
+        }
+        for (int g = 0, n = fiberRuntimes.size(); g < n; g++) {
+            if (!awaitRuntimeQuiesce(fiberRuntimes.getQuick(g), isBounded, deadlineNanos)) {
+                return g;
+            }
+        }
+        return -1;
+    }
+
     private WorkerHaltResult awaitWorkerHalt(boolean isFiberRuntimeDraining, boolean isBounded, long deadlineNanos) {
         // Signal every spawned worker before waiting on the start latch: start() may have stalled
         // between running=true and started.countDown(), leaving spawned workers looping against
@@ -691,14 +751,57 @@ public class WorkerPool implements Closeable {
         }
     }
 
-    private AssertionError fiberRuntimeHaltTimeout(long timeoutNanos, FiberRuntime runtime) {
+    private String describeRuntime(int group) {
+        final FiberRuntime runtime = fiberRuntimes.getQuick(group);
+        return "state=" + runtime.state()
+                + ", outstanding=" + runtime.getOutstandingTaskCount()
+                + ", queued=" + runtime.getQueuedCount()
+                + ", mounted=" + runtime.getMountedCount()
+                + ", parked=" + runtime.getParkedFiberCount()
+                + ", live=" + runtime.getLiveFiberCount()
+                + ", retained=" + runtime.getRetainedFiberCount()
+                + ", finalizing=" + runtime.getFinalizerCount()
+                + ", budgetExhaustions=" + runtime.getBudgetExhaustionCount()
+                + (groupCount > 1 ? ", group=" + group : "");
+    }
+
+    private AssertionError fiberRuntimeHaltTimeout(long timeoutNanos, int group) {
         return new AssertionError(
                 "WorkerPool timed out waiting for fiber runtime to drain before leak-sensitive test cleanup [pool="
                         + poolName
                         + ", timeoutMs=" + (timeoutNanos / 1_000_000)
-                        + ", " + describeRuntime(runtime)
+                        + ", " + describeRuntime(group)
                         + ']'
         );
+    }
+
+    // A group's share of a pool-wide fiber limit, in proportion to its share of the workers,
+    // rounded up and at least 1. A real split has at least CpuTopology.MIN_WORKERS_PER_GROUP
+    // workers per group, so dividing the default limits gives what the default formulas give for
+    // the group's own worker count. A limit below 1 passes through for the runtime to reject.
+    private int getGroupShare(int limit, int group) {
+        if (groupCount == 1 || limit < 1) {
+            return limit;
+        }
+        final long groupWorkerCount = getGroupStart(group + 1) - getGroupStart(group);
+        return (int) Math.max(1, (limit * groupWorkerCount + workerCount - 1) / workerCount);
+    }
+
+    // the first worker of group group; group == groupCount gives workerCount
+    private int getGroupStart(int group) {
+        return (int) (((long) group * workerCount + groupCount - 1) / groupCount);
+    }
+
+    // Worker workerId's index among its group's workers, which is its owner index in the group's
+    // fiber runtime and its id in the group's wake controller. An id outside the pool passes
+    // through unchanged, for the wake controller to treat as out of range.
+    private int getOwnerIndex(int workerId) {
+        return workerId >= 0 && workerId < workerCount ? workerId - getGroupStart(getGroup(workerId)) : workerId;
+    }
+
+    // the wake controller of worker workerId's group; an id outside the pool goes to group 0's
+    private WorkerWakeController getWakeController(int workerId) {
+        return workerWakeControllers.getQuick(workerId >= 0 && workerId < workerCount ? getGroup(workerId) : 0);
     }
 
     private boolean haltAndRelease(boolean isBounded, long deadlineNanos, boolean isStrict) {
@@ -746,16 +849,17 @@ public class WorkerPool implements Closeable {
             if (running.compareAndSet(true, false)) {
                 isStartAttempted = true;
             }
-            final FiberRuntime runtime = fiberRuntime;
+            final boolean isFiberHost = fiberRuntimes.size() > 0;
             AssertionError runtimeHaltFailure = null;
             boolean isRuntimeDrained = true;
-            if (runtime != null) {
-                isRuntimeDrained = awaitRuntimeQuiesce(runtime, isBounded, deadlineNanos);
+            if (isFiberHost) {
+                final int undrainedGroup = awaitRuntimesQuiesce(isBounded, deadlineNanos);
+                isRuntimeDrained = undrainedGroup < 0;
                 if (!isRuntimeDrained) {
                     if (isStrict) {
-                        runtimeHaltFailure = fiberRuntimeHaltTimeout(timeoutNanos, runtime);
+                        runtimeHaltFailure = fiberRuntimeHaltTimeout(timeoutNanos, undrainedGroup);
                     } else {
-                        final String runtimeDescription = describeRuntime(runtime);
+                        final String runtimeDescription = describeRuntime(undrainedGroup);
                         LOG.error().$("timed out waiting for fiber runtime to drain; retaining live pool resources [pool=").$(poolName)
                                 .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms")
                                 .$(", ").$(runtimeDescription).I$();
@@ -765,7 +869,7 @@ public class WorkerPool implements Closeable {
             AssertionError workerHaltFailure = null;
             boolean isWorkerHaltComplete = true;
             if (isStartAttempted) {
-                final WorkerHaltResult workerHaltResult = awaitWorkerHalt(runtime != null, isBounded, deadlineNanos);
+                final WorkerHaltResult workerHaltResult = awaitWorkerHalt(isFiberHost, isBounded, deadlineNanos);
                 if (workerHaltResult != WorkerHaltResult.HALTED) {
                     isWorkerHaltComplete = false;
                     final boolean isStartComplete = workerHaltResult == WorkerHaltResult.HALT_TIMEOUT;
@@ -790,7 +894,7 @@ public class WorkerPool implements Closeable {
                 }
                 return false;
             }
-            final Throwable cleanupFailure = releaseResources(runtime);
+            final Throwable cleanupFailure = releaseResources();
             isHaltComplete = true;
             CairoException.rethrowCleanupFailure(cleanupFailure);
             return true;
@@ -812,19 +916,20 @@ public class WorkerPool implements Closeable {
         return nextStallLogNanos + DEFAULT_HALT_TIMEOUT_NANOS;
     }
 
-    private @Nullable Throwable releaseResources(@Nullable FiberRuntime runtime) {
+    private @Nullable Throwable releaseResources() {
         Throwable cleanupFailure = null;
-        if (workerWakeController != null) {
-            workerWakeController.deactivate();
+        for (int g = 0, n = workerWakeControllers.size(); g < n; g++) {
+            workerWakeControllers.getQuick(g).deactivate();
         }
-        if (runtime != null) {
-            if (dynamicFiberConfiguration != null) {
-                try {
-                    dynamicFiberConfiguration.setFiberConfigurationListener(null);
-                } catch (Throwable th) {
-                    cleanupFailure = addCleanupFailure(cleanupFailure, th);
-                }
+        if (fiberRuntimes.size() > 0 && dynamicFiberConfiguration != null) {
+            try {
+                dynamicFiberConfiguration.setFiberConfigurationListener(null);
+            } catch (Throwable th) {
+                cleanupFailure = addCleanupFailure(cleanupFailure, th);
             }
+        }
+        for (int g = 0, n = fiberRuntimes.size(); g < n; g++) {
+            final FiberRuntime runtime = fiberRuntimes.getQuick(g);
             try {
                 runtime.closeAfterDrained();
             } catch (Throwable th) {
@@ -844,6 +949,8 @@ public class WorkerPool implements Closeable {
         return Misc.freeObjListIfCloseableBestEffort(cleanupFailure, freeOnExit);
     }
 
+    // Undoes construction for the runtimes created before the failure, which can be fewer than
+    // the groups when a later group's runtime fails to construct.
     private void rollbackFiberRuntimeConstruction(Throwable failure) {
         if (dynamicFiberConfiguration != null) {
             try {
@@ -852,23 +959,26 @@ public class WorkerPool implements Closeable {
                 suppressCleanupFailure(failure, th);
             }
         }
-        try {
-            metrics.fiberMetrics().unregister(fiberRuntime);
-        } catch (Throwable th) {
-            suppressCleanupFailure(failure, th);
+        for (int g = 0, n = fiberRuntimes.size(); g < n; g++) {
+            final FiberRuntime runtime = fiberRuntimes.getQuick(g);
+            try {
+                metrics.fiberMetrics().unregister(runtime);
+            } catch (Throwable th) {
+                suppressCleanupFailure(failure, th);
+            }
+            try {
+                runtime.beginQuiesce();
+            } catch (Throwable th) {
+                suppressCleanupFailure(failure, th);
+            }
+            try {
+                runtime.closeAfterDrained();
+            } catch (Throwable th) {
+                suppressCleanupFailure(failure, th);
+            }
         }
-        try {
-            fiberRuntime.beginQuiesce();
-        } catch (Throwable th) {
-            suppressCleanupFailure(failure, th);
-        }
-        try {
-            fiberRuntime.closeAfterDrained();
-        } catch (Throwable th) {
-            suppressCleanupFailure(failure, th);
-        }
-        if (workerWakeController != null) {
-            workerWakeController.deactivate();
+        for (int g = 0, n = workerWakeControllers.size(); g < n; g++) {
+            workerWakeControllers.getQuick(g).deactivate();
         }
     }
 
@@ -891,13 +1001,13 @@ public class WorkerPool implements Closeable {
                 }
             }
         }
-        if (workerWakeController != null) {
-            workerWakeController.wakeAll();
+        for (int g = 0, n = workerWakeControllers.size(); g < n; g++) {
+            workerWakeControllers.getQuick(g).wakeAll();
         }
     }
 
     private void preflightTerminalFiberHalt() {
-        if (fiberRuntime == null) {
+        if (fiberRuntimes.size() == 0) {
             return;
         }
         if (Worker.current() != null) {
@@ -916,6 +1026,17 @@ public class WorkerPool implements Closeable {
 
     private void trackOwnedJob(Job job) {
         assignedJobs.add(job);
+    }
+
+    // receives the pool-wide limits and gives each group's runtime its share
+    private void updateFiberConfiguration(int maxLiveCount, int retainedCount, int mountBudget) {
+        for (int g = 0, n = fiberRuntimes.size(); g < n; g++) {
+            fiberRuntimes.getQuick(g).updateConfiguration(
+                    getGroupShare(maxLiveCount, g),
+                    getGroupShare(retainedCount, g),
+                    mountBudget
+            );
+        }
     }
 
     private AssertionError workerPoolHaltLockTimeout(long timeoutNanos) {

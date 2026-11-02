@@ -53,6 +53,8 @@ public class Worker extends Thread {
     private final @Nullable String cpusText;
     private final String criticalErrorLine;
     private final FiberRuntime.OwnerContext fiberOwnerContext;
+    // the worker's index in its fiber runtime and wake controller, which serve only its group
+    private final int fiberOwnerIndex;
     private final FiberRuntime fiberRuntime;
     private final SOCountDownLatch haltLatch;
     private final boolean haltOnError;
@@ -135,9 +137,7 @@ public class Worker extends Thread {
         if ((fiberRuntime == null) != (fiberOwnerContext == null)) {
             throw new IllegalArgumentException("Fiber runtime and owner context must be installed together");
         }
-        if (fiberOwnerContext != null
-                && (!fiberOwnerContext.isOwnedBy(fiberRuntime)
-                || fiberOwnerContext.getWorkerId() != workerId)) {
+        if (fiberOwnerContext != null && !fiberOwnerContext.isOwnedBy(fiberRuntime)) {
             throw new IllegalArgumentException("Fiber owner context does not match the Worker runtime");
         }
         if ((fiberOwnerContext == null) != (wakeController == null)) {
@@ -187,6 +187,7 @@ public class Worker extends Thread {
         this.metrics = metrics;
         this.fiberRuntime = fiberRuntime;
         this.fiberOwnerContext = fiberOwnerContext;
+        this.fiberOwnerIndex = fiberOwnerContext != null ? fiberOwnerContext.getWorkerId() : workerId;
         this.wakeController = wakeController;
         this.log = log;
     }
@@ -210,7 +211,7 @@ public class Worker extends Thread {
     public void halt() {
         lifecycle.set(WorkerLifecycle.HALTED);
         if (wakeController != null) {
-            wakeController.wakeOne(workerId);
+            wakeController.wakeOne(fiberOwnerIndex);
         }
     }
 
@@ -271,7 +272,7 @@ public class Worker extends Thread {
             lifecycle.set(WorkerLifecycle.HALTED);
             carrierScope = null;
             if (wakeController != null) {
-                wakeController.unregisterReady(workerId);
+                wakeController.unregisterReady(fiberOwnerIndex);
             }
             if (isFiberOwnerActive) {
                 try {
@@ -491,7 +492,7 @@ public class Worker extends Thread {
             }
             if (lifecycle.compareAndSet(state, WorkerLifecycle.HALTING)) {
                 if (wakeController != null) {
-                    wakeController.wakeOne(workerId);
+                    wakeController.wakeOne(fiberOwnerIndex);
                 }
                 return;
             }
@@ -517,7 +518,7 @@ public class Worker extends Thread {
             LockSupport.parkNanos(this, 1L);
         }
 
-        if (!wakeController.registerReady(workerId)) {
+        if (!wakeController.registerReady(fiberOwnerIndex)) {
             return false;
         }
         try {
@@ -528,16 +529,16 @@ public class Worker extends Thread {
                 // A Worker that found work is no longer an idle wake target. Clear the bit before
                 // mounting: a continuation may run for an arbitrary time, during which a publisher
                 // must be able to claim a genuinely parked sibling instead.
-                wakeController.unregisterReady(workerId);
+                wakeController.unregisterReady(fiberOwnerIndex);
                 return fiberRuntime.drainOneBeforePark(fiberOwnerContext);
             }
-            if (!isFiberParkAllowed() || !wakeController.isReady(workerId)) {
+            if (!isFiberParkAllowed() || !wakeController.isReady(fiberOwnerIndex)) {
                 return false;
             }
             LockSupport.parkNanos(this, nanos);
             return false;
         } finally {
-            wakeController.unregisterReady(workerId);
+            wakeController.unregisterReady(fiberOwnerIndex);
         }
     }
 

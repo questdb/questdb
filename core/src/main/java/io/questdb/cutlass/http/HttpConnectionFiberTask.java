@@ -53,9 +53,11 @@ import org.jetbrains.annotations.TestOnly;
  * <p>Selector confinement: the handler instances hang off a per-execution selector
  * (single-thread-confined scratch), and a fiber may mount on any worker, so a step
  * must not borrow the launching worker's selector. {@code runStep()} brackets each
- * step with {@code selectorFactory} acquire/release, so a suspended step retains
- * exclusive ownership until it resumes and releases the selector. Per-connection
- * request state lives on the context (LocalValue), never on the selector.
+ * step with {@code selectorPool} acquire/release, so a suspended step retains
+ * exclusive ownership until it resumes and releases the selector. The pool belongs
+ * to the worker group whose job created the task, and that group's workers run its
+ * fibers. Per-connection request state lives on the context (LocalValue), never on
+ * the selector.
  *
  * <p>The busy-writer retry path is a third trigger, next to fd events and heartbeats:
  * a due retry launches this task with {@link #launchRerun(FiberRuntime, long)} and
@@ -80,7 +82,7 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
     private final HttpConnectionContext context;
     private final IODispatcher<HttpConnectionContext> dispatcher;
     private final WaitProcessor rescheduleContext;
-    private final HttpServer.HttpRequestProcessorSelectorFactory selectorFactory;
+    private final HttpServer.HttpRequestProcessorSelectorPool selectorPool;
     private int disconnectReason = IODispatcher.DISCONNECT_REASON_UNKNOWN_OPERATION;
     private boolean isDisconnectPending;
     private boolean isRearmed;
@@ -94,23 +96,23 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
     HttpConnectionFiberTask(
             HttpConnectionContext context,
             IODispatcher<HttpConnectionContext> dispatcher,
-            HttpServer.HttpRequestProcessorSelectorFactory selectorFactory,
+            HttpServer.HttpRequestProcessorSelectorPool selectorPool,
             WaitProcessor rescheduleContext
     ) {
-        this(context, dispatcher, selectorFactory, rescheduleContext, null);
+        this(context, dispatcher, selectorPool, rescheduleContext, null);
     }
 
     private HttpConnectionFiberTask(
             HttpConnectionContext context,
             IODispatcher<HttpConnectionContext> dispatcher,
-            HttpServer.HttpRequestProcessorSelectorFactory selectorFactory,
+            HttpServer.HttpRequestProcessorSelectorPool selectorPool,
             WaitProcessor rescheduleContext,
             @Nullable Runnable beforeLaunchFailureSignalForTesting
     ) {
         this.beforeLaunchFailureSignalForTesting = beforeLaunchFailureSignalForTesting;
         this.context = context;
         this.dispatcher = dispatcher;
-        this.selectorFactory = selectorFactory;
+        this.selectorPool = selectorPool;
         this.rescheduleContext = rescheduleContext;
     }
 
@@ -141,7 +143,7 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
         final HttpConnectionFiberTask task = new HttpConnectionFiberTask(
                 context,
                 dispatcher,
-                new HttpServer.HttpRequestProcessorSelectorFactory(1, 1),
+                new HttpServer.HttpRequestProcessorSelectorFactory(1, 1).getPool(0),
                 rescheduleContext,
                 beforeLaunchFailureSignalForTesting
         );
@@ -153,7 +155,7 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
 
     @TestOnly
     public void closeForTesting() {
-        selectorFactory.close();
+        selectorPool.getFactory().close();
     }
 
     @TestOnly
@@ -210,7 +212,7 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
         disconnectReason = IODispatcher.DISCONNECT_REASON_RETRY_FAILED;
         isDisconnectPending = true;
         nextAction = ACTION_NONE;
-        final HttpServer.HttpRequestProcessorSelectorImpl selector = selectorFactory.acquire();
+        final HttpServer.HttpRequestProcessorSelectorImpl selector = selectorPool.acquire();
         try {
             context.fail(selector, e);
         } catch (PeerIsSlowToReadException slowToRead) {
@@ -220,7 +222,7 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
             disconnectReason = context.getDisconnectReason();
             isDisconnectPending = true;
         } finally {
-            selectorFactory.release(selector);
+            selectorPool.release(selector);
         }
     }
 
@@ -509,7 +511,7 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
         isRescheduleNextAttempt = false;
         isReschedulePending = false;
         nextAction = ACTION_NONE;
-        final HttpServer.HttpRequestProcessorSelectorImpl selector = selectorFactory.acquire();
+        final HttpServer.HttpRequestProcessorSelectorImpl selector = selectorPool.acquire();
         try {
             if (eventAction == EVENT_RERUN) {
                 if (!context.tryRerun(selector, this)) {
@@ -538,7 +540,7 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
             isDisconnectPending = true;
             return true;
         } finally {
-            selectorFactory.release(selector);
+            selectorPool.release(selector);
         }
     }
 }

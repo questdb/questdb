@@ -86,7 +86,8 @@ public class HttpServer implements Closeable {
     private final ObjList<Closeable> closeables = new ObjList<>();
     // one per worker group, each with its own listener on the server's port
     private final ObjList<IODispatcher<HttpConnectionContext>> dispatchers;
-    private final @Nullable FiberRuntime fiberRuntime;
+    // one per worker group of the pool, parallel to the selector factory's pools; empty without fibers
+    private final ObjList<FiberRuntime> fiberRuntimes;
     private final HttpContextFactory httpContextFactory;
     private final AssociativeCache<RecordCursorFactory> selectCache;
     private final HttpRequestProcessorSelectorFactory selectorFactory;
@@ -127,18 +128,23 @@ public class HttpServer implements Closeable {
         HttpContextFactory httpContextFactory = null;
         AssociativeCache<RecordCursorFactory> selectCache = null;
         HttpRequestProcessorSelectorFactory selectorFactory = null;
-        FiberRuntime fiberRuntime = null;
+        final ObjList<FiberRuntime> fiberRuntimes = new ObjList<>();
         try {
             if (isFiberExecutionEnabled && configuration.isFiberEnabled() && networkSharedPool.isFiberHost()) {
-                fiberRuntime = networkSharedPool.getFiberRuntime();
+                for (int g = 0, n = networkSharedPool.getGroupCount(); g < n; g++) {
+                    fiberRuntimes.add(networkSharedPool.getFiberRuntime(g));
+                }
             }
-            selectorFactory = new HttpRequestProcessorSelectorFactory(
-                    workerCount,
-                    fiberRuntime == null ? workerCount : networkSharedPool.getFiberMaxLiveCount(),
-                    afterSelectorPop
-            );
-            if (fiberRuntime != null) {
-                fiberRuntime.registerConfigurationListener(selectorFactory);
+            selectorFactory = new HttpRequestProcessorSelectorFactory(workerCount, afterSelectorPop);
+            if (fiberRuntimes.size() == 0) {
+                selectorFactory.addPool(workerCount);
+            } else {
+                // each group's fiber steps recycle selectors in their group's pool, capped by the
+                // group runtime's live-fiber limit
+                for (int g = 0, n = fiberRuntimes.size(); g < n; g++) {
+                    final FiberRuntime runtime = fiberRuntimes.getQuick(g);
+                    runtime.registerConfigurationListener(selectorFactory.addPool(runtime.getMaxLiveFiberCount()));
+                }
             }
             if (configuration instanceof HttpFullFatServerConfiguration serverConfiguration
                     && serverConfiguration.isQueryCacheEnabled()) {
@@ -171,7 +177,7 @@ public class HttpServer implements Closeable {
 
             this.activeConnectionTracker = activeConnectionTracker;
             this.dispatchers = dispatchers;
-            this.fiberRuntime = fiberRuntime;
+            this.fiberRuntimes = fiberRuntimes;
             this.httpContextFactory = httpContextFactory;
             this.selectCache = selectCache;
             this.selectorFactory = selectorFactory;
@@ -186,8 +192,12 @@ public class HttpServer implements Closeable {
                 waitProcessorJobs.add(new AcceptGatedJob(waitProcessors.getQuick(g), acceptOpen));
             }
             for (int i = 0; i < workerCount; i++) {
-                final int g = groupCount == 1 ? 0 : networkSharedPool.getGroup(i);
-                final HttpRequestProcessorSelectorImpl selector = fiberRuntime == null
+                // A worker runs only its pool group's fibers, so its job launches on that group's
+                // runtime even when the server has a single dispatcher on a split pool.
+                final int poolGroup = networkSharedPool.getGroup(i);
+                final int g = groupCount == 1 ? 0 : poolGroup;
+                final FiberRuntime runtime = fiberRuntimes.size() > 0 ? fiberRuntimes.getQuick(poolGroup) : null;
+                final HttpRequestProcessorSelectorImpl selector = runtime == null
                         ? selectorFactory.getSelectorByWorker(i)
                         : null;
                 networkSharedPool.assign(i, dispatcherJobs.getQuick(g));
@@ -197,16 +207,17 @@ public class HttpServer implements Closeable {
                         dispatchers.getQuick(g),
                         waitProcessors.getQuick(g),
                         selectorFactory,
+                        selectorFactory.getPool(runtime != null ? poolGroup : 0),
                         selector,
                         acceptOpen,
-                        fiberRuntime
+                        runtime
                 ));
                 networkSharedPool.assignThreadLocalCleaner(i, this.httpContextFactory::freeThreadLocal);
             }
         } catch (Throwable t) {
             acceptOpen.set(false);
-            if (fiberRuntime != null && selectorFactory != null) {
-                fiberRuntime.unregisterConfigurationListener(selectorFactory);
+            if (selectorFactory != null) {
+                unregisterSelectorPools(fiberRuntimes, selectorFactory);
             }
             // group k's bind can fail after groups 0 to k - 1 have bound
             for (int g = 0, n = dispatchers.size(); g < n; g++) {
@@ -455,6 +466,7 @@ public class HttpServer implements Closeable {
                     dispatcher,
                     rescheduleContext,
                     selectorFactory,
+                    selectorFactory.getPool(0),
                     null,
                     new AtomicBoolean(true),
                     runtime
@@ -477,9 +489,7 @@ public class HttpServer implements Closeable {
     @Override
     public void close() {
         acceptOpen.set(false);
-        if (fiberRuntime != null) {
-            fiberRuntime.unregisterConfigurationListener(selectorFactory);
-        }
+        unregisterSelectorPools(fiberRuntimes, selectorFactory);
         Throwable failure = null;
         for (int g = 0, n = dispatchers.size(); g < n; g++) {
             failure = Misc.freeBestEffort(failure, dispatchers.getQuick(g));
@@ -505,12 +515,22 @@ public class HttpServer implements Closeable {
 
     @TestOnly
     public int getMaxRecycledSelectorCountForTesting() {
-        return selectorFactory.maxRecycledSelectors;
+        return getMaxRecycledSelectorCountForTesting(0);
+    }
+
+    @TestOnly
+    public int getMaxRecycledSelectorCountForTesting(int group) {
+        return selectorFactory.getPool(group).getMaxRecycledSelectorCount();
     }
 
     @TestOnly
     public int getRecycledSelectorCountForTesting() {
-        return selectorFactory.recycledSelectors.count();
+        return getRecycledSelectorCountForTesting(0);
+    }
+
+    @TestOnly
+    public int getRecycledSelectorCountForTesting(int group) {
+        return selectorFactory.getPool(group).getRecycledSelectorCount();
     }
 
     @TestOnly
@@ -519,13 +539,18 @@ public class HttpServer implements Closeable {
     }
 
     @TestOnly
+    public int getSelectorPoolCountForTesting() {
+        return selectorFactory.getPoolCount();
+    }
+
+    @TestOnly
     public HttpRequestProcessorSelector acquireSelectorForTesting() {
-        return selectorFactory.acquire();
+        return selectorFactory.getPool(0).acquire();
     }
 
     @TestOnly
     public void releaseSelectorForTesting(HttpRequestProcessorSelector selector) {
-        selectorFactory.release((HttpRequestProcessorSelectorImpl) selector);
+        selectorFactory.getPool(0).release((HttpRequestProcessorSelectorImpl) selector);
     }
 
     public ActiveConnectionTracker getActiveConnectionTracker() {
@@ -559,6 +584,17 @@ public class HttpServer implements Closeable {
 
     public void registerClosable(Closeable closeable) {
         closeables.add(closeable);
+    }
+
+    // Unregisters each group's selector pool from its group's runtime. Safe for a pool that never
+    // registered, which happens when construction failed partway.
+    private static void unregisterSelectorPools(
+            ObjList<FiberRuntime> fiberRuntimes,
+            HttpRequestProcessorSelectorFactory selectorFactory
+    ) {
+        for (int g = 0, n = Math.min(fiberRuntimes.size(), selectorFactory.getPoolCount()); g < n; g++) {
+            fiberRuntimes.getQuick(g).unregisterConfigurationListener(selectorFactory.getPool(g));
+        }
     }
 
     private boolean handleClientOperation(
@@ -619,12 +655,14 @@ public class HttpServer implements Closeable {
         private final @Nullable WaitProcessor.RetryLauncher retryLauncher;
         private final HttpRequestProcessorSelectorImpl selector;
         private final HttpRequestProcessorSelectorFactory selectorFactory;
+        private final HttpRequestProcessorSelectorPool selectorPool;
 
         HttpRequestJob(
                 HttpServer owner,
                 IODispatcher<HttpConnectionContext> dispatcher,
                 WaitProcessor rescheduleContext,
                 HttpRequestProcessorSelectorFactory selectorFactory,
+                HttpRequestProcessorSelectorPool selectorPool,
                 HttpRequestProcessorSelectorImpl selector,
                 AtomicBoolean acceptOpen,
                 @Nullable FiberRuntime fiberRuntime
@@ -633,6 +671,7 @@ public class HttpServer implements Closeable {
             this.dispatcher = dispatcher;
             this.rescheduleContext = rescheduleContext;
             this.selectorFactory = selectorFactory;
+            this.selectorPool = selectorPool;
             this.selector = selector;
             this.acceptOpen = acceptOpen;
             this.fiberRuntime = fiberRuntime;
@@ -657,7 +696,7 @@ public class HttpServer implements Closeable {
                     }
                     reservedFiber = fiber;
                     reservedFiberEpoch = reservationEpoch;
-                    final HttpConnectionFiberTask task = context.getFiberTask(disp, selectorFactory, rescheduleContext);
+                    final HttpConnectionFiberTask task = context.getFiberTask(disp, selectorPool, rescheduleContext);
                     reservedFiber = null;
                     reservedFiberEpoch = 0;
                     return handleLaunchResult(
@@ -668,7 +707,7 @@ public class HttpServer implements Closeable {
                 this.retryLauncher = (fiber, reservationEpoch, retry, taskIncarnation) -> {
                     try {
                         final HttpConnectionContext context = (HttpConnectionContext) retry;
-                        final HttpConnectionFiberTask task = context.getFiberTask(dispatcher, selectorFactory, rescheduleContext);
+                        final HttpConnectionFiberTask task = context.getFiberTask(dispatcher, selectorPool, rescheduleContext);
                         handleLaunchResult(
                                 context,
                                 task.launchRerunReserved(runtime, fiber, reservationEpoch, taskIncarnation)
@@ -751,42 +790,27 @@ public class HttpServer implements Closeable {
      * boolean)} so that the same URL maps to the same handler id across
      * every selector this factory ever creates.
      */
-    static class HttpRequestProcessorSelectorFactory implements Closeable, FiberRuntimeConfigurationListener {
+    static class HttpRequestProcessorSelectorFactory implements Closeable {
+        private final @Nullable Runnable afterSelectorPop;
         private final ObjList<FactoryHolder> factoryHolders = new ObjList<>();
         private final AtomicBoolean isClosed = new AtomicBoolean();
         private int nextHandlerId = 0;
+        // One per worker group of the pool, so fiber steps recycle selectors among their own
+        // group's workers and never through a structure that the other groups also write.
+        private final ObjList<HttpRequestProcessorSelectorPool> pools = new ObjList<>();
         private volatile int publishedFactoryCount;
-        // Lock-free: acquire/release run twice per HTTP I/O event on every worker, so a server-wide
-        // monitor here would serialize the whole request path.
-        private final ConcurrentPool<HttpRequestProcessorSelectorImpl> recycledSelectors;
         // Per-worker selectors used by the Jobs registered to the pool in legacy mode. These
         // selectors are NOT pooled -- they live for the server's lifetime so the per-worker fast
         // path doesn't have to re-acquire across iterations.
         private final ObjList<HttpRequestProcessorSelectorImpl> selectors;
-        private volatile int maxRecycledSelectors;
 
         HttpRequestProcessorSelectorFactory(int workerCount, int maxRecycledSelectors) {
-            this(workerCount, maxRecycledSelectors, null);
+            this(workerCount, null);
+            addPool(maxRecycledSelectors);
         }
 
-        HttpRequestProcessorSelectorFactory(
-                int workerCount,
-                int maxRecycledSelectors,
-                @Nullable Runnable afterSelectorPop
-        ) {
-            this.maxRecycledSelectors = Math.max(1, maxRecycledSelectors);
-            this.recycledSelectors = afterSelectorPop == null
-                    ? new ConcurrentPool<>()
-                    : new ConcurrentPool<>() {
-                @Override
-                public HttpRequestProcessorSelectorImpl pop() {
-                    final HttpRequestProcessorSelectorImpl selector = super.pop();
-                    if (selector != null) {
-                        afterSelectorPop.run();
-                    }
-                    return selector;
-                }
-            };
+        HttpRequestProcessorSelectorFactory(int workerCount, @Nullable Runnable afterSelectorPop) {
+            this.afterSelectorPop = afterSelectorPop;
             this.selectors = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
                 selectors.add(null);
@@ -798,10 +822,11 @@ public class HttpServer implements Closeable {
             if (!isClosed.compareAndSet(false, true)) {
                 return;
             }
-            maxRecycledSelectors = 0;
             Throwable failure = Misc.freeObjListBestEffort(null, selectors);
             selectors.clear();
-            failure = trimRecycledSelectors(failure);
+            for (int g = 0, n = pools.size(); g < n; g++) {
+                failure = pools.getQuick(g).close(failure);
+            }
             CairoException.rethrowCleanupFailure(failure);
         }
 
@@ -822,34 +847,10 @@ public class HttpServer implements Closeable {
             return s;
         }
 
-        HttpRequestProcessorSelectorImpl acquire() {
-            while (true) {
-                if (isClosed.get()) {
-                    throw new IllegalStateException("HTTP selector factory is closed");
-                }
-                final HttpRequestProcessorSelectorImpl selector = recycledSelectors.pop();
-                if (selector != null) {
-                    if (isClosed.get()) {
-                        final IllegalStateException exception = new IllegalStateException("HTTP selector factory is closed");
-                        Misc.free(selector, exception);
-                        throw exception;
-                    }
-                    try {
-                        populateMissing(selector);
-                        return selector;
-                    } catch (Throwable th) {
-                        Misc.free(selector, th);
-                        throw th;
-                    }
-                }
-                if (recycledSelectors.count() == 0) {
-                    if (isClosed.get()) {
-                        throw new IllegalStateException("HTTP selector factory is closed");
-                    }
-                    return create();
-                }
-                Os.pause();
-            }
+        HttpRequestProcessorSelectorPool addPool(int maxRecycledSelectors) {
+            final HttpRequestProcessorSelectorPool pool = new HttpRequestProcessorSelectorPool(this, maxRecycledSelectors, afterSelectorPop);
+            pools.add(pool);
+            return pool;
         }
 
         synchronized void bind(HttpRequestHandlerFactory factory, boolean useAsDefault) {
@@ -874,49 +875,12 @@ public class HttpServer implements Closeable {
             }
         }
 
-        @Override
-        public void onConfigurationChanged(int maxLiveFiberCount, int maxRetainedFiberCount) {
-            if (isClosed.get()) {
-                return;
-            }
-            maxRecycledSelectors = Math.max(1, maxLiveFiberCount);
-            if (isClosed.get()) {
-                maxRecycledSelectors = 0;
-            }
-            trimRecycledSelectors();
+        HttpRequestProcessorSelectorPool getPool(int group) {
+            return pools.getQuick(group);
         }
 
-        void release(HttpRequestProcessorSelectorImpl selector) {
-            final int maxRecycledSelectors = this.maxRecycledSelectors;
-            final boolean isPushed;
-            try {
-                isPushed = recycledSelectors.tryPush(selector, maxRecycledSelectors);
-            } catch (Throwable th) {
-                Misc.free(selector, th);
-                throw th;
-            }
-            if (isPushed) {
-                if (maxRecycledSelectors != this.maxRecycledSelectors) {
-                    trimRecycledSelectors();
-                }
-                return;
-            }
-            Misc.free(selector);
-        }
-
-        private void trimRecycledSelectors() {
-            CairoException.rethrowCleanupFailure(trimRecycledSelectors(null));
-        }
-
-        private Throwable trimRecycledSelectors(Throwable failure) {
-            while (recycledSelectors.count() > maxRecycledSelectors) {
-                final HttpRequestProcessorSelectorImpl selector = recycledSelectors.pop();
-                if (selector == null) {
-                    return failure;
-                }
-                failure = Misc.freeBestEffort(failure, selector);
-            }
-            return failure;
+        int getPoolCount() {
+            return pools.size();
         }
 
         private void populateMissing(HttpRequestProcessorSelectorImpl selector) {
@@ -1047,6 +1011,132 @@ public class HttpServer implements Closeable {
             }
             lastSelectedHandlerId = defaultProcessorId;
             return defaultRequestProcessor;
+        }
+    }
+
+    /**
+     * The selectors that one worker group's fiber steps recycle. A step acquires a selector,
+     * keeps it while suspended, and releases it when the step ends; the pool keeps at most as
+     * many as the group's runtime has live fibers and frees the rest.
+     */
+    static final class HttpRequestProcessorSelectorPool implements FiberRuntimeConfigurationListener {
+        private final HttpRequestProcessorSelectorFactory factory;
+        // Lock-free: acquire/release run twice per HTTP I/O event on every worker of the group,
+        // so a monitor here would serialize the group's whole request path.
+        private final ConcurrentPool<HttpRequestProcessorSelectorImpl> recycledSelectors;
+        private volatile int maxRecycledSelectors;
+
+        private HttpRequestProcessorSelectorPool(
+                HttpRequestProcessorSelectorFactory factory,
+                int maxRecycledSelectors,
+                @Nullable Runnable afterSelectorPop
+        ) {
+            this.factory = factory;
+            this.maxRecycledSelectors = Math.max(1, maxRecycledSelectors);
+            this.recycledSelectors = afterSelectorPop == null
+                    ? new ConcurrentPool<>()
+                    : new ConcurrentPool<>() {
+                @Override
+                public HttpRequestProcessorSelectorImpl pop() {
+                    final HttpRequestProcessorSelectorImpl selector = super.pop();
+                    if (selector != null) {
+                        afterSelectorPop.run();
+                    }
+                    return selector;
+                }
+            };
+        }
+
+        @Override
+        public void onConfigurationChanged(int maxLiveFiberCount, int maxRetainedFiberCount) {
+            if (factory.isClosed.get()) {
+                return;
+            }
+            maxRecycledSelectors = Math.max(1, maxLiveFiberCount);
+            if (factory.isClosed.get()) {
+                maxRecycledSelectors = 0;
+            }
+            trimRecycledSelectors();
+        }
+
+        HttpRequestProcessorSelectorImpl acquire() {
+            while (true) {
+                if (factory.isClosed.get()) {
+                    throw new IllegalStateException("HTTP selector factory is closed");
+                }
+                final HttpRequestProcessorSelectorImpl selector = recycledSelectors.pop();
+                if (selector != null) {
+                    if (factory.isClosed.get()) {
+                        final IllegalStateException exception = new IllegalStateException("HTTP selector factory is closed");
+                        Misc.free(selector, exception);
+                        throw exception;
+                    }
+                    try {
+                        factory.populateMissing(selector);
+                        return selector;
+                    } catch (Throwable th) {
+                        Misc.free(selector, th);
+                        throw th;
+                    }
+                }
+                if (recycledSelectors.count() == 0) {
+                    if (factory.isClosed.get()) {
+                        throw new IllegalStateException("HTTP selector factory is closed");
+                    }
+                    return factory.create();
+                }
+                Os.pause();
+            }
+        }
+
+        Throwable close(Throwable failure) {
+            maxRecycledSelectors = 0;
+            return trimRecycledSelectors(failure);
+        }
+
+        HttpRequestProcessorSelectorFactory getFactory() {
+            return factory;
+        }
+
+        int getMaxRecycledSelectorCount() {
+            return maxRecycledSelectors;
+        }
+
+        int getRecycledSelectorCount() {
+            return recycledSelectors.count();
+        }
+
+        void release(HttpRequestProcessorSelectorImpl selector) {
+            final int maxRecycledSelectors = this.maxRecycledSelectors;
+            final boolean isPushed;
+            try {
+                isPushed = recycledSelectors.tryPush(selector, maxRecycledSelectors);
+            } catch (Throwable th) {
+                Misc.free(selector, th);
+                throw th;
+            }
+            if (isPushed) {
+                if (maxRecycledSelectors != this.maxRecycledSelectors) {
+                    trimRecycledSelectors();
+                }
+                return;
+            }
+            Misc.free(selector);
+        }
+
+        private Throwable trimRecycledSelectors(Throwable failure) {
+            while (recycledSelectors.count() > maxRecycledSelectors) {
+                final HttpRequestProcessorSelectorImpl selector = recycledSelectors.pop();
+                if (selector == null) {
+                    return failure;
+                }
+                failure = Misc.freeBestEffort(failure, selector);
+            }
+            return failure;
+        }
+
+        private void trimRecycledSelectors() {
+            CairoException.rethrowCleanupFailure(trimRecycledSelectors(null));
         }
     }
 
