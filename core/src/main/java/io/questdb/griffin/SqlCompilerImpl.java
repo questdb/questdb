@@ -2547,6 +2547,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     .put(']');
         }
         final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+        // True while replaceViewDefinition() runs. A failure there is a storage failure, not a compile error,
+        // so it reaches the caller unchanged: a failed flush keeps its data-sync classification and carries
+        // no position in the view SQL.
+        boolean isWritingDefinition = false;
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             int remainingRetries = maxRecompileAttempts;
             for (; ; ) {
@@ -2606,7 +2610,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     } else {
                         executionContext.getSecurityContext().authorizeAlterView(viewToken);
                         if (!executionContext.isValidationOnly()) {
+                            isWritingDefinition = true;
                             engine.replaceViewDefinition(viewToken, viewSql, dependencies, blockFileWriter, path);
+                            isWritingDefinition = false;
                         }
                         if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
                             compiledQuery.ofAlterView();
@@ -2642,10 +2648,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw e;
         } catch (CairoException e) {
             // An authorization failure (e.g. no ALTER VIEW permission) must keep its identity so the
-            // caller reports it as forbidden. Rewrapping it as a SqlException would downgrade it to a
+            // caller reports it as forbidden, and a failure while writing the definition must keep its
+            // storage classification. Rewrapping either as a SqlException would downgrade it to a
             // generic SQL error, so re-throw it unchanged. Only genuine compile errors get the view SQL
             // position adjustment.
-            if (e.isAuthorizationError()) {
+            if (e.isAuthorizationError() || isWritingDefinition) {
                 throw e;
             }
             // position is reported from the view SQL, we have to adjust it
