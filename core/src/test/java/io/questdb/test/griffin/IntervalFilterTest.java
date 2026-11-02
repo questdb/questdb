@@ -26,8 +26,14 @@ package io.questdb.test.griffin;
 
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.TickCalendarServiceFactory;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.model.IntervalOperation;
+import io.questdb.griffin.model.IntervalUtils;
+import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
@@ -37,6 +43,7 @@ import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TestTickCalendarService;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -726,7 +733,10 @@ public class IntervalFilterTest extends AbstractCairoTest {
     public void testInDateListTimeZoneAboveMergeThreshold() throws Exception {
         // One row per hour from 2023-12-31T00:00Z to 2025-01-08T23:00Z, so every local day of 2024
         // at +05:00 holds 24 rows. January's 31 days and the 308 days 1 to 28 of February to
-        // December make 339 bracket values, above the incremental merge threshold (256).
+        // December make 339 bracket values, above the incremental merge threshold (256). A day
+        // that keeps UTC instead of its local time keeps the count, so each case also compares
+        // the rows with a reference that selects them by their local time l at +05:00, which
+        // Asia/Karachi keeps all year.
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE t (tm #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY MONTH", timestampType.getTypeName());
             execute("""
@@ -734,26 +744,48 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     SELECT '2023-12-31'::TIMESTAMP + (x - 1) * 3_600_000_000L, '2023-12-31'::TIMESTAMP + (x - 1) * 3_600_000_000L
                     FROM long_sequence(9_000)
                     """);
+            final String days = "year(l) = 2024 AND (month(l) = 1 OR day(l) <= 28)";
+            final String januaryAndMondays = "year(l) = 2024 AND (month(l) = 1 OR (day(l) <= 28 AND day_of_week(l) = 1))";
             final String[][] cases = {
-                    {"'[2024-01-[01..31],2024-[02..12]-[01..28]]@+05:00'", String.valueOf((31 + 11 * 28) * 24)},
-                    {"'[2024-01-[01..31]@+05:00,2024-[02..12]-[01..28]@+05:00]'", String.valueOf((31 + 11 * 28) * 24)},
-                    {"'[2024-01-[01..31]@Asia/Karachi,2024-[02..12]-[01..28]@Asia/Karachi]'", String.valueOf((31 + 11 * 28) * 24)},
-                    {"'[2024-01-01@+05:00,2024-[02..12]-[01..28]@+05:00]'", String.valueOf((1 + 11 * 28) * 24)},
-                    {"'[2024-01-[01..31]@+05:00,2024-[02..05]-[01..28]@+05:00]'", String.valueOf((31 + 4 * 28) * 24)},
-                    {"'2024-[02..12]-[01..28]@+05:00'", String.valueOf(11 * 28 * 24)},
+                    {"'[2024-01-[01..31],2024-[02..12]-[01..28]]@+05:00'", String.valueOf((31 + 11 * 28) * 24), days},
+                    {"'[2024-01-[01..31]@+05:00,2024-[02..12]-[01..28]@+05:00]'", String.valueOf((31 + 11 * 28) * 24), days},
+                    {"'[2024-01-[01..31]@Asia/Karachi,2024-[02..12]-[01..28]@Asia/Karachi]'", String.valueOf((31 + 11 * 28) * 24), days},
+                    {
+                            "'[2024-01-01@+05:00,2024-[02..12]-[01..28]@+05:00]'",
+                            String.valueOf((1 + 11 * 28) * 24),
+                            "year(l) = 2024 AND ((month(l) = 1 AND day(l) = 1) OR (month(l) >= 2 AND day(l) <= 28))"
+                    },
+                    {
+                            "'[2024-01-[01..31]@+05:00,2024-[02..05]-[01..28]@+05:00]'",
+                            String.valueOf((31 + 4 * 28) * 24),
+                            "year(l) = 2024 AND (month(l) = 1 OR (month(l) <= 5 AND day(l) <= 28))"
+                    },
+                    {"'2024-[02..12]-[01..28]@+05:00'", String.valueOf(11 * 28 * 24), "year(l) = 2024 AND month(l) >= 2 AND day(l) <= 28"},
                     // the Mondays among them: 5 in January and 4 in each of the 11 later months
-                    {"'[2024-01-[01..31],2024-[02..12]-[01..28]]@+05:00#mon'", String.valueOf((5 + 11 * 4) * 24)},
-                    {"'[2024-01-[01..31]@+05:00,2024-[02..12]-[01..28]@+05:00#mon]'", String.valueOf((31 + 11 * 4) * 24)},
+                    {"'[2024-01-[01..31],2024-[02..12]-[01..28]]@+05:00#mon'", String.valueOf((5 + 11 * 4) * 24), days + " AND day_of_week(l) = 1"},
+                    // January and the Mondays of the later months
+                    {"'[2024-01-[01..31]@+05:00,2024-[02..12]-[01..28]@+05:00#mon]'", String.valueOf((31 + 11 * 4) * 24), januaryAndMondays},
+                    {"'[2024-01-[01..31],2024-[02..12]-[01..28]#mon]@+05:00'", String.valueOf((31 + 11 * 4) * 24), januaryAndMondays},
                     // 09:00 to 10:00 local on each day
-                    {"'[2024-01-[01..31],2024-[02..12]-[01..28]]T09:00@+05:00;1h'", String.valueOf(31 + 11 * 28)},
+                    {"'[2024-01-[01..31],2024-[02..12]-[01..28]]T09:00@+05:00;1h'", String.valueOf(31 + 11 * 28), days + " AND hour(l) = 9"},
             };
             for (String[] c : cases) {
+                final String reference = "SELECT ts FROM (SELECT ts, dateadd('h', 5, ts) l FROM t) WHERE " + c[2];
+                assertQuery("SELECT count() FROM (" + reference + ")")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n" + c[1] + "\n");
                 for (String column : new String[]{"ts", "tm"}) {
                     assertQuery("SELECT count() FROM t WHERE " + column + " IN " + c[0])
                             .noLeakCheck()
                             .expectSize()
                             .noRandomAccess()
                             .returns("count\n" + c[1] + "\n");
+                    assertSqlCursors(reference, "SELECT ts FROM t WHERE " + column + " IN " + c[0]);
+                    bindVariableService.clear();
+                    bindVariableService.setStr("p", c[0].substring(1, c[0].length() - 1));
+                    assertSqlCursors(reference, "SELECT ts FROM t WHERE " + column + " IN :p");
                 }
             }
         });
@@ -1707,6 +1739,41 @@ public class IntervalFilterTest extends AbstractCairoTest {
             }
             // the failed compilations leave the next query intact
             assertInBothOrders("ts IN '2024-01-[05,09]'", "ts < now()", "k\n1\n");
+        });
+    }
+
+    @Test
+    public void testIncrementalMergeMatchesUnmergedParse() throws Exception {
+        // testIntervalScanMatchesRowFilter compares two consumers of the same parse, so it cannot
+        // see a wrong incremental merge. A merge threshold above the leaf count of every tick
+        // string that randomTickString builds leaves only the final union, which must give the
+        // intervals of the default parse.
+        final CairoConfiguration unmergedConfiguration = new DefaultCairoConfiguration(".") {
+            @Override
+            public int getSqlIntervalIncrementalMergeThreshold() {
+                return 5_000_000;
+            }
+
+            @Override
+            public int getSqlIntervalMaxIntervalsAfterMerge() {
+                return 10_000_000;
+            }
+        };
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            final TimestampDriver timestampDriver = timestampType.getDriver();
+            final StringSink tickSink = new StringSink();
+            final StringSink sink = new StringSink();
+            final LongList expected = new LongList();
+            final LongList actual = new LongList();
+            for (int i = 0; i < 3_000; i++) {
+                final String tick = randomTickString(rnd, tickSink, true);
+                expected.clear();
+                actual.clear();
+                IntervalUtils.parseTickExpr(timestampDriver, unmergedConfiguration, tick, 0, tick.length(), 0, expected, IntervalOperation.INTERSECT, sink, true);
+                IntervalUtils.parseTickExpr(timestampDriver, configuration, tick, 0, tick.length(), 0, actual, IntervalOperation.INTERSECT, sink, true);
+                Assert.assertEquals(tick, expected, actual);
+            }
         });
     }
 

@@ -54,6 +54,7 @@ import org.junit.runners.Parameterized;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.TreeSet;
@@ -1799,12 +1800,21 @@ public class TickExprTest {
         // An element whose bracket expansion reaches the incremental merge threshold (256) merges
         // its own intervals only, before its day filter and time zone, so the intervals of the
         // earlier elements keep their place and their conversion.
-        assertMatchesUnmergedOracle(
+        final String[] intervals = {
                 "[2024-01-[01..31],2024-[02..12]-[01..28]]@+05:00",
                 "[2024-01-[01..31]@+05:00,2024-[02..12]-[01..28]@+05:00]",
                 "[2024-01-[01..31]@Europe/London,2024-[02..12]-[01..28]@America/New_York]",
                 "[2024-01-[01..31],2024-[02..12]-[01..28]]T09:00@+05:00;1h",
                 "[2024-01-[01..31],2024-[02..12]-[01..28]]@+05:00#mon",
+                // Only the later element is filtered. Its merges must leave out January's converted
+                // days, which a union would join into one block, moving the Mondays below the
+                // element's start, where its time zone never reaches them.
+                "[2024-01-[01..31]@+05:00,2024-[02..12]-[01..28]@+05:00#mon]",
+                "[2024-01-[01..31],2024-[02..12]-[01..28]#mon]@+05:00",
+                "[2024-01-[01..31]@Europe/London,2024-[02..12]-[01..28]@America/New_York#mon]",
+                // the zone moves the first element's last hours to 2024-01-04T00:45Z-02:45Z, among the
+                // leaves of the second element, which a union would take below the element's start
+                "[2024-01-[01..03]T[00..23]:15,2024-01-[04..20]T[00..23]:40]@-03:30#workday",
                 "[2023-[01..12]-[01..28]T09:00,2023-[03..04]#mon]",
                 "[[2019..2024]-[01..12]-[01..28]#mon,2024-[09..10]#workday]",
                 "[[2019..2024]-[01..12]-[01..28],2024-[09..10]]#mon",
@@ -1813,9 +1823,50 @@ public class TickExprTest {
                 // each time list value converts its own 600 intervals
                 "2024-01-01T[20:00@-05:00,10:00@+05:00]:[00..59].[0..9]",
                 "2024-01-01T[20:00,10:00]:[00..59].[0..9]@-05:00",
+                // the same under a day filter; both values stay on Monday 2024-01-01 in UTC (#8113)
+                "2024-01-01T[10:00@-05:00,12:00@+05:00]:[00..59].[0..9]#mon",
                 "[$today,2024-[01..12]-[01..28]@+05:00]",
-                "[2024-[01..12]-[01..28]@+05:00,$today..$today+300d]"
+                "[2024-[01..12]-[01..28]@+05:00,$today..$today+300d]",
+                // each day of a date variable range merges its own 1,440 minutes; $today is the
+                // Monday 2024-01-08
+                "[$today..$today+1d]T[00..23]:[00..59]@+05:00#workday"
+        };
+        // At the server default and at low thresholds, at which the earlier elements and time list
+        // values merge as well, and a union reorders the intervals it takes in.
+        for (int mergeThreshold : new int[]{256, 4, 2}) {
+            assertMatchesUnmergedOracle(mergeThreshold, intervals);
+        }
+
+        // The oracle runs the same parser, so independent results pin the time list, the date
+        // variable range and the named zones. 10:00 at -05:00 is 15:00Z and 12:00 at +05:00 is 07:00Z.
+        assertTickExprAtMonday(
+                configuration,
+                "[{lo=2024-01-01T07:00:00.000000Z, hi=2024-01-01T07:00:59.999999Z},{lo=2024-01-01T15:00:00.000000Z, hi=2024-01-01T15:00:59.999999Z}]",
+                "2024-01-01T[10:00@-05:00,12:00@+05:00]:[00..59].[0..9]#mon"
         );
+        // the Monday 2024-01-08 and the Tuesday 2024-01-09 at +05:00
+        assertTickExprAtMonday(
+                configuration,
+                "[{lo=2024-01-07T19:00:00.000000Z, hi=2024-01-09T18:59:59.999999Z}]",
+                "[$today..$today+1d]T[00..23]:[00..59]@+05:00#workday"
+        );
+        // January at Europe/London as one block, then the 44 Mondays among days 1-28 of February to
+        // December at America/New_York, whose offset is -04:00 from 2024-03-10 to 2024-11-03 and
+        // -05:00 otherwise: 2024-02-05 is [05:00Z, 2024-02-06T04:59:59.999999Z]
+        final ZoneId london = ZoneId.of("Europe/London");
+        final ZoneId newYork = ZoneId.of("America/New_York");
+        final LongList expected = new LongList();
+        addLocalDays(expected, LocalDate.of(2024, 1, 1), LocalDate.of(2024, 2, 1), london);
+        for (LocalDate day = LocalDate.of(2024, 2, 1); day.getYear() == 2024; day = day.plusDays(1)) {
+            if (day.getDayOfMonth() <= 28 && day.getDayOfWeek() == DayOfWeek.MONDAY) {
+                addLocalDays(expected, day, day.plusDays(1), newYork);
+            }
+        }
+        Assert.assertEquals(2 * 45, expected.size());
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        out.clear();
+        parseTickExprAtMonday(configuration, out, "[2024-01-[01..31]@Europe/London,2024-[02..12]-[01..28]@America/New_York#mon]");
+        TestUtils.assertEquals(intervalToString(timestampDriver, expected).toString(), intervalToString(timestampDriver, out));
     }
 
     @Test
@@ -6499,6 +6550,13 @@ public class TickExprTest {
         return LocalDate.ofEpochDay(Math.floorDiv(timestampDriver.toMicros(timestamp), Micros.DAY_MICROS));
     }
 
+    // Adds the local days [from, to) in the zone as one interval
+    private void addLocalDays(LongList intervals, LocalDate from, LocalDate to, ZoneId zone) {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        intervals.add(timestampDriver.fromMicros(from.atStartOfDay(zone).toEpochSecond() * Micros.SECOND_MICROS));
+        intervals.add(timestampDriver.fromMicros(to.atStartOfDay(zone).toEpochSecond() * Micros.SECOND_MICROS) - 1);
+    }
+
     private void assertBracketInterval(String expected, String interval) throws SqlException {
         out.clear();
         final TimestampDriver timestampDriver = timestampType.getDriver();
@@ -6761,8 +6819,17 @@ public class TickExprTest {
     }
 
     private void assertMatchesUnmergedOracle(String... intervals) throws SqlException {
+        assertMatchesUnmergedOracle(configuration.getSqlIntervalIncrementalMergeThreshold(), intervals);
+    }
+
+    private void assertMatchesUnmergedOracle(int mergeThreshold, String... intervals) throws SqlException {
         // both configurations lift the cap, so only the merge points differ
         final CairoConfiguration mergingConfiguration = new DefaultCairoConfiguration(".") {
+            @Override
+            public int getSqlIntervalIncrementalMergeThreshold() {
+                return mergeThreshold;
+            }
+
             @Override
             public int getSqlIntervalMaxIntervalsAfterMerge() {
                 return 10_000_000;
@@ -6785,7 +6852,7 @@ public class TickExprTest {
             parseTickExprAtMonday(oracleConfiguration, expected, interval);
             parseTickExprAtMonday(mergingConfiguration, actual, interval);
             Assert.assertTrue(interval, expected.size() > 0);
-            Assert.assertEquals(interval, expected, actual);
+            Assert.assertEquals(interval + " at merge threshold " + mergeThreshold, expected, actual);
         }
     }
 
