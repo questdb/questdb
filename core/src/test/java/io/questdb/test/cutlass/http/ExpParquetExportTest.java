@@ -2573,17 +2573,22 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     ) {
                         exportParquet(httpClient, sink, query);
                         assertParquetMatchesQuery(engine, sqlExecutionContext, sink, query, "converted_view.parquet");
-                        final StringSink parquetSink = new StringSink();
-                        TestUtils.printSql(engine, sqlExecutionContext, "SELECT * FROM read_parquet('converted_view.parquet')", parquetSink);
-                        TestUtils.assertEquals("""
-                                c\tts
-                                1000003\t2024-01-01T00:00:00.000000Z
-                                2000006\t2024-01-01T08:00:00.000000Z
-                                3000009\t2024-01-01T16:00:00.000000Z
-                                4000012\t2024-01-02T00:00:00.000000Z
-                                5000015\t2024-01-02T08:00:00.000000Z
-                                6000018\t2024-01-02T16:00:00.000000Z
-                                """, parquetSink);
+                        assertQuery("SELECT * FROM read_parquet('converted_view.parquet')")
+                                .withEngine(engine)
+                                .withContext(sqlExecutionContext)
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .columnType(0, ColumnType.LONG)
+                                .returns("""
+                                        c\tts
+                                        1000003\t2024-01-01T00:00:00.000000Z
+                                        2000006\t2024-01-01T08:00:00.000000Z
+                                        3000009\t2024-01-01T16:00:00.000000Z
+                                        4000012\t2024-01-02T00:00:00.000000Z
+                                        5000015\t2024-01-02T08:00:00.000000Z
+                                        6000018\t2024-01-02T16:00:00.000000Z
+                                        """);
                     }
                 });
     }
