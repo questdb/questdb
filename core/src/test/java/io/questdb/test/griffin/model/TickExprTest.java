@@ -55,6 +55,7 @@ import org.junit.runners.Parameterized;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.TreeSet;
@@ -1644,6 +1645,25 @@ public class TickExprTest {
             // merge, plus the unmerged tail and the output of applyDayFilter past the list end.
             Assert.assertTrue("peak longs " + peakOut.peak, peakOut.peak <= 2 * (1_024 + 2 * 256));
         }
+    }
+
+    @Test
+    public void testDateListDayFilterElementsAtMaxIntervals() throws SqlException {
+        // The first element keeps the 1,008 Mondays among days 1-28 of 2004 to 2024 (21 years x 12
+        // months x 4), below the cap of 1,024. The second element repeats the 48 Mondays of 2024.
+        // Its first merge, at its 256th leaf 2024-10-04, must count only its own 36 Mondays against
+        // the cap: with the first element's it would count 1,044. The final union joins the copies.
+        final LongList expected = new LongList();
+        for (LocalDate day = LocalDate.of(2004, 1, 1); day.getYear() <= 2024; day = day.plusDays(1)) {
+            if (day.getDayOfMonth() <= 28 && day.getDayOfWeek() == DayOfWeek.MONDAY) {
+                addLocalDays(expected, day, day.plusDays(1), ZoneOffset.UTC);
+            }
+        }
+        Assert.assertEquals(2 * 1_008, expected.size());
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        out.clear();
+        parseTickExprAtMonday(configuration, out, "[[2004..2024]-[01..12]-[01..28]#mon,2024-[01..12]-[01..28]#mon]");
+        TestUtils.assertEquals(intervalToString(timestampDriver, expected).toString(), intervalToString(timestampDriver, out));
     }
 
     @Test
