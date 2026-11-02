@@ -768,6 +768,39 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyingSortsFitSmallMemoryLimit() throws Exception {
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4 * 1024 * 1024);
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO t VALUES ('2024-01-01T00:00:00', 3), ('2024-01-01T00:00:01', 1), ('2024-01-01T00:00:02', 2)", context);
+            final String ascending = """
+                    ts\ts
+                    2024-01-01T00:00:01.000000Z\t1
+                    2024-01-01T00:00:02.000000Z\t2
+                    2024-01-01T00:00:00.000000Z\t3
+                    """;
+            assertQuery("SELECT ts, sum(v) s FROM t SAMPLE BY 1s ORDER BY s").withEngine(engine).withContext(context)
+                    .noLeakCheck()
+                    .withPlanContaining("Encode sort\n  keys: [s]")
+                    .returns(ascending);
+            assertQuery("SELECT ts, sum(v) s FROM t SAMPLE BY 1s ORDER BY s DESC LIMIT 2").withEngine(engine).withContext(context)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Encode sort lo: 2")
+                    .returns("""
+                            ts\ts
+                            2024-01-01T00:00:00.000000Z\t3
+                            2024-01-01T00:00:02.000000Z\t2
+                            """);
+            setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, "false");
+            assertQuery("SELECT ts, sum(v) s FROM t SAMPLE BY 1s ORDER BY s").withEngine(engine).withContext(context)
+                    .noLeakCheck()
+                    .withPlanContaining("Sort\n  keys: [s]")
+                    .returns(ascending);
+        });
+    }
+
+    @Test
     public void testDescendingKeyKeepsFirstAndLastInStorageOrder() throws Exception {
         run((engine, compiler, context) -> {
             engine.execute("CREATE TABLE dup (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", context);

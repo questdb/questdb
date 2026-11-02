@@ -116,7 +116,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             encoderInit = new SortKeyEncoder(metadata, sortColumnFilter);
             entriesInit = new EncodedTopKBuffer(configuration, true, recordSink != null);
             if (recordSink != null) {
-                final long pageSize = configuration.getSqlSortValuePageSize();
+                final long pageSize = Math.min(configuration.getSqlSmallMapPageSize(), configuration.getSqlSortValuePageSize());
                 // RecordArray ceilPow2's the page before allocating; divide by the rounded unit to honor the cap.
                 final int maxPages = (int) Math.min(
                         Math.max(1L, configuration.getSqlSortValueMaxBytes() / Numbers.ceilPow2(pageSize)),

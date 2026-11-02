@@ -72,7 +72,7 @@ public class SortedRecordCursorFactory extends AbstractRecordCursorFactory {
                     comparator,
                     configuration.getSqlSortKeyPageSize(),
                     configuration.getSqlSortKeyMaxBytes(),
-                    configuration.getSqlSortValuePageSize(),
+                    Math.min(configuration.getSqlSmallMapPageSize(), configuration.getSqlSortValuePageSize()),
                     configuration.getSqlSortValueMaxBytes(),
                     PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
                     PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath(),
