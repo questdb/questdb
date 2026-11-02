@@ -28,6 +28,7 @@ import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewState;
@@ -462,6 +463,11 @@ public class TableSnapshotRestore implements QuietCloseable {
             // parquet partitions were already handled by prepareParquetPartitions.
             if (rebuildPartitionColumnIndexes) {
                 rebuildBitmapIndexes(tablePath, pathTableLen);
+            } else {
+                // A writer keeps changing a partition's POSTING .pk in place while the checkpoint is
+                // copied, so the copy can carry chain entries of commits newer than the checkpoint's
+                // _txn, whose value files it may not have. Drop them before any writer opens the index.
+                dropUncommittedPostingIndexEntries(tablePath, pathTableLen);
             }
 
             // Drain all parallel tasks before going further: tableMetadata,
@@ -720,6 +726,123 @@ public class TableSnapshotRestore implements QuietCloseable {
                     .$(", dst=").$(dstPath)
                     .I$();
         }
+    }
+
+    private void dropUncommittedPostingIndexEntries(Path tablePath, int pathTableLen) {
+        final int columnCount = tableMetadata.getColumnCount();
+        boolean hasPostingIndex = false;
+        for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+            if (isPostingIndexedSymbol(colIdx)) {
+                hasPostingIndex = true;
+                break;
+            }
+        }
+        if (!hasPostingIndex) {
+            return;
+        }
+
+        final int partitionBy = tableMetadata.getPartitionBy();
+        final boolean isPartitioned = PartitionBy.isPartitioned(partitionBy);
+        // One default partition for non-partitioned tables, else every attached one.
+        final int partitionCount = isPartitioned ? txWriter.getPartitionCount() : 1;
+        if (partitionCount == 0) {
+            return;
+        }
+        final int timestampType = tableMetadata.getTimestampType();
+        final String tablePathStr = tablePath.trimTo(pathTableLen).toString();
+        final AtomicInteger cursor = new AtomicInteger(0);
+        final int workerCount = Math.min(threadCount, partitionCount);
+        for (int w = 0; w < workerCount; w++) {
+            futures.add(submitParallelTask(() -> dropUncommittedPostingIndexEntries(
+                    tablePathStr,
+                    partitionBy,
+                    timestampType,
+                    isPartitioned,
+                    partitionCount,
+                    cursor
+            )));
+        }
+    }
+
+    /**
+     * Worker body for {@link #dropUncommittedPostingIndexEntries(Path, int)}: pulls partition indexes
+     * from the shared {@code cursor} and opens every POSTING index of the partition with the recovery
+     * walk armed at the restored {@code _txn}. The walk drops the chain entries newer than that txn and
+     * unlinks their value files, so the head of each chain is an entry the checkpoint committed.
+     */
+    private void dropUncommittedPostingIndexEntries(
+            String tablePathStr,
+            int partitionBy,
+            int timestampType,
+            boolean isPartitioned,
+            int partitionCount,
+            AtomicInteger cursor
+    ) {
+        final long tableTxn = txWriter.getTxn();
+        final int columnCount = tableMetadata.getColumnCount();
+        final Path path = new Path();
+        final PostingIndexWriter writer = new PostingIndexWriter(configuration);
+        try {
+            int i;
+            while (!abortParallelTasks.get() && (i = cursor.getAndIncrement()) < partitionCount) {
+                final long partitionTimestamp;
+                final long partitionNameTxn;
+                if (isPartitioned) {
+                    if (txWriter.isPartitionRemotelyServed(i)) {
+                        continue;
+                    }
+                    partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
+                    partitionNameTxn = txWriter.getPartitionNameTxn(i);
+                } else {
+                    partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
+                    partitionNameTxn = -1L;
+                }
+                path.of(tablePathStr);
+                TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                final int partitionPathLen = path.size();
+                for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                    if (!isPostingIndexedSymbol(colIdx)) {
+                        continue;
+                    }
+                    final int writerIndex = tableMetadata.getWriterIndex(colIdx);
+                    // -1 means the column is absent in this partition, see ColumnVersionReader.getColumnTop()
+                    if (columnVersionReader.getColumnTop(partitionTimestamp, writerIndex) < 0) {
+                        continue;
+                    }
+                    final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
+                    final String columnName = tableMetadata.getColumnName(colIdx);
+                    // A copy that lost the partition's index files leaves nothing to walk
+                    if (!ff.exists(PostingIndexUtils.keyFileName(path.trimTo(partitionPathLen), columnName, columnNameTxn))) {
+                        continue;
+                    }
+                    try {
+                        writer.setCurrentTableTxn(tableTxn);
+                        writer.of(path.trimTo(partitionPathLen), columnName, columnNameTxn, partitionTimestamp, partitionNameTxn);
+                    } catch (CairoException e) {
+                        LOG.error().$("could not open posting index of restored partition [path=").$(path.trimTo(partitionPathLen))
+                                .$(", column=").$safe(columnName)
+                                .$(", txn=").$(tableTxn)
+                                .$(", errno=").$(e.getErrno())
+                                .$(", msg=").$safe(e.getFlyweightMessage())
+                                .I$();
+                        throw e;
+                    } finally {
+                        writer.close();
+                    }
+                }
+            }
+        } finally {
+            Misc.free(writer);
+            path.close();
+            Path.clearThreadLocals();
+        }
+    }
+
+    private boolean isPostingIndexedSymbol(int colIdx) {
+        // Deleted columns may still carry the indexed flag
+        return tableMetadata.isColumnIndexed(colIdx)
+                && ColumnType.isSymbol(tableMetadata.getColumnType(colIdx))
+                && IndexType.isPosting(tableMetadata.getColumnIndexType(colIdx));
     }
 
     /**
