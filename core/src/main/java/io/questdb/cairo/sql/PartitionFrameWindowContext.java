@@ -37,6 +37,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -197,6 +198,8 @@ final class PartitionFrameWindowContext implements QuietCloseable {
         private final CairoConfiguration configuration;
         // Released leases, kept for reuse while the window context is open.
         private final ObjList<ParquetBaseLease> freeLeases = new ObjList<>();
+        // Debug-only: released leases overwrite their decoded buffers.
+        private final boolean isFreedBufferPoisonEnabled;
         private final DirectIntList parquetColumns;
         private final DirectLongList views;
         private boolean isClosed;
@@ -206,6 +209,7 @@ final class PartitionFrameWindowContext implements QuietCloseable {
 
         private BaseViewLease(CairoConfiguration configuration) {
             this.configuration = configuration;
+            this.isFreedBufferPoisonEnabled = configuration.isDebugFreedBufferPoisonEnabled();
             DirectIntList parquetColumns = null;
             DirectLongList views = null;
             try {
@@ -398,6 +402,7 @@ final class PartitionFrameWindowContext implements QuietCloseable {
                 throw th;
             }
             lease.bytes = parquetBuffers.sumChunkBytes(0, count);
+            lease.slotCount = count;
             for (int slot = 0; slot < count; slot++) {
                 final int columnId = parquetDecoder.getColumnId(parquetColumns.get(2L * slot));
                 final int type = parquetColumns.get(2L * slot + 1);
@@ -441,6 +446,7 @@ final class PartitionFrameWindowContext implements QuietCloseable {
      * buffers and the chunk resource, and returns the lease for reuse.
      */
     static final class ParquetBaseLease implements QuietCloseable {
+        private static final byte FREED_BUFFER_POISON = (byte) 0xA5;
         private final RowGroupBuffers buffers;
         private final BaseViewLease owner;
         // Decoded bytes the lease keeps alive, counted by every buffer that retains it.
@@ -448,6 +454,8 @@ final class PartitionFrameWindowContext implements QuietCloseable {
         private int refCount;
         private ParquetPartitionDecoder releaser;
         private long resource;
+        // Decoded column slots in buffers, 0 until a decode completes.
+        private int slotCount;
 
         private ParquetBaseLease(BaseViewLease owner) {
             this.owner = owner;
@@ -477,6 +485,9 @@ final class PartitionFrameWindowContext implements QuietCloseable {
         }
 
         private void freeContents() {
+            if (owner.isFreedBufferPoisonEnabled) {
+                poisonBuffers();
+            }
             buffers.close();
             if (resource != 0 && releaser != null) {
                 releaser.releaseDecodeResource(resource);
@@ -484,6 +495,22 @@ final class PartitionFrameWindowContext implements QuietCloseable {
             resource = 0;
             releaser = null;
             bytes = 0;
+            slotCount = 0;
+        }
+
+        private static void poison(long address, long size) {
+            if (address != 0 && size > 0) {
+                Unsafe.setMemory(address, size, FREED_BUFFER_POISON);
+            }
+        }
+
+        // Overwrites the decoded data and aux bytes, which slices may point into, before they are
+        // freed. Page buffers have no Java view; a debug native build poisons them on close.
+        private void poisonBuffers() {
+            for (int slot = 0; slot < slotCount; slot++) {
+                poison(buffers.getChunkDataPtr(slot), buffers.getChunkDataSize(slot));
+                poison(buffers.getChunkAuxPtr(slot), buffers.getChunkAuxSize(slot));
+            }
         }
     }
 

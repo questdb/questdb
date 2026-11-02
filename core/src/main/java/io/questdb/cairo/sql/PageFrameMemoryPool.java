@@ -304,6 +304,37 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     }
 
     /**
+     * The distinct Parquet base leases the cached frame buffers retain, not counting the
+     * prepared window's own reference.
+     */
+    @TestOnly
+    public int getRetainedBaseLeaseCount() {
+        final ObjList<PartitionFrameWindowContext.ParquetBaseLease> leases = new ObjList<>();
+        for (DecodedFrameBuffers buffers = lruHead; buffers != null; buffers = buffers.next) {
+            for (int i = 0, n = buffers.baseLeases.size(); i < n; i++) {
+                final PartitionFrameWindowContext.ParquetBaseLease lease = buffers.baseLeases.getQuick(i);
+                if (leases.indexOf(lease) < 0) {
+                    leases.add(lease);
+                }
+            }
+        }
+        return leases.size();
+    }
+
+    /**
+     * The decode resources the cached frame buffers retain: chunk leases for a Parquet frame,
+     * native decode outputs for a custom frame.
+     */
+    @TestOnly
+    public int getRetainedDecodeResourceCount() {
+        int count = 0;
+        for (DecodedFrameBuffers buffers = lruHead; buffers != null; buffers = buffers.next) {
+            count += (int) buffers.decodeResources.size();
+        }
+        return count;
+    }
+
+    /**
      * Navigates to the given frame, potentially deserializing it to in-memory format
      * (for Parquet partitions). After this call, the input record can be used to access
      * any row within the frame.

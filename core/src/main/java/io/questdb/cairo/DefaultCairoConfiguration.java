@@ -1886,6 +1886,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isDebugFreedBufferPoisonEnabled() {
+        return false;
+    }
+
+    @Override
     public boolean isDebugWriterInvariantCheckEnabled() {
         return false;
     }
