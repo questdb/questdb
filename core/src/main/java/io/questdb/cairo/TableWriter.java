@@ -11582,9 +11582,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 continue;
             }
             final CharSequence indexColumnName = metadata.getColumnName(i);
-            // A sidecar name writes name txn 0 of the index column as no name txn, and the scan reads it back so.
-            final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, i);
-            final long indexColumnNameTxn = columnNameTxn == 0 ? COLUMN_NAME_TXN_NONE : columnNameTxn;
+            final long indexColumnNameTxn = PostingIndexUtils.coverFilePostingColumnNameTxn(columnVersionWriter.getColumnNameTxn(partitionTimestamp, i));
             PostingIndexUtils.scanSealedFiles(ff, path, plen, indexColumnName, new PostingIndexUtils.SealedFileVisitor() {
                 @Override
                 public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long fileCoveredColumnNameTxn, long sealTxn) {
@@ -11669,8 +11667,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // than reading the (includeIdx, coveredColumnNameTxn) tuples from .pci:
         // ALTER on covered columns can leave .pci's per-column count out of
         // sync with the on-disk reality, so the directory listing is the
-        // source of truth. A sidecar name writes name txn 0 as no name txn, and the scan reads it back so.
-        final long srcSidecarColumnNameTxn = srcColumnNameTxn == 0 ? COLUMN_NAME_TXN_NONE : srcColumnNameTxn;
+        // source of truth.
+        final long srcSidecarColumnNameTxn = PostingIndexUtils.coverFilePostingColumnNameTxn(srcColumnNameTxn);
         PostingIndexUtils.scanSealedFiles(ff, path, srcDirLen, srcColumnName, new PostingIndexUtils.SealedFileVisitor() {
             @Override
             public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
@@ -21549,7 +21547,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-            if (postingColumnNameTxn != columnNameTxn) {
+            if (postingColumnNameTxn != PostingIndexUtils.coverFilePostingColumnNameTxn(columnNameTxn)) {
                 return;
             }
             detachedPath.trimTo(detachedPartitionRoot);

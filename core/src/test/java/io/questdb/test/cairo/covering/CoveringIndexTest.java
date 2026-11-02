@@ -34,6 +34,7 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.PostingSealPurgeJob;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
@@ -91,7 +92,9 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
 import java.lang.reflect.Field;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicIntegerArray;
@@ -18702,6 +18705,50 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSealPurgeRemovesCoverFilesOfIndexWithNameTxnZero() throws Exception {
+        // A column added before the first commit has name txn 0, which the cover file names cannot tell apart from
+        // no name txn. The seal purge must still remove the cover files of the generations a later seal superseded.
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            createIndexWithNameTxnZeroTable("t_seal_purge_txn0");
+            execute("INSERT INTO t_seal_purge_txn0 VALUES ('2024-01-01T02:00:00', 3.0, 'A')");
+            execute("INSERT INTO t_seal_purge_txn0 VALUES ('2024-01-03T00:00:00', 5.0, 'A')");
+            final String[] before = partitionFileNames("t_seal_purge_txn0", "2024-01-01");
+            assertTrue("fixture: sym must have name txn 0: " + Arrays.toString(before), Arrays.asList(before).contains("sym.pk.0"));
+            assertTrue("fixture: a later seal must supersede one: " + Arrays.toString(before), countFiles(before, "sym\\.pv\\.0\\.\\d+") > 1);
+
+            engine.releaseAllReaders();
+            try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                for (int i = 0; i < 32 && job.run(); i++) {
+                    // drain
+                }
+            }
+
+            final String[] after = partitionFileNames("t_seal_purge_txn0", "2024-01-01");
+            assertEquals("superseded seals purged: " + Arrays.toString(after), 1, countFiles(after, "sym\\.pv\\.0\\.\\d+"));
+            // One cover file per covered column (val and the designated timestamp), all of the live seal.
+            assertEquals("cover files of superseded seals purged: " + Arrays.toString(after), 2, countFiles(after, "sym\\.pc\\d+\\.0\\.\\d+"));
+            final String liveSeal = after[indexOfMatch(after, "sym\\.pv\\.0\\.\\d+")].substring("sym.pv.0.".length());
+            assertEquals(Arrays.toString(after), 2, countFiles(after, "sym\\.pc\\d+\\.0\\." + liveSeal));
+
+            assertQuery("SELECT sym, val, ts FROM t_seal_purge_txn0 WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: val, ts")
+                    .returns("""
+                            sym\tval\tts
+                            A\t1.0\t2024-01-01T00:00:00.000000Z
+                            A\t3.0\t2024-01-01T02:00:00.000000Z
+                            A\t4.0\t2024-01-02T00:00:00.000000Z
+                            A\t5.0\t2024-01-03T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testSeekToLastEmptyPartition() throws Exception {
         // Gap 6: LATEST ON where key exists in day 1 but not day 2.
         // seekToLast in day 2 returns -1, cursor tries day 1.
@@ -19535,6 +19582,37 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             sym\tval\tts
                             A\t110.5\t2024-01-01T00:00:00.000000Z
                             A\t11.5\t2024-01-01T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateCoveredColumnOfIndexWithNameTxnZeroPurgesOldVersion() throws Exception {
+        // UPDATE of a covered column moves the index column to a new name txn and purges the old version. With name
+        // txn 0, which the cover file names cannot tell apart from no name txn, the purge must still remove the old
+        // version's cover files.
+        assertMemoryLeak(() -> {
+            createIndexWithNameTxnZeroTable("t_upd_cov_txn0");
+            final String[] before = partitionFileNames("t_upd_cov_txn0", "2024-01-01");
+            assertTrue("fixture: sym must have name txn 0: " + Arrays.toString(before), Arrays.asList(before).contains("sym.pk.0"));
+            assertTrue("fixture: the old version has cover files: " + Arrays.toString(before), countFiles(before, "sym\\.pc\\d+\\.0\\..*") > 0);
+
+            engine.releaseAllReaders();
+            execute("UPDATE t_upd_cov_txn0 SET val = val + 100 WHERE ts IN '2024-01-01'");
+
+            final String[] after = partitionFileNames("t_upd_cov_txn0", "2024-01-01");
+            assertEquals("old version purged: " + Arrays.toString(after), 0, countFiles(after, "sym\\.(d|pk|pci)\\.0|sym\\.pv\\.0\\..*"));
+            assertEquals("old version's cover files purged: " + Arrays.toString(after), 0, countFiles(after, "sym\\.pc\\d+\\.0\\..*"));
+
+            assertQuery("SELECT sym, val, ts FROM t_upd_cov_txn0 WHERE sym = 'A'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym with: val, ts")
+                    .returns("""
+                            sym\tval\tts
+                            A\t101.0\t2024-01-01T00:00:00.000000Z
+                            A\t4.0\t2024-01-02T00:00:00.000000Z
                             """);
         });
     }
@@ -20837,6 +20915,16 @@ public class CoveringIndexTest extends AbstractCairoTest {
      * TableReader must supply this — the reader resolves covered-column types
      * from live metadata, not from the .pci.
      */
+    private static int countFiles(String[] names, String regex) {
+        int count = 0;
+        for (String name : names) {
+            if (name.matches(regex)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     private static RecordMetadata coveringMetadata(int[] coveredIndices, int[] coveredTypes) {
         int maxIdx = -1;
         for (int idx : coveredIndices) {
@@ -20867,6 +20955,17 @@ public class CoveringIndexTest extends AbstractCairoTest {
      * split. Big enough that a key's postings span several DELTA blocks, which is what lets an
      * interval skip whole blocks.
      */
+    /**
+     * A non-WAL table whose POSTING index on sym INCLUDEs val. sym is added before the first commit, so it has name
+     * txn 0, and 'A' has a row in each of 2024-01-01 and 2024-01-02.
+     */
+    private static void createIndexWithNameTxnZeroTable(String tableName) throws Exception {
+        execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("ALTER TABLE " + tableName + " ADD COLUMN sym SYMBOL");
+        execute("ALTER TABLE " + tableName + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+        execute("INSERT INTO " + tableName + " VALUES ('2024-01-01T00:00:00', 1.0, 'A'), ('2024-01-01T01:00:00', 2.0, 'B'), ('2024-01-02T00:00:00', 4.0, 'A')");
+    }
+
     private static void createIntervalSidecarTable() throws Exception {
         execute("CREATE TABLE t_interval_sidecar (ts TIMESTAMP, ip4 IPV4, s STRING, b BINARY, sym SYMBOL)"
                 + " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
@@ -21069,6 +21168,29 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 ('2024-01-04T00:00:00', 'A', 4.0)
                 """);
         execute("ALTER TABLE t_upd_rb CONVERT PARTITION TO PARQUET LIST '2024-01-03'");
+    }
+
+    private static int indexOfMatch(String[] names, String regex) {
+        for (int i = 0; i < names.length; i++) {
+            if (names[i].matches(regex)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * The names of the files in the directory of the table's partition, sorted.
+     */
+    private static String[] partitionFileNames(String tableName, String partitionName) {
+        final File tableDir = new File(configuration.getDbRoot(), engine.verifyTableName(tableName).getDirName());
+        final File[] dirs = tableDir.listFiles((dir, name) -> name.equals(partitionName) || name.startsWith(partitionName + "."));
+        Assert.assertNotNull(dirs);
+        Assert.assertEquals("one directory for partition " + partitionName + ": " + Arrays.toString(dirs), 1, dirs.length);
+        final String[] names = dirs[0].list();
+        Assert.assertNotNull(names);
+        Arrays.sort(names);
+        return names;
     }
 
     @SuppressWarnings("unchecked")

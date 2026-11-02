@@ -59,6 +59,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
     private int scanPartitionPathLen;
     private long scanRemovedCoverColumnNameTxn;
     private int scanRemovedCoverIncludeIdx;
+    // The posting column name txn as the scan reports it for a cover data file.
     private long scanTargetPostingTxn;
     private long scanTargetSealTxn;
     private TxReader txReader;
@@ -289,7 +290,7 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
         scanAllCoversRemoved = true;
         scanAnyCoverRemoved = false;
         scanTargetSealTxn = task.getSealTxn();
-        scanTargetPostingTxn = task.getPostingColumnNameTxn();
+        scanTargetPostingTxn = PostingIndexUtils.coverFilePostingColumnNameTxn(task.getPostingColumnNameTxn());
         scanColumnName = task.getIndexColumnName();
         scanPartitionPathLen = pathPartitionLen;
         path.trimTo(pathPartitionLen);

@@ -430,6 +430,15 @@ public final class PostingIndexUtils {
         return path.$();
     }
 
+    /**
+     * The posting column name txn {@link #scanSealedFiles} reports for a cover data file of the given name txn. The
+     * file name writes no name txn as 0, so name txn 0 reads back as no name txn: compare a scanned cover data file
+     * against this, not against the column's name txn.
+     */
+    public static long coverFilePostingColumnNameTxn(long postingColumnNameTxn) {
+        return postingColumnNameTxn == 0 ? COLUMN_NAME_TXN_NONE : postingColumnNameTxn;
+    }
+
     public static LPSZ coverInfoFileName(Path path, CharSequence name, long postingColumnNameTxn) {
         path.concat(name).put(".pci");
         if (postingColumnNameTxn > COLUMN_NAME_TXN_NONE) {
@@ -1677,6 +1686,7 @@ public final class PostingIndexUtils {
             long postingColumnNameTxn
     ) {
         final boolean[] anyFailed = {false};
+        final long coverFilePostingColumnNameTxn = coverFilePostingColumnNameTxn(postingColumnNameTxn);
         LPSZ pciFile = coverInfoFileName(path.trimTo(pathTrimTo), columnName, postingColumnNameTxn);
         if (ff.exists(pciFile) && !ff.removeQuiet(pciFile) && ff.exists(pciFile)) {
             anyFailed[0] = true;
@@ -1685,7 +1695,7 @@ public final class PostingIndexUtils {
         scanSealedFiles(ff, path, pathTrimTo, columnName, new SealedFileVisitor() {
             @Override
             public void onCoverDataFile(int includeIdx, long filePostingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-                if (filePostingColumnNameTxn != postingColumnNameTxn) {
+                if (filePostingColumnNameTxn != coverFilePostingColumnNameTxn) {
                     return;
                 }
                 LPSZ p = coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, filePostingColumnNameTxn, coveredColumnNameTxn, sealTxn);
