@@ -629,6 +629,44 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
+     * The install commits around the open transaction, with the copied day after the oldest one: it publishes the
+     * committed entries of the days before it, too.
+     */
+    @Test
+    public void testParquetCopyInstallAroundAnOpenTransactionOfALaterDay() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createParquetCopyTable("gl");
+            execute("INSERT INTO gl SELECT x::INT + 50_000 i, timestamp_sequence('2019-12-31', 600*1_000_000L) ts FROM long_sequence(20)");
+            execute("CREATE TABLE gl_oracle AS (SELECT * FROM gl) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
+                Assert.assertEquals("the day must follow the oldest one", 1, ownerWriter.getTxWriter().getPartitionIndex(day));
+                final String stagedBuild = stageParquetCopy(ownerWriter, token, day);
+                appendRow(ownerWriter, "2020-01-03T05:00:00.000000Z", 70_001);
+                Assert.assertTrue(ownerWriter.inTransaction());
+                Assert.assertFalse(ownerWriter.hasO3());
+
+                ownerWriter.tick();
+                Assert.assertTrue("the install must leave the transaction open", ownerWriter.inTransaction());
+                Assert.assertFalse("no staged build may outlive the install", dirExists(configuration.getFilesFacade(), stagedBuild));
+                try (TableReader reader = engine.getReader(token)) {
+                    Assert.assertTrue("the copy must be installed around the open transaction", reader.getTxFile().isPartitionParquetGenerated(1));
+                }
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT * FROM gl_oracle", "SELECT * FROM gl", LOG);
+                ownerWriter.commit();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            assertParquetCopyInstalled(token, day, 1, 100);
+            execute("INSERT INTO gl_oracle VALUES (70_001, '2020-01-03T05:00:00.000000Z')");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT * FROM gl_oracle", "SELECT * FROM gl", LOG);
+        });
+    }
+
+    /**
      * The open transaction opened a new day and holds an O3 row for an earlier one, so the install commits it first
      * and must look the day up again: the commit moves it from index 0 to 1.
      */
@@ -2225,13 +2263,17 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     private void assertParquetCopyInstalled(TableToken token, long day, long liveRows) {
+        assertParquetCopyInstalled(token, day, 0, liveRows);
+    }
+
+    private void assertParquetCopyInstalled(TableToken token, long day, int partitionIndex, long liveRows) {
         try (TableReader reader = engine.getReader(token); Path path = new Path()) {
             final TxReader tx = reader.getTxFile();
-            Assert.assertTrue("the copy must be installed", tx.isPartitionParquetGenerated(0));
-            Assert.assertFalse("the folder must stay native", tx.isPartitionParquet(0));
+            Assert.assertTrue("the copy must be installed", tx.isPartitionParquetGenerated(partitionIndex));
+            Assert.assertFalse("the folder must stay native", tx.isPartitionParquet(partitionIndex));
             path.of(configuration.getDbRoot()).concat(token.getDirName());
             TableUtils.setPathForNativePartition(
-                    path, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), day, tx.getPartitionNameTxn(0)
+                    path, reader.getMetadata().getTimestampType(), reader.getPartitionedBy(), day, tx.getPartitionNameTxn(partitionIndex)
             );
             final int partitionDirLen = path.size();
             final FilesFacade ff = configuration.getFilesFacade();
@@ -2981,6 +3023,69 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     @Test
     public void testScanDoesNotRebuildAStagingCopyWhileItsSwapIsStillQueued() throws Exception {
         assertNoRebuildWhileSwapQueued("1h");
+    }
+
+    /**
+     * The REWRITE swap commits around the open transaction, with the composite day after the oldest one: the swap
+     * publishes the committed entries of the days before it, too.
+     */
+    @Test
+    public void testCompositeSwapAroundAnOpenTransactionOfALaterDay() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE cl (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO cl SELECT x::INT + 1_000 i, timestamp_sequence('2019-12-31', 600*1_000_000L) ts FROM long_sequence(20)");
+            execute("INSERT INTO cl SELECT x::INT i, timestamp_sequence('2020-01-01', 15*1_000_000L) ts FROM long_sequence(5760)");
+            execute("INSERT INTO cl SELECT x::INT + 90_000 i, timestamp_sequence('2020-01-03', 60*1_000_000L) ts FROM long_sequence(50)");
+            drainWalQueue();
+            execute("INSERT INTO cl SELECT x::INT + 70_000 i, timestamp_sequence('2020-01-01T04:00:07', 5*1_000_000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+            execute("ALTER TABLE cl SET TYPE BYPASS WAL");
+            engine.releaseInactive();
+            engine.load();
+
+            final TableToken token = engine.verifyTableName("cl");
+            Assert.assertFalse(token.isWal());
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            final long nameTxnBefore;
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertEquals("the day must follow the oldest one", 1, tx.getPartitionIndex(day));
+                Assert.assertTrue("2020-01-01 should still be composite after the conversion", tx.isPartitionComposite(1));
+                nameTxnBefore = tx.getPartitionNameTxn(1);
+            }
+            execute("CREATE TABLE cl_oracle AS (SELECT * FROM cl) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
+            try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
+                appendRow(ownerWriter, "2020-01-03T05:00:00.000000Z", 80_001);
+                Assert.assertTrue(ownerWriter.inTransaction());
+                Assert.assertFalse(ownerWriter.hasO3());
+
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(token, day));
+                runSweepOnAnotherThread(configuration.getFilesFacade());
+                ownerWriter.tick();
+                Assert.assertTrue("the swap must leave the transaction open", ownerWriter.inTransaction());
+                try (TableReader reader = engine.getReader(token)) {
+                    final TxReader tx = reader.getTxFile();
+                    Assert.assertFalse("the REWRITE must have landed", tx.isPartitionComposite(1));
+                    Assert.assertNotEquals("the REWRITE must have landed", nameTxnBefore, tx.getPartitionNameTxn(1));
+                }
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT * FROM cl_oracle", "SELECT * FROM cl", LOG);
+                ownerWriter.commit();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            execute("INSERT INTO cl_oracle VALUES (80_001, '2020-01-03T05:00:00.000000Z')");
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT * FROM cl_oracle", "SELECT * FROM cl", LOG);
+        });
     }
 
     /**

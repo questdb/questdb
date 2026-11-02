@@ -146,6 +146,9 @@ pub fn generate_parquet_metadata(
 /// Returns an error when the new row group count is smaller than the existing
 /// one: the writer's row-group entry list cannot drop existing references, so
 /// the caller must escalate to a full rewrite.
+///
+/// `is_index_row_map_dropped` writes the identity index row map, for a table
+/// with no symbol index (see `ParquetMetaUpdateWriter::drop_index_row_map`).
 #[allow(clippy::too_many_arguments)]
 pub fn update_parquet_metadata(
     existing_parquet_meta: &[u8],
@@ -157,6 +160,7 @@ pub fn update_parquet_metadata(
     bloom_bitsets: &[Vec<Option<Vec<u8>>>],
     unused_bytes: u64,
     seq_txn: SeqTxn,
+    is_index_row_map_dropped: bool,
 ) -> ParquetResult<ParquetMetaUpdateResult> {
     // append_base (the published header, >= the parse anchor) bounds the new
     // footer's position; the buffer must reach it so finish folds any dead
@@ -262,6 +266,9 @@ pub fn update_parquet_metadata(
     updater.parquet_footer(parquet_footer_offset, parquet_footer_length);
     updater.unused_bytes(unused_bytes);
     updater.seq_txn(seq_txn);
+    if is_index_row_map_dropped {
+        updater.drop_index_row_map();
+    }
     let (append_bytes, new_file_size) = updater.finish_appending_at(append_base)?;
     debug_assert_eq!(new_file_size, append_base + append_bytes.len() as u64);
 
@@ -1700,6 +1707,7 @@ mod tests {
             &[],
             0,
             SeqTxn::UNSET,
+            false,
         )
         .unwrap();
 
@@ -1772,6 +1780,7 @@ mod tests {
             &[],
             0,
             SeqTxn::UNSET,
+            false,
         )
         .unwrap();
         let mut full_file = initial_pm.clone();
@@ -1792,6 +1801,35 @@ mod tests {
             Some(committed_rows)
         );
         assert_eq!(footer.index_row_count(), Some(2 * committed_rows));
+
+        // A table without a symbol index: the same update reuses the block but keeps the identity map.
+        let result = update_parquet_metadata(
+            &initial_pm,
+            initial_size,
+            initial_size,
+            &shifted_rgs,
+            200,
+            60,
+            &[],
+            0,
+            SeqTxn::UNSET,
+            true,
+        )
+        .unwrap();
+        let mut full_file = initial_pm.clone();
+        full_file.extend_from_slice(&result.bytes);
+        full_file[qdb_parquet_meta::types::HEADER_PARQUET_META_FILE_SIZE_OFF
+            ..qdb_parquet_meta::types::HEADER_PARQUET_META_FILE_SIZE_OFF + 8]
+            .copy_from_slice(&result.new_file_size.to_le_bytes());
+        let reader = ParquetMetaReader::from_file_size(&full_file, result.new_file_size).unwrap();
+        assert!(reader.verify_checksum().is_ok());
+        assert_eq!(reader.row_group_count(), 2);
+        let footer = reader.footer();
+        assert_eq!(footer.row_group_block_offset(1).unwrap(), committed_block);
+        assert!(!reader.footer_feature_flags().has_index_row_map());
+        assert_eq!(footer.index_row_count(), None);
+        assert_eq!(footer.row_group_index_row_lo(0).unwrap(), None);
+        assert_eq!(footer.row_group_index_row_lo(1).unwrap(), None);
     }
 
     #[test]
@@ -1854,6 +1892,7 @@ mod tests {
             &[],
             0,
             SeqTxn::UNSET,
+            false,
         );
 
         let err = match result {
@@ -1926,6 +1965,7 @@ mod tests {
                 &[],
                 0,
                 SeqTxn::UNSET,
+                false,
             );
             let err = match result {
                 Ok(_) => panic!("append base {bad_base} must be rejected"),

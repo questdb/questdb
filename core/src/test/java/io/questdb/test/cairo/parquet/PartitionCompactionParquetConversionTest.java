@@ -435,41 +435,20 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
     }
 
     @Test
+    public void testConvertsALaterSplitDayAroundANonWalOpenTransaction() throws Exception {
+        // The swap commits the committed entries of the days before the converted one, too.
+        assertConvertsASplitDayAroundANonWalOpenTransaction("cl", true, true);
+    }
+
+    @Test
+    public void testConvertsALaterSplitDayAroundANonWalOpenTransactionThatRollsBack() throws Exception {
+        // The rollback reloads the swap's _txn, so the conversion and every earlier day survive it.
+        assertConvertsASplitDayAroundANonWalOpenTransaction("cr", true, false);
+    }
+
+    @Test
     public void testConvertsASplitDayAroundANonWalOpenTransaction() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
-        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
-        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
-        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
-        assertMemoryLeak(() -> {
-            createTable("cn", true);
-            insertBackfill("cn", "2020-01-01T22:00:07");
-            execute("ALTER TABLE cn SET TYPE BYPASS WAL");
-            engine.releaseInactive();
-            engine.load();
-            final TableToken token = engine.verifyTableName("cn");
-            Assert.assertFalse(token.isWal());
-            assertFolders("cn", 2, false);
-            execute("CREATE TABLE cn_oracle AS (SELECT * FROM cn) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-
-            try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
-                final TableWriter.Row row = ownerWriter.newRow(parse("2020-01-03T05:00:00.000000Z"));
-                row.putInt(0, 99_999);
-                row.append();
-                Assert.assertTrue(ownerWriter.inTransaction());
-
-                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetConversion(token, DAY));
-                runJobOnAnotherThread();
-                ownerWriter.tick();
-                Assert.assertTrue("the swap must leave the transaction open", ownerWriter.inTransaction());
-                assertConverted("cn");
-                TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT * FROM cn_oracle", "SELECT * FROM cn", LOG);
-                ownerWriter.commit();
-            }
-            execute("INSERT INTO cn_oracle (i, ts) VALUES (99_999, '2020-01-03T05:00:00.000000Z')");
-            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT * FROM cn_oracle", "SELECT * FROM cn", LOG);
-        });
+        assertConvertsASplitDayAroundANonWalOpenTransaction("cn", false, true);
     }
 
     /**
@@ -754,10 +733,14 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
     }
 
     private static void assertConverted(String tableName) {
+        assertConverted(tableName, 0);
+    }
+
+    private static void assertConverted(String tableName, int expectedIndex) {
         try (TableReader reader = engine.getReader(tableName)) {
             final TxReader tx = reader.getTxFile();
             final int index = tx.getPartitionIndex(DAY);
-            Assert.assertEquals("the day must be one folder", 0, index);
+            Assert.assertEquals("the day must be one folder", expectedIndex, index);
             Assert.assertTrue("the day must be parquet", tx.isPartitionParquet(index));
             Assert.assertFalse("the day must not be composite", tx.isPartitionComposite(index));
             Assert.assertNotEquals("the day must have no split left", DAY, tx.getLogicalPartitionTimestamp(tx.getPartitionTimestampByIndex(index + 1)));
@@ -900,6 +883,61 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         engine.releaseAllReaders();
         engine.releaseAllWriters();
         assertConvertedMatchesOracle(tableName);
+    }
+
+    private void assertConvertsASplitDayAroundANonWalOpenTransaction(String tableName, boolean hasEarlierDay, boolean isCommit) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+        assertMemoryLeak(() -> {
+            createTable(tableName, true);
+            insertBackfill(tableName, "2020-01-01T22:00:07");
+            if (hasEarlierDay) {
+                execute("INSERT INTO " + tableName + " (i, s, ts) SELECT x::INT + 50_000 i, rnd_symbol('k1', 'k2', NULL) s," +
+                        " timestamp_sequence('2019-12-31', 600 * 1_000_000L) ts FROM long_sequence(20)");
+                drainWalQueue();
+            }
+            execute("ALTER TABLE " + tableName + " SET TYPE BYPASS WAL");
+            engine.releaseInactive();
+            engine.load();
+            final TableToken token = engine.verifyTableName(tableName);
+            Assert.assertFalse(token.isWal());
+            assertFolders(tableName, 2, false);
+            final int dayIndex = hasEarlierDay ? 1 : 0;
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertEquals(dayIndex, reader.getTxFile().getPartitionIndex(DAY));
+            }
+            execute("CREATE TABLE " + tableName + "_oracle AS (SELECT * FROM " + tableName + ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
+                final TableWriter.Row row = ownerWriter.newRow(parse("2020-01-03T05:00:00.000000Z"));
+                row.putInt(0, 99_999);
+                row.append();
+                Assert.assertTrue(ownerWriter.inTransaction());
+
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetConversion(token, DAY));
+                runJobOnAnotherThread();
+                ownerWriter.tick();
+                Assert.assertTrue("the swap must leave the transaction open", ownerWriter.inTransaction());
+                assertConverted(tableName, dayIndex);
+                TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT * FROM " + tableName + "_oracle", "SELECT * FROM " + tableName, LOG);
+                if (isCommit) {
+                    ownerWriter.commit();
+                } else {
+                    ownerWriter.rollback();
+                }
+            }
+            if (isCommit) {
+                execute("INSERT INTO " + tableName + "_oracle (i, ts) VALUES (99_999, '2020-01-03T05:00:00.000000Z')");
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertConverted(tableName, dayIndex);
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "SELECT * FROM " + tableName + "_oracle", "SELECT * FROM " + tableName, LOG);
+        });
     }
 
     private void assertConversion(String tableName, boolean isWal) throws Exception {

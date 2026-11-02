@@ -360,6 +360,8 @@ pub struct ParquetMetaUpdateWriter<'a> {
     prior_index_row_lo: Vec<u64>,
     /// Index rows the committed footer covers, identity map resolved.
     prior_index_row_count: u64,
+    /// Set by [`Self::drop_index_row_map`]: the new footer carries the identity map.
+    is_index_row_map_dropped: bool,
 }
 
 enum RowGroupEntry {
@@ -462,7 +464,16 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
             prior_num_rows,
             prior_index_row_lo,
             prior_index_row_count,
+            is_index_row_map_dropped: false,
         })
+    }
+
+    /// Writes the identity index row map whatever the row groups do: index rows start over as partition rows.
+    /// Only valid when no index file refers to the committed index rows, i.e. the table has no symbol index.
+    /// Older binaries reject a footer that carries a map, so a table without an index never writes one.
+    pub fn drop_index_row_map(&mut self) -> &mut Self {
+        self.is_index_row_map_dropped = true;
+        self
     }
 
     /// Places committed row group `src` at `index` (may append), keeping its block and index rows.
@@ -785,7 +796,11 @@ impl<'a> ParquetMetaUpdateWriter<'a> {
         };
         fb.set_scratchpad_entries(effective_scratchpad);
         fb.validate_scratchpad()?;
-        fb.set_index_row_map(self.resolve_index_row_map());
+        fb.set_index_row_map(if self.is_index_row_map_dropped {
+            None
+        } else {
+            self.resolve_index_row_map()
+        });
         fb.validate_index_row_map()?;
         fb.write_to(&mut append_buf);
 
@@ -1023,6 +1038,49 @@ mod tests {
         assert_eq!(
             index_row_map_of(&second, first_size),
             Some((1200, vec![1000, 0]))
+        );
+    }
+
+    #[test]
+    fn index_row_map_dropped_keeps_identity_for_shifted_row_groups() {
+        // Insert in front, as index_row_map_reused_row_group_keeps_its_rows, with the map dropped.
+        let (original, size) = make_simple_file();
+        let (full, new_size) = index_row_map_apply(&original, size, |u| {
+            u.replace_row_group(0, index_row_map_rg(200)).unwrap();
+            u.reuse_row_group(1, 0).unwrap();
+            u.drop_index_row_map();
+        });
+        assert_eq!(index_row_map_of(&full, new_size), None);
+        let reader = ParquetMetaReader::from_file_size(&full, new_size).unwrap();
+        assert!(!reader.footer_feature_flags().has_index_row_map());
+        assert_eq!(reader.row_group(0).unwrap().num_rows(), 200);
+        assert_eq!(reader.row_group(1).unwrap().num_rows(), 1000);
+    }
+
+    #[test]
+    fn index_row_map_dropped_over_a_committed_map() {
+        // A committed map, then an update with the map dropped: the new footer is identity, the old one keeps its map.
+        let (original, size) = make_simple_file();
+        let (first, first_size) = index_row_map_apply(&original, size, |u| {
+            u.replace_row_group(0, index_row_map_rg(200)).unwrap();
+            u.reuse_row_group(1, 0).unwrap();
+        });
+        let (second, second_size) = index_row_map_apply(&first, first_size, |u| {
+            u.add_row_group(index_row_map_rg(10));
+            u.drop_index_row_map();
+        });
+        assert_eq!(index_row_map_of(&second, second_size), None);
+        assert_eq!(
+            index_row_map_of(&second, first_size),
+            Some((1200, vec![1000, 0]))
+        );
+        // A later update without the drop starts from the identity map.
+        let (third, third_size) = index_row_map_apply(&second, second_size, |u| {
+            u.replace_row_group(1, index_row_map_rg(1001)).unwrap();
+        });
+        assert_eq!(
+            index_row_map_of(&third, third_size),
+            Some((2211, vec![0, 1210, 1200]))
         );
     }
 

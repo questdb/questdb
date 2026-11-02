@@ -313,6 +313,26 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpd
 }
 
 #[no_mangle]
+pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_dropIndexRowMap(
+    mut env: JNIEnv,
+    _class: JClass,
+    updater: *mut ParquetUpdater,
+) {
+    let env = &mut env;
+    if updater.is_null() {
+        let mut err = fmt_err!(InvalidType, "ParquetUpdater pointer is null");
+        err.add_context("error in PartitionUpdater.dropIndexRowMap");
+        err.into_cairo_exception().throw::<()>(env);
+        return;
+    }
+
+    // SAFETY: Pointer was created by `Box::into_raw` in the create function.
+    // Single-threaded JNI access guarantees no aliasing.
+    let parquet_updater = unsafe { &mut *updater };
+    parquet_updater.drop_index_row_map();
+}
+
+#[no_mangle]
 pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_PartitionUpdater_updateFileMetadata(
     mut env: JNIEnv,
     _class: JClass,

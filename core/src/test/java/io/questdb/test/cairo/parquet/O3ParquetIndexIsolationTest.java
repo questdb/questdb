@@ -99,17 +99,17 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
 
     @Test
     public void testAddIndexAfterInPlaceUpdate() throws Exception {
-        // ADD INDEX must build in index rows over a partition that has an index row map
+        // ADD INDEX must build in index rows over a partition that has an index row map; s2's index makes the map
         assertMemoryLeak(() -> {
-            createParquetPartition("", false);
-            execute("INSERT INTO pt VALUES ('b', 100, '2024-01-01T00:30:00.000000Z'), ('a', 101, '2024-01-01T06:30:00.000000Z')");
+            createParquetPartition("", false, true, ", s2 SYMBOL INDEX");
+            execute("INSERT INTO pt (s, v, ts) VALUES ('b', 100, '2024-01-01T00:30:00.000000Z'), ('a', 101, '2024-01-01T06:30:00.000000Z')");
             drainWalQueue();
             Assert.assertTrue(hasIndexRowMap());
             execute("ALTER TABLE pt ALTER COLUMN s ADD " + indexClause);
             drainWalQueue();
             assertIndexQueriesMatchTruth();
             assertMultiKeyQueriesMatchTruth();
-            assertIsolatedAcrossCommit("INSERT INTO pt VALUES ('c', 102, '2024-01-01T10:30:00.000000Z')", true);
+            assertIsolatedAcrossCommit("INSERT INTO pt (s, v, ts) VALUES ('c', 102, '2024-01-01T10:30:00.000000Z')", true);
         });
     }
 
@@ -311,6 +311,28 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
                             """,
                     true
             );
+        });
+    }
+
+    @Test
+    public void testInPlaceUpdateWithoutIndexKeepsIdentityRowMap() throws Exception {
+        // No index refers to index rows, so the footer keeps the identity map that older binaries read
+        assertMemoryLeak(() -> {
+            createParquetPartition("", false);
+            final long nameTxn = getPartitionNameTxn();
+            execute("INSERT INTO pt VALUES ('b', 100, '2024-01-01T00:30:00.000000Z'), ('a', 101, '2024-01-01T06:30:00.000000Z')");
+            drainWalQueue();
+            Assert.assertEquals("O3 merge must update the parquet partition in place", nameTxn, getPartitionNameTxn());
+            Assert.assertFalse(hasIndexRowMap());
+            Assert.assertEquals(14, getIndexRowCount());
+
+            // The first index makes the next in-place update start a map from the identity one
+            execute("ALTER TABLE pt ALTER COLUMN s ADD " + indexClause);
+            drainWalQueue();
+            assertIndexQueriesMatchTruth();
+            assertMultiKeyQueriesMatchTruth();
+            assertIsolatedAcrossCommit("INSERT INTO pt VALUES ('c', 102, '2024-01-01T10:30:00.000000Z')", true);
+            Assert.assertTrue(hasIndexRowMap());
         });
     }
 
@@ -817,11 +839,15 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
     }
 
     private void createParquetPartition(String dedupClause, boolean isIndexed, boolean isWal) throws Exception {
-        execute("CREATE TABLE pt (s SYMBOL " + (isIndexed ? indexClause : "") + ", v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY "
-                + (isWal ? "WAL" : "BYPASS WAL") + dedupClause);
+        createParquetPartition(dedupClause, isIndexed, isWal, "");
+    }
+
+    private void createParquetPartition(String dedupClause, boolean isIndexed, boolean isWal, String extraColumns) throws Exception {
+        execute("CREATE TABLE pt (s SYMBOL " + (isIndexed ? indexClause : "") + ", v INT, ts TIMESTAMP" + extraColumns
+                + ") TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL") + dedupClause);
         execute(
                 """
-                        INSERT INTO pt VALUES
+                        INSERT INTO pt (s, v, ts) VALUES
                         ('a', 1, '2024-01-01T01:00:00.000000Z'), ('b', 2, '2024-01-01T02:00:00.000000Z'),
                         ('c', 3, '2024-01-01T03:00:00.000000Z'), ('a', 4, '2024-01-01T04:00:00.000000Z'),
                         ('b', 5, '2024-01-01T05:00:00.000000Z'), (NULL, 6, '2024-01-01T06:00:00.000000Z'),

@@ -2439,6 +2439,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         parquetFileSize, // existing parquet data-file size (gates first-time vs incremental)
                         seqTxn
                 );
+                if (!hasIndexedSymbolColumn(tableWriterMetadata)) {
+                    // The index row map only serves symbol indexes, and an older binary rejects a footer that
+                    // carries one: a table without an index keeps the identity map.
+                    partitionUpdater.dropIndexRowMap();
+                }
 
                 if (hasSchemaChange || forceFullReencode) {
                     ParquetRowGroupMaterializer.setTargetSchema(
@@ -4466,6 +4471,18 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 }
             }
             prevMax = readRowGroupTimestampBound(partitionDecoder, meta, rg, timestampParquetIdx, true);
+        }
+        return false;
+    }
+
+    /**
+     * Whether {@link #updateParquetIndexes} has an index to maintain; without one, no index file refers to index rows.
+     */
+    private static boolean hasIndexedSymbolColumn(TableRecordMetadata metadata) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnType(i) == ColumnType.SYMBOL && metadata.isColumnIndexed(i)) {
+                return true;
+            }
         }
         return false;
     }
