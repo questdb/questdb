@@ -66,6 +66,17 @@ public class ShortGroupByFunctionBatchTest extends AbstractGroupByFunctionBatchT
     }
 
     @Test
+    public void testAvgShortSetDoubleInterpolation() throws Exception {
+        assertMemoryLeak(() -> {
+            AvgShortGroupByFunction function = new AvgShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
+            try (SimpleMapValue value = prepare(function)) {
+                function.setDouble(value, 1.5);
+                Assert.assertEquals(1.5, function.getDouble(value), 0.00001);
+            }
+        });
+    }
+
+    @Test
     public void testFirstShortBatch() throws Exception {
         assertMemoryLeak(() -> {
             FirstShortGroupByFunction function = new FirstShortGroupByFunction(ShortColumn.newInstance(COLUMN_INDEX));
