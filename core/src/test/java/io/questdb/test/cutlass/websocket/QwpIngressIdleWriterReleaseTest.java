@@ -29,6 +29,7 @@ import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
 import io.questdb.cutlass.http.HttpRawSocket;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.server.QwpIngressProcessorState;
 import io.questdb.cutlass.qwp.server.QwpIngressUpgradeProcessor;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
@@ -36,12 +37,15 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cutlass.qwp.QwpWireTestFixtures;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.nio.charset.StandardCharsets;
 
 import static io.questdb.test.cutlass.websocket.QwpIngressWireHarness.*;
 
@@ -217,6 +221,38 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIdleReleaseKeepsDistinctTableLimit() throws Exception {
+        // qwp.max.tables.per.connection caps the distinct tables one connection
+        // writes (QwpConstants, server.conf). Returning idle writers to the pool
+        // must not reset that count.
+        assertMemoryLeak(() -> {
+            for (int i = 1; i < 4; i++) {
+                execute("CREATE TABLE tab" + i + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            }
+            byte[] firstThree = concat(
+                    clientEncodedFrame(1, "tab"),
+                    clientEncodedFrame(1, "tab1"),
+                    clientEncodedFrame(1, "tab2")
+            );
+            byte[] fourth = clientEncodedFrame(1, "tab3");
+            try (IdleReleaseFixture f = new IdleReleaseFixture(30_000, 3, concat(firstThree, PING, fourth))) {
+                f.drive(firstThree.length);
+                f.clock.nowMicros += 30_000_000;
+                f.drive(PING.length);
+                Assert.assertEquals("idle PING must release every writer", 0, f.state.getCachedTableCount());
+
+                f.drive(fourth.length);
+                int refusal = indexOfBinaryFrame(f.sentFrames, QwpConstants.STATUS_WRITE_ERROR, 3);
+                Assert.assertTrue("a fourth distinct table must be refused", refusal > -1);
+                Assert.assertEquals("too many distinct tables, limit: 3", errorMessage(f.sentFrames.getQuick(refusal)));
+                Assert.assertEquals(2, maxCumulativeOkAck(f.sentFrames));
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM tab3").expectSize().noRandomAccess().returns("count\n0\n");
+        });
+    }
+
+    @Test
     public void testPartialFrameDoesNotReadClock() throws Exception {
         assertMemoryLeak(() -> {
             byte[] data = clientEncodedFrame(1, "tab");
@@ -302,6 +338,12 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
         });
     }
 
+    // Server error frame: [ws header 2][status 1][seq 8][message length 2, LE][message].
+    private static String errorMessage(byte[] frame) {
+        int length = (frame[11] & 0xFF) | (frame[12] & 0xFF) << 8;
+        return new String(frame, 13, length, StandardCharsets.UTF_8);
+    }
+
     private static class CountingClock implements MicrosecondClock {
         private int calls;
         private long nowMicros = 1_000_000;
@@ -317,6 +359,7 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
         private final CountingClock clock = new CountingClock();
         private final PhasedNetworkFacade network;
         private final QwpIngressUpgradeProcessor processor;
+        private final ObjList<byte[]> sentFrames = new ObjList<>();
         private final QwpIngressProcessorState state;
         private TestableContext context;
         private boolean isSendBlocked;
@@ -326,11 +369,20 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
         private long sendBuffer;
 
         private IdleReleaseFixture(long minIdleMs, byte[] wire) throws Exception {
+            this(minIdleMs, QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION, wire);
+        }
+
+        private IdleReleaseFixture(long minIdleMs, int maxTables, byte[] wire) throws Exception {
             execute("CREATE TABLE tab (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             LineHttpProcessorConfiguration lineConfig = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration) {
                 @Override
                 public MicrosecondClock getMicrosecondClock() {
                     return clock;
+                }
+
+                @Override
+                public int getQwpMaxTablesPerConnection() {
+                    return maxTables;
                 }
 
                 @Override
@@ -372,6 +424,11 @@ public class QwpIngressIdleWriterReleaseTest extends AbstractCairoTest {
                         if (isSendDisconnected) {
                             throw PeerDisconnectedException.INSTANCE;
                         }
+                        byte[] frame = new byte[size];
+                        for (int i = 0; i < size; i++) {
+                            frame[i] = Unsafe.getByte(sendBuffer + i);
+                        }
+                        sentFrames.add(frame);
                     }
                 };
                 context = new TestableContext(httpConfig, network, faultSocket, recvBuffer, RECV_BUFFER_SIZE) {
