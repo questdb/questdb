@@ -26,6 +26,8 @@ package io.questdb.cutlass.qwp.server;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.wal.DurabilityTier;
+import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -486,23 +488,45 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         byte[] acceptKey = QwpIngressHttpProcessor.computeAcceptKey(wsKey);
 
-        // Resolve durable-ack opt-in before sizing the 101 response, since
-        // the X-QWP-Durable-Ack confirmation header affects the response size.
-        // The header is silently dropped when the engine has no durable-ack
-        // registry installed (OSS build or primary replication disabled), so
-        // opted-in clients on such servers receive a 101 without confirmation
-        // and fail at the client side.
+        // Resolve durable-ack tier negotiation before sizing the 101 response,
+        // since the X-QWP-Durable-Ack confirmation header affects the response
+        // size. An opted-in client whose requested tier set this server cannot
+        // grant in full (registry disabled, or a tier the registry does not
+        // offer) receives a 101 without the confirmation header, so it can fail
+        // at once instead of waiting for durable-ack frames that never arrive.
         Utf8Sequence durableAckHeader = requestHeader.getHeader(
                 QwpIngressHttpProcessor.HEADER_X_QWP_REQUEST_DURABLE_ACK);
-        boolean durableAckHeaderRequested = durableAckHeader != null
-                && Utf8s.equalsIgnoreCaseAscii(durableAckHeader, QwpIngressHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
         Utf8Sequence selectedWebSocketProtocol = selectBrowserWebSocketProtocol(
                 requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL));
         boolean durableAckWebSocketProtocolRequested =
                 selectedWebSocketProtocol == QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK;
         boolean isQwpV1WebSocketProtocolSelected = selectedWebSocketProtocol == QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1;
-        boolean durableAckRequested = durableAckHeaderRequested || durableAckWebSocketProtocolRequested;
-        boolean durableAckEnabled = durableAckRequested && engine.getDurableAckRegistry().isEnabled();
+        int requestedTiers = DurabilityTier.fromHeaderValue(durableAckHeader);
+        if (durableAckWebSocketProtocolRequested) {
+            // The browser subprotocol token carries no tier parameter, so it
+            // requests what the legacy "true" header requests: REPLICATED,
+            // confirmed with the "enabled" token. A browser cannot ask for the
+            // "local" tier. When both carriers arrive, the requested sets combine.
+            requestedTiers |= DurabilityTier.REPLICATED | DurabilityTier.LEGACY_TRUE;
+        }
+        DurableAckRegistry ackRegistry = engine.getDurableAckRegistry();
+        int grantedTiers;
+        if (requestedTiers == DurabilityTier.NONE || !ackRegistry.isEnabled()) {
+            grantedTiers = DurabilityTier.NONE;
+        } else {
+            // All or nothing: grant the full requested set or nothing, so a
+            // client that asked for "replicated" is never downgraded to a
+            // local-only guarantee. The legacy "true" request means REPLICATED,
+            // so an OSS server denies it, as released servers do.
+            grantedTiers = ackRegistry.isTierSetAvailable(requestedTiers & DurabilityTier.TIERS_MASK)
+                    ? requestedTiers
+                    : DurabilityTier.NONE;
+        }
+        boolean durableAckEnabled = grantedTiers != DurabilityTier.NONE;
+        // Echo the granted set ("local", "replicated" or "local,replicated");
+        // a legacy "true" grant echoes "enabled", the token released clients
+        // expect. Omit the header when nothing is granted.
+        Utf8Sequence durableAckConfirmToken = DurabilityTier.responseToken(grantedTiers);
         // Echo the subprotocol whenever it was offered, enabled or not. The
         // token confirms the browser negotiation dialect, NOT the capability:
         // a browser fails the whole connection when it offered a subprotocol
@@ -525,7 +549,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     .$(context.getFd()).I$();
         }
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
-                acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
+                acceptKey, negotiatedVersion, null, durableAckConfirmToken, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes,
                 durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected);
         if (browserServerInfoRequested) {
@@ -552,10 +576,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         state.of(context.getFd(), context.getSecurityContext());
         state.setNegotiatedVersion((byte) negotiatedVersion);
         state.setDurableAckEnabled(durableAckEnabled);
+        state.setDurableAckTiers(grantedTiers);
 
         // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
-                bufferAddr, acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
+                bufferAddr, acceptKey, negotiatedVersion, null, durableAckConfirmToken, roleBytes,
                 effectiveMaxBatchSizeBytes, sessionCookieValueBytes,
                 durableAckWebSocketProtocolRequested, isQwpV1WebSocketProtocolSelected);
         if (bytesWritten <= 0) {
@@ -2090,7 +2115,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             boolean isDurableProgressFlushed = state.isSendReady();
             boolean isDurableWorkFullyUploaded = isDurableProgressFlushed
                     ? state.isDurableProgressSnapshotFullyUploaded()
-                    : state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry());
+                    : state.isDurableWorkFullyCovered(engine.getDurableAckRegistry());
             if (isDurableWorkFullyUploaded || isGraceExpired) {
                 roleChangeCloseWithUploadGrace(
                         context,
@@ -2217,7 +2242,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             // so preserve it for onDurableAckSent and use the coverage-only
             // traversal. The continuation performs a fresh fused pass after
             // the genuine blocked-send interval when pending work remains.
-            isDurableWorkFullyUploaded = state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry());
+            isDurableWorkFullyUploaded = state.isDurableWorkFullyCovered(engine.getDurableAckRegistry());
         }
         roleChangeCloseWithUploadGrace(
                 context,
@@ -2269,6 +2294,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             // Grace expired with genuinely un-acked durable work according to
             // the fused completion snapshot: the one close the operator must
             // see. Do not repeat the registry traversal just for diagnostics.
+
             LOG.error().$("role-change close upload grace expired; closing with un-acked durable work, client replay may duplicate [fd=")
                     .$(context.getFd()).I$();
         }
@@ -2914,18 +2940,54 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             throws PeerDisconnectedException, PeerIsSlowToReadException {
         assert state.isSendReady() : "trySendCollectedDurableAck called in wrong state";
 
+        // Additive LOCAL stream first (LOCAL|REPLICATED grants only): the local
+        // frontier runs ahead of the replicated one, so its progress frame is
+        // the earlier signal. A blocked send parks with the stream marker set
+        // (see setSendingLocalDurableAck), so completing it advances only the
+        // LOCAL watermark. The RESUME_DURABLE_ACK continuation then re-enters
+        // trySendDurableAck, which re-collects both streams and sends whatever
+        // remains. The close continuations do the same before they close:
+        // RESUME_DURABLE_ACK_THEN_CLOSE (finishDeferredFatalClose) and
+        // RESUME_DURABLE_ACK_THEN_CLOSE_RESPONSE (finishClientCloseResponse)
+        // run flushPendingAck, so the final replicated ack precedes the CLOSE,
+        // and a new block re-parks the close behind that frame. Teardown is
+        // different on purpose: onConnectionClosed's drainPendingResponse
+        // finishes a frame parked ahead of a client-close response and skips
+        // the response, and leaves a parked fatal close unsent; only the
+        // best-effort flushPendingAck that follows may send more.
+        CharSequenceLongHashMap localProgress = state.getLocalDurableProgressSnapshot();
+        if (localProgress.size() > 0) {
+            state.setSendingLocalDurableAck(true);
+            trySendDurableAckFrame(context, state, STATUS_LOCAL_DURABLE_ACK, localProgress,
+                    state.computeLocalDurableAckPayloadSize());
+        }
+
         CharSequenceLongHashMap progress = state.getDurableProgressSnapshot();
         if (progress.size() == 0) {
             return;
         }
+        state.setSendingLocalDurableAck(false);
+        // A LOCAL-only grant's primary stream reports the local-fsync frontier
+        // and must carry the matching status byte; any grant that includes
+        // REPLICATED reports the replicated frontier as STATUS_DURABLE_ACK.
+        byte status = DurabilityTier.hasReplicated(state.getDurableAckTiers())
+                ? STATUS_DURABLE_ACK
+                : STATUS_LOCAL_DURABLE_ACK;
+        trySendDurableAckFrame(context, state, status, progress, state.computeDurableAckPayloadSize());
+    }
 
+    private void trySendDurableAckFrame(
+            HttpConnectionContext context,
+            QwpIngressProcessorState state,
+            byte status,
+            CharSequenceLongHashMap progress,
+            int payloadLen
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         HttpRawSocket rawSocket = context.getRawResponseSocket();
         long bufferAddr = rawSocket.getBufferAddress();
         int bufferSize = rawSocket.getBufferSize();
 
-        int payloadLen = state.computeDurableAckPayloadSize();
         int frameSize = WebSocketFrameWriter.headerSize(payloadLen, false) + payloadLen;
-
         if (frameSize > bufferSize) {
             LOG.critical().$("Buffer too small for durable ACK response [fd=").$(context.getFd())
                     .$(", required=").$(frameSize)
@@ -2935,13 +2997,14 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         int headerLen = WebSocketFrameWriter.writeBinaryFrameHeader(bufferAddr, payloadLen);
         long writeAddr = bufferAddr + headerLen;
-        Unsafe.putByte(writeAddr, STATUS_DURABLE_ACK);
+        Unsafe.putByte(writeAddr, status);
         QwpIngressProcessorState.writeTableSeqTxnEntries(writeAddr + 1, progress);
 
         try {
             rawSocket.send(headerLen + payloadLen);
             state.onDurableAckSent();
             LOG.debug().$("Sent durable ACK [fd=").$(context.getFd())
+                    .$(", status=").$(status)
                     .$(", numOfTables=").$(progress.size()).I$();
         } catch (PeerIsSlowToReadException e) {
             state.onDurableAckBlocked();

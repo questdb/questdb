@@ -8983,6 +8983,44 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByYearFromTimeZoneNearMaxTimestamp() throws Exception {
+        // Pacific/Kiritimati stays at UTC+14, so every bucket starts on Aug 31 at local midnight, which is
+        // Aug 30T10:00Z. The last row is 2262-01-01T10:00 local time and belongs to the bucket that starts on
+        // 2261-08-31 local time. The bucket of its own year would start on 2262-08-31, after the last
+        // TIMESTAMP_NS value (2262-04-11), and floorYYYY() must not build it. FILL(NULL) without TO adds no rows,
+        // because every bucket from FROM to the last row holds data.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP_NS, x DOUBLE) TIMESTAMP(ts) PARTITION BY YEAR");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2259-09-01T00:00:00.000000000Z', 1.0),
+                    ('2260-09-01T00:00:00.000000000Z', 2.0),
+                    ('2261-12-31T20:00:00.000000000Z', 4.0)
+                    """);
+            assertQuery("SELECT ts, sum(x) FROM t SAMPLE BY 1y FROM '2021-08-31' ALIGN TO CALENDAR TIME ZONE 'Pacific/Kiritimati'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsum
+                            2259-08-30T10:00:00.000000000Z\t1.0
+                            2260-08-30T10:00:00.000000000Z\t2.0
+                            2261-08-30T10:00:00.000000000Z\t4.0
+                            """);
+            assertQuery("SELECT ts, sum(x) FROM t SAMPLE BY 1y FROM '2259-08-31' FILL(NULL) ALIGN TO CALENDAR TIME ZONE 'Pacific/Kiritimati'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum
+                            2259-08-30T10:00:00.000000000Z\t1.0
+                            2260-08-30T10:00:00.000000000Z\t2.0
+                            2261-08-30T10:00:00.000000000Z\t4.0
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleCountFillLinear() throws Exception {
         assertQuery("select b, count(), k from x sample by 3h fill(linear) align to first observation")
                 .ddl("create table x as " +
@@ -9872,6 +9910,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
 
     @Test
     public void testSampleFillLinearByMonth() throws Exception {
+        // Buckets start on the 3rd of every third month, so rows on the 1st and the 2nd belong to the previous
+        // bucket, unlike with ALIGN TO CALENDAR below (#7769)
         assertQuery("select b, sum_t(a), k from x sample by 3M fill(linear) align to first observation")
                 .ddl("create table x as " +
                         "(" +
@@ -9886,36 +9926,36 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                 .expectSize()
                 .returns("""
                         b\tsum_t\tk
-                        \t54112.40405938657\t1970-01-03T00:00:00.000000000Z
-                        VTJW\t11209.880434660998\t1970-01-03T00:00:00.000000000Z
-                        RXGZ\t9939.438287132381\t1970-01-03T00:00:00.000000000Z
-                        PEHN\t11042.882403279875\t1970-01-03T00:00:00.000000000Z
-                        HYRX\t11080.174817969955\t1970-01-03T00:00:00.000000000Z
-                        CPSW\t9310.397369439\t1970-01-03T00:00:00.000000000Z
-                        \t53936.039113863764\t1970-04-03T00:00:00.000000000Z
-                        HYRX\t10382.092656987053\t1970-04-03T00:00:00.000000000Z
-                        CPSW\t11677.451781387846\t1970-04-03T00:00:00.000000000Z
-                        RXGZ\t12082.97398092452\t1970-04-03T00:00:00.000000000Z
-                        VTJW\t11574.354700279142\t1970-04-03T00:00:00.000000000Z
-                        PEHN\t11225.427167029598\t1970-04-03T00:00:00.000000000Z
-                        \t53719.38559836983\t1970-07-03T00:00:00.000000000Z
-                        VTJW\t10645.216313875992\t1970-07-03T00:00:00.000000000Z
-                        RXGZ\t12441.881371617534\t1970-07-03T00:00:00.000000000Z
-                        HYRX\t10478.918039106036\t1970-07-03T00:00:00.000000000Z
-                        CPSW\t11215.534064219255\t1970-07-03T00:00:00.000000000Z
-                        PEHN\t12053.625707887684\t1970-07-03T00:00:00.000000000Z
-                        \t54106.362147164444\t1970-10-03T00:00:00.000000000Z
-                        HYRX\t11883.354138407445\t1970-10-03T00:00:00.000000000Z
-                        RXGZ\t11608.715762809448\t1970-10-03T00:00:00.000000000Z
-                        CPSW\t11623.362686708584\t1970-10-03T00:00:00.000000000Z
-                        PEHN\t11258.550294609915\t1970-10-03T00:00:00.000000000Z
-                        VTJW\t10865.136275604094\t1970-10-03T00:00:00.000000000Z
-                        \t33152.56289929654\t1971-01-03T00:00:00.000000000Z
-                        PEHN\t7219.25966062438\t1971-01-03T00:00:00.000000000Z
-                        CPSW\t6038.83487182006\t1971-01-03T00:00:00.000000000Z
-                        RXGZ\t5862.505042201944\t1971-01-03T00:00:00.000000000Z
-                        VTJW\t6677.581919995402\t1971-01-03T00:00:00.000000000Z
-                        HYRX\t5998.730211949621\t1971-01-03T00:00:00.000000000Z
+                        \t55342.35808049189\t1970-01-03T00:00:00.000000000Z
+                        VTJW\t11567.037431069954\t1970-01-03T00:00:00.000000000Z
+                        RXGZ\t10201.524212064816\t1970-01-03T00:00:00.000000000Z
+                        PEHN\t11202.70624166601\t1970-01-03T00:00:00.000000000Z
+                        HYRX\t11272.942252172881\t1970-01-03T00:00:00.000000000Z
+                        CPSW\t9549.728356483236\t1970-01-03T00:00:00.000000000Z
+                        \t53480.15115633946\t1970-04-03T00:00:00.000000000Z
+                        CPSW\t11636.209302114898\t1970-04-03T00:00:00.000000000Z
+                        VTJW\t11390.234559637041\t1970-04-03T00:00:00.000000000Z
+                        RXGZ\t12440.107683784532\t1970-04-03T00:00:00.000000000Z
+                        PEHN\t11450.78558033701\t1970-04-03T00:00:00.000000000Z
+                        HYRX\t10356.509551414398\t1970-04-03T00:00:00.000000000Z
+                        \t54114.54355982458\t1970-07-03T00:00:00.000000000Z
+                        PEHN\t11989.334543549547\t1970-07-03T00:00:00.000000000Z
+                        HYRX\t10581.79116275676\t1970-07-03T00:00:00.000000000Z
+                        VTJW\t10511.596334423533\t1970-07-03T00:00:00.000000000Z
+                        CPSW\t11160.449030359112\t1970-07-03T00:00:00.000000000Z
+                        RXGZ\t11949.011789400207\t1970-07-03T00:00:00.000000000Z
+                        \t53746.717765655616\t1970-10-03T00:00:00.000000000Z
+                        PEHN\t11547.526370144547\t1970-10-03T00:00:00.000000000Z
+                        HYRX\t11615.62616490242\t1970-10-03T00:00:00.000000000Z
+                        RXGZ\t11675.396635775045\t1970-10-03T00:00:00.000000000Z
+                        VTJW\t10933.352039216545\t1970-10-03T00:00:00.000000000Z
+                        CPSW\t11749.28339631865\t1970-10-03T00:00:00.000000000Z
+                        HYRX\t5996.400733173654\t1971-01-03T00:00:00.000000000Z
+                        PEHN\t6609.39249773434\t1971-01-03T00:00:00.000000000Z
+                        \t32342.983255769585\t1971-01-03T00:00:00.000000000Z
+                        VTJW\t6569.949280068554\t1971-01-03T00:00:00.000000000Z
+                        CPSW\t5769.910688298849\t1971-01-03T00:00:00.000000000Z
+                        RXGZ\t5669.474123661225\t1971-01-03T00:00:00.000000000Z
                         """);
 
         assertQuery("select b, sum_t(a), k from x sample by 3M fill(linear) align to calendar")

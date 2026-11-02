@@ -193,7 +193,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
             }
         } catch (Throwable th) {
             // Notify table writer of error before clocking down done counters
-            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
+            tableWriter.o3BumpErrorCount(th);
 
             // We cannot close / unmap fds here. Other copy jobs may still be running and using them.
             // exception handling code of the stack will check if all the parts are finished before closing the memory / fds.
@@ -650,8 +650,12 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                 );
             }
 
-            final int commitMode = tableWriter.getConfiguration().getCommitMode();
-            if (commitMode != CommitMode.NOSYNC) {
+            // The writer's own grade, not the raw global mode: a table held at SYNC pending adaptive
+            // enrolment must flush here even though the instance runs ADAPTIVE.
+            final int commitMode = tableWriter.getEffectiveCommitMode();
+            // Apply-path destination-column sync, SYNC and ASYNC only (CommitMode.appliesColumnSync). Under
+            // ADAPTIVE the durable epoch and recovery make the lazily applied column crash-safe.
+            if (CommitMode.appliesColumnSync(commitMode)) {
                 syncColumns(
                         columnCounter,
                         timestampMergeIndexAddr,
@@ -700,7 +704,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                         .$("release error [table=").$(tableWriter.getTableToken())
                         .$(", e=").$(th)
                         .I$();
-                tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
+                tableWriter.o3BumpErrorCount(th);
                 closeColumnIdle(
                         columnCounter,
                         timestampMergeIndexAddr,
@@ -763,6 +767,14 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
     ) {
         try {
             boolean async = commitMode == CommitMode.ASYNC;
+            // Sync data (dstVar = .d, primary) before aux (dstFix = .i, secondary): the aux vector
+            // holds offsets into the data vector; a durable aux entry must never point past durable data.
+            if (dstVarAddr != 0 && dstVarSize > 0) {
+                ff.msync(dstVarAddr, dstVarSize, async);
+                if (dstVarFd != -1 && dstVarFd != 0) {
+                    ff.fsync(Math.abs(dstVarFd));
+                }
+            }
             if (dstFixAddr != 0 && dstFixSize > 0) {
                 ff.msync(dstFixAddr, dstFixSize, async);
                 // sync FD in case we wrote data not via mmap
@@ -770,18 +782,12 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     ff.fsync(Math.abs(dstFixFd));
                 }
             }
-            if (dstVarAddr != 0 && dstVarSize > 0) {
-                ff.msync(dstVarAddr, dstVarSize, async);
-                if (dstVarFd != -1 && dstVarFd != 0) {
-                    ff.fsync(Math.abs(dstVarFd));
-                }
-            }
         } catch (Throwable e) {
             LOG.error()
                     .$("sync error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(e)
                     .I$();
-            tableWriter.o3BumpErrorCount(false);
+            tableWriter.o3BumpErrorCount(e, false);
             unmapAndCloseAllPartsComplete(
                     columnCounter,
                     timestampMergeIndexAddr,
@@ -883,6 +889,9 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     }
                 }
                 indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
+                // Give this possibly transient index writer the table's effective commit mode, so its commit()
+                // flush follows the destination-column sync gate above rather than the instance-wide mode.
+                indexWriter.setCommitMode(tableWriter.getEffectiveCommitMode());
                 updateIndex(dstFixAddr, Math.abs(dstFixSize), indexWriter, dstIndexOffset / Integer.BYTES, dstIndexAdjust);
                 indexWriter.commit();
             } finally {
@@ -895,7 +904,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     .$("index error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(e)
                     .I$();
-            tableWriter.o3BumpErrorCount(false);
+            tableWriter.o3BumpErrorCount(e, false);
             unmapAndCloseAllPartsComplete(
                     columnCounter,
                     timestampMergeIndexAddr,
@@ -964,7 +973,7 @@ public class O3CopyJob extends AbstractQueueConsumerJob<O3CopyTask> {
                     .$("release error [table=").$(tableWriter.getTableToken())
                     .$(", e=").$(th)
                     .I$();
-            tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
+            tableWriter.o3BumpErrorCount(th);
             throw th;
         } finally {
             try {

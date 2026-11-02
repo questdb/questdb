@@ -1,0 +1,261 @@
+/*******************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo.crash;
+
+import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.DurableEpochManifest;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.RecoveryCoordinator;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalPurgeJob;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.str.Path;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+import org.junit.Test;
+
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Counterpart of {@link AdaptiveRecoveryRollForwardCrashTest}: a table that crashed while adaptive, restarted
+ * after the operator turns adaptive off.
+ *
+ * <p>The current {@code cairo.commit.mode} says how the table will be written next, not how the crash left
+ * its state. A table whose columns were applied lazily before the crash is torn ahead of its durable epoch
+ * whatever the restart mode, so {@code RecoveryCoordinator.recover()} must still roll it forward.
+ *
+ * <p>The two roll-forward tests crash identically and differ only in the restart mode:
+ * <ul>
+ *   <li>{@link #testCrashedAdaptiveTableRollsForwardWhenGlobalStaysAdaptive} restarts adaptive. It is the
+ *       control that shows the harness really constructs a lazily torn table.</li>
+ *   <li>{@link #testCrashedAdaptiveTableRollsForwardAfterGlobalFlipToNosync} restarts nosync. The rows
+ *       survive here too: the durable WAL still holds them and the durable epoch still names the cut to
+ *       replay from.</li>
+ * </ul>
+ *
+ * <p>Recovery decides from the table's save point, not from the instance mode. A start under a non-adaptive
+ * mode rolls the table forward and then removes the save point, so a later start cannot rewind onto WAL
+ * that the nosync purge floor has released ({@link #testDowngradedTableStopsRewindingOnceReconciled}). The
+ * clean downgrade, without a crash, is covered in {@code AdaptiveUpgradeCompatTest}.
+ */
+public class AdaptiveCommitModeFlipCrashTest extends AbstractCrashConsistencyTest {
+
+    // Returned (as the single element) when a read throws a loud Cairo/JVM error.
+    private static final long TORN_SENTINEL = Long.MIN_VALUE;
+    private static final int K = 4; // txns covered by the durable epoch
+    private static final int M = 5; // txns applied lazily after it
+
+    @Test
+    public void testCrashedAdaptiveTableRollsForwardAfterGlobalFlipToNosync() throws Exception {
+        assertRollForwardSurvivesRebootMode("nosync");
+    }
+
+    @Test
+    public void testCrashedAdaptiveTableRollsForwardWhenGlobalStaysAdaptive() throws Exception {
+        assertRollForwardSurvivesRebootMode("adaptive");
+    }
+
+    /**
+     * The repair must also converge. A table left enrolled after the roll-forward would rewind at every later
+     * start to an epoch that nosync never advances, and once the WAL purge floor drops to the applied seqTxn
+     * (the epoch floor applies only under ADAPTIVE), the WAL that rewind needs is gone. The start that rolls
+     * the table forward therefore makes it durable and removes its save point. The test runs the whole
+     * sequence: crash adaptive, flip to nosync, recover, keep writing under nosync, purge the WAL under the
+     * nosync floor, restart again. Every row survives, and the second restart does not rely on the epoch.
+     */
+    @Test
+    public void testDowngradedTableStopsRewindingOnceReconciled() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        try {
+            runWithCrashFacade(() -> {
+                crashFf.modelSharedJournal = false;
+                execute("create table t (ts timestamp, v long) timestamp(ts) partition by day wal");
+                for (int i = 0; i < K; i++) {
+                    execute("insert into t values ('2024-10-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("t");
+
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+                for (int i = K; i < K + M; i++) {
+                    execute("insert into t values ('2024-10-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+
+                final String tableDir = engine.getConfiguration().getDbRoot() + java.io.File.separator + tt.getDirName();
+                crashFf.markFileDurable(tableDir + java.io.File.separator + TableUtils.TXN_FILE_NAME);
+                crashFf.markFileDurable(tableDir + java.io.File.separator + TableUtils.COLUMN_VERSION_FILE_NAME);
+                crashAndReopen();
+
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                engine.notifyWalTxnRepublisher(tt);
+                drainWalQueue();
+                Assert.assertEquals("roll-forward must rebuild every row", K + M, readVs(engine).size());
+
+                // The table is reconciled: the start made it durable and removed its save point.
+                try (Path p = new Path()) {
+                    p.of(engine.getConfiguration().getDbRoot()).concat(tt);
+                    Assert.assertFalse(
+                            "a downgraded table must not keep its save point, or every restart rewinds to an epoch"
+                                    + " nosync never advances",
+                            DurableEpochManifest.exists(engine.getConfiguration().getFilesFacade(), p, p.size())
+                    );
+                }
+
+                // Keep writing under nosync, then purge the WAL under the nosync floor: the epoch is frozen
+                // strictly below the live cut, so a rewind to it would lose rows.
+                for (int i = K + M; i < K + M + 3; i++) {
+                    execute("insert into t values ('2024-10-02T0" + (i - K - M) + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+                engine.releaseAllWalWriters();
+                final long step = engine.getConfiguration().getWalPurgeInterval() * 1000L + 1_000_000L;
+                final long[] tick = {1L};
+                try (WalPurgeJob job = new WalPurgeJob(engine, engine.getConfiguration().getFilesFacade(),
+                        () -> (tick[0] += step))) {
+                    job.run();
+                    job.run();
+                }
+
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
+                engine.notifyWalTxnRepublisher(tt);
+                drainWalQueue();
+
+                Assert.assertFalse("reconciled table must not be suspended",
+                        engine.getTableSequencerAPI().isSuspended(tt));
+                final List<Long> post = readVsAllowTorn(engine);
+                Assert.assertEquals("every row must survive the purge and the second restart [rows=" + post + ']',
+                        K + M + 3, post.size());
+                for (int i = 0; i < K + M + 3; i++) {
+                    Assert.assertEquals("row " + i + " value", Long.valueOf(i), post.get(i));
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+        }
+    }
+
+    private void assertRollForwardSurvivesRebootMode(String rebootMode) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        try {
+            Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+            runWithCrashFacade(() -> {
+                // Per-inode journaling: a journal commit on _txn must not incidentally journal the columns.
+                crashFf.modelSharedJournal = false;
+                execute("create table t (ts timestamp, v long) timestamp(ts) partition by day wal");
+
+                for (int i = 0; i < K; i++) {
+                    execute("insert into t values ('2024-10-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+                final TableToken tt = engine.verifyTableName("t");
+
+                // Disable the epoch so the next M rows are applied lazily: non-durable columns above the cut.
+                setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+                for (int i = K; i < K + M; i++) {
+                    execute("insert into t values ('2024-10-01T0" + i + ":00:00.000000Z', " + i + ")");
+                }
+                drainWalQueue();
+                Assert.assertEquals("pre-crash must see all K+M rows", K + M, readVs(engine).size());
+
+                // Model the kernel writing back _txn/_cv without an msync from QuestDB: the commit pointer
+                // survives at the post-epoch frontier while the column data it exposes does not.
+                final String tableDir = engine.getConfiguration().getDbRoot() + java.io.File.separator + tt.getDirName();
+                crashFf.markFileDurable(tableDir + java.io.File.separator + TableUtils.TXN_FILE_NAME);
+                crashFf.markFileDurable(tableDir + java.io.File.separator + TableUtils.COLUMN_VERSION_FILE_NAME);
+
+                crashAndReopen();
+
+                // The operator edits cairo.commit.mode and restarts. Drop the cached tracker so the mode is
+                // resolved from _meta + the (new) server default, as it is on a cold start; otherwise the
+                // live tracker answers ADAPTIVE from memory and the flip is not modelled at all.
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, rebootMode);
+                engine.getTableSequencerAPI().resetForReboot(tt);
+
+                new RecoveryCoordinator(engine).recover();
+                engine.notifyWalTxnRepublisher(tt);
+                drainWalQueue();
+
+                final boolean suspended = engine.getTableSequencerAPI().isSuspended(tt);
+                final List<Long> post = readVsAllowTorn(engine);
+                Assert.assertFalse("table must NOT be suspended after recovery [rebootMode=" + rebootMode + ']', suspended);
+                Assert.assertEquals(
+                        "recovery must rebuild ALL K+M rows from the durable WAL [rebootMode=" + rebootMode
+                                + ", rows=" + post + ']',
+                        K + M,
+                        post.size()
+                );
+                for (int i = 0; i < K + M; i++) {
+                    Assert.assertEquals("row " + i + " value [rebootMode=" + rebootMode + ']',
+                            Long.valueOf(i), post.get(i));
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+        }
+    }
+
+    private List<Long> readVs(CairoEngine eng) {
+        final List<Long> out = new ArrayList<>();
+        try (
+                SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(eng);
+                RecordCursorFactory f = eng.select("select v from t order by ts", ctx)
+        ) {
+            try (RecordCursor c = f.getCursor(ctx)) {
+                io.questdb.cairo.sql.Record r = c.getRecord();
+                while (c.hasNext()) {
+                    out.add(r.getLong(0));
+                }
+            }
+        } catch (io.questdb.griffin.SqlException e) {
+            throw new RuntimeException(e);
+        }
+        return out;
+    }
+
+    private List<Long> readVsAllowTorn(CairoEngine eng) {
+        try {
+            return readVs(eng);
+        } catch (RuntimeException | io.questdb.cairo.CairoError | InternalError e) {
+            final List<Long> torn = new ArrayList<>();
+            torn.add(TORN_SENTINEL);
+            return torn;
+        }
+    }
+}

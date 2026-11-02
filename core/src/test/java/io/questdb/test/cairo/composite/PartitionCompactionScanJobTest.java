@@ -1889,6 +1889,8 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                 Assert.assertFalse("2020-01-01 should have been compacted", reader.getTxFile().isPartitionComposite(0));
             }
             engine.releaseAllReaders();
+            // The retired directory waits for the save points that still list it.
+            releaseSavePointHolds("cx");
             Assert.assertFalse("the retired directory is still on disk", dirExists(ff, retiredDir));
             assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n6010\n");
         });
@@ -2665,6 +2667,8 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                 try {
                     // Past the decline backoff, a commit elsewhere lets the writer MAKE-PLAIN the front.
                     setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
+                    // MAKE-PLAIN shortens the front's files, so it waits for a save point past the front's geometry.
+                    releaseSavePointHolds("x");
                     execute("INSERT INTO x SELECT x::INT + 900_000 i, 'd' s," +
                             " timestamp_sequence('2024-03-20', 60_000_000L) ts FROM long_sequence(2)");
                     drainWalQueue();
