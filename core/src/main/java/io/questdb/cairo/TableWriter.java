@@ -2333,7 +2333,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
-        boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
+        boolean lastPartitionConverted = txWriter.getLogicalPartitionTimestamp(lastPartitionTimestamp)
+                == partitionTimestamp;
         long partitionNameTxn;
         int newPartitionDirLen = 0;
         boolean isTxnWriteStarted = false;
@@ -2480,6 +2481,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
+        // Unlike native-to-parquet, this conversion does not squash split siblings. Compare the
+        // physical timestamps so converting a parquet prefix does not close the active native tail.
         boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         int newPartitionDirLen = 0;
