@@ -25,17 +25,12 @@
 package io.questdb.test.cairo.view;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.TableToken;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.std.ObjList;
 import io.questdb.test.tools.TestUtils;
-import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -109,16 +104,6 @@ public class ViewDependencyGapAuthorizationTest extends AbstractViewTest {
         });
     }
 
-    private static SqlExecutionContext denyBaseTableSelectContext() {
-        return new SqlExecutionContextImpl(engine, 1).with(
-                new DenyBaseTableSelectSecurityContext(),
-                bindVariableService,
-                null,
-                -1,
-                null
-        );
-    }
-
     private static long readViewRowCount(SqlExecutionContext context) throws SqlException {
         long count = 0;
         try (RecordCursorFactory factory = engine.select("SELECT * FROM " + VIEW1, context)) {
@@ -136,16 +121,5 @@ public class ViewDependencyGapAuthorizationTest extends AbstractViewTest {
         // guard the test itself: the entry must be present before we simulate the gap by removing it
         assertNotNull(viewDefinition.getDependencies().get(baseTableName));
         viewDefinition.getDependencies().remove(baseTableName);
-    }
-
-    /**
-     * Grants everything except per-column SELECT on a base table, so the view-level authorization
-     * still passes while the fallback's explicit per-column base-table check is rejected.
-     */
-    private static final class DenyBaseTableSelectSecurityContext extends AllowAllSecurityContext {
-        @Override
-        public void authorizeSelect(TableToken tableToken, @NotNull ObjList<CharSequence> columnNames) {
-            throw CairoException.nonCritical().put("permission denied [table=").put(tableToken.getTableName()).put(']');
-        }
     }
 }

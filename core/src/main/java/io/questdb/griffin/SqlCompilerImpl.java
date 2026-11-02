@@ -175,6 +175,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     };
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
+    // collectUnkeyedJoinDependencies() compiles the SELECT of a view as a sub-query of this read, which needs
+    // neither the timestamp of the view nor the order of its rows
+    private static final String UNKEYED_JOIN_READ_PREFIX = "SELECT count() FROM (";
     // Raised from two places: once on the parsed model, where it has to win over the more general
     // cross-table rejection, and once on the optimised one, for the joins the optimiser itself
     // introduces. Shared so the two cannot drift apart.
@@ -215,6 +218,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
+    private final SqlUtil.ViewWildcardSources viewWildcardSources = new SqlUtil.ViewWildcardSources();
     private final ObjList<CharSequence> views = new ObjList<>();
     protected CharSequence sqlText;
     private boolean closed = false;
@@ -406,6 +410,43 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @Override
+    public void collectUnkeyedJoinDependencies(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) throws SqlException {
+        clear();
+        // The read drops the ORDER BY clauses of the sub-queries that a read of the view that needs no order
+        // drops, and the new line ends a comment the SELECT may end with.
+        final String readSql = UNKEYED_JOIN_READ_PREFIX + viewSql + "\n)";
+        try {
+            lexer.of(readSql);
+            final ExecutionModel model = parser.parse(lexer, executionContext, this);
+            // the caller compiled the same SELECT before
+            assert model.getModelType() == ExecutionModel.QUERY;
+            SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, dependencies, viewWildcardSources);
+            final IQueryModel queryModel;
+            optimiser.setUnkeyedJoinKeptWhole(true);
+            try {
+                // a throw closes the table functions optimise() opened
+                queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
+            } finally {
+                optimiser.setUnkeyedJoinKeptWhole(false);
+            }
+            // Nothing generates the model, so nothing takes over the table functions optimise() opened. The
+            // walk below reads the expressions of the model, not its functions.
+            CairoException.rethrowCleanupFailure(optimiser.freeUnclaimedTableFactories(null));
+            SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources);
+        } catch (SqlException e) {
+            // the position the caller reports is one in the SELECT
+            e.setPosition(Math.max(0, e.getPosition() - UNKEYED_JOIN_READ_PREFIX.length()));
+            throw e;
+        } finally {
+            viewWildcardSources.clear();
+        }
+    }
+
+    @Override
     @NotNull
     public CompiledQuery compile(@NotNull CharSequence sqlText, @NotNull SqlExecutionContext executionContext) throws SqlException {
         clear();
@@ -586,6 +627,40 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @Override
+    public ExecutionModel generateViewExecutionModel(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) throws SqlException {
+        clear();
+        lexer.of(viewSql);
+        final ExecutionModel model = parser.parse(lexer, executionContext, this);
+        if (model.getModelType() != ExecutionModel.QUERY) {
+            throw SqlException.$(0, "SELECT query expected");
+        }
+        // The parsed model names the objects and the wildcards of the view, the optimised one resolves
+        // the columns it reads, and which wildcards it keeps whole. Optimisation rewrites the model it is
+        // given, so the parsed one goes first.
+        SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, dependencies, viewWildcardSources);
+        try {
+            final IQueryModel queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
+            SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources);
+            if (viewWildcardSources.hasUnkeyedJoinedSubQuery()) {
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    compiler.collectUnkeyedJoinDependencies(viewSql, executionContext, dependencies);
+                }
+            }
+            return queryModel;
+        } catch (Throwable e) {
+            // like compileExecutionModel(): nothing generates the factories optimise() left in flight
+            optimiser.freeTableFactoriesInFlight(e);
+            throw e;
+        } finally {
+            viewWildcardSources.clear();
+        }
+    }
+
+    @Override
     public BytecodeAssembler getAsm() {
         return asm;
     }
@@ -597,6 +672,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     public FunctionFactoryCache getFunctionFactoryCache() {
         return functionParser.getFunctionFactoryCache();
+    }
+
+    /**
+     * Returns how many times the walks that record the columns a view reads have reached a model of the
+     * view's optimised SELECT over the life of this compiler, a model reached twice counting twice. Tests
+     * check with it that the walks reach each model a bounded number of times, see
+     * {@link SqlUtil#collectTableColumnReads(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, SqlUtil.ViewWildcardSources)}.
+     */
+    @TestOnly
+    public long getViewDependencyVisitCountForTesting() {
+        return viewWildcardSources.getVisitCount();
     }
 
     @TestOnly
@@ -2147,37 +2233,48 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
         final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
-            final IQueryModel queryModel = executionModel.getQueryModel();
-            SqlUtil.collectTableAndColumnReferences(engine, queryModel, dependencies);
-            engine.getViewGraph().validateNoCycle(viewToken, queryModel);
-
-            try (RecordCursorFactory factory = SqlUtil.generateFactory(compiler, executionModel, executionContext)) {
-                final RecordMetadata metadata = factory.getMetadata();
-                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                    final CharSequence columnName = metadata.getColumnName(i);
-                    if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
-                        throw SqlException.position(0)
-                                .put("invalid column name [name=")
-                                .put(columnName)
-                                .put(", position=")
-                                .put(i)
-                                .put(']');
-                    }
-                }
-                // test the cursor, if no exception thrown viewSql is working
-                // Nobody is handed the row this reads, so the open is flagged like the probe in
-                // executeCreateView: an audited view in the new body must not record a read.
-                final boolean wasMetadataProbe = executionContext.isMetadataProbe();
-                executionContext.setMetadataProbe(true);
-                final RecordCursor cursor;
+            for (int retryCount = 0; ; retryCount++) {
                 try {
-                    cursor = factory.getCursor(executionContext);
-                } finally {
-                    executionContext.setMetadataProbe(wasMetadataProbe);
-                }
-                try (cursor) {
-                    cursor.hasNext();
+                    // A retry must replace both the plan and the permissions collected for it.
+                    dependencies.clear();
+                    final ExecutionModel executionModel = compiler.generateViewExecutionModel(viewSql, executionContext, dependencies);
+                    final IQueryModel queryModel = executionModel.getQueryModel();
+                    engine.getViewGraph().validateNoCycle(viewToken, queryModel);
+
+                    try (RecordCursorFactory factory = compiler.generateSelectWithoutRetries(queryModel, executionContext, false)) {
+                        final RecordMetadata metadata = factory.getMetadata();
+                        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                            final CharSequence columnName = metadata.getColumnName(i);
+                            if (!TableUtils.isValidColumnName(columnName, configuration.getMaxFileNameLength())) {
+                                throw SqlException.position(0)
+                                        .put("invalid column name [name=")
+                                        .put(columnName)
+                                        .put(", position=")
+                                        .put(i)
+                                        .put(']');
+                            }
+                        }
+                        // test the cursor, if no exception thrown viewSql is working
+                        // Nobody is handed the row this reads, so the open is flagged like the probe in
+                        // executeCreateView: an audited view in the new body must not record a read.
+                        final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                        executionContext.setMetadataProbe(true);
+                        final RecordCursor cursor;
+                        try {
+                            cursor = factory.getCursor(executionContext);
+                        } finally {
+                            executionContext.setMetadataProbe(wasMetadataProbe);
+                        }
+                        try (cursor) {
+                            cursor.hasNext();
+                        }
+                    }
+                    break;
+                } catch (TableReferenceOutOfDateException e) {
+                    if (retryCount >= maxRecompileAttempts) {
+                        throw SqlException.$(0, e.getFlyweightMessage());
+                    }
+                    LOG.info().$("retrying view plan [q=`").$(viewSql).$("`]").$();
                 }
             }
         } catch (SqlException e) {
@@ -4614,18 +4711,39 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             final IQueryModel queryModel;
             final boolean cacheable;
+            final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = createViewOp.getViewDefinition().getDependencies();
+            // The map lists what the plan this compiles reads, and no plan before it: executeCreateView()
+            // compiles the SELECT again when a table changes under the plan, and the earlier plan may have
+            // read a column of the table the new one does not.
+            dependencies.clear();
             try {
                 try {
                     final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
                     if (executionModel.getModelType() != ExecutionModel.QUERY) {
                         throw SqlException.$(startPos, "SELECT query expected");
                     }
+                    // The parser recorded the objects and the wildcards of the view, see
+                    // SqlParser.parseCreateView(), but whether a wildcard under a SELECT list that names its
+                    // columns reads every column only the optimised model tells. The walk of the parsed model
+                    // that collects such wildcards records the same objects and wildcards into the map again.
+                    SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) executionModel, dependencies, viewWildcardSources);
                     queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
                 } catch (SqlException e) {
                     e.setPosition(e.getPosition() + selectTextPosition);
                     throw e;
                 }
                 createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
+                // the optimised model resolves the columns the view reads, and which wildcards it keeps whole
+                SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources);
+                if (viewWildcardSources.hasUnkeyedJoinedSubQuery()) {
+                    // before generation, which then finds a table that changed meanwhile out of date
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        compiler.collectUnkeyedJoinDependencies(createTableOp.getSelectText(), executionContext, dependencies);
+                    } catch (SqlException e) {
+                        e.setPosition(e.getPosition() + selectTextPosition);
+                        throw e;
+                    }
+                }
                 // Same read-before-generation rule as compileMatViewQuery, and inside the same try for the
                 // same reason: a throw must free the table factories optimise() left in flight.
                 cacheable = queryModel.isCacheable();
@@ -4634,14 +4752,21 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // cursor functions to the model and generation has not taken them over yet.
                 optimiser.freeTableFactoriesInFlight(th);
                 throw th;
+            } finally {
+                viewWildcardSources.clear();
             }
 
             try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, null, executionContext, false), cacheable);
+                // Let executeCreateView() retry the whole compilation, including its dependency map.
+                compiledQuery.ofSelect(generateSelectWithoutRetries(queryModel, executionContext, false), cacheable);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
             }
+        } catch (TableReferenceOutOfDateException e) {
+            // Not a query error: executeCreateView() compiles the SELECT again, and logs the statement's
+            // failure once if it runs out of attempts.
+            throw e;
         } catch (Throwable th) {
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
             throw th;
@@ -5213,7 +5338,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
-                            if (retryCount == maxRecompileAttempts) {
+                            if (retryCount >= maxRecompileAttempts) {
                                 Misc.free(newFactory);
                                 throw SqlException.$(0, e.getFlyweightMessage());
                             }

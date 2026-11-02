@@ -33,6 +33,8 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.InsertModel;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.LowerCaseCharSequenceHashSet;
+import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Transient;
@@ -40,6 +42,28 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 public interface SqlCompiler extends QuietCloseable, Mutable {
+
+    /**
+     * Adds to the dependency map of a view the columns that a read of the view reads from the sub-queries,
+     * CTEs and views its SELECT joins without a key, such as with a CROSS JOIN, or an ASOF, LT or SPLICE
+     * JOIN without ON. The plan of the view's own SELECT reads only the columns of such a sub-query the view
+     * selects, and those its timestamp and its order need, but a read that names none of its columns and
+     * needs neither gives the sub-query no columns to keep, and its plan computes every column of the
+     * sub-query. This compiles the SELECT again, as a sub-query of a read that counts its rows, with every
+     * such sub-query kept whole, see {@link SqlUtil.ViewWildcardSources#hasUnkeyedJoinedSubQuery()}, and
+     * collects what that plan reads, including a {@code *} for each wildcard it keeps whole. Call it on a
+     * compiler of its own after the SELECT of the view is optimised and before its plan is generated, so
+     * that generating the plan finds a table that changed in between out of date.
+     *
+     * @param viewSql          the SELECT of the view
+     * @param executionContext the context to compile the SELECT in
+     * @param dependencies     the dependency map of the view, which this adds to
+     */
+    void collectUnkeyedJoinDependencies(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+    ) throws SqlException;
 
     CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException;
 
@@ -91,6 +115,24 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
             @Transient IQueryModel queryModel,
             @Transient SqlExecutionContext executionContext,
             boolean generateProgressLogger
+    ) throws SqlException;
+
+    /**
+     * Parses and optimises the SELECT of a view, like {@link #generateExecutionModel}, and collects its
+     * dependencies: the objects it names, see {@link SqlUtil#collectTableAndColumnReferences}, and the
+     * columns it reads from each table, see {@link SqlUtil#collectTableColumnReads}, a read of the view
+     * that names none of the columns of a sub-query the SELECT joins without a key included, see
+     * {@link #collectUnkeyedJoinDependencies}.
+     *
+     * @param viewSql          the SELECT of the view
+     * @param executionContext the context to compile the SELECT in
+     * @param dependencies     the dependency map of the view, which this adds to
+     * @return the optimised model of the SELECT
+     */
+    ExecutionModel generateViewExecutionModel(
+            CharSequence viewSql,
+            SqlExecutionContext executionContext,
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
     ) throws SqlException;
 
     BytecodeAssembler getAsm();
