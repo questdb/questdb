@@ -34,6 +34,7 @@ import io.questdb.griffin.QueryBuilder;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.ops.Operation;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.ExpressionNode;
@@ -146,9 +147,10 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
         public void collectUnkeyedJoinDependencies(
                 CharSequence viewSql,
                 SqlExecutionContext executionContext,
-                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+                LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+                SqlUtil.ViewCompileRecord compileRecord
         ) throws SqlException {
-            delegate.collectUnkeyedJoinDependencies(viewSql, executionContext, dependencies);
+            delegate.collectUnkeyedJoinDependencies(viewSql, executionContext, dependencies, compileRecord);
         }
 
         @Override

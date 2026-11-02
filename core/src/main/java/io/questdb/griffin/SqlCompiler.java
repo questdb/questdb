@@ -47,22 +47,26 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
      * Adds to the dependency map of a view the columns that a read of the view reads from the sub-queries,
      * CTEs and views its SELECT joins without a key, such as with a CROSS JOIN, or an ASOF, LT or SPLICE
      * JOIN without ON. The plan of the view's own SELECT reads only the columns of such a sub-query the view
-     * selects, and those its timestamp and its order need, but a read that names none of its columns and
-     * needs neither gives the sub-query no columns to keep, and its plan computes every column of the
-     * sub-query. This compiles the SELECT again, as a sub-query of a read that counts its rows, with every
-     * such sub-query kept whole, see {@link SqlUtil.ViewWildcardSources#hasUnkeyedJoinedSubQuery()}, and
+     * selects, and those its timestamp and its order need, but a read that names only outputs of the view
+     * whose columns do not need the sub-query, and needs neither its timestamp nor its order, gives the
+     * sub-query no columns to keep, and its plan computes every column of the sub-query. This compiles the
+     * SELECT again, as a sub-query of a read that counts its rows, with every such sub-query some read leaves
+     * without columns kept whole, see {@link SqlUtil.ViewWildcardSources#hasUnkeyedJoinedSubQuery()}, and
      * collects what that plan reads, including a {@code *} for each wildcard it keeps whole. Call it on a
-     * compiler of its own after the SELECT of the view is optimised and before its plan is generated, so
-     * that generating the plan finds a table that changed in between out of date.
+     * compiler of its own after the SELECT of the view is optimised and before its plan is generated, with
+     * what that compile recorded: this takes the values of the PIVOT IN sub-queries from it rather than
+     * running them again, and finds a table out of date when it scans one of another id than that compile.
      *
      * @param viewSql          the SELECT of the view
      * @param executionContext the context to compile the SELECT in
      * @param dependencies     the dependency map of the view, which this adds to
+     * @param compileRecord    what the compile that optimised the SELECT of the view to plan it recorded
      */
     void collectUnkeyedJoinDependencies(
             CharSequence viewSql,
             SqlExecutionContext executionContext,
-            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+            SqlUtil.ViewCompileRecord compileRecord
     ) throws SqlException;
 
     CompiledQuery compile(CharSequence sqlText, SqlExecutionContext ctx) throws SqlException;

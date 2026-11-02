@@ -175,9 +175,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     };
     private static final Log LOG = LogFactory.getLog(SqlCompilerImpl.class);
-    // collectUnkeyedJoinDependencies() compiles the SELECT of a view as a sub-query of this read, which needs
-    // neither the timestamp of the view nor the order of its rows
-    private static final String UNKEYED_JOIN_READ_PREFIX = "SELECT count() FROM (";
     // Raised from two places: once on the parsed model, where it has to win over the more general
     // cross-table rejection, and once on the optimised one, for the joins the optimiser itself
     // introduces. Shared so the two cannot drift apart.
@@ -218,6 +215,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
+    // what the compile of a view's SELECT that plans it saw, for the compile collectUnkeyedJoinDependencies() runs
+    private final SqlUtil.ViewCompileRecord viewCompileRecord = new SqlUtil.ViewCompileRecord();
     private final SqlUtil.ViewWildcardSources viewWildcardSources = new SqlUtil.ViewWildcardSources();
     private final ObjList<CharSequence> views = new ObjList<>();
     protected CharSequence sqlText;
@@ -413,34 +412,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     public void collectUnkeyedJoinDependencies(
             CharSequence viewSql,
             SqlExecutionContext executionContext,
-            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies
+            LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
+            SqlUtil.ViewCompileRecord compileRecord
     ) throws SqlException {
         clear();
-        // The read drops the ORDER BY clauses of the sub-queries that a read of the view that needs no order
-        // drops, and the new line ends a comment the SELECT may end with.
-        final String readSql = UNKEYED_JOIN_READ_PREFIX + viewSql + "\n)";
         try {
-            lexer.of(readSql);
+            // The SELECT parses as the caller's compile parsed it, top-level DECLARE block and all, and only the
+            // model of the read around it is built here.
+            lexer.of(viewSql);
             final ExecutionModel model = parser.parse(lexer, executionContext, this);
             // the caller compiled the same SELECT before
             assert model.getModelType() == ExecutionModel.QUERY;
             SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, dependencies, viewWildcardSources);
             final IQueryModel queryModel;
             optimiser.setUnkeyedJoinKeptWhole(true);
+            optimiser.setPivotInValueSource(compileRecord);
             try {
                 // a throw closes the table functions optimise() opened
-                queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
+                queryModel = optimiser.optimise(countRowsOf((IQueryModel) model), executionContext, this);
             } finally {
                 optimiser.setUnkeyedJoinKeptWhole(false);
+                optimiser.setPivotInValueSource(null);
             }
             // Nothing generates the model, so nothing takes over the table functions optimise() opened. The
             // walk below reads the expressions of the model, not its functions.
             CairoException.rethrowCleanupFailure(optimiser.freeUnclaimedTableFactories(null));
-            SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources);
-        } catch (SqlException e) {
-            // the position the caller reports is one in the SELECT
-            e.setPosition(Math.max(0, e.getPosition() - UNKEYED_JOIN_READ_PREFIX.length()));
-            throw e;
+            // a table the caller's plan scans has to be the one this compile scans
+            SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources, compileRecord, false);
         } finally {
             viewWildcardSources.clear();
         }
@@ -642,12 +640,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // the columns it reads, and which wildcards it keeps whole. Optimisation rewrites the model it is
         // given, so the parsed one goes first.
         SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) model, dependencies, viewWildcardSources);
+        viewCompileRecord.clear();
         try {
-            final IQueryModel queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
-            SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources);
+            optimiser.setPivotInValueRecorder(viewCompileRecord);
+            final IQueryModel queryModel;
+            try {
+                queryModel = optimiser.optimise((IQueryModel) model, executionContext, this);
+            } finally {
+                optimiser.setPivotInValueRecorder(null);
+            }
+            SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources, viewCompileRecord, true);
             if (viewWildcardSources.hasUnkeyedJoinedSubQuery()) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    compiler.collectUnkeyedJoinDependencies(viewSql, executionContext, dependencies);
+                    compiler.collectUnkeyedJoinDependencies(viewSql, executionContext, dependencies, viewCompileRecord);
                 }
             }
             return queryModel;
@@ -657,6 +662,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw e;
         } finally {
             viewWildcardSources.clear();
+            viewCompileRecord.clear();
         }
     }
 
@@ -678,7 +684,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Returns how many times the walks that record the columns a view reads have reached a model of the
      * view's optimised SELECT over the life of this compiler, a model reached twice counting twice. Tests
      * check with it that the walks reach each model a bounded number of times, see
-     * {@link SqlUtil#collectTableColumnReads(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, SqlUtil.ViewWildcardSources)}.
+     * {@link SqlUtil#collectTableColumnReads(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, SqlUtil.ViewWildcardSources, SqlUtil.ViewCompileRecord, boolean)}.
      */
     @TestOnly
     public long getViewDependencyVisitCountForTesting() {
@@ -4716,6 +4722,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // compiles the SELECT again when a table changes under the plan, and the earlier plan may have
             // read a column of the table the new one does not.
             dependencies.clear();
+            viewCompileRecord.clear();
             try {
                 try {
                     final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
@@ -4727,18 +4734,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // columns reads every column only the optimised model tells. The walk of the parsed model
                     // that collects such wildcards records the same objects and wildcards into the map again.
                     SqlUtil.collectTableAndColumnReferences(engine, (IQueryModel) executionModel, dependencies, viewWildcardSources);
-                    queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
+                    optimiser.setPivotInValueRecorder(viewCompileRecord);
+                    try {
+                        queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
+                    } finally {
+                        optimiser.setPivotInValueRecorder(null);
+                    }
                 } catch (SqlException e) {
                     e.setPosition(e.getPosition() + selectTextPosition);
                     throw e;
                 }
                 createViewOp.validateAndUpdateMetadataFromModel(executionContext, optimiser.getFunctionFactoryCache(), queryModel);
                 // the optimised model resolves the columns the view reads, and which wildcards it keeps whole
-                SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources);
+                SqlUtil.collectTableColumnReads(engine, queryModel, dependencies, viewWildcardSources, viewCompileRecord, true);
                 if (viewWildcardSources.hasUnkeyedJoinedSubQuery()) {
                     // before generation, which then finds a table that changed meanwhile out of date
                     try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                        compiler.collectUnkeyedJoinDependencies(createTableOp.getSelectText(), executionContext, dependencies);
+                        compiler.collectUnkeyedJoinDependencies(createTableOp.getSelectText(), executionContext, dependencies, viewCompileRecord);
                     } catch (SqlException e) {
                         e.setPosition(e.getPosition() + selectTextPosition);
                         throw e;
@@ -4754,6 +4766,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw th;
             } finally {
                 viewWildcardSources.clear();
+                viewCompileRecord.clear();
             }
 
             try {
@@ -4884,6 +4897,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 engine.unlock(context.getSecurityContext(), tableToken, writer, false);
             }
         }
+    }
+
+    // The model of SELECT count() FROM (<query>), around a parsed query, as the parser builds it from that text: a
+    // read that names none of the columns of the query, and needs neither its timestamp nor the order of its rows.
+    private IQueryModel countRowsOf(IQueryModel queryModel) throws SqlException {
+        final QueryModel fromModel = queryModelPool.next();
+        fromModel.setNestedModel(queryModel);
+        fromModel.setNestedModelIsSubQuery(true);
+        final QueryModel countModel = queryModelPool.next();
+        countModel.addBottomUpColumn(queryColumnPool.next().of("count", sqlNodePool.next().of(ExpressionNode.FUNCTION, "count", 0, 0)));
+        countModel.setSelectModelType(IQueryModel.SELECT_MODEL_CHOOSE);
+        countModel.setNestedModel(fromModel);
+        // the parser hands the views a statement reads to its top model
+        countModel.recordViews(queryModel.getReferencedViews());
+        countModel.recordViewAudits(queryModel.getViewAudits());
+        return countModel;
     }
 
     private void enqueueCompileViews(ExecutionModel model) {

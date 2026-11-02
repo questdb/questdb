@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.InvalidColumnException;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.engine.functions.constants.Long256Constant;
 import io.questdb.griffin.engine.functions.constants.Long256NullConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
@@ -315,7 +316,7 @@ public class SqlUtil {
      * This records no other column. The parsed model has not resolved its column references, so it
      * cannot tell which table {@code t.a}, or {@code a} in a join, reads. The columns the view reads
      * come from its optimised model instead, see
-     * {@link #collectTableColumnReads(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources)}.
+     * {@link #collectTableColumnReads(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources, ViewCompileRecord, boolean)}.
      *
      * @param engine the engine, which resolves the table names
      * @param model  the parsed SELECT of the view, before optimisation
@@ -336,7 +337,7 @@ public class SqlUtil {
      * column of its tables: the optimiser keeps every column of a sub-query whose columns the query
      * above it does not name, such as the one in {@code SELECT count() FROM (SELECT * FROM x)}, and of
      * the left side of a LATERAL join. Only the optimised model tells, see
-     * {@link #collectTableColumnReads(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources)}.
+     * {@link #collectTableColumnReads(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources, ViewCompileRecord, boolean)}.
      *
      * @param engine          the engine, which resolves the table names
      * @param model           the parsed SELECT of the view, before optimisation
@@ -394,21 +395,32 @@ public class SqlUtil {
      * left side of another. A walk of the optimised SELECT visits a model only along the first path that
      * reaches it, see {@link ViewWildcardSources}.
      *
-     * @param engine          the engine, which resolves the table names
-     * @param model           the SELECT of the view, after optimisation
-     * @param depMap          the dependency map of the view
-     * @param wildcardSources the tables {@link #collectTableAndColumnReferences(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources)}
-     *                        collected from the parsed SELECT, if any, and the state of the walks of
-     *                        the optimised SELECT
+     * @param engine             the engine, which resolves the table names
+     * @param model              the SELECT of the view, after optimisation
+     * @param depMap             the dependency map of the view
+     * @param wildcardSources    the tables {@link #collectTableAndColumnReferences(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources)}
+     *                           collected from the parsed SELECT, if any, and the state of the walks of
+     *                           the optimised SELECT
+     * @param compileRecord      where the walk records the id of each table it scans, or checks it against
+     *                           the one another compile of the same SELECT recorded, see {@link ViewCompileRecord}
+     * @param isRecordingCompile whether the walk records the ids rather than checks them
      */
     public static void collectTableColumnReads(
             @NotNull CairoEngine engine,
             @NotNull IQueryModel model,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> depMap,
-            @NotNull ViewWildcardSources wildcardSources
+            @NotNull ViewWildcardSources wildcardSources,
+            @NotNull ViewCompileRecord compileRecord,
+            boolean isRecordingCompile
     ) {
         wildcardSources.clearReads();
-        collectTableColumnReads(engine, model, depMap, wildcardSources, false);
+        wildcardSources.compileRecord = compileRecord;
+        wildcardSources.isRecordingCompile = isRecordingCompile;
+        try {
+            collectTableColumnReads(engine, model, depMap, wildcardSources, false);
+        } finally {
+            wildcardSources.compileRecord = null;
+        }
         collectKeptWildcardReferences(engine, model, depMap, wildcardSources);
         dropColumnsCoveredByWildcard(depMap);
     }
@@ -2430,7 +2442,8 @@ public class SqlUtil {
 
     // Collects the columns the scan of a table model reads: its top-down columns, which
     // SqlCodeGenerator.buildQueryMetadata() reads, and the timestamp it adds when the plan requires one.
-    // Records the scan in wildcardSources for collectKeptWildcardReferences().
+    // Records the scan in wildcardSources for collectKeptWildcardReferences(), and the table it scans for the
+    // compiles of the same SELECT that have to see the same table, see ViewCompileRecord.
     private static void collectTableScanColumns(
             @NotNull CairoEngine engine,
             @NotNull IQueryModel model,
@@ -2447,12 +2460,12 @@ public class SqlUtil {
         if (tableToken == null) {
             return;
         }
+        wildcardSources.addScan(model, tableToken);
         final LowerCaseCharSequenceHashSet columns = addTableDependency(depMap, tableToken.getTableName());
         final ObjList<QueryColumn> topDownColumns = model.getTopDownColumns();
         for (int i = 0, n = topDownColumns.size(); i < n; i++) {
             columns.add(Chars.toString(topDownColumns.getQuick(i).getName()));
         }
-        wildcardSources.addScan(model);
         if (!isTimestampRequired && !SqlCodeGenerator.joinsRequiringTimestamp[model.getJoinType()]) {
             return;
         }
@@ -2771,6 +2784,103 @@ public class SqlUtil {
     }
 
     /**
+     * What the compile of a view's SELECT that plans it saw, and the compile that collects what a read of
+     * the view naming none of the columns of a sub-query it joins without a key reads has to see the same,
+     * see {@link SqlCompiler#collectUnkeyedJoinDependencies}. The latter takes the values each PIVOT IN
+     * sub-query returned rather than running the sub-queries again, and finds a table of the same name with
+     * another id than the one the plan scans out of date: a table that replaced it would lend its own
+     * columns to the dependencies of the view.
+     */
+    public static final class ViewCompileRecord implements Mutable {
+        private static final int TABLE_ID_CONFLICT = Integer.MIN_VALUE + 1;
+        private static final int TABLE_ID_UNKNOWN = Integer.MIN_VALUE;
+        // per PIVOT IN sub-query, in the order the compile ran them: its position, and the end of its values in
+        // pivotInValues, where the values of the one before it end and its own start
+        private final IntList pivotInPositions = new IntList();
+        private final IntList pivotInValueHis = new IntList();
+        private final ObjList<CharSequence> pivotInValues = new ObjList<>();
+        // the ids of the tables the plan scans, TABLE_ID_CONFLICT for a name it scans with several, and
+        // TABLE_ID_UNKNOWN for a name it does not scan
+        private final LowerCaseCharSequenceIntHashMap tableIds = new LowerCaseCharSequenceIntHashMap(8, 0.5, TABLE_ID_UNKNOWN);
+        // the PIVOT IN sub-query the next one to take values runs as, see takePivotIn()
+        private int pivotInReplayIndex;
+
+        @Override
+        public void clear() {
+            pivotInPositions.clear();
+            pivotInValueHis.clear();
+            pivotInValues.clear();
+            tableIds.clear();
+            pivotInReplayIndex = 0;
+        }
+
+
+        /**
+         * Returns the value at index of the PIVOT IN sub-query takePivotIn() returned, the token a plan of
+         * the sub-query's values uses for it.
+         */
+        CharSequence getPivotInValue(int index) {
+            return pivotInValues.getQuick(index);
+        }
+
+        // the end of the values of the recorded PIVOT IN sub-query at index in pivotInValues
+        int getPivotInValueHi(int pivotInIndex) {
+            return pivotInValueHis.getQuick(pivotInIndex);
+        }
+
+        // the start of the values of the recorded PIVOT IN sub-query at index in pivotInValues
+        int getPivotInValueLo(int pivotInIndex) {
+            return pivotInIndex > 0 ? pivotInValueHis.getQuick(pivotInIndex - 1) : 0;
+        }
+
+        /**
+         * Records the values a PIVOT IN sub-query at the position returned: the tokens of the values from lo to
+         * hi, which a plan of the sub-query's values uses.
+         */
+        void recordPivotIn(int position, ObjList<ExpressionNode> values, int lo, int hi) {
+            for (int i = lo; i < hi; i++) {
+                pivotInValues.add(Chars.toString(values.getQuick(i).token));
+            }
+            pivotInPositions.add(position);
+            pivotInValueHis.add(pivotInValues.size());
+        }
+
+        /**
+         * Returns the index of the recorded PIVOT IN sub-query the next sub-query a compile of the same SELECT
+         * runs corresponds to. Both compiles optimise the SELECT the same way up to the PIVOT IN sub-queries,
+         * so they run them in the same order, at the same positions.
+         */
+        int takePivotIn(int position) {
+            final int index = pivotInReplayIndex++;
+            assert index < pivotInPositions.size() && pivotInPositions.getQuick(index) == position
+                    : "PIVOT IN sub-query at " + position + " out of the order the compile of the same SELECT ran them in";
+            return index;
+        }
+
+        // Finds the table the scan of another compile of the same SELECT reads out of date when the plan scans
+        // a table of the same name with another id, several tables of the name, or none: the compiles saw
+        // different tables. A view the SELECT reads that changed in between the plan finds out of date as it
+        // opens, see StaleViewCheckFactory.
+        private void checkTableId(TableToken tableToken, int tableId) {
+            final int recordedTableId = tableIds.get(tableToken.getTableName());
+            if (recordedTableId != tableId) {
+                throw TableReferenceOutOfDateException.of(tableToken, recordedTableId, tableId, -1, -1);
+            }
+        }
+
+        private void recordTableId(TableToken tableToken, int tableId) {
+            final CharSequence tableName = tableToken.getTableName();
+            final int index = tableIds.keyIndex(tableName);
+            if (index > -1) {
+                tableIds.putAt(index, tableName, tableId);
+            } else if (tableIds.valueAt(index) != tableId) {
+                // the compile scans two tables of the name, of which one at least is not the one the plan scans
+                tableIds.putAt(index, tableName, TABLE_ID_CONFLICT);
+            }
+        }
+    }
+
+    /**
      * The tables a wildcard of a view's SELECT selects through sub-queries, CTEs or views whose SELECT
      * lists name the columns they keep, each with a holder: a model of the parsed FROM clause that holds
      * one of those sub-queries, and with the source of the FROM clause the wildcard selects the table
@@ -2778,7 +2888,7 @@ public class SqlUtil {
      * sub-query a holder holds.
      * {@link #collectTableAndColumnReferences(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources)}
      * fills this from the parsed SELECT, and
-     * {@link #collectTableColumnReads(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources)}
+     * {@link #collectTableColumnReads(CairoEngine, IQueryModel, LowerCaseCharSequenceObjHashMap, ViewWildcardSources, ViewCompileRecord, boolean)}
      * reads it once optimisation has rewritten the SELECT, which keeps the holders and the models of the
      * sources, and records the scans of the optimised SELECT in it, which tell the columns of each table
      * the plan is built on.
@@ -2804,8 +2914,12 @@ public class SqlUtil {
         // timestamp of them, and with the plan requiring one
         private final ObjHashSet<IQueryModel> visitedModels = new ObjHashSet<>();
         private final ObjHashSet<IQueryModel> visitedTimestampModels = new ObjHashSet<>();
+        // where the walk of an optimised SELECT records the tables it scans, or checks them against, while the
+        // walk runs, see collectTableColumnReads()
+        private ViewCompileRecord compileRecord;
         // whether the optimised SELECT joins a sub-query without a key, see isUnkeyedJoinedSubQuery()
         private boolean hasUnkeyedJoinedSubQuery;
+        private boolean isRecordingCompile;
         // the number of times the walks of optimised SELECTs have reached a model, for the tests of their cost
         private long visitCount;
 
@@ -2844,8 +2958,19 @@ public class SqlUtil {
             }
         }
 
-        private void addScan(IQueryModel scan) {
+        private void addScan(IQueryModel scan, TableToken tableToken) {
             scans.add(scan);
+            // A model the optimiser copies from a table model after it read the columns of the table, as LATERAL
+            // decorrelation does, has no table id, and its plan reads the table of the name, see
+            // SqlCodeGenerator.checkTableOfModel().
+            final int tableId = scan.getTableId();
+            if (tableId > -1) {
+                if (isRecordingCompile) {
+                    compileRecord.recordTableId(tableToken, tableId);
+                } else {
+                    compileRecord.checkTableId(tableToken, tableId);
+                }
+            }
         }
 
         // Forgets what the walks of an optimised SELECT recorded, and keeps the tables the walk of the parsed

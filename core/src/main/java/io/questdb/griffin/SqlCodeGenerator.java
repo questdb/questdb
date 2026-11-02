@@ -66,6 +66,7 @@ import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
@@ -1590,6 +1591,22 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return base != null && !base.canPeelForTopK() && (base.supportsPageFrameCursor() || base.supportsFilterStealing());
         }
         return false;
+    }
+
+    // A table that took the name of the one a model was optimised on, even with the same metadata version, has
+    // columns the model does not know of, so the statement compiles again, as it does for a table whose metadata
+    // changed. A model that names no table it enumerated has no table id.
+    private static void checkTableOfModel(IQueryModel model, TableToken tableToken) {
+        final int tableId = model.getTableId();
+        if (tableId > -1 && tableId != tableToken.getTableId()) {
+            throw TableReferenceOutOfDateException.of(
+                    tableToken,
+                    tableId,
+                    tableToken.getTableId(),
+                    model.getMetadataVersion(),
+                    model.getMetadataVersion()
+            );
+        }
     }
 
     private static void coerceRuntimeConstantType(Function func, int type, SqlExecutionContext context, CharSequence message, int pos) throws SqlException {
@@ -10919,6 +10936,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         && tableModel.getLatestBy().size() == 0) {
                     TableToken tableToken = executionContext.getTableTokenIfExists(tableModel.getTableName());
                     if (tableToken != null) {
+                        checkTableOfModel(tableModel, tableToken);
                         try (TableReader reader = executionContext.getReader(tableToken, tableModel.getMetadataVersion())) {
                             TableRecordMetadata tableMeta = reader.getMetadata();
                             int colIdx = SqlUtil.getColumnIndexQuiet(tableMeta, colName);
@@ -12992,6 +13010,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // The live-view layer wraps it in a LiveViewRecordCursorFactory that
         // pins the in-memory tier at cursor-open and routes by seam_ts.
         final TableToken tableToken = executionContext.getTableToken(tableName);
+        checkTableOfModel(model, tableToken);
         RecordCursorFactory result;
         if (model.isUpdate() && !executionContext.isWalApplication() && executionContext.getCairoEngine().isWalTable(tableToken)) {
             // two phase update execution, this is client-side branch. It has to execute against the sequencer metadata
