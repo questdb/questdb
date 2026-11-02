@@ -80,7 +80,13 @@ The level controls how much of the review below actually runs. Lower levels keep
 | **2** | Full Step 2.5, with 2.5b restricted to `public`/`protected` symbols. Run Agent 1 plus at most **four** change-relevant roles from Agents 2-8 and 11-13. Run an independent falsification task for each surviving atomic candidate. |
 | **3** | Full Step 2.5 and the complete admission protocol. Select at most **six** applicable discovery roles from Agents 1-14: Agent 1 always; Agent 9 for changed symbols with out-of-diff callers; Agents 2-8 and 11 only when their domain is touched; Agents 12-14 only for changed tests or a fix claim; Agent 10 only when a distinct adversarial pass is warranted. Depth comes from producer/reachability evidence and independent falsification, not agent count. |
 
-State the chosen level in one line at the start of the review so the user knows what they're getting (e.g., "Reviewing PR #1234 at level 2"). If the level was defaulted, mention that level 3 exists for full review.
+State the chosen level and the model running the review in one line at the start of the review so the user knows what they're getting (e.g., "Reviewing PR #1234 at level 2 with <provider>/<model>, thinking <level>"). Take the model from pi, never from memory: models misstate their own name and version.
+
+```bash
+printf '%s/%s, thinking %s\n' "$PI_PROVIDER" "$PI_MODEL" "$PI_REASONING_LEVEL"
+```
+
+If it prints no model, write `model unknown`. If the level was defaulted, mention that level 3 exists for full review.
 
 ## Spawning review agents in pi
 
@@ -907,6 +913,8 @@ Net impact: Ingestion stalls after ~1k failed commits.
 Evidence: WalLeakTest red at abc123, green at base def456.
 ```
 
+Open the report with the line from "Review level" that names the target, the level and the model.
+
 Structure as:
 
 ### Severity classification (impact-first — severity is the user's consequence, not the finding's category)
@@ -966,7 +974,7 @@ If a behavioral candidate cannot name and execute a supported trigger with one o
 Do not inflate and do not deflate. Filing a real user-visible defect as Moderate is a review failure; so is filing a bounded compile-time micro-cost as Critical. Where two readings are defensible, pick the one you can evidence.
 
 ### Title and description
-Open the report with the Step 2 result: the title, then the body and labels, each `OK` or its problems with the ready-to-paste replacement. In `--range` mode without a PR, write "Skipped: no PR". These are not findings: they skip Step 3b, sit outside the severity rubric and the proportionality budget, and never affect the verdict.
+Follow the opening line with the Step 2 result: the title, then the body and labels, each `OK` or its problems with the ready-to-paste replacement. In `--range` mode without a PR, write "Skipped: no PR". These are not findings: they skip Step 3b, sit outside the severity rubric and the proportionality budget, and never affect the verdict.
 
 ### Blocking
 Findings that hold up this PR, introduced or exposed by it: the Critical findings that Step 3c rates at or above `--block-at`, and those that block by rule. Order them by risk, then by user impact, and number them B1, B2, ... Each must include:
