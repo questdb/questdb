@@ -285,7 +285,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
         hasOpenSpans = false;
         isOpenCollected = false;
         emitCursor = emitMap.getCursor();
-        segmentMap.getRecord().of(emitCursor.getRecord());
+        segmentMap.ofRow(emitCursor.getRecord(), emitMap.getSegmentKey());
     }
 
     private boolean isSharded() {
@@ -336,7 +336,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
             return false;
         }
         emitCursor = emitShards.getQuick(emitShardIndex).getCursor();
-        segmentMap.getRecord().of(emitCursor.getRecord());
+        segmentMap.ofRow(emitCursor.getRecord(), emitMap.getSegmentKey());
         return true;
     }
 
@@ -351,11 +351,13 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
     }
 
     private boolean hasNextSegment() {
+        if (emitCursor != null && emitCursor.hasNext()) {
+            return true;
+        }
         circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         while (true) {
             if (emitCursor != null) {
                 if (emitCursor.hasNext()) {
-                    emitMap.putSegmentKey(emitCursor.getRecord());
                     return true;
                 }
                 if (nextEmitShard()) {
@@ -369,7 +371,7 @@ class AsyncStreamGroupByRecordCursor implements NoRandomAccessRecordCursor {
                     final Record chainRecord = resultRecords.getRecord();
                     final long key = segmentMap.getSegmentKey(chainRecord);
                     if (key != chainLastKey) {
-                        segmentMap.getRecord().of(chainRecord);
+                        segmentMap.ofRow(chainRecord, key);
                         return true;
                     }
                     segmentMap.clear(key);

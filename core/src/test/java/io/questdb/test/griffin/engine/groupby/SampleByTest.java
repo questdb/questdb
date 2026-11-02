@@ -1524,9 +1524,9 @@ public class SampleByTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             symbol\tsum\ttimestamp_floor\tlast_timestamp
-                            a\t0.6390492980774742\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:03:00.000000Z
-                            c\t2.3759005540157383\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:09:00.000000Z
                             b\t1.6749086742799453\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:07:00.000000Z
+                            c\t2.3759005540157383\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:09:00.000000Z
+                            a\t0.6390492980774742\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:03:00.000000Z
                             """);
 
             assertQuery("select symbol, sum(amount), timestamp_floor('1d', timestamp) timestamp, last(timestamp) last_timestamp " +
@@ -1535,9 +1535,9 @@ public class SampleByTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             symbol\tsum\ttimestamp\tlast_timestamp
-                            a\t0.6390492980774742\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:03:00.000000Z
-                            c\t2.3759005540157383\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:09:00.000000Z
                             b\t1.6749086742799453\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:07:00.000000Z
+                            c\t2.3759005540157383\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:09:00.000000Z
+                            a\t0.6390492980774742\t2022-02-24T00:00:00.000000Z\t2022-02-24T00:03:00.000000Z
                             """);
         });
     }

@@ -53,6 +53,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.TestOnly;
@@ -78,7 +79,7 @@ public final class StreamGroupByMap implements QuietCloseable {
     private final RecordSink mergeSink;
     // The most keys a map presizes for, 0 when presizing is off.
     private final long presizeMaxKeys;
-    private final SelectedRecord record;
+    private final SegmentRecord record;
     private final int segmentIndex;
     private final int segmentType;
     private final ObjList<Map> shards = new ObjList<>();
@@ -125,7 +126,6 @@ public final class StreamGroupByMap implements QuietCloseable {
         try {
             mapKeyTypes = new ArrayColumnTypes();
             mapValueTypes = new ArrayColumnTypes().addAll(valueTypes);
-            mapValueTypes.add(segmentType);
             final ListColumnFilter inputColumns = new ListColumnFilter();
             final ObjList<Function> inputFunctions = new ObjList<>();
             columnCrossIndex = new IntList();
@@ -134,9 +134,9 @@ public final class StreamGroupByMap implements QuietCloseable {
             }
             for (int i = 0, n = keyTypes.getColumnCount(); i < n; i++) {
                 if (i == streamKeyIndex) {
-                    columnCrossIndex.add(segmentIndex);
+                    columnCrossIndex.add(0);
                 } else {
-                    columnCrossIndex.add(segmentIndex + 1 + mapKeyTypes.getColumnCount());
+                    columnCrossIndex.add(segmentIndex + mapKeyTypes.getColumnCount());
                     mapKeyTypes.add(keyTypes.getColumnType(i));
                     if (i < columnFilter.getColumnCount()) {
                         inputColumns.add(columnFilter.getColumnIndex(i));
@@ -145,13 +145,14 @@ public final class StreamGroupByMap implements QuietCloseable {
                     }
                 }
             }
-            stateTypes = new ArrayColumnTypes().addAll(mapValueTypes).addAll(mapKeyTypes);
-            final ListColumnFilter stateColumns = new ListColumnFilter();
+            final ArrayColumnTypes rowTypes = new ArrayColumnTypes().addAll(mapValueTypes).addAll(mapKeyTypes);
+            stateTypes = new ArrayColumnTypes().addAll(rowTypes).add(segmentType);
+            final ListColumnFilter rowColumns = new ListColumnFilter();
             final ListColumnFilter mergeColumns = new ListColumnFilter();
             final ListColumnFilter valueColumns = new ListColumnFilter();
-            for (int i = 0, n = stateTypes.getColumnCount(); i < n; i++) {
-                stateColumns.add(i + 1);
-                if (i <= segmentIndex) {
+            for (int i = 0, n = rowTypes.getColumnCount(); i < n; i++) {
+                rowColumns.add(i + 1);
+                if (i < segmentIndex) {
                     valueColumns.add(i + 1);
                 } else {
                     mergeColumns.add(i + 1);
@@ -159,10 +160,10 @@ public final class StreamGroupByMap implements QuietCloseable {
             }
             inputSink = RecordSinkFactory.getInstance(configuration, asm, baseTypes, inputColumns, inputFunctions, null);
             mergeSink = RecordSinkFactory.getInstance(configuration, asm, stateTypes, mergeColumns);
-            stateSink = RecordSinkFactory.getInstance(configuration, asm, stateTypes, stateColumns);
+            stateSink = RecordSinkFactory.getInstance(configuration, asm, rowTypes, rowColumns);
             valueSink = RecordValueSinkFactory.getInstance(asm, stateTypes, valueColumns);
             value = new FlyweightPackedMapValue(mapValueTypes);
-            record = new SelectedRecord(columnCrossIndex);
+            record = new SegmentRecord(columnCrossIndex, segmentIndex + streamKeyIndex);
             map = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, 1, configuration.getSqlSmallMapPageSize(), true, false);
             mergeMemory = new DirectLongList((value.getSizeInBytes() + 7) / 8, MemoryTag.NATIVE_FAST_MAP, true);
             batchRows = new DirectLongList(batchSize, MemoryTag.NATIVE_FAST_MAP, true);
@@ -192,7 +193,7 @@ public final class StreamGroupByMap implements QuietCloseable {
         valueSink = prototype.valueSink;
         try {
             value = new FlyweightPackedMapValue(mapValueTypes);
-            record = new SelectedRecord(columnCrossIndex);
+            record = new SegmentRecord(columnCrossIndex, prototype.record.keyColumn);
             map = MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, 1, configuration.getSqlSmallMapPageSize(), true, false);
             mergeMemory = new DirectLongList((value.getSizeInBytes() + 7) / 8, MemoryTag.NATIVE_FAST_MAP, true);
             batchRows = new DirectLongList(batchSize, MemoryTag.NATIVE_FAST_MAP, true);
@@ -219,9 +220,13 @@ public final class StreamGroupByMap implements QuietCloseable {
         final MapRecord record = cursor.getRecord();
         while (cursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-            GroupByUtils.setStreamGroupByKey(record.getValue(), segmentIndex, segmentType, segmentKey);
             previous = chain.beginRecord(previous);
             stateSink.copy(record, chain);
+            if (segmentType == ColumnType.INT) {
+                chain.putInt(segmentKey == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) segmentKey);
+            } else {
+                chain.putLong(segmentKey);
+            }
         }
         return previous;
     }
@@ -277,7 +282,7 @@ public final class StreamGroupByMap implements QuietCloseable {
 
     public MapRecordCursor getCursor() {
         final MapRecordCursor cursor = map.getCursor();
-        record.of(cursor.getRecord());
+        record.of(cursor.getRecord(), segmentKey);
         return cursor;
     }
 
@@ -290,8 +295,13 @@ public final class StreamGroupByMap implements QuietCloseable {
         return record;
     }
 
+    public long getSegmentKey() {
+        return segmentKey;
+    }
+
     public long getSegmentKey(Record record) {
-        return segmentType == ColumnType.INT ? record.getInt(segmentIndex) : record.getLong(segmentIndex);
+        final int column = stateTypes.getColumnCount() - 1;
+        return segmentType == ColumnType.INT ? record.getInt(column) : record.getLong(column);
     }
 
     public ObjList<Map> getShards() {
@@ -353,8 +363,8 @@ public final class StreamGroupByMap implements QuietCloseable {
         return MapFactory.createUnorderedMap(configuration, mapKeyTypes, mapValueTypes, false, false);
     }
 
-    public void putSegmentKey(MapRecord record) {
-        GroupByUtils.setStreamGroupByKey(record.getValue(), segmentIndex, segmentType, segmentKey);
+    public void ofRow(Record row, long segmentKey) {
+        record.of(row, segmentKey);
     }
 
     // Called before a merge frees the shards.
@@ -409,7 +419,6 @@ public final class StreamGroupByMap implements QuietCloseable {
         final MapValue value = key.createValue();
         if (value.isNew()) {
             updater.updateNew(value, record, rowId);
-            GroupByUtils.setStreamGroupByKey(value, segmentIndex, segmentType, segmentKey);
         } else {
             updater.updateExisting(value, record, rowId);
         }
@@ -472,7 +481,6 @@ public final class StreamGroupByMap implements QuietCloseable {
             final MapValue value = key.createValue(hashCode);
             if (value.isNew()) {
                 updater.updateNew(value, record, baseRowId + rowIndex);
-                GroupByUtils.setStreamGroupByKey(value, segmentIndex, segmentType, segmentKey);
             } else {
                 updater.updateExisting(value, record, baseRowId + rowIndex);
             }
@@ -484,5 +492,39 @@ public final class StreamGroupByMap implements QuietCloseable {
             shards.getQuick(i).close();
         }
         isSharded = false;
+    }
+
+    // Rows hold the values and the other keys; the stream key of every row of a segment comes from the segment.
+    private static final class SegmentRecord extends SelectedRecord {
+        private final int keyColumn;
+        private long segmentKey;
+
+        private SegmentRecord(IntList columnCrossIndex, int keyColumn) {
+            super(columnCrossIndex);
+            this.keyColumn = keyColumn;
+        }
+
+        @Override
+        public int getInt(int col) {
+            if (col == keyColumn) {
+                return segmentKey == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) segmentKey;
+            }
+            return super.getInt(col);
+        }
+
+        @Override
+        public long getLong(int col) {
+            return col == keyColumn ? segmentKey : super.getLong(col);
+        }
+
+        @Override
+        public long getTimestamp(int col) {
+            return col == keyColumn ? segmentKey : super.getTimestamp(col);
+        }
+
+        private void of(Record base, long segmentKey) {
+            of(base);
+            this.segmentKey = segmentKey;
+        }
     }
 }

@@ -304,10 +304,10 @@ public class StreamGroupByRecordCursorFactory extends AbstractRecordCursorFactor
         }
 
         private boolean hasNextSegment() {
-            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (mapCursor != null && mapCursor.hasNext()) {
                 return true;
             }
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (done) {
                 return false;
             }

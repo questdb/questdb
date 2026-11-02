@@ -304,6 +304,67 @@ public class StreamGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntStreamKeySpansFrameSegments() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2015-01-01', 8_640_000_000_000L) ts, x v, "
+                    + "('s' || (x % 3))::symbol sym FROM long_sequence(40)) TIMESTAMP(ts)", context);
+            engine.execute("CREATE TABLE hash_input (ts timestamp, v long, sym symbol)", context);
+            engine.execute("INSERT INTO hash_input SELECT * FROM trades", context);
+            assertMatchesHash(compiler, context, "SELECT year(ts) bucket, count(*), sum(v), first(v), last(v) FROM $table ORDER BY bucket");
+            assertMatchesHash(compiler, context, "SELECT year(ts) bucket, sym, count(*), sum(v) FROM $table ORDER BY bucket, sym");
+        });
+    }
+
+    @Test
+    public void testLargeBucketEmitsWithoutPerRowBreakerChecks() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE big AS (SELECT (x - 1)::timestamp ts, (x - 1)::int k FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            final SqlExecutionContextImpl impl = (SqlExecutionContextImpl) context;
+            final SqlExecutionCircuitBreaker breaker = impl.getCircuitBreaker();
+            final CountingSqlExecutionCircuitBreaker counting = new CountingSqlExecutionCircuitBreaker(breaker);
+            impl.with(counting);
+            try (
+                    RecordCursorFactory factory = compiler.compile("SELECT timestamp_floor('1h', ts) ts, k, count() c FROM big", context).getRecordCursorFactory();
+                    RecordCursor cursor = factory.getCursor(context)
+            ) {
+                Assert.assertTrue(cursor.hasNext());
+                final long checks = counting.getCheckCount();
+                long rows = 1;
+                while (cursor.hasNext()) {
+                    rows++;
+                }
+                Assert.assertEquals(100_000, rows);
+                Assert.assertTrue("breaker checks while emitting: " + (counting.getCheckCount() - checks), counting.getCheckCount() - checks < 1_000);
+            } finally {
+                impl.with(breaker);
+            }
+        });
+    }
+
+    @Test
+    public void testLargeBucketFitsMemoryLimit() throws Exception {
+        // One thread aggregates the bucket only when frames do not spread over workers.
+        Assume.assumeTrue(!parallel || workers == 0);
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE big AS (SELECT (x - 1)::timestamp ts, (x - 1)::int k, x v FROM long_sequence(100_000)) TIMESTAMP(ts) PARTITION BY DAY", context);
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, (parallel ? 7L : 9L) << 20);
+            try {
+                assertQuery("SELECT count() n, sum(c) c, sum(s) s, min(ts) lo, max(ts) hi FROM (SELECT timestamp_floor('1h', ts) ts, k, count() c, sum(v) s FROM big)")
+                        .withEngine(engine).withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                n\tc\ts\tlo\thi
+                                100000\t100000\t5000050000\t1970-01-01T00:00:00.000000Z\t1970-01-01T00:00:00.000000Z
+                                """);
+            } finally {
+                setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+            }
+        });
+    }
+
+    @Test
     public void testStreamGroupByDisabled() throws Exception {
         run((engine, compiler, context) -> {
             createTable(compiler, context);

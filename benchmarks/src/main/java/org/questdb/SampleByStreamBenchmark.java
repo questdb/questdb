@@ -86,7 +86,7 @@ public class SampleByStreamBenchmark {
     public String timeZone;
     @Param({"0", "4"})
     public int workers;
-    @Param({"basic", "count", "double", "stats", "decimal", "first_last", "distinct_byte", "expression", "filtered", "filtered_desc", "hash_filtered", "keyed", "keyed_double", "keyed_filtered", "keyed_string", "keyed_multi", "keyed_distinct_byte"})
+    @Param({"basic", "count", "double", "stats", "decimal", "first_last", "distinct_byte", "expression", "filtered", "filtered_desc", "hash_filtered", "keyed", "keyed_double", "keyed_filtered", "keyed_string", "keyed_multi", "keyed_distinct_byte", "keyed_unique"})
     public String workload;
     private int[] columnTypes;
     private SqlCompiler compiler;
@@ -151,7 +151,7 @@ public class SampleByStreamBenchmark {
             engine.execute("create table trades as (select "
                     + timestamp + " ts, "
                     + v + " v, " + d + " d, (x % " + symbolCount + ")::symbol sym, "
-                    + v + "::decimal(18,2) price from long_sequence(" + rowCount + ")) "
+                    + v + "::decimal(18,2) price, x::int id from long_sequence(" + rowCount + ")) "
                     + "timestamp(ts) partition by day", context);
             if ("parquet".equals(dataFormat)) {
                 engine.execute("alter table trades convert partition to parquet where ts >= 0", context);
@@ -172,6 +172,7 @@ public class SampleByStreamBenchmark {
                 case "keyed_string" -> "sym::varchar name, count(*), sum(v), avg(d)";
                 case "keyed_multi" -> "sym, v % 7 k, count(*), sum(v), avg(d)";
                 case "keyed_distinct_byte" -> "sym, count_distinct(v::byte), approx_count_distinct(v::byte), count(*)";
+                case "keyed_unique" -> "id, count(*), sum(v)";
                 default -> throw new IllegalArgumentException("unknown workload: " + workload);
             };
             final boolean isHashControl = "hash_filtered".equals(workload);

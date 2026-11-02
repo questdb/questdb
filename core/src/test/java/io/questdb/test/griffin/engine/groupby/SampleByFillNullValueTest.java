@@ -617,8 +617,8 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             \ta\tnull
                             \ta\tnull
                             \tb\tnull
-                            2024-01-01T03:00:00.000000Z\ta\t3.0
                             2024-01-01T03:30:00.000000Z\tb\t4.0
+                            2024-01-01T03:00:00.000000Z\ta\t3.0
                             """);
         });
     }
