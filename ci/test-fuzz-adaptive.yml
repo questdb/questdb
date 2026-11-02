@@ -1,11 +1,10 @@
-# Temporary soak-fuzz pipeline for the nw_adaptive_commit branch (PR #7411).
+# Soak-fuzz pipeline for the adaptive commit mode (PR #7411), scheduled on master.
 #
 # This file backs its own ADO definition, separate from Fuzz Tests
 # (definition 25, ci/test-fuzz.yml), so the soak runs register under a
 # different pipeline name and stay out of the builds channel subscription.
-# One-time setup in ADO: create a new pipeline from this file (suggested
-# name: Adaptive Commit Fuzz) with default branch nw_adaptive_commit, and
-# do not subscribe it to the builds channel.
+# ADO setup: the pipeline is named Adaptive Commit Fuzz, its default branch
+# is master, and it is not subscribed to the builds channel.
 #
 # Failures alert through the Slack webhook in the
 # TMP_ADAPTIVE_COMMIT_ALERT_WEBHOOK secret variable instead. Set it in the
@@ -29,8 +28,7 @@
 # fuzz suite ~12 min. Hence a ~10m first pass plus roughly two loop iterations inside the hour.
 #
 # A full-suite pass still runs once nightly, sharded into separate JVMs so a long/OOM-prone sweep cannot
-# poison the rest of the suite. Delete this file after the squash-merge; the branch deletion leaves the
-# definition with nothing to schedule.
+# poison the rest of the suite.
 #
 # The soak cron deliberately skips 00:00-01:59 so the 01:00 nightly gets the pool to itself: the pool runs
 # one agent at a time, so a soak queued mid-nightly does not just delay itself, it wedges between two nightly
@@ -124,13 +122,13 @@ schedules:
     displayName: Run continuous soak (outside nightly window)
     branches:
       include:
-        - nw_adaptive_commit
+        - master
     always: true
   - cron: "0 1 * * *"
     displayName: Run adaptive crash nightly
     branches:
       include:
-        - nw_adaptive_commit
+        - master
     always: true
   # The durability battery. Live since build 270631, which ran the whole battery green on
   # this agent: controls t06/t07/t10 passed, then all three arms returned verdicts
@@ -156,7 +154,7 @@ schedules:
     displayName: Run durability sweep
     branches:
       include:
-        - nw_adaptive_commit
+        - master
     always: true
 
 variables:
