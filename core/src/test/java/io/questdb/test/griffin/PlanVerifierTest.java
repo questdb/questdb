@@ -60,6 +60,7 @@ import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
+import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -1344,6 +1345,45 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 Assert.assertEquals(WindowJoinStep.Algorithm.SERIAL, step.getAlgorithm());
                 step.setAlgorithm(WindowJoinStep.Algorithm.PARALLEL);
             }, PlanVerifier.WINDOW_JOIN_ALGORITHM);
+        });
+    }
+
+    @Test
+    public void testWindowJoinNullExtensionContradictsFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String sql = "SELECT a.ts, %s FROM a WINDOW JOIN a b ON (%s) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW";
+            final Object[][] cases = {
+                    {"sum(b.x)", "1 = 0", WindowJoinStep.NullExtension.NULL_PADDING, WindowJoinStep.NullExtension.EMPTY_VALUES},
+                    {"sum(b.x), count()", "1 = 0", WindowJoinStep.NullExtension.EMPTY_VALUES, WindowJoinStep.NullExtension.NULL_PADDING},
+                    {"sum(b.x)", "b.x > 0", WindowJoinStep.NullExtension.NONE, WindowJoinStep.NullExtension.NULL_PADDING},
+                    {"sum(b.x)", "1 = 0", WindowJoinStep.NullExtension.NULL_PADDING, WindowJoinStep.NullExtension.NONE}
+            };
+            for (Object[] c : cases) {
+                assertAlgorithmContradicts(sql.formatted(c[0], c[1]), WindowJoinPlan.class, join -> {
+                    final WindowJoinStep step = join.getSteps().getQuick(0);
+                    Assert.assertEquals(c[2], step.getNullExtension());
+                    step.setNullExtension((WindowJoinStep.NullExtension) c[3]);
+                }, PlanVerifier.WINDOW_JOIN_ALGORITHM);
+            }
+        });
+    }
+
+    @Test
+    public void testWindowOrderNotDelivered() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE grouped (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertAlgorithmContradicts("SELECT ts, x, sum(x) OVER (ORDER BY x ROWS UNBOUNDED PRECEDING) s FROM grouped", WindowPlan.class, window -> {
+                final WindowSpec spec = window.getSpecs().getQuick(0);
+                Assert.assertFalse(spec.isOrderDelivered());
+                spec.setOrderDelivered(true);
+                window.setAlgorithm(WindowPlan.Algorithm.STREAMING);
+            }, PlanVerifier.WINDOW_ORDER);
+            assertAlgorithmContradicts("SELECT ts, x, sum(x) OVER (ORDER BY ts) s FROM grouped", WindowPlan.class, window -> {
+                final WindowSpec spec = window.getSpecs().getQuick(0);
+                Assert.assertTrue(spec.isOrderDelivered());
+                spec.getOrderByDirections().setQuick(0, SortDirection.DESCENDING);
+            }, PlanVerifier.WINDOW_ORDER);
         });
     }
 

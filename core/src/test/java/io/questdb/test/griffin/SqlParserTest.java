@@ -3410,6 +3410,35 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testCreateMatViewPeriodLengthErrorOrder() throws Exception {
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 25h time zone 'foobar' delay 30h)",
+                55,
+                "maximum supported length interval is 24 hours: 25h"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1h time zone 'foobar' delay 2h)",
+                68,
+                "invalid timezone: foobar"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 25h time zone 'Europe/Sofia' delay 1x)",
+                90,
+                "Invalid unit: 1x"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 1h time zone 'foobar' delay 1x)",
+                83,
+                "Invalid unit: 1x"
+        );
+        assertSyntaxError(
+                "create materialized view myview refresh period (length 25h time zone 'Europe/Sofia'",
+                83,
+                "'delay' or ')' expected"
+        );
+    }
+
+    @Test
     public void testCreateMatViewsWithInvalidColumnNameShouldFail() throws Exception {
         TableModel model = new TableModel(configuration, "tab", PartitionBy.DAY)
                 .timestamp()

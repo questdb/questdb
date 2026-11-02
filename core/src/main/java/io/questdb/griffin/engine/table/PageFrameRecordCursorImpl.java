@@ -178,20 +178,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             }
             PageFrame frame;
             while ((frame = frameCursor.next()) != null) {
-                // Consult the breaker once per page frame, so a long multi-frame scan stays cancellable.
-                // Use the time-throttled variant rather than the count-throttled statefulThrowExceptionIfTripped()
-                // (whose 2M-consultation window would skip ~2M frames between real checks, disabling mid-scan
-                // cancellation for any realistic table) and rather than the un-throttled variant (which would
-                // perform a recv() connection probe on every frame). A nested-loop/cross join re-scans this
-                // cursor once per master row, so an un-throttled per-frame probe becomes ~one syscall per
-                // master row. The time-throttled variant still checks cancellation/timeout every frame (cheap)
-                // while bounding the connection probe to once per wall-clock window for the whole query.
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-                frameAddressCache.add(frameCount, frame);
+                final int frameIndex = addFrame(frame);
                 final long remaining = maxRowsAfterSkip - rowsProducedSinceSkip;
                 final long frameSize = frame.getPartitionHi() - frame.getPartitionLo();
                 final int inFrameHi = (int) Math.min(Math.min(frameSize, remaining), Integer.MAX_VALUE);
-                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameCount++, inFrameHi);
+                final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex, inFrameHi);
                 rowCursor = Misc.free(rowCursor);
                 rowCursor = rowCursorFactory.getCursor(frame, frameMemory);
                 if (rowCursor.hasNext()) {
@@ -460,6 +451,21 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
             );
             case NONE -> throw new UnsupportedOperationException();
         };
+    }
+
+    /**
+     * Caches the addresses of the page frame under the next frame index of the walk and returns that index, once the
+     * circuit breaker lets the walk go on. The breaker is consulted once per page frame, so that a walk of many page
+     * frames stays cancellable, through its time-throttled check: the count-throttled one would skip about two million
+     * page frames between real checks, and the un-throttled one would probe the connection with a recv() per page
+     * frame, which a nested-loop or cross join that walks this cursor once per master row turns into a syscall per
+     * master row. The time-throttled check reads the cancellation and the timeout every page frame and probes the
+     * connection once per wall-clock window of the query.
+     */
+    protected final int addFrame(PageFrame frame) {
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+        frameAddressCache.add(frameCount, frame);
+        return frameCount++;
     }
 
     protected final void dropSkipWalkFrames() {

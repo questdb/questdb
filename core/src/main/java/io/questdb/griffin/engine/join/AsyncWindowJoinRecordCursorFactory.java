@@ -56,7 +56,6 @@ import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByLongList;
 import io.questdb.griffin.engine.table.AsyncFilter;
 import io.questdb.griffin.engine.table.AsyncFilterResources;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
@@ -74,8 +73,6 @@ import org.jetbrains.annotations.TestOnly;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
 /**
  * Multi-threaded WINDOW JOIN factory for general join conditions.
@@ -1600,7 +1597,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         try {
-            final long filteredRowCount = applyMasterFilter(record, task, atom, slotId, frameRowCount);
+            final long filteredRowCount = applyMasterFilter(record, task, atom, slotId);
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final DirectLongList rows = task.getFilteredRows();
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
@@ -1719,7 +1716,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         try {
-            final long filteredRowCount = applyMasterFilter(record, task, atom, slotId, frameRowCount);
+            final long filteredRowCount = applyMasterFilter(record, task, atom, slotId);
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final DirectLongList rows = task.getFilteredRows();
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
@@ -1868,7 +1865,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         try {
-            final long filteredRowCount = applyMasterFilter(record, task, atom, slotId, frameRowCount);
+            final long filteredRowCount = applyMasterFilter(record, task, atom, slotId);
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final DirectLongList rows = task.getFilteredRows();
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
@@ -2014,7 +2011,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         try {
-            final long filteredRowCount = applyMasterFilter(record, task, atom, slotId, frameRowCount);
+            final long filteredRowCount = applyMasterFilter(record, task, atom, slotId);
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final DirectLongList rows = task.getFilteredRows();
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
@@ -2247,7 +2244,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         try {
-            final long filteredRowCount = applyMasterFilter(record, task, atom, slotId, frameRowCount);
+            final long filteredRowCount = applyMasterFilter(record, task, atom, slotId);
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final DirectLongList rows = task.getFilteredRows();
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
@@ -2374,7 +2371,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         try {
-            final long filteredRowCount = applyMasterFilter(record, task, atom, slotId, frameRowCount);
+            final long filteredRowCount = applyMasterFilter(record, task, atom, slotId);
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final DirectLongList rows = task.getFilteredRows();
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
@@ -2500,7 +2497,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         try {
-            final long filteredRowCount = applyMasterFilter(record, task, atom, slotId, frameRowCount);
+            final long filteredRowCount = applyMasterFilter(record, task, atom, slotId);
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final DirectLongList rows = task.getFilteredRows();
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
@@ -2615,7 +2612,7 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
         final boolean owner = stealingFrameSequence != null && stealingFrameSequence == task.getFrameSequence();
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         try {
-            final long filteredRowCount = applyMasterFilter(record, task, atom, slotId, frameRowCount);
+            final long filteredRowCount = applyMasterFilter(record, task, atom, slotId);
             if (filteredRowCount > 0 && !atom.isSkipAggregation()) {
                 final DirectLongList rows = task.getFilteredRows();
                 final int masterTimestampIndex = atom.getMasterTimestampIndex();
@@ -2832,35 +2829,20 @@ public class AsyncWindowJoinRecordCursorFactory extends AbstractRecordCursorFact
             @NotNull PageFrameMemoryRecord record,
             @NotNull PageFrameReduceTask task,
             @NotNull AsyncWindowJoinAtom atom,
-            int slotId,
-            long frameRowCount
+            int slotId
     ) {
-        final DirectLongList rows = task.getFilteredRows();
-        rows.clear();
         final AsyncFilter masterFilter = atom.getMasterFilter();
-        final boolean isParquetFrame = task.isParquetFrame();
-        final boolean isLateMaterialization = masterFilter.shouldUseLateMaterialization(slotId, isParquetFrame, false);
+        final boolean isLateMaterialization = masterFilter.shouldUseLateMaterialization(slotId, task.isParquetFrame(), false);
         final PageFrameMemory frameMemory = isLateMaterialization
                 ? task.populateFrameMemory(masterFilter.getFilterUsedColumnIndexes())
                 : task.populateFrameMemory();
         record.init(frameMemory);
 
-        final CompiledFilter compiledFilter = masterFilter.getCompiledFilter();
-        if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
-            applyFilter(masterFilter.getFilter(slotId), rows, record, frameRowCount);
-        } else {
-            applyCompiledFilter(compiledFilter, masterFilter.getBindVarMemory(), masterFilter.getBindVarFunctions(), task);
-        }
-
-        final long filteredRowCount = rows.size();
-        task.setFilteredRowCount(filteredRowCount);
-        if (isParquetFrame) {
-            masterFilter.getSelectivityStats(slotId).update(filteredRowCount, frameRowCount);
-        }
+        final long filteredRowCount = masterFilter.filterFrame(slotId, record, task);
         if (isLateMaterialization
                 && filteredRowCount > 0
                 && !atom.isSkipAggregation()
-                && task.populateRemainingColumns(masterFilter.getFilterUsedColumnIndexes(), rows, true)) {
+                && task.populateRemainingColumns(masterFilter.getFilterUsedColumnIndexes(), task.getFilteredRows(), true)) {
             record.init(frameMemory);
         }
         return filteredRowCount;

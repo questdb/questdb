@@ -58,7 +58,6 @@ import io.questdb.griffin.engine.join.IntHashJoinBuild;
 import io.questdb.griffin.engine.join.MapHashJoinBuild;
 import io.questdb.griffin.engine.join.SymbolKeyTranslatingRecord;
 import io.questdb.griffin.engine.join.SymbolKeyTranslator;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -939,30 +938,13 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
 
     /**
      * Leaves in {@code rows} the rows of the frame that the build's WHERE filter and ON filter
-     * both pass, evaluated on the slot's own copies of them. The compiled filter reads raw column
-     * addresses, so column tops and Parquet type casts, which the record resolves per row, fall
-     * back to the interpreted filter.
+     * both pass, evaluated on the slot's own copies of them.
      */
     private void filterBuildFrame(int slotId, PageFrameMemory frameMemory, PageFrameMemoryRecord record, long rowCount, DirectLongList rows) {
         rows.clear();
         final Function filter = buildFilterContext.getFilter(slotId);
         if (filter != null) {
-            final CompiledFilter compiledFilter = buildFilterContext.getCompiledFilter();
-            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
-                AsyncFilterUtils.applyFilter(filter, rows, record, rowCount);
-            } else {
-                AsyncFilterUtils.applyCompiledFilter(
-                        compiledFilter,
-                        buildFilterContext.getBindVarMemory(),
-                        buildFilterContext.getBindVarFunctions(),
-                        frameMemory,
-                        buildFrames.getAddressCache(),
-                        buildFilterContext.getDataAddresses(slotId),
-                        buildFilterContext.getAuxAddresses(slotId),
-                        rows,
-                        rowCount
-                );
-            }
+            buildFilterContext.filterFrame(slotId, frameMemory, record, buildFrames.getAddressCache(), rowCount);
         }
         final Function onFilter = buildOnFilter.get(slotId);
         if (onFilter != null) {

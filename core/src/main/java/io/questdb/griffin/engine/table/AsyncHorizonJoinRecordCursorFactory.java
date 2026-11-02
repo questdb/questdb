@@ -59,7 +59,6 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
@@ -72,8 +71,6 @@ import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
 /**
  * Factory for parallel horizon join query execution.
@@ -343,35 +340,12 @@ public class AsyncHorizonJoinRecordCursorFactory extends AbstractRecordCursorFac
             final RecordSink groupByMapSink = atom.getMapSink(slotId);
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
             final HorizonJoinRecord horizonJoinRecord = atom.getHorizonJoinRecord(slotId);
-            final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
-            final Function filter = filterCtx.getFilter(slotId);
 
             // Apply filter to master rows
             final DirectLongList rows = filterCtx.getFilteredRows(slotId);
-            rows.clear();
-            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
-                applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                applyCompiledFilter(
-                        compiledFilter,
-                        filterCtx.getBindVarMemory(),
-                        filterCtx.getBindVarFunctions(),
-                        frameMemory,
-                        addressCache,
-                        filterCtx.getDataAddresses(slotId),
-                        filterCtx.getAuxAddresses(slotId),
-                        rows,
-                        frameRowCount
-                );
-            }
-
-            final long filteredRowCount = rows.size();
+            final long filteredRowCount = filterCtx.filterFrame(slotId, frameMemory, record, addressCache, frameRowCount);
             if (filteredRowCount == 0) {
                 return;
-            }
-
-            if (isParquetFrame) {
-                filterCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
             }
 
             if (useLateMaterialization && frameMemory.populateRemainingColumns(filterCtx.getFilterUsedColumnIndexes(), rows, false)) {

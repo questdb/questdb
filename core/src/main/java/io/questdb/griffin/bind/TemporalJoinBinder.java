@@ -1028,7 +1028,9 @@ final class TemporalJoinBinder {
             }
         }
         for (int s = 0, m = plan.getSteps().size(); s < m; s++) {
-            validateWindowJoinStep(plan.getSteps().getQuick(s), masterOutput);
+            final WindowJoinStep step = plan.getSteps().getQuick(s);
+            step.setNullExtension(WindowJoinStep.NullExtension.of(step.getFilter(), step.getAggregates()));
+            validateWindowJoinStep(step, masterOutput);
         }
         return plan;
     }

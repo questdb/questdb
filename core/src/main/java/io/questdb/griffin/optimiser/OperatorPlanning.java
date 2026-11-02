@@ -187,7 +187,7 @@ final class OperatorPlanning implements Mutable {
                     return hasScanFilter(scan);
                 }
                 case WindowJoinPlan windowJoin -> {
-                    if (!windowJoin.isMasterPassedThrough()) {
+                    if (windowJoin.getNullExtension() == WindowJoinStep.NullExtension.NONE) {
                         return false;
                     }
                     plan = windowJoin.getMaster();
@@ -718,14 +718,16 @@ final class OperatorPlanning implements Mutable {
             step.setBuildSide(JoinInput.BuildSide.SMALLER);
             return;
         }
-        final long masterFloor = context.rowFloor(master);
-        final long slaveFloor = context.rowFloor(slave);
+        final ScanPlan masterScan = PhysicalProperties.rowCountScan(master);
+        final ScanPlan slaveScan = PhysicalProperties.rowCountScan(slave);
+        final long masterFloor = context.rowFloor(master, masterScan);
+        final long slaveFloor = context.rowFloor(slave, slaveScan);
         if (isNeverLarger(slave, slaveRows, master, masterFloor)) {
             step.setBuildSide(JoinInput.BuildSide.SLAVE);
-            keepBuildSide(slave, slaveRows, master, PhysicalProperties.rowCountScan(master), masterFloor);
+            keepBuildSide(slave, slaveRows, master, masterScan, masterFloor);
         } else if (isNeverLarger(master, masterRows, slave, slaveFloor) && isRandomAccess(master)) {
             step.setBuildSide(JoinInput.BuildSide.MASTER);
-            keepBuildSide(master, masterRows, slave, PhysicalProperties.rowCountScan(slave), slaveFloor);
+            keepBuildSide(master, masterRows, slave, slaveScan, slaveFloor);
         } else {
             step.setBuildSide(JoinInput.BuildSide.SMALLER);
         }
@@ -1113,7 +1115,8 @@ final class OperatorPlanning implements Mutable {
      * A step joins in parallel when it reads the page frames of the master, or steals the master's parallel filter,
      * its aggregate functions support parallelism and its slave serves time frames. A step whose filter is constant
      * false null-extends the master instead, keeping its page frames for the next step when it pads with NULL, see
-     * {@link WindowJoinStep#isNullPadding}; a step that joins leaves neither page frames nor a filter to the next.
+     * {@link WindowJoinStep.NullExtension#NULL_PADDING}; a step that joins leaves neither page frames nor a filter to the
+     * next.
      */
     private void planWindowJoin(WindowJoinPlan windowJoin) throws SqlException {
         final LogicalPlan master = windowJoin.getMaster();
@@ -1129,8 +1132,8 @@ final class OperatorPlanning implements Mutable {
             final WindowJoinStep step = windowJoin.getSteps().getQuick(i);
             validateTimeSeriesOrders(master, step.getSlave(), step.getPosition());
             validateTimestampAggregates(step.getAggregates(), step.getScope(), masterTimestampIndex, false);
-            if (step.isNullExtending()) {
-                hasPageFrames &= step.isNullPadding();
+            if (step.getNullExtension() != WindowJoinStep.NullExtension.NONE) {
+                hasPageFrames &= step.getNullExtension() == WindowJoinStep.NullExtension.NULL_PADDING;
                 isFilterStolen = false;
                 continue;
             }
@@ -1643,15 +1646,16 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * Keeps a choice to hash {@code built}, bounded by {@code builtRows} rows, and probe it with {@code probe}, of
-     * {@code probeRows} rows, no fewer, that the row count of the table {@code probeScan} reads gives, null when none
-     * does. The choice holds while the hashed input holds at most twice the rows of the other one. The scan whose table
-     * bounds the hashed input, see {@link PhysicalProperties#rowBoundScan}, and {@code probeScan} keep the row counts
-     * that guarantee it: the probed one at least half its rows and at least the square root of half the product of the
-     * two, and the hashed one at most twice that, so it may grow to at least the rows of the probed one. A cursor open
-     * past them compiles the statement again, and a compile at the same row counts keeps them. Inputs whose rows one
-     * table gives record none when the LIMITs of the hashed one allow no more rows than those of the other, see
-     * {@link PhysicalProperties#rowBoundLimit}, as its row bound then never exceeds the other's.
+     * Keeps a choice to hash {@code built}, bounded by {@code builtRows} rows, and probe it with {@code probe}, which the
+     * choice takes to hold {@code probeRows} rows: the row count of the table {@code probeScan} reads, capped by the
+     * LIMITs of constant bounds along the way, see {@link PhysicalProperties#rowBoundLimit}, and 0 when no table gives
+     * them, {@code probeScan} null. The choice holds while the hashed input holds at most twice the rows of the other
+     * one. The scan whose table bounds the hashed input, see {@link PhysicalProperties#rowBoundScan}, and
+     * {@code probeScan} keep the row counts that guarantee it: the probed one at least half its rows and at least the
+     * square root of half the product of the two, and the hashed one at most twice that, so it may grow to at least the
+     * rows of the probed one. A cursor open past them compiles the statement again, and a compile at the same row
+     * counts keeps them. Inputs whose rows one table gives record none when the LIMITs of the hashed one allow no more
+     * rows than those of the other, as its row bound then never exceeds the other's.
      */
     static void keepBuildSide(LogicalPlan built, long builtRows, LogicalPlan probe, @Nullable ScanPlan probeScan, long probeRows) {
         final ScanPlan builtScan = PhysicalProperties.rowBoundScan(built);

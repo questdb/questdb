@@ -596,6 +596,8 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
             assertLimitCount("2, -1", Long.MAX_VALUE, 17);
             assertLimitCount("0, -2", Long.MAX_VALUE, 18);
             assertLimitCount("NULL::LONG", Long.MAX_VALUE, 20);
+            assertLimitCount("NULL::LONG, 5", 5, 5);
+            assertLimitCount("NULL::LONG, -2", Long.MAX_VALUE, 18);
         });
     }
 

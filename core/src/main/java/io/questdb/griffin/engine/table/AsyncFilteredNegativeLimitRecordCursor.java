@@ -65,7 +65,7 @@ import org.jetbrains.annotations.NotNull;
  * and returns to the rows it keeps through {@link #readRows(DirectLongList)}. The frame sequence reads the frames last
  * to first in scan order, so a frame with a higher index holds older rows.
  */
-class AsyncFilteredNegativeLimitRecordCursor implements AsyncFilteredRecordCursorFactory.RecordFreer, RecordCursor {
+class AsyncFilteredNegativeLimitRecordCursor implements AbstractAsyncFilteredRecordCursorFactory.RecordFreer, RecordCursor {
     private static final Log LOG = LogFactory.getLog(AsyncFilteredNegativeLimitRecordCursor.class);
     // Each read of older rows covers this many times the rows read before it, so the join over the
     // master rows rewinds a logarithmic number of times.

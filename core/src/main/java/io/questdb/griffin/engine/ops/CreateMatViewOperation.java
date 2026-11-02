@@ -45,51 +45,29 @@ import org.jetbrains.annotations.Nullable;
 
 public interface CreateMatViewOperation extends TableStructure, Operation {
 
-    static long matViewPeriodDelaySeconds(int delay, char delayUnit, int pos) throws SqlException {
-        return switch (delayUnit) {
-            case 's' -> delay;
-            case 'm' -> delay * 60L;
-            case 'h' -> delay * 60L * 60;
-            case 'd' -> delay * 24L * 60 * 60;
-            default -> throw SqlException.position(pos).put("unsupported delay unit: ").put(delay).put(delayUnit)
-                    .put(", supported units are 's', 'm', 'h', 'd'");
-        };
-    }
-
-    static long matViewPeriodLengthSeconds(int length, char lengthUnit, int pos) throws SqlException {
-        return switch (lengthUnit) {
-            case 's' -> length;
-            case 'm' -> length * 60L;
-            case 'h' -> length * 60L * 60;
-            case 'd' -> length * 24L * 60 * 60;
-            default -> throw SqlException.position(pos).put("unsupported length unit: ").put(length).put(lengthUnit)
-                    .put(", supported units are 's', 'm', 'h', 'd'");
-        };
-    }
-
     /**
-     * The start of a PERIOD refresh timer: the start of the current period of {@code length} {@code lengthUnit}, which
-     * {@link #validateMatViewPeriodLength} validated, in the time zone {@code rules}, or in UTC for null, in
-     * microseconds.
+     * The start of the timer of a PERIOD (LENGTH) refresh, see {@link #periodTimerStartUs}: validates the length
+     * {@code length} {@code lengthUnit}, failing at {@code lengthPos}, the time zone {@code timeZone}, null for none,
+     * which the period starts in, failing at {@code timeZonePos}, and the delay {@code delay} {@code delayUnit}, a
+     * zero unit for none, failing at {@code delayPos}.
      */
-    static long periodTimerStartUs(MicrosecondClock clock, int length, char lengthUnit, @Nullable TimeZoneRules rules, int pos) throws SqlException {
-        final long nowMicros = clock.getTicks();
-        return TimestampSamplerFactory.getInstance(MicrosTimestampDriver.INSTANCE, length, lengthUnit, pos)
-                .round(rules != null ? nowMicros + rules.getOffset(nowMicros) : nowMicros);
-    }
-
-    /**
-     * The rules of the PERIOD time zone {@code timeZone}, null for none; an unknown time zone fails at {@code pos}.
-     */
-    static TimeZoneRules periodTimeZoneRules(@Nullable CharSequence timeZone, int pos) throws SqlException {
-        if (timeZone == null) {
-            return null;
+    static long lengthPeriodTimerStartUs(
+            MicrosecondClock clock,
+            int length,
+            char lengthUnit,
+            int lengthPos,
+            @Nullable CharSequence timeZone,
+            int timeZonePos,
+            int delay,
+            char delayUnit,
+            int delayPos
+    ) throws SqlException {
+        validateMatViewPeriodLength(length, lengthUnit, lengthPos);
+        final TimeZoneRules rules = periodTimeZoneRules(timeZone, timeZonePos);
+        if (delayUnit != 0) {
+            validateMatViewPeriodDelay(length, lengthUnit, delay, delayUnit, delayPos);
         }
-        try {
-            return MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone);
-        } catch (CairoException e) {
-            throw SqlException.position(pos).put(e.getFlyweightMessage());
-        }
+        return periodTimerStartUs(clock, length, lengthUnit, rules, lengthPos);
     }
 
     /**
@@ -102,47 +80,21 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
 
     /**
      * The start of the timer of a PERIOD (SAMPLE BY INTERVAL) refresh, see {@link #periodTimerStartUs}: validates the
-     * {@link #samplePeriodLength length} of {@code samplingInterval} {@code samplingIntervalUnit}, the SAMPLE BY time
-     * zone {@code timeZone}, which the period starts in, and the SAMPLE BY offset {@code timeZoneOffset}, failing at
-     * {@code pos}.
+     * {@link #samplePeriodLength length} {@code length} {@code lengthUnit}, the SAMPLE BY time zone {@code timeZone},
+     * which the period starts in, and the SAMPLE BY offset {@code timeZoneOffset}, failing at {@code pos}.
      */
     static long samplePeriodTimerStartUs(
             MicrosecondClock clock,
-            long samplingInterval,
-            char samplingIntervalUnit,
+            int length,
+            char lengthUnit,
             @Nullable CharSequence timeZone,
             @Nullable CharSequence timeZoneOffset,
             int pos
     ) throws SqlException {
-        final int length = samplePeriodLength(samplingInterval);
-        validateMatViewPeriodLength(length, samplingIntervalUnit, pos);
+        validateMatViewPeriodLength(length, lengthUnit, pos);
         final TimeZoneRules rules = periodTimeZoneRules(timeZone, pos);
         validatePeriodSampleByOffset(timeZoneOffset, pos);
-        return periodTimerStartUs(clock, length, samplingIntervalUnit, rules, pos);
-    }
-
-    static void validateMatViewPeriodLength(int length, char lengthUnit, int pos) throws SqlException {
-        final long lengthSeconds = matViewPeriodLengthSeconds(length, lengthUnit, pos);
-        if (lengthSeconds > 24 * 60 * 60) {
-            throw SqlException.position(pos).put("maximum supported length interval is 24 hours: ").put(length).put(lengthUnit);
-        }
-    }
-
-    /**
-     * Fails at {@code pos} unless the offset of the SAMPLE BY a PERIOD (SAMPLE BY INTERVAL) aligns to, {@code offset},
-     * is none or a valid offset of zero.
-     */
-    static void validatePeriodSampleByOffset(@Nullable CharSequence offset, int pos) throws SqlException {
-        if (offset == null) {
-            return;
-        }
-        final long value = Dates.parseOffset(offset);
-        if (value == Numbers.LONG_NULL) {
-            throw SqlException.position(pos).put("invalid offset: ").put(offset);
-        }
-        if (Numbers.decodeLowInt(value) != 0) {
-            throw SqlException.position(pos).put("PERIOD (SAMPLE BY INTERVAL) can't be used with WITH OFFSET");
-        }
+        return periodTimerStartUs(clock, length, lengthUnit, rules, pos);
     }
 
     CharSequence getBaseTableName();
@@ -173,4 +125,77 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
     void validateAndUpdateMetadataFromPlan(SqlExecutionContext sqlExecutionContext, @Transient LogicalPlan root, @Transient IntList positions) throws SqlException;
 
     void validateAndUpdateMetadataFromSelect(RecordMetadata selectMetadata, TableReaderMetadata baseTableMetadata, int scanDirection) throws SqlException;
+
+    /**
+     * The seconds in {@code value} {@code unit}; a unit other than 's', 'm', 'h' and 'd' fails at {@code pos}, naming
+     * the {@code kind} of the interval.
+     */
+    private static long periodSeconds(int value, char unit, String kind, int pos) throws SqlException {
+        return switch (unit) {
+            case 's' -> value;
+            case 'm' -> value * 60L;
+            case 'h' -> value * 60L * 60;
+            case 'd' -> value * 24L * 60 * 60;
+            default -> throw SqlException.position(pos).put("unsupported ").put(kind).put(" unit: ").put(value).put(unit)
+                    .put(", supported units are 's', 'm', 'h', 'd'");
+        };
+    }
+
+    /**
+     * The start of a PERIOD refresh timer: the start of the current period of {@code length} {@code lengthUnit}, which
+     * {@link #validateMatViewPeriodLength} validated, in the time zone {@code rules}, or in UTC for null, in
+     * microseconds.
+     */
+    private static long periodTimerStartUs(MicrosecondClock clock, int length, char lengthUnit, @Nullable TimeZoneRules rules, int pos) throws SqlException {
+        final long nowMicros = clock.getTicks();
+        return TimestampSamplerFactory.getInstance(MicrosTimestampDriver.INSTANCE, length, lengthUnit, pos)
+                .round(rules != null ? nowMicros + rules.getOffset(nowMicros) : nowMicros);
+    }
+
+    /**
+     * The rules of the PERIOD time zone {@code timeZone}, null for none; an unknown time zone fails at {@code pos}.
+     */
+    private static TimeZoneRules periodTimeZoneRules(@Nullable CharSequence timeZone, int pos) throws SqlException {
+        if (timeZone == null) {
+            return null;
+        }
+        try {
+            return MicrosTimestampDriver.INSTANCE.getTimezoneRules(DateLocaleFactory.EN_LOCALE, timeZone);
+        } catch (CairoException e) {
+            throw SqlException.position(pos).put(e.getFlyweightMessage());
+        }
+    }
+
+    private static void validateMatViewPeriodDelay(int length, char lengthUnit, int delay, char delayUnit, int pos) throws SqlException {
+        if (delay < 0) {
+            throw SqlException.position(pos).put("delay cannot be negative");
+        }
+        final long lengthSeconds = periodSeconds(length, lengthUnit, "length", pos);
+        if (periodSeconds(delay, delayUnit, "delay", pos) >= lengthSeconds) {
+            throw SqlException.position(pos).put("delay cannot be equal to or greater than length");
+        }
+    }
+
+    private static void validateMatViewPeriodLength(int length, char lengthUnit, int pos) throws SqlException {
+        if (periodSeconds(length, lengthUnit, "length", pos) > 24 * 60 * 60) {
+            throw SqlException.position(pos).put("maximum supported length interval is 24 hours: ").put(length).put(lengthUnit);
+        }
+    }
+
+    /**
+     * Fails at {@code pos} unless the offset of the SAMPLE BY a PERIOD (SAMPLE BY INTERVAL) aligns to, {@code offset},
+     * is none or a valid offset of zero.
+     */
+    private static void validatePeriodSampleByOffset(@Nullable CharSequence offset, int pos) throws SqlException {
+        if (offset == null) {
+            return;
+        }
+        final long value = Dates.parseOffset(offset);
+        if (value == Numbers.LONG_NULL) {
+            throw SqlException.position(pos).put("invalid offset: ").put(offset);
+        }
+        if (Numbers.decodeLowInt(value) != 0) {
+            throw SqlException.position(pos).put("PERIOD (SAMPLE BY INTERVAL) can't be used with WITH OFFSET");
+        }
+    }
 }

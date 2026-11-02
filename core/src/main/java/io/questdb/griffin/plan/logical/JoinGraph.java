@@ -179,21 +179,29 @@ public final class JoinGraph implements Mutable {
     }
 
     /**
-     * Adds a constant conjunct, which reads no input: one the ON clause of the INNER or CROSS input {@code origin}
-     * states, or, for -1, the constant WHERE terms, or the constant terms of every clause of a join without an outer or
-     * temporal input, which bind as one conjunction.
+     * Adds a constant conjunct, which reads no input: the constant terms the ON clause of the INNER or CROSS input
+     * {@code origin} states, or, for -1, the constant WHERE terms, or the constant terms of every clause of a join
+     * without an outer or temporal input, which bind as one conjunction; or a conjunct that binds to a constant, see
+     * {@link io.questdb.griffin.LogicalPlans#constantTruth}, stated by {@code origin} as a residual is.
      */
     public void addConstantFilter(BoundExpression constantFilter, int origin) {
         constantFilters.add(constantFilter);
         constantFilterOrigins.add(origin);
     }
 
+    /**
+     * Adds a conjunct that does not bind to a constant, stated by the ON clause of input {@code origin}, -1 for WHERE.
+     */
     public void addResidual(BoundExpression residual, int origin) {
         residuals.add(residual);
         residualOwners.add(origin);
         residualOwnerEnds.add(residualOwners.size());
     }
 
+    /**
+     * Adds a conjunct that does not bind to a constant, stated by the ON clauses of the inputs {@code owners}, -1 for
+     * WHERE.
+     */
     public void addResidual(BoundExpression residual, IntList owners) {
         residuals.add(residual);
         residualOwners.addAll(owners);

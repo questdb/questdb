@@ -8122,7 +8122,7 @@ public class JoinTest extends AbstractCairoTest {
 
             assertQuery("select * from t1 join t2 on i=j and abs(1) = 0")
                     .noLeakCheck()
-                    .noRandomAccess()
+                    .withPlanContaining("Empty table")
                     .returns("i\tj\n");
             assertQuery("select * from t1 left join t2 on i=j and abs(1) = 0")
                     .noLeakCheck()
@@ -10612,8 +10612,8 @@ public class JoinTest extends AbstractCairoTest {
         // predicate stays a post-join Filter rather than being pushed into the master
         // sub-query (which would empty the master and pair each slave row with a NULL master,
         // leaking one row per slave). A WHERE that is always FALSE therefore produces no rows,
-        // and the literal and bind-variable forms must agree. The literal folds to a post-join
-        // "Filter filter: false" over a full Splice Join (no Empty table substitution).
+        // and the literal and bind-variable forms must agree. The literal folds to false, which join
+        // ordering places as a constant filter after the Splice Join, so the query plans as an Empty table.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t1 (c0 SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE t0 (c0 INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -10630,7 +10630,7 @@ public class JoinTest extends AbstractCairoTest {
                     "FROM t1 a SPLICE JOIN t0 b " +
                     "WHERE ((a.c0 + null))::TIMESTAMP < '2024-03-06T20:54:00.000000Z'::TIMESTAMP";
             bindVariableService.clear();
-            assertQuery(literalSql).noLeakCheck().noRandomAccess().withPlanContaining("Filter filter: false").returns(expected);
+            assertQuery(literalSql).noLeakCheck().withPlanContaining("Empty table").returns(expected);
 
             // Bind-variable form evaluates the same NULL/FALSE predicate per row and must agree.
             bindVariableService.clear();

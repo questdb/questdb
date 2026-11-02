@@ -103,9 +103,7 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
         if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
             final long from = sampleFromFunc.getTimestamp(null);
             if (from != Long.MIN_VALUE) {
-                final long localAnchor = localAnchor(from);
-                timestampSampler.setLocalAnchor(localAnchor);
-                gridAnchor = timestampSampler.localAnchorAsUtc(localAnchor);
+                gridAnchor = timestampSampler.anchorAtLocal(localAnchor(from));
             } else {
                 timestampSampler.setLocalAnchor(0);
             }
@@ -117,11 +115,10 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
 
     /**
      * Returns the bucket of a timestamp in the sampler's input space on the grid {@link #anchorCalendarGrid()}
-     * anchored: the grid line at or before the timestamp, or the FROM anchor for a timestamp before it, where
-     * timestamp_floor_utc puts the values between FROM and a later anchor (a positive OFFSET).
+     * anchored, see {@link TimestampSampler#roundFromAnchor(long, long)}.
      */
     protected long calendarBucket(long timestamp) {
-        return Math.max(gridAnchor, timestampSampler.round(timestamp));
+        return timestampSampler.roundFromAnchor(gridAnchor, timestamp);
     }
 
     // The grid line timestamp_floor_utc anchors at: FROM plus OFFSET.

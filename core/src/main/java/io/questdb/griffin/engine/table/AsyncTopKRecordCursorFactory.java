@@ -31,7 +31,6 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableToken;
-import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -53,7 +52,6 @@ import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.orderby.SortedLightRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
@@ -212,9 +210,6 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
         final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
         final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame, false);
         final DirectLongList rows = filterCtx.getFilteredRows(slotId);
-        rows.clear();
-        final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
-        final Function filter = filterCtx.getFilter(slotId);
         // navigateTo() can throw, so it must sit inside the try that releases the slot: the locks
         // have no reset and the atom outlives the query, so a leaked slot starves the pool.
         try {
@@ -226,25 +221,7 @@ public class AsyncTopKRecordCursorFactory extends AbstractRecordCursorFactory {
             }
             record.init(frameMemory);
 
-            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
-                // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
-                AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                AsyncFilterUtils.applyCompiledFilter(
-                        compiledFilter,
-                        filterCtx.getBindVarMemory(),
-                        filterCtx.getBindVarFunctions(),
-                        frameMemory,
-                        addressCache,
-                        filterCtx.getDataAddresses(slotId),
-                        filterCtx.getAuxAddresses(slotId),
-                        rows,
-                        frameRowCount
-                );
-            }
-            if (isParquetFrame) {
-                filterCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
-            }
+            filterCtx.filterFrame(slotId, frameMemory, record, addressCache, frameRowCount);
 
             if (atom.isEncoded()) {
                 final IntHashSet skipColumnIndexes = atom.getEncodedSkipColumnIndexes();

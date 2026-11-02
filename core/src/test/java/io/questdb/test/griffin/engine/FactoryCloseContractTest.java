@@ -64,6 +64,7 @@ import io.questdb.griffin.engine.join.HashJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.griffin.engine.join.WindowJoinRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AbstractAsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
@@ -109,7 +110,7 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
             final CallbackCloseFactory base = new CallbackCloseFactory(() -> {
                 callbackCount.incrementAndGet();
                 assertFieldsNull(
-                        AsyncFilteredRecordCursorFactory.class,
+                        AbstractAsyncFilteredRecordCursorFactory.class,
                         factory,
                         "base",
                         "cursor",
@@ -136,12 +137,12 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
                     "io.questdb.griffin.engine.table.AsyncFilteredNegativeLimitRecordCursor"
             ));
             final DirectLongList negativeLimitRows = new DirectLongList(2, MemoryTag.NATIVE_OFFLOAD);
-            setField(AsyncFilteredRecordCursorFactory.class, factory, "base", base);
-            setField(AsyncFilteredRecordCursorFactory.class, factory, "cursor", cursor);
-            setField(AsyncFilteredRecordCursorFactory.class, factory, "frameSequence", frameSequence);
-            setField(AsyncFilteredRecordCursorFactory.class, factory, "limitBounds", new LimitBounds(limitLoFunction, null, 0));
-            setField(AsyncFilteredRecordCursorFactory.class, factory, "negativeLimitCursor", negativeLimitCursor);
-            setField(AsyncFilteredRecordCursorFactory.class, factory, "negativeLimitRows", negativeLimitRows);
+            setField(AbstractAsyncFilteredRecordCursorFactory.class, factory, "base", base);
+            setField(AbstractAsyncFilteredRecordCursorFactory.class, factory, "cursor", cursor);
+            setField(AbstractAsyncFilteredRecordCursorFactory.class, factory, "frameSequence", frameSequence);
+            setField(AbstractAsyncFilteredRecordCursorFactory.class, factory, "limitBounds", new LimitBounds(limitLoFunction, null, 0));
+            setField(AbstractAsyncFilteredRecordCursorFactory.class, factory, "negativeLimitCursor", negativeLimitCursor);
+            setField(AbstractAsyncFilteredRecordCursorFactory.class, factory, "negativeLimitRows", negativeLimitRows);
 
             factory.close();
             Assert.assertEquals(1, callbackCount.get());
@@ -264,7 +265,7 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
             final CallbackCloseFactory base = new CallbackCloseFactory(() -> {
                 callbackCount.incrementAndGet();
                 assertFieldsNull(
-                        AsyncJitFilteredRecordCursorFactory.class,
+                        AbstractAsyncFilteredRecordCursorFactory.class,
                         factory,
                         "base",
                         "cursor",
@@ -309,12 +310,12 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
                     "io.questdb.griffin.engine.table.AsyncFilteredNegativeLimitRecordCursor"
             ));
             final DirectLongList negativeLimitRows = new DirectLongList(2, MemoryTag.NATIVE_OFFLOAD);
-            setField(AsyncJitFilteredRecordCursorFactory.class, factory, "base", base);
-            setField(AsyncJitFilteredRecordCursorFactory.class, factory, "cursor", cursor);
-            setField(AsyncJitFilteredRecordCursorFactory.class, factory, "frameSequence", frameSequence);
-            setField(AsyncJitFilteredRecordCursorFactory.class, factory, "limitBounds", new LimitBounds(limitLoFunction, null, 0));
-            setField(AsyncJitFilteredRecordCursorFactory.class, factory, "negativeLimitCursor", negativeLimitCursor);
-            setField(AsyncJitFilteredRecordCursorFactory.class, factory, "negativeLimitRows", negativeLimitRows);
+            setField(AbstractAsyncFilteredRecordCursorFactory.class, factory, "base", base);
+            setField(AbstractAsyncFilteredRecordCursorFactory.class, factory, "cursor", cursor);
+            setField(AbstractAsyncFilteredRecordCursorFactory.class, factory, "frameSequence", frameSequence);
+            setField(AbstractAsyncFilteredRecordCursorFactory.class, factory, "limitBounds", new LimitBounds(limitLoFunction, null, 0));
+            setField(AbstractAsyncFilteredRecordCursorFactory.class, factory, "negativeLimitCursor", negativeLimitCursor);
+            setField(AbstractAsyncFilteredRecordCursorFactory.class, factory, "negativeLimitRows", negativeLimitRows);
 
             try {
                 factory.close();

@@ -56,7 +56,10 @@ import static io.questdb.cairo.TableUtils.charFileName;
 import static io.questdb.cairo.TableUtils.offsetFileName;
 
 public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
-    // @TestOnly observability for the sorts of the symbol keys by their values, see copySortedKeysTo().
+    // Counts the sorts of the symbol keys by their values, see sortNewKeys(). Off by default; a test turns it on
+    // around the queries it measures.
+    @TestOnly
+    public static boolean isKeySortCounterEnabled = false;
     @TestOnly
     public static final AtomicLong testKeySorts = new AtomicLong();
     private static final int INSERTION_SORT_THRESHOLD = 16;
@@ -68,11 +71,11 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     // keyOf() scans candidates through its own view: the caller may pass in the flyweight that
     // valueOf() returned, and a hash collision would otherwise overwrite that input mid-scan
     private final DirectString keyOfView = new DirectString();
-    // The left runs of keys that the sort of the symbol keys merges, see sortKeys().
+    // The left runs of keys that a sort of the symbol keys merges, freed once the sort ends, see sortNewKeys().
     private final DirectIntList mergedKeys = new DirectIntList(0, MemoryTag.NATIVE_TABLE_READER, true);
     private final MemoryCMR offsetMem = Vm.getCMRInstance();
     private final Path path = new Path();
-    // The keys of the first sortedKeyCount symbols in the order of their values, see copySortedKeysTo().
+    // The keys of the first sortedKeyCount symbols in the order of their values, see sortNewKeys().
     private final DirectIntList sortedKeys = new DirectIntList(0, MemoryTag.NATIVE_TABLE_READER, true);
     // The views of the symbol values that the sort compares, which leave the cache of the symbol values as it is.
     private final DirectString sortViewA = new DirectString();
@@ -125,6 +128,14 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         return cache.size();
     }
 
+    @Override
+    public void copySortedKeysTo(DirectIntList keys) {
+        sortNewKeys();
+        for (int i = 0; i < symbolCount; i++) {
+            keys.add(sortedKeys.get(i));
+        }
+    }
+
     /**
      * Sorts the keys of the symbols that the reader gained since it sorted them last, merges them into the order it
      * keeps, and adds the keys in that order to the list. The reader drops the order when an existing key may come to
@@ -134,19 +145,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
      */
     @Override
     public void copySortedKeysTo(IntList keys) {
-        if (sortedKeyCount < symbolCount) {
-            testKeySorts.incrementAndGet();
-            if (sortedKeys.getCapacity() < symbolCount) {
-                sortedKeys.setCapacity(symbolCount);
-            }
-            sortedKeys.setPos(sortedKeyCount);
-            for (int key = sortedKeyCount; key < symbolCount; key++) {
-                sortedKeys.add(key);
-            }
-            sortKeys(sortedKeyCount, symbolCount);
-            mergeKeys(0, sortedKeyCount, symbolCount);
-            sortedKeyCount = symbolCount;
-        }
+        sortNewKeys();
         for (int i = 0; i < symbolCount; i++) {
             keys.add(sortedKeys.get(i));
         }
@@ -452,6 +451,32 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
         sortKeys(lo, mid);
         sortKeys(mid, hi);
         mergeKeys(lo, mid, hi);
+    }
+
+    /**
+     * Sorts the keys of the symbols that the reader gained since it sorted them last and merges them into the order it
+     * keeps, see {@link #copySortedKeysTo(IntList)}.
+     */
+    private void sortNewKeys() {
+        if (sortedKeyCount < symbolCount) {
+            if (isKeySortCounterEnabled) {
+                testKeySorts.incrementAndGet();
+            }
+            if (sortedKeys.getCapacity() < symbolCount) {
+                sortedKeys.setCapacity(symbolCount);
+            }
+            sortedKeys.setPos(sortedKeyCount);
+            for (int key = sortedKeyCount; key < symbolCount; key++) {
+                sortedKeys.add(key);
+            }
+            try {
+                sortKeys(sortedKeyCount, symbolCount);
+                mergeKeys(0, sortedKeyCount, symbolCount);
+            } finally {
+                mergedKeys.close();
+            }
+            sortedKeyCount = symbolCount;
+        }
     }
 
     private CharSequence uncachedValue(int key) {

@@ -163,18 +163,29 @@ public final class PhysicalProperties {
 
     /**
      * The scan whose table's row count, capped by the LIMITs along the way, see {@link #rowBoundLimit} and
-     * {@link #hasRuntimeLimitsOf}, is the number of rows the factory returns, null when no table's is: the scan reads
-     * every row of its table, and the projections, sorts and windows over it return each row of their input, and the
-     * LIMITs the first or the last rows of their input, up to their count, see {@link #isWithoutOffset}.
+     * {@link #hasRuntimeLimitsOf}, is the number of rows the factory returns, null when no table's is: the scan of
+     * {@link #rowFloorScan} unless it reads a live view.
      */
     public static ScanPlan rowCountScan(LogicalPlan plan) {
+        final ScanPlan scan = rowFloorScan(plan);
+        return scan != null && !scan.getTableToken().isLiveView() ? scan : null;
+    }
+
+    /**
+     * The scan whose table's row count, capped by the LIMITs along the way, see {@link #rowBoundLimit} and
+     * {@link #hasRuntimeLimitsOf}, is no more than the number of rows the factory returns, null when no table's is: the
+     * scan reads every row of its table, and a scan of a live view also the rows its table does not hold yet, and the
+     * projections, sorts and windows over it return each row of their input, and the LIMITs the first or the last rows
+     * of their input, up to their count, see {@link #isWithoutOffset}.
+     */
+    public static ScanPlan rowFloorScan(LogicalPlan plan) {
         LogicalPlan node = plan;
         while (node instanceof ProjectPlan || node instanceof SortPlan || node instanceof WindowPlan
                 || node instanceof LimitPlan limit && isWithoutOffset(limit)) {
             node = boundingInput(node);
         }
         return node instanceof ScanPlan scan && scan.getAccessPath() == ScanPlan.AccessPath.PAGE_FRAMES && !scan.isIntervalScan()
-                && scan.getResidual() == null && !scan.getTableToken().isLiveView() ? scan : null;
+                && scan.getResidual() == null ? scan : null;
     }
 
     /**
@@ -608,15 +619,14 @@ public final class PhysicalProperties {
 
     /**
      * Whether the LIMIT returns the first or the last rows of its input, up to its count, and skips none: one count,
-     * which execution may know alone, or constant bounds of which one is zero, see {@link LimitBounds.Values#of}.
+     * which execution may know alone, or constant bounds of which one is zero, see {@link LimitBounds#isWithoutOffset}.
      */
     private static boolean isWithoutOffset(LimitPlan limit) {
-        final BoundExpression hi = limit.getHi();
         if (isRuntimeLimit(limit)) {
-            return hi == null;
+            return limit.getHi() == null;
         }
-        return limitCount(limit) > -1 && (hi == null || LogicalPlans.limitValue((ConstantExpression) limit.getLo()) == 0
-                || LogicalPlans.limitValue((ConstantExpression) hi) == 0);
+        final long hi = limitHi(limit);
+        return LimitBounds.isWithoutOffset(limitLo(limit, hi), hi);
     }
 
     /**
@@ -713,15 +723,30 @@ public final class PhysicalProperties {
 
     /**
      * The most rows a LIMIT returns, see {@link LimitBounds#rowCount}; -1 where only execution knows a bound
-     * or a bound is NULL.
+     * or a bound is NULL after {@link LimitBounds#loOf}.
      */
     private static long limitCount(LimitPlan limit) {
         if (isRuntimeLimit(limit)) {
             return -1;
         }
-        final long lo = LogicalPlans.limitValue((ConstantExpression) limit.getLo());
-        final long hi = limit.getHi() == null ? 0 : LogicalPlans.limitValue((ConstantExpression) limit.getHi());
+        final long hi = limitHi(limit);
+        final long lo = limitLo(limit, hi);
         return lo == Numbers.LONG_NULL || hi == Numbers.LONG_NULL ? -1 : LimitBounds.rowCount(lo, hi);
+    }
+
+    /**
+     * The hi bound of a LIMIT of constant bounds as {@link LimitBounds.Values#of} reads it: 0 for {@code LIMIT n}.
+     */
+    private static long limitHi(LimitPlan limit) {
+        return limit.getHi() == null ? 0 : LogicalPlans.limitValue((ConstantExpression) limit.getHi());
+    }
+
+    /**
+     * The lo bound of a LIMIT of constant bounds as {@link LimitBounds.Values#of} reads it, see {@link LimitBounds#loOf}.
+     */
+    private static long limitLo(LimitPlan limit, long hi) {
+        final long lo = LogicalPlans.limitValue((ConstantExpression) limit.getLo());
+        return limit.getHi() == null ? lo : LimitBounds.loOf(lo, hi);
     }
 
     /**
@@ -1221,7 +1246,7 @@ public final class PhysicalProperties {
 
     /**
      * Folds the steps of the window join: a step whose filter is constant false null-extends its master, keeping the
-     * master's properties but its page frames when it pads a count, see {@link WindowJoinStep#isNullPadding}, and any
+     * master's properties but its page frames when it pads a count, see {@link WindowJoinStep#getNullExtension}, and any
      * other step is a serial or parallel window join, of which only the serial one follows the master's advice and
      * exposes its base chain.
      */
@@ -1234,15 +1259,18 @@ public final class PhysicalProperties {
         final ObjList<WindowJoinStep> steps = windowJoin.getSteps();
         for (int i = 0, n = steps.size(); i < n; i++) {
             final WindowJoinStep step = steps.getQuick(i);
-            if (!step.isNullExtending()) {
-                final WindowJoinStep.Algorithm algorithm = step.getAlgorithm();
-                final Capability isSerial = algorithm == null ? Capability.UNKNOWN : Capability.of(algorithm == WindowJoinStep.Algorithm.SERIAL);
-                final ScanDirection direction = algorithm == WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER
-                        ? stolenFilterDirection(windowJoin.getMaster(), master) : direction(properties);
-                properties = properties(Capability.NO, Capability.NO, Capability.NO, and(isSerial, capability(properties, ORDER_ADVICE)),
-                        direction, and(isSerial, capability(properties, LONG_SEQUENCE)));
-            } else if (!step.isNullPadding()) {
-                properties = with(properties, PAGE_FRAMES, Capability.NO);
+            switch (step.getNullExtension()) {
+                case NONE -> {
+                    final WindowJoinStep.Algorithm algorithm = step.getAlgorithm();
+                    final Capability isSerial = algorithm == null ? Capability.UNKNOWN : Capability.of(algorithm == WindowJoinStep.Algorithm.SERIAL);
+                    final ScanDirection direction = algorithm == WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER
+                            ? stolenFilterDirection(windowJoin.getMaster(), master) : direction(properties);
+                    properties = properties(Capability.NO, Capability.NO, Capability.NO, and(isSerial, capability(properties, ORDER_ADVICE)),
+                            direction, and(isSerial, capability(properties, LONG_SEQUENCE)));
+                }
+                case EMPTY_VALUES -> properties = with(properties, PAGE_FRAMES, Capability.NO);
+                case NULL_PADDING -> {
+                }
             }
         }
         return properties;
@@ -1254,7 +1282,7 @@ public final class PhysicalProperties {
      */
     private static Capability windowJoinLongTopK(WindowJoinPlan windowJoin, int columnIndex) {
         final LogicalPlan master = windowJoin.getMaster();
-        return windowJoin.isMasterPassedThrough() && columnIndex < master.getOutput().getColumnCount()
+        return windowJoin.getNullExtension() != WindowJoinStep.NullExtension.NONE && columnIndex < master.getOutput().getColumnCount()
                 ? supportsLongTopK(master, null, columnIndex) : Capability.NO;
     }
 
@@ -1273,7 +1301,7 @@ public final class PhysicalProperties {
                 ? stolenFilterLeafTableToken(PlanToFactoryRules.stolenFilter(master)) : tableToken(master);
         for (int i = 0, n = steps.size(); i < n; i++) {
             final WindowJoinStep step = steps.getQuick(i);
-            if (step.isNullExtending() || step.getAlgorithm() == WindowJoinStep.Algorithm.SERIAL) {
+            if (step.getNullExtension() != WindowJoinStep.NullExtension.NONE || step.getAlgorithm() == WindowJoinStep.Algorithm.SERIAL) {
                 table = null;
             }
         }
@@ -1284,7 +1312,8 @@ public final class PhysicalProperties {
      * Whether the window join pads its master with NULL through every step, passing the master's time frames through.
      */
     private static Capability windowJoinTimeFrame(WindowJoinPlan windowJoin) {
-        return windowJoin.isMasterFramePassedThrough() ? supportsTimeFrameCursor(windowJoin.getMaster(), null) : Capability.NO;
+        return windowJoin.getNullExtension() == WindowJoinStep.NullExtension.NULL_PADDING
+                ? supportsTimeFrameCursor(windowJoin.getMaster(), null) : Capability.NO;
     }
 
     /**

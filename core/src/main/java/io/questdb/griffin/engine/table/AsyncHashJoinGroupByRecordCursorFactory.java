@@ -52,7 +52,6 @@ import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.join.HashJoinGroupByRecord;
 import io.questdb.griffin.engine.join.SymbolKeyTranslator;
 import io.questdb.griffin.plan.logical.JoinKind;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -1946,27 +1945,9 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 final PageFrameMemory frameMemory = pool.navigateTo(frameIndex);
                 probeRecord.init(frameMemory);
                 final long rowCount = sequence.getFrameRowCount(frameIndex);
-                // Phase one: narrow the frame to the rows the probe filter keeps. The compiled
-                // filter reads raw column addresses, so column tops and Parquet type casts, which
-                // the logical record resolves per row, fall back to the interpreted filter.
+                // Phase one: narrow the frame to the rows the probe filter keeps.
                 final DirectLongList rows = filterCtx.getFilteredRows(slotId);
-                rows.clear();
-                final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
-                if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
-                    AsyncFilterUtils.applyFilter(filterCtx.getFilter(slotId), rows, probeRecord, rowCount);
-                } else {
-                    AsyncFilterUtils.applyCompiledFilter(
-                            compiledFilter,
-                            filterCtx.getBindVarMemory(),
-                            filterCtx.getBindVarFunctions(),
-                            frameMemory,
-                            sequence.getPageFrameAddressCache(),
-                            filterCtx.getDataAddresses(slotId),
-                            filterCtx.getAuxAddresses(slotId),
-                            rows,
-                            rowCount
-                    );
-                }
+                filterCtx.filterFrame(slotId, frameMemory, probeRecord, sequence.getPageFrameAddressCache(), rowCount);
                 // Phase two: join and aggregate the surviving rows.
                 final GroupByMapFragment fragment = atom.getFragment(slotId);
                 if (atom.isSharded()) {

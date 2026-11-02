@@ -24,14 +24,12 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.RowCursorFactory;
-import io.questdb.cairo.sql.SymbolTable;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -75,6 +73,12 @@ interface KeyOrderedRowCursorFactory extends RowCursorFactory {
     int getIndexDirection();
 
     /**
+     * The key of the index that records of the key at {@code keyIndex} hold in the column, the keys counted in key
+     * order: 0 for NULL, or -1 when the symbol table lacks the value, so that no record holds the key.
+     */
+    int getIndexKey(int keyIndex);
+
+    /**
      * The number of keys, known once the cursors are prepared.
      */
     int getKeyCount();
@@ -92,9 +96,9 @@ interface KeyOrderedRowCursorFactory extends RowCursorFactory {
         final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
         long count = 0;
         for (int i = keyLo; i < keyHi && count <= maxCount; i++) {
-            final int symbolKey = getSymbolKey(i);
-            if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                count += reader.countRows(TableUtils.toIndexKey(symbolKey), rowLo + indexShift, rowHi + indexShift, maxCount - count);
+            final int indexKey = getIndexKey(i);
+            if (indexKey >= 0) {
+                count += reader.countRows(indexKey, rowLo + indexShift, rowHi + indexShift, maxCount - count);
             }
         }
         return count;
@@ -115,14 +119,6 @@ interface KeyOrderedRowCursorFactory extends RowCursorFactory {
      * stops after {@code maxCount} rows.
      */
     long getRowCount(PageFrame pageFrame, int keyLo, int keyHi, long rowLo, long rowHi, long maxCount);
-
-    /**
-     * The symbol key that records of the key at {@code keyIndex} hold in the column, the keys counted in key order:
-     * {@link io.questdb.cairo.sql.SymbolTable#VALUE_IS_NULL} for NULL, or
-     * {@link io.questdb.cairo.sql.SymbolTable#VALUE_NOT_FOUND} when the symbol table lacks the value, so that no record
-     * holds the key.
-     */
-    int getSymbolKey(int keyIndex);
 
     /**
      * True when the keys are every key of the column, NULL included, so that the cursors of all keys return every row

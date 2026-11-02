@@ -28,7 +28,9 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameFilteredMemoryRecord;
+import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
@@ -147,18 +149,48 @@ public class AsyncFilterContext extends AsyncFilter implements Mutable {
         return Misc.freeBestEffort(cleanupFailure, ownerPageFrameFilteredMemoryRecord);
     }
 
+    /**
+     * Filters the frame, see
+     * {@link AsyncFilter#filterFrame(int, PageFrameMemory, PageFrameMemoryRecord, PageFrameAddressCache, DirectLongList, DirectLongList, DirectLongList, long)},
+     * into the filtered rows of {@code slotId} with its column address lists.
+     */
+    public long filterFrame(
+            int slotId,
+            PageFrameMemory frameMemory,
+            PageFrameMemoryRecord record,
+            PageFrameAddressCache pageAddressCache,
+            long frameRowCount
+    ) {
+        return filterFrame(
+                slotId,
+                frameMemory,
+                record,
+                pageAddressCache,
+                getDataAddresses(slotId),
+                getAuxAddresses(slotId),
+                getFilteredRows(slotId),
+                frameRowCount
+        );
+    }
+
+    /**
+     * The aux column addresses the compiled filter of {@code slotId} reads, null without a compiled filter.
+     */
     public DirectLongList getAuxAddresses(int slotId) {
         if (slotId == -1) {
             return ownerAuxAddresses;
         }
-        return perWorkerAuxAddresses.getQuick(slotId);
+        return perWorkerAuxAddresses.getQuiet(slotId);
     }
 
+    /**
+     * The data column addresses the compiled filter of {@code slotId} reads, null without a compiled filter.
+     */
     public DirectLongList getDataAddresses(int slotId) {
         if (slotId == -1) {
             return ownerDataAddresses;
         }
-        return perWorkerDataAddresses.getQuick(slotId);
+        return perWorkerDataAddresses.getQuiet(slotId);
     }
 
     public DirectLongList getFilteredRows(int slotId) {

@@ -1963,6 +1963,42 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRightJoinKeepsOrdinaryPlanOverFilteredPreservedInputAndEmptyBuild() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (k SYMBOL, v LONG, w LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO b VALUES
+                        ('x', 1, 1, '2024-01-01'),
+                        ('y', 2, 3, '2024-01-02'),
+                        ('y', 3, 3, '2024-01-02T12:00'),
+                        ('z', 4, 0, '2024-01-03'),
+                        ('w', 5, 5, '2024-01-04')
+                    """);
+            final String select = "SELECT b.k bk, count(*) c, sum(a.v) s FROM ";
+            final String right = "a RIGHT JOIN b ON a.k = b.k";
+            final String groupBy = " GROUP BY b.k ORDER BY bk";
+            final String filtered = select + right + " WHERE b.v > 1" + groupBy;
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                assertDifferential(filtered, context, false);
+                assertDifferential(select + right + " WHERE b.ts IN '2024-01-02'" + groupBy, context, false);
+                assertDifferential(select + "a RIGHT JOIN (SELECT * FROM b WHERE v > 1) b ON a.k = b.k" + groupBy, context, false);
+                assertQuery(filtered)
+                        .noLeakCheck()
+                        .withContext(context)
+                        .withPlanContaining("Hash Right Outer Join Light")
+                        .expectSize()
+                        .returns("""
+                                bk\tc\ts
+                                w\t1\tnull
+                                y\t2\tnull
+                                z\t1\tnull
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testBuildPresizesOnlyFromExactCounts() throws Exception {
         assertMemoryLeak(() -> {
             // pb has twice the rows of pa and the same ten keys in each key column. pa spreads its
@@ -2862,8 +2898,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             // DECIMAL(4, 2) holds at most 99.99, so the cast throws on the row where c0 is 7288.
             final String cast = "0.62::DECIMAL(2, 2) >= b.c0::DECIMAL(4, 2)";
             final String castFilter = "0.62>=c0::DECIMAL(4,2)";
-            // Only FunctionParser folds these conjuncts, so the optimizer leaves them to the filter
-            // after the join instead of emptying the query.
+            // Only FunctionParser folds these conjuncts; join ordering then places a false one as a
+            // constant filter, which empties the query as a conjunct of literals does.
             final String constFalse = "0.366490 >= 29_062::SHORT";
             final String constTrue = "0.366490 <= 29_062::SHORT";
             // Each spelling evaluates b's conjuncts in b's scan, in written order, and stops at the
@@ -2973,51 +3009,18 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 }
                 // The plans below name the filter factory that runs without JIT.
                 context.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-                // The false filter prevents both the join and any scan filter from executing.
+                // The false conjunct empties the query, so neither the join nor any scan filter runs.
                 final String constFalseWhere = " WHERE " + cast + " AND " + constFalse;
-                assertQuery("SELECT count(*), count(a.v)" + froms[0] + constFalseWhere)
-                        .withContext(context)
-                        .noLeakCheck()
-                        .assertsPlan("""
-                                GroupBy vectorized: false
-                                  values: [count(*),count(a.v)]
-                                    Filter filter: false
-                                        Hash Right Outer Join Light
-                                          condition: b.k=a.k
-                                          symbolKeyJoin: true
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: a
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: b
-                                """);
-                final String pushedPlan = """
-                        GroupBy vectorized: false
-                          values: [count(*),count(a.v)]
-                            Filter filter: false
-                                %s
-                                  condition: a.k=b.k
-                                  symbolKeyJoin: true
-                                    Async Filter workers: 4
-                                      filter: 0.62>=c0::DECIMAL(4,2)
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: b
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: a
-                        """;
-                assertQuery("SELECT count(*), count(a.v)" + froms[1] + constFalseWhere)
-                        .withContext(context)
-                        .noLeakCheck()
-                        .assertsPlan(pushedPlan.formatted("Hash Left Outer Join Light"));
-                assertQuery("SELECT count(*), count(a.v)" + froms[2] + constFalseWhere)
-                        .withContext(context)
-                        .noLeakCheck()
-                        .assertsPlan(pushedPlan.formatted("Hash Join Light"));
+                for (String from : froms) {
+                    assertQuery("SELECT count(*), count(a.v)" + from + constFalseWhere)
+                            .withContext(context)
+                            .noLeakCheck()
+                            .assertsPlan("""
+                                    GroupBy vectorized: false
+                                      values: [count(*),count(a.v)]
+                                        Empty table
+                                    """);
+                }
                 // A runtime-constant filter gates both inputs of the fused join, b's scan under the
                 // cast it steals.
                 assertQuery(select + froms[1] + " WHERE " + cast + " AND $1 = 1")

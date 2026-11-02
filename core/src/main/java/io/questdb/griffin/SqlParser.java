@@ -88,7 +88,6 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.Micros;
-import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -577,18 +576,6 @@ public class SqlParser {
         if (unit != 'M' && unit != 'y' && unit != 'w' && unit != 'd' && unit != 'h' && unit != 'm') {
             throw SqlException.position(pos).put("unsupported interval unit: ").put(unit)
                     .put(", supported units are 'm', 'h', 'd', 'w', 'y', 'M'");
-        }
-    }
-
-    public static void validateMatViewPeriodDelay(int length, char lengthUnit, int delay, char delayUnit, int pos) throws SqlException {
-        if (delay < 0) {
-            throw SqlException.position(pos).put("delay cannot be negative");
-        }
-
-        final long lengthSeconds = matViewPeriodLengthSeconds(length, lengthUnit, pos);
-        final long delaySeconds = matViewPeriodDelaySeconds(delay, delayUnit, pos);
-        if (delaySeconds >= lengthSeconds) {
-            throw SqlException.position(pos).put("delay cannot be equal to or greater than length");
         }
     }
 
@@ -3541,33 +3528,34 @@ public class SqlParser {
                     final int lengthPosition = lexer.lastTokenPosition();
                     final int length = CommonUtils.getStrideMultiple(tok, lengthPosition);
                     final char lengthUnit = CommonUtils.getStrideUnit(tok, lengthPosition);
-                    validateMatViewPeriodLength(length, lengthUnit, lengthPosition);
                     tok = tok(lexer, "'time zone' or 'delay' or ')'");
 
-                    TimeZoneRules tzRulesMicros = null;
                     String tz = null;
+                    int tzPosition = 0;
                     if (isTimeKeyword(tok)) {
                         expectTok(lexer, "zone");
                         tok = tok(lexer, "TIME ZONE name");
+                        tzPosition = lexer.lastTokenPosition();
                         if (Chars.equals(tok, ')') || isDelayKeyword(tok)) {
-                            throw SqlException.position(lexer.lastTokenPosition()).put("TIME ZONE name expected");
+                            throw SqlException.position(tzPosition).put("TIME ZONE name expected");
                         }
                         tz = unquote(tok).toString();
-                        tzRulesMicros = periodTimeZoneRules(tz, lexer.lastTokenPosition());
                         tok = tok(lexer, "'delay' or ')'");
                     }
 
                     int delay = 0;
                     char delayUnit = 0;
+                    int delayPosition = 0;
                     if (isDelayKeyword(tok)) {
                         tok = tok(lexer, "DELAY interval");
-                        delay = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
-                        delayUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
-                        validateMatViewPeriodDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
+                        delayPosition = lexer.lastTokenPosition();
+                        delay = CommonUtils.getStrideMultiple(tok, delayPosition);
+                        delayUnit = CommonUtils.getStrideUnit(tok, delayPosition);
                         tok = tok(lexer, "')'");
                     }
 
-                    final long startUs = periodTimerStartUs(configuration.getMicrosecondClock(), length, lengthUnit, tzRulesMicros, lengthPosition);
+                    final long startUs = lengthPeriodTimerStartUs(configuration.getMicrosecondClock(), length, lengthUnit, lengthPosition,
+                            tz, tzPosition, delay, delayUnit, delayPosition);
                     mvOpBuilder.setTimer(tz, startUs, every, everyUnit);
                     mvOpBuilder.setPeriodLength(length, lengthUnit, delay, delayUnit);
                 } else if (isSampleKeyword(tok)) {

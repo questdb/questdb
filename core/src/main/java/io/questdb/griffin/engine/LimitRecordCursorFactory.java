@@ -351,8 +351,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         private void ensureBoundsResolved() {
             if (!areBoundsResolved()) {
                 final long lo = bounds.getValues().getLo();
-                if (masterSuffixLimit == null && lo < 0 && lo != Numbers.LONG_NULL) {
-                    base.expectLastRows(-lo);
+                final long lastRowCount = bounds.getValues().getLastRowCount();
+                if (masterSuffixLimit == null && lastRowCount > -1) {
+                    base.expectLastRows(lastRowCount);
                 }
                 // If baseSize was cheap to get, bounds would already have been sorted out in of().
                 // Now it's time to use the heavy-handed approach to getting baseSize.

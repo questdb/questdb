@@ -2086,12 +2086,14 @@ final class JoinFactoryGenerator {
                 if (joinFilter.isConstant()) {
                     joinFilter.init(null, executionContext);
                 }
-                if (ParanoiaState.PLAN_PARANOIA_MODE && step.isNullExtending() != (joinFilter.isConstant() && !joinFilter.getBool(null))) {
+                final WindowJoinStep.NullExtension nullExtension = step.getNullExtension();
+                if (ParanoiaState.PLAN_PARANOIA_MODE
+                        && (nullExtension != WindowJoinStep.NullExtension.NONE) != (joinFilter.isConstant() && !joinFilter.getBool(null))) {
                     throw new AssertionError("window join step filter differs from its instantiated function");
                 }
-                if (step.isNullExtending()) {
+                if (nullExtension != WindowJoinStep.NullExtension.NONE) {
                     isTransferred = true;
-                    final boolean isNullPadding = step.isNullPadding();
+                    final boolean isNullPadding = nullExtension == WindowJoinStep.NullExtension.NULL_PADDING;
                     Throwable failure = Misc.freeBestEffort(null, slave);
                     failure = Misc.freeBestEffort(failure, joinMetadata);
                     failure = Misc.freeBestEffort(failure, joinFilter);

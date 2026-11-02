@@ -330,8 +330,9 @@ public final class SqlBinder implements Mutable {
     }
 
     /**
-     * The operand {@code i} of the call or operator {@code node}, see {@link #operandCount}; null where the node has
-     * no left or right operand.
+     * An operand of the call or operator {@code node}, for {@code i} below {@link #operandCount}: the left operand for 0
+     * and the right one for 1 below three parameters, otherwise the argument {@code i} places from the last, as the
+     * parser stores them; null where the node has no left or right operand.
      */
     private static ExpressionNode operandAt(ExpressionNode node, int i) {
         return node.paramCount < 3 ? (i == 0 ? node.lhs : node.rhs) : node.args.getQuick(i);

@@ -351,23 +351,28 @@ public class SortedSymbolIndexOrderingTest extends AbstractCairoTest {
             // for the first of them
             engine.releaseAllReaders();
             SymbolMapReaderImpl.testKeySorts.set(0);
-            for (int i = 0; i < 3; i++) {
-                assertSymbolOrder(query, ascending);
+            SymbolMapReaderImpl.isKeySortCounterEnabled = true;
+            try {
+                for (int i = 0; i < 3; i++) {
+                    assertSymbolOrder(query, ascending);
+                }
+                Assert.assertEquals(1, SymbolMapReaderImpl.testKeySorts.get());
+                // a new symbol merges into the order
+                execute("INSERT INTO x VALUES ('ac', '2024-01-01T00:02:00.000000Z')");
+                sorted.add("ac");
+                Collections.sort(sorted);
+                ascending.clear();
+                ascending.put("s\n\n");
+                for (int i = 0, n = sorted.size(); i < n; i++) {
+                    ascending.put(sorted.get(i)).put('\n');
+                }
+                for (int i = 0; i < 3; i++) {
+                    assertSymbolOrder(query, ascending);
+                }
+                Assert.assertEquals(2, SymbolMapReaderImpl.testKeySorts.get());
+            } finally {
+                SymbolMapReaderImpl.isKeySortCounterEnabled = false;
             }
-            Assert.assertEquals(1, SymbolMapReaderImpl.testKeySorts.get());
-            // a new symbol merges into the order
-            execute("INSERT INTO x VALUES ('ac', '2024-01-01T00:02:00.000000Z')");
-            sorted.add("ac");
-            Collections.sort(sorted);
-            ascending.clear();
-            ascending.put("s\n\n");
-            for (int i = 0, n = sorted.size(); i < n; i++) {
-                ascending.put(sorted.get(i)).put('\n');
-            }
-            for (int i = 0; i < 3; i++) {
-                assertSymbolOrder(query, ascending);
-            }
-            Assert.assertEquals(2, SymbolMapReaderImpl.testKeySorts.get());
         });
     }
 

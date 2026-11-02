@@ -143,7 +143,6 @@ import io.questdb.std.RetainedCapacity;
 import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
-import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
 import io.questdb.std.str.StringSink;
@@ -2847,29 +2846,30 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 final int lengthPosition = lexer.lastTokenPosition();
                                 length = CommonUtils.getStrideMultiple(tok, lengthPosition);
                                 lengthUnit = CommonUtils.getStrideUnit(tok, lengthPosition);
-                                validateMatViewPeriodLength(length, lengthUnit, lengthPosition);
                                 tok = expectToken(lexer, "'time zone' or 'delay' or ')'");
 
-                                TimeZoneRules tzRulesMicros = null;
+                                int timeZonePosition = 0;
                                 if (isTimeKeyword(tok)) {
                                     expectKeyword(lexer, "zone");
                                     tok = expectToken(lexer, "TIME ZONE name");
+                                    timeZonePosition = lexer.lastTokenPosition();
                                     if (Chars.equals(tok, ')') || isDelayKeyword(tok)) {
-                                        throw SqlException.position(lexer.lastTokenPosition()).put("TIME ZONE name expected");
+                                        throw SqlException.position(timeZonePosition).put("TIME ZONE name expected");
                                     }
                                     timerTimeZone = unquote(tok).toString();
-                                    tzRulesMicros = periodTimeZoneRules(timerTimeZone, lexer.lastTokenPosition());
                                     tok = expectToken(lexer, "'delay' or ')'");
                                 }
 
+                                int delayPosition = 0;
                                 if (isDelayKeyword(tok)) {
                                     tok = expectToken(lexer, "DELAY interval");
-                                    delay = CommonUtils.getStrideMultiple(tok, lexer.lastTokenPosition());
-                                    delayUnit = CommonUtils.getStrideUnit(tok, lexer.lastTokenPosition());
-                                    SqlParser.validateMatViewPeriodDelay(length, lengthUnit, delay, delayUnit, lexer.lastTokenPosition());
+                                    delayPosition = lexer.lastTokenPosition();
+                                    delay = CommonUtils.getStrideMultiple(tok, delayPosition);
+                                    delayUnit = CommonUtils.getStrideUnit(tok, delayPosition);
                                     tok = expectToken(lexer, "')'");
                                 }
-                                timerStartUs = periodTimerStartUs(configuration.getMicrosecondClock(), length, lengthUnit, tzRulesMicros, lengthPosition);
+                                timerStartUs = lengthPeriodTimerStartUs(configuration.getMicrosecondClock(), length, lengthUnit, lengthPosition,
+                                        timerTimeZone, timeZonePosition, delay, delayUnit, delayPosition);
                             } else if (isSampleKeyword(tok)) {
                                 // REFRESH ... PERIOD(SAMPLE BY INTERVAL)
                                 // Align the period to the SAMPLE BY bucket.
@@ -2881,7 +2881,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 length = samplePeriodLength(viewDefinition.getSamplingInterval());
                                 lengthUnit = viewDefinition.getSamplingIntervalUnit();
                                 timerTimeZone = viewDefinition.getTimeZone();
-                                timerStartUs = samplePeriodTimerStartUs(configuration.getMicrosecondClock(), viewDefinition.getSamplingInterval(), lengthUnit,
+                                timerStartUs = samplePeriodTimerStartUs(configuration.getMicrosecondClock(), length, lengthUnit,
                                         timerTimeZone, viewDefinition.getTimeZoneOffset(), lengthPosition);
                             } else {
                                 throw SqlException.position(lexer.lastTokenPosition()).put("'length' or 'sample' expected");

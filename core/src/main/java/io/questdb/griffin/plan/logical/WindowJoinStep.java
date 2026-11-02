@@ -57,6 +57,7 @@ public final class WindowJoinStep implements Mutable {
     private int loSign;
     private char loTimeUnit;
     private CharSequence masterAlias;
+    private NullExtension nullExtension = NullExtension.NONE;
     private int position;
     private LogicalPlan slave;
     private CharSequence slaveAlias;
@@ -82,6 +83,7 @@ public final class WindowJoinStep implements Mutable {
         loSign = 0;
         loTimeUnit = 0;
         masterAlias = null;
+        nullExtension = NullExtension.NONE;
         position = 0;
         slave = null;
         slaveAlias = null;
@@ -96,8 +98,8 @@ public final class WindowJoinStep implements Mutable {
     }
 
     /**
-     * The window join execution operator planning records for the step; null for a step whose filter is constant false,
-     * which null-extends its master instead of joining.
+     * The window join execution operator planning records for the step; null for a step that null-extends its master
+     * instead of joining, see {@link #getNullExtension}.
      */
     public Algorithm getAlgorithm() {
         return algorithm;
@@ -174,6 +176,14 @@ public final class WindowJoinStep implements Mutable {
         return masterScope;
     }
 
+    /**
+     * How the step null-extends its master instead of joining, which binding records once the step's filter and
+     * aggregates are bound, see {@link NullExtension#of}.
+     */
+    public NullExtension getNullExtension() {
+        return nullExtension;
+    }
+
     public int getPosition() {
         return position;
     }
@@ -196,31 +206,6 @@ public final class WindowJoinStep implements Mutable {
 
     public boolean isIncludePrevailing() {
         return isIncludePrevailing;
-    }
-
-    /**
-     * True when the step's filter is constant false: the step null-extends every master row instead of joining.
-     */
-    public boolean isNullExtending() {
-        return LogicalPlans.constantTruth(filter) == 0;
-    }
-
-    /**
-     * True when the step null-extends and every aggregate reads NULL over no rows, see
-     * {@link SqlUtil#isZeroOnEmptyAggregate(CharSequence)}: the step then pads its aggregate columns with NULL and passes
-     * the master's page and time frames through. A step that null-extends a count pads each column with the value its
-     * aggregate takes over an empty window and serves neither.
-     */
-    public boolean isNullPadding() {
-        if (!isNullExtending()) {
-            return false;
-        }
-        for (int i = 0, n = aggregates.size(); i < n; i++) {
-            if (SqlUtil.isZeroOnEmptyAggregate(aggregates.getQuick(i).getName())) {
-                return false;
-            }
-        }
-        return true;
     }
 
     public boolean isTableSource() {
@@ -260,6 +245,10 @@ public final class WindowJoinStep implements Mutable {
         this.loPosition = position;
     }
 
+    public void setNullExtension(NullExtension nullExtension) {
+        this.nullExtension = nullExtension;
+    }
+
     public void setTableSource(boolean isTableSource) {
         this.isTableSource = isTableSource;
     }
@@ -281,5 +270,41 @@ public final class WindowJoinStep implements Mutable {
      */
     public enum Algorithm {
         PARALLEL, PARALLEL_STOLEN_FILTER, SERIAL
+    }
+
+    /**
+     * How a step null-extends its master instead of joining.
+     */
+    public enum NullExtension {
+        /**
+         * The step joins: its filter is not constant false.
+         */
+        NONE,
+        /**
+         * The filter is constant false and every aggregate reads NULL over no rows: the step pads its aggregate columns
+         * with NULL and passes the master's page and time frames through.
+         */
+        NULL_PADDING,
+        /**
+         * The filter is constant false and an aggregate reads another value over no rows, see
+         * {@link SqlUtil#isZeroOnEmptyAggregate(CharSequence)}: the step pads each column with the value its aggregate
+         * reads over an empty window and passes neither page nor time frames through.
+         */
+        EMPTY_VALUES;
+
+        /**
+         * How a step with the bound {@code filter} and {@code aggregates} null-extends its master.
+         */
+        public static NullExtension of(BoundExpression filter, ObjList<FunctionExpression> aggregates) {
+            if (LogicalPlans.constantTruth(filter) != 0) {
+                return NONE;
+            }
+            for (int i = 0, n = aggregates.size(); i < n; i++) {
+                if (SqlUtil.isZeroOnEmptyAggregate(aggregates.getQuick(i).getName())) {
+                    return EMPTY_VALUES;
+                }
+            }
+            return NULL_PADDING;
+        }
     }
 }

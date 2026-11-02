@@ -53,7 +53,6 @@ import io.questdb.griffin.engine.functions.groupby.MinTimestampGroupByFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
@@ -500,12 +499,9 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
 
         final DirectLongList rows = filterCtx.getFilteredRows(slotId);
-        rows.clear();
 
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final SimpleMapValue value = atom.getMapValue(slotId);
-        final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
-        final Function filter = filterCtx.getFilter(slotId);
         // navigateTo() can throw; it must sit inside the try that releases the slot. See
         // aggregate() for why a leaked slot is permanent.
         try {
@@ -517,26 +513,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             }
             record.init(frameMemory);
 
-            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
-                // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
-                AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                AsyncFilterUtils.applyCompiledFilter(
-                        compiledFilter,
-                        filterCtx.getBindVarMemory(),
-                        filterCtx.getBindVarFunctions(),
-                        frameMemory,
-                        addressCache,
-                        filterCtx.getDataAddresses(slotId),
-                        filterCtx.getAuxAddresses(slotId),
-                        rows,
-                        frameRowCount
-                );
-            }
-
-            if (isParquetFrame) {
-                filterCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
-            }
+            filterCtx.filterFrame(slotId, frameMemory, record, addressCache, frameRowCount);
 
             if (useLateMaterialization && frameMemory.populateRemainingColumns(filterCtx.getFilterUsedColumnIndexes(), rows, false)) {
                 PageFrameFilteredMemoryRecord filteredMemoryRecord = filterCtx.getPageFrameFilteredMemoryRecord(slotId);

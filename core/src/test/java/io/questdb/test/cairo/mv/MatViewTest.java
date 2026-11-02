@@ -1241,6 +1241,46 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterRefreshPeriodLengthErrorOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_price (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW price_1h_t REFRESH EVERY 1h AS SELECT sym, last(price) price, ts FROM base_price SAMPLE BY 1h");
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (length 25h time zone 'foobar' delay 30h)",
+                    62,
+                    "maximum supported length interval is 24 hours: 25h"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (length 1h time zone 'foobar' delay 2h)",
+                    75,
+                    "invalid timezone: foobar"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (length 25h time zone 'Europe/Sofia' delay 1x)",
+                    97,
+                    "Invalid unit: 1x"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (length 1h time zone 'foobar' delay 1x)",
+                    90,
+                    "Invalid unit: 1x"
+            );
+            assertExceptionNoLeakCheck(
+                    "alter materialized view price_1h_t set refresh period (length 25h time zone 'Europe/Sofia'",
+                    90,
+                    "'delay' or ')' expected"
+            );
+            assertQuery("SELECT view_name, refresh_type, timer_interval, period_length FROM materialized_views()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_name\trefresh_type\ttimer_interval\tperiod_length
+                            price_1h_t\ttimer\t1\t0
+                            """);
+        });
+    }
+
+    @Test
     public void testAlterRefreshPeriodSampleByIntervalTimeZone() throws Exception {
         assertMemoryLeak(() -> {
             // The local day is the 29th in Berlin (UTC+1) and the 28th in New York (UTC-4).

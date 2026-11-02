@@ -497,7 +497,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             periodLengthUnit = samplingIntervalUnit;
             assert timerTimeZone == null;
             timerTimeZone = timeZone;
-            timerStartUs = CreateMatViewOperation.samplePeriodTimerStartUs(configuration.getMicrosecondClock(), samplingInterval, samplingIntervalUnit,
+            timerStartUs = CreateMatViewOperation.samplePeriodTimerStartUs(configuration.getMicrosecondClock(), periodLength, periodLengthUnit,
                     timeZone, timeZoneOffset, intervalPos);
         }
     }

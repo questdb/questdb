@@ -27,6 +27,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 
 /**
@@ -36,13 +37,19 @@ import io.questdb.std.IntList;
 public interface SymbolMapReader extends StaticSymbolTable {
 
     /**
+     * Adds the keys of the symbols to the list in the order of their values, as {@link #copySortedKeysTo(IntList)}
+     * does.
+     */
+    void copySortedKeysTo(DirectIntList keys);
+
+    /**
      * Adds the keys of the symbols, 0 to the symbol count, to the list in the order of their values: by UTF-16 code
      * units, as {@link String#compareTo(String)} orders them. A reader of a table keeps the order it sorted while its
-     * symbols stay the same, for every query that reads the table through it.
+     * symbols stay the same, for every query that reads the table through it. Only the thread that owns the reader
+     * calls it, since the reader keeps the order in state of its own; the views of {@link #newSymbolTableView()} that
+     * parallel workers read are not symbol map readers.
      */
-    default void copySortedKeysTo(IntList keys) {
-        throw new UnsupportedOperationException();
-    }
+    void copySortedKeysTo(IntList keys);
 
     int getSymbolCapacity();
 

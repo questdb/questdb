@@ -45,7 +45,6 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.join.JoinRecordMetadata;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
@@ -55,8 +54,6 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyCompiledFilter;
-import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 
 /**
  * Parallel HORIZON JOIN without aggregation: one output row per master row and offset.
@@ -298,28 +295,7 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
                     : task.populateFrameMemory();
             record.init(frameMemory);
 
-            final CompiledFilter compiledFilter = masterFilter.getCompiledFilter();
-            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
-                applyFilter(masterFilter.getFilter(slotId), rows, record, frameRowCount);
-            } else {
-                applyCompiledFilter(
-                        compiledFilter,
-                        masterFilter.getBindVarMemory(),
-                        masterFilter.getBindVarFunctions(),
-                        frameMemory,
-                        frameSequence.getPageFrameAddressCache(),
-                        task.getDataAddresses(),
-                        task.getAuxAddresses(),
-                        rows,
-                        frameRowCount
-                );
-            }
-
-            final long filteredRowCount = rows.size();
-            task.setFilteredRowCount(filteredRowCount);
-            if (isParquetFrame) {
-                masterFilter.getSelectivityStats(slotId).update(filteredRowCount, frameRowCount);
-            }
+            final long filteredRowCount = masterFilter.filterFrame(slotId, record, task);
             if (filteredRowCount == 0 || isCountOnly) {
                 return;
             }

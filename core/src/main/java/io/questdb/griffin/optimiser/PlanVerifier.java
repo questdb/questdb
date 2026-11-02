@@ -170,6 +170,7 @@ public final class PlanVerifier {
     public static final String WINDOW_JOIN_ALGORITHM = "window join step algorithm contradicts its filter or master";
     public static final String WINDOW_JOIN_SCOPE = "window join step scope differs from its master and slave columns";
     public static final String WINDOW_JOIN_SHAPE = "window join output is not the master columns followed by the step aggregates";
+    public static final String WINDOW_ORDER = "window function reads an order its input does not deliver";
     public static final String WINDOW_OUTPUT = "window output is not input columns followed by its function columns";
     public static final String WINDOW_SHAPE = "window functions, specs and column ids differ in length";
     private final ObjList<BoundExpression> checkedExpressions;
@@ -960,6 +961,9 @@ public final class PlanVerifier {
             }
         }
         failIfViolated(PhysicalChoiceVerifier.timestampReads(plan, isAccessPathRequired));
+        if (plan instanceof WindowPlan window) {
+            failIfViolated(PhysicalChoiceVerifier.windowOrder(window));
+        }
         site = null;
         reads(plan);
     }

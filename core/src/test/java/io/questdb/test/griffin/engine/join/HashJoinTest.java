@@ -517,6 +517,63 @@ public class HashJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHashJoinLightBuildsNullLoRangeLimitedInput() throws Exception {
+        assertMemoryLeak(() -> {
+            createBuildSideTables();
+            // LIMIT NULL::LONG, 2 reads as LIMIT 0, 2, so it holds 2 rows of a, fewer than the 3 rows of o, and the plan
+            // hashes it
+            assertQuery("SELECT l.id, o.id FROM (SELECT id, x FROM a LIMIT NULL::LONG, 2) l JOIN o ON l.x = o.x")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: o.x=l.x
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: o
+                                    Hash
+                                        Limit left: nullL right: 2
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                            """)
+                    .returns("""
+                            id\tid1
+                            1\t2
+                            2\t3
+                            """);
+            // LIMIT NULL::LONG, 9 returns all 9 rows of a, more than the 3 rows of o, so the plan hashes o
+            assertQuery("SELECT o.id, l.id FROM o JOIN (SELECT id, x FROM a LIMIT NULL::LONG, 9) l ON l.x = o.x")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: l.x=o.x
+                                    Limit left: nullL right: 9
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: o
+                            """)
+                    .returns("""
+                            id\tid1
+                            2\t1
+                            3\t2
+                            1\t3
+                            2\t4
+                            3\t5
+                            1\t6
+                            2\t7
+                            3\t8
+                            1\t9
+                            """);
+        });
+    }
+
+    @Test
     public void testHashJoinLightBuildsRangeLimitedInput() throws Exception {
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 1_048_576);
         assertMemoryLeak(() -> {

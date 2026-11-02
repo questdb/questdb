@@ -1469,7 +1469,9 @@ final class AggregateBinder implements Mutable {
     /**
      * Binds the aggregation of the query level over {@code input}. A SAMPLE BY lowers to {@code sampleBy}, the
      * grouping that records its grid, null without one: the {@link SampleByPlan} the SAMPLE BY cursor executes, or an
-     * aggregate grouped by the bucket {@code sampleByBucket}, which is null otherwise.
+     * aggregate grouped by the bucket {@code sampleByBucket}, which is null otherwise. Binding the grid creates
+     * {@code sampleBy} before {@code input}, so it takes {@code input} here and not through
+     * {@link BindContext#aggregate}: a SAMPLE BY never reads a HORIZON JOIN, which rejects it.
      */
     LogicalPlan bindAggregation(
             QueryModel model, QueryModel source, LogicalPlan input, ObjList<ExpressionNode> selectExpressions,

@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Hash;
 import io.questdb.std.IntList;
@@ -1284,6 +1285,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                     writer.put("c");
                     writer.put("a");
                     writer.put("b");
+                    SymbolMapReaderImpl.isKeySortCounterEnabled = true;
                     try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 3)) {
                         SymbolMapReaderImpl.testKeySorts.set(0);
                         assertSortedKeys(reader, 1, 2, 0);
@@ -1317,6 +1319,7 @@ public class SymbolMapTest extends AbstractCairoTest {
                             values.add(Chars.toString(reader.valueOf(i)));
                         }
                         for (int batch = 0; batch < 3; batch++) {
+                            final int sortedCount = values.size();
                             for (int i = 0; i < 200; i++) {
                                 final String value = Chars.toString(rnd.nextChars(1 + rnd.nextInt(6)));
                                 if (writer.put(value) == values.size()) {
@@ -1333,8 +1336,14 @@ public class SymbolMapTest extends AbstractCairoTest {
                             for (int i = 0; i < expected.length; i++) {
                                 expectedKeys[i] = expected[i];
                             }
+                            // the reader keeps the sorted keys alone once the sort ends, not the runs it merged
+                            final long readerBytes = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_READER);
                             assertSortedKeys(reader, expectedKeys);
+                            Assert.assertEquals((long) (values.size() - sortedCount) * Integer.BYTES, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_READER) - readerBytes);
                         }
+                        Assert.assertEquals(8, SymbolMapReaderImpl.testKeySorts.get());
+                    } finally {
+                        SymbolMapReaderImpl.isKeySortCounterEnabled = false;
                     }
                 }
             }
@@ -1984,10 +1993,18 @@ public class SymbolMapTest extends AbstractCairoTest {
      */
     private static void assertSortedKeys(SymbolMapReaderImpl reader, int... expected) {
         final IntList actual = new IntList();
+        actual.add(-1);
         reader.copySortedKeysTo(actual);
-        Assert.assertEquals(expected.length, actual.size());
-        for (int i = 0; i < expected.length; i++) {
-            Assert.assertEquals(expected[i], actual.getQuick(i));
+        Assert.assertEquals(expected.length + 1, actual.size());
+        try (DirectIntList directActual = new DirectIntList(1, MemoryTag.NATIVE_DEFAULT)) {
+            directActual.add(-1);
+            reader.copySortedKeysTo(directActual);
+            Assert.assertEquals(expected.length + 1, directActual.size());
+            for (int i = 0; i <= expected.length; i++) {
+                final int expectedKey = i == 0 ? -1 : expected[i - 1];
+                Assert.assertEquals(expectedKey, actual.getQuick(i));
+                Assert.assertEquals(expectedKey, directActual.get(i));
+            }
         }
     }
 

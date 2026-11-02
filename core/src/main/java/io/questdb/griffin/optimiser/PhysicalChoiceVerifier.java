@@ -53,6 +53,7 @@ import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
+import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
@@ -226,7 +227,7 @@ final class PhysicalChoiceVerifier {
      */
     private static boolean isMasterPageFrameRead(WindowJoinPlan windowJoin, int index, boolean isPlanned) {
         for (int i = 0; i < index; i++) {
-            if (!windowJoin.getSteps().getQuick(i).isNullPadding()) {
+            if (windowJoin.getSteps().getQuick(i).getNullExtension() != WindowJoinStep.NullExtension.NULL_PADDING) {
                 return false;
             }
         }
@@ -738,11 +739,15 @@ final class PhysicalChoiceVerifier {
     }
 
     static String windowJoinStep(WindowJoinPlan windowJoin, int index, WindowJoinStep step, boolean isPlanned) {
+        final WindowJoinStep.NullExtension nullExtension = step.getNullExtension();
+        if (nullExtension != WindowJoinStep.NullExtension.of(step.getFilter(), step.getAggregates())) {
+            return PlanVerifier.WINDOW_JOIN_ALGORITHM;
+        }
         final WindowJoinStep.Algorithm algorithm = step.getAlgorithm();
         if (algorithm == null) {
-            return isPlanned && !step.isNullExtending() ? PlanVerifier.CHOICE_UNPLANNED : null;
+            return isPlanned && nullExtension == WindowJoinStep.NullExtension.NONE ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
-        final boolean isValid = !step.isNullExtending() && switch (algorithm) {
+        final boolean isValid = nullExtension == WindowJoinStep.NullExtension.NONE && switch (algorithm) {
             case PARALLEL_STOLEN_FILTER ->
                     index == 0 && PlanToFactoryRules.stolenFilter(windowJoin.getMaster()) != null && OperatorPlanning.isParallelWindowJoinStep(step);
             case PARALLEL ->
@@ -750,5 +755,31 @@ final class PhysicalChoiceVerifier {
             case SERIAL -> true;
         };
         return isValid ? null : PlanVerifier.WINDOW_JOIN_ALGORITHM;
+    }
+
+    /**
+     * Checks the order a window that operator planning planned reads from its input once every master side is decided,
+     * after {@link #timestampReads}: each function whose order planning records as delivered, see
+     * {@link WindowSpec#isOrderDelivered}, reads it from the input.
+     */
+    static String windowOrder(WindowPlan window) {
+        if (window.getAlgorithm() == null) {
+            return null;
+        }
+        final LogicalPlan input = window.getChild();
+        final boolean isAdviceFollowed = PhysicalProperties.followsOrderAdvice(input) == PhysicalProperties.Capability.YES
+                && PlanToFactoryRules.hasAdvisedInput(input);
+        final int timestampIndex = PhysicalProperties.timestampIndex(input);
+        final PhysicalProperties.ScanDirection direction = PhysicalProperties.scanDirection(input);
+        for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
+            final WindowSpec spec = window.getSpecs().getQuick(i);
+            final IntList order = spec.getOrderByColumnIds();
+            if (spec.isOrderDelivered() && !(isAdviceFollowed && spec.isOrderedByQueryOrder(window.getQueryOrder())
+                    || order.size() == 1 && timestampIndex > -1 && input.getOutput().getColumnIndexById(order.getQuick(0)) == timestampIndex
+                    && direction == PhysicalProperties.ScanDirection.of(spec.getOrderByDirections().getQuick(0)))) {
+                return PlanVerifier.WINDOW_ORDER;
+            }
+        }
+        return null;
     }
 }

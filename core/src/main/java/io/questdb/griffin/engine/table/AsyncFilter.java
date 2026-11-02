@@ -26,12 +26,18 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameMemory;
+import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.jit.CompiledFilter;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -130,6 +136,26 @@ public class AsyncFilter implements QuietCloseable {
         return cleanupFailure;
     }
 
+    /**
+     * Filters the frame memory of {@code task}, see
+     * {@link #filterFrame(int, PageFrameMemory, PageFrameMemoryRecord, PageFrameAddressCache, DirectLongList, DirectLongList, DirectLongList, long)},
+     * into its filtered rows with its column address lists, and sets its filtered row count.
+     */
+    public long filterFrame(int slotId, PageFrameMemoryRecord record, PageFrameReduceTask task) {
+        final long filteredRowCount = filterFrame(
+                slotId,
+                task.getFrameMemory(),
+                record,
+                task.getFrameSequence().getPageFrameAddressCache(),
+                task.getDataAddresses(),
+                task.getAuxAddresses(),
+                task.getFilteredRows(),
+                task.getFrameRowCount()
+        );
+        task.setFilteredRowCount(filteredRowCount);
+        return filteredRowCount;
+    }
+
     public ObjList<Function> getBindVarFunctions() {
         return bindVarFunctions;
     }
@@ -194,5 +220,53 @@ public class AsyncFilter implements QuietCloseable {
      */
     public void toTop() {
         filter.toTop();
+    }
+
+    /**
+     * Leaves in {@code filteredRows} the rows of the frame in {@code frameMemory} that pass the filter, and returns
+     * their number: the compiled filter, which reads the column addresses of the frame from {@code dataAddresses} and
+     * {@code auxAddresses}, filters a frame it applies to, see {@link #isCompiledFilterApplicable}, and the filter
+     * function of {@code slotId} reads every other frame through {@code record}. Updates the selectivity statistics
+     * of {@code slotId} for a Parquet frame. The address lists are read only for a frame the compiled filter filters.
+     */
+    protected long filterFrame(
+            int slotId,
+            PageFrameMemory frameMemory,
+            PageFrameMemoryRecord record,
+            PageFrameAddressCache pageAddressCache,
+            DirectLongList dataAddresses,
+            DirectLongList auxAddresses,
+            DirectLongList filteredRows,
+            long frameRowCount
+    ) {
+        filteredRows.clear();
+        if (isCompiledFilterApplicable(frameMemory)) {
+            AsyncFilterUtils.applyCompiledFilter(
+                    compiledFilter,
+                    bindVarMemory,
+                    bindVarFunctions,
+                    frameMemory,
+                    pageAddressCache,
+                    dataAddresses,
+                    auxAddresses,
+                    filteredRows,
+                    frameRowCount
+            );
+        } else {
+            AsyncFilterUtils.applyFilter(filter.get(slotId), filteredRows, record, frameRowCount);
+        }
+        final long filteredRowCount = filteredRows.size();
+        if (frameMemory.getFrameFormat() == PartitionFormat.PARQUET) {
+            getSelectivityStats(slotId).update(filteredRowCount, frameRowCount);
+        }
+        return filteredRowCount;
+    }
+
+    /**
+     * Whether the compiled filter filters the frame: there is one, and the frame has neither column tops nor column
+     * type casts, which only the record resolves.
+     */
+    private boolean isCompiledFilterApplicable(PageFrameMemory frameMemory) {
+        return compiledFilter != null && !frameMemory.hasColumnTops() && !frameMemory.hasColumnTypeCasts();
     }
 }

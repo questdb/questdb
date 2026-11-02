@@ -51,6 +51,30 @@ public final class WindowJoinPlan extends LogicalPlan {
         return master;
     }
 
+    /**
+     * How the window join null-extends its master through all its steps, see {@link WindowJoinStep#getNullExtension}:
+     * {@link WindowJoinStep.NullExtension#NONE} when it is empty or a step joins, so its factory does not pass the master
+     * through, {@link WindowJoinStep.NullExtension#NULL_PADDING} when every step pads with NULL, so it also passes the
+     * master's page and time frames through, and {@link WindowJoinStep.NullExtension#EMPTY_VALUES} otherwise.
+     */
+    public WindowJoinStep.NullExtension getNullExtension() {
+        if (isEmpty) {
+            return WindowJoinStep.NullExtension.NONE;
+        }
+        WindowJoinStep.NullExtension nullExtension = WindowJoinStep.NullExtension.NULL_PADDING;
+        for (int i = 0, n = steps.size(); i < n; i++) {
+            switch (steps.getQuick(i).getNullExtension()) {
+                case NONE -> {
+                    return WindowJoinStep.NullExtension.NONE;
+                }
+                case EMPTY_VALUES -> nullExtension = WindowJoinStep.NullExtension.EMPTY_VALUES;
+                case NULL_PADDING -> {
+                }
+            }
+        }
+        return nullExtension;
+    }
+
     public ObjList<WindowJoinStep> getSteps() {
         return steps;
     }
@@ -70,37 +94,6 @@ public final class WindowJoinPlan extends LogicalPlan {
 
     public boolean isEmpty() {
         return isEmpty;
-    }
-
-    /**
-     * True when the window join is not empty and every step null-extends, so its factory passes the master through.
-     */
-    public boolean isMasterPassedThrough() {
-        if (isEmpty) {
-            return false;
-        }
-        for (int i = 0, n = steps.size(); i < n; i++) {
-            if (!steps.getQuick(i).isNullExtending()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    /**
-     * True when the window join is not empty and every step pads with NULL, see {@link WindowJoinStep#isNullPadding}, so
-     * its factory passes the master's page and time frames through.
-     */
-    public boolean isMasterFramePassedThrough() {
-        if (isEmpty) {
-            return false;
-        }
-        for (int i = 0, n = steps.size(); i < n; i++) {
-            if (!steps.getQuick(i).isNullPadding()) {
-                return false;
-            }
-        }
-        return true;
     }
 
     public WindowJoinPlan of(LogicalPlan master, int position) {

@@ -56,7 +56,6 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
-import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.Misc;
@@ -510,12 +509,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
 
         final DirectLongList rows = filterCtx.getFilteredRows(slotId);
-        rows.clear();
 
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final GroupByMapFragment fragment = atom.getFragment(slotId);
-        final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
-        final Function filter = filterCtx.getFilter(slotId);
         final RecordSink mapSink = atom.getMapSink(slotId);
         // navigateTo() can throw; it must sit inside the try that releases the slot. See
         // aggregate() for why a leaked slot is permanent.
@@ -530,25 +526,8 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
 
             atom.resetLocalStats(slotId);
 
-            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
-                AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
-            } else {
-                AsyncFilterUtils.applyCompiledFilter(
-                        compiledFilter,
-                        filterCtx.getBindVarMemory(),
-                        filterCtx.getBindVarFunctions(),
-                        frameMemory,
-                        addressCache,
-                        filterCtx.getDataAddresses(slotId),
-                        filterCtx.getAuxAddresses(slotId),
-                        rows,
-                        frameRowCount
-                );
-            }
+            filterCtx.filterFrame(slotId, frameMemory, record, addressCache, frameRowCount);
 
-            if (isParquetFrame) {
-                filterCtx.getSelectivityStats(slotId).update(rows.size(), frameRowCount);
-            }
             // Late materialization installs a PageFrameFilteredMemoryRecord that requires both
             // the absolute and the compacted row index via setFilteredRowIndex. The batched
             // probe/update path bottoms out in Map.probeBatch* and computeKeyedBatch, which call

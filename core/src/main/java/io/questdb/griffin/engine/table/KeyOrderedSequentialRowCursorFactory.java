@@ -24,9 +24,11 @@
 
 package io.questdb.griffin.engine.table;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.ObjList;
 
 /**
@@ -63,6 +65,12 @@ class KeyOrderedSequentialRowCursorFactory extends SequentialRowCursorFactory im
     }
 
     @Override
+    public int getIndexKey(int keyIndex) {
+        final int symbolKey = keyCursorFactories.getQuick(keyIndex).getSymbolKey();
+        return symbolKey == SymbolTable.VALUE_NOT_FOUND ? -1 : TableUtils.toIndexKey(symbolKey);
+    }
+
+    @Override
     public int getKeyCount() {
         return cursorFactoriesIdx[0];
     }
@@ -83,11 +91,6 @@ class KeyOrderedSequentialRowCursorFactory extends SequentialRowCursorFactory im
             count += keyRowCount;
         }
         return count;
-    }
-
-    @Override
-    public int getSymbolKey(int keyIndex) {
-        return keyCursorFactories.getQuick(keyIndex).getSymbolKey();
     }
 
     @Override

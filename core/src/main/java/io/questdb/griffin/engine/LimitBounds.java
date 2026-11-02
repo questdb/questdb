@@ -63,6 +63,22 @@ public final class LimitBounds implements QuietCloseable {
     }
 
     /**
+     * Whether {@code LIMIT lo, hi}, as {@link Values#of} resolves the bounds, returns the first or the last rows of its
+     * input, up to the {@link #rowCount}, and skips none: the count is a constant and one of the bounds is zero.
+     */
+    public static boolean isWithoutOffset(long lo, long hi) {
+        return (lo == 0 || hi == 0) && rowCount(lo, hi) > -1;
+    }
+
+    /**
+     * The {@code lo} bound {@link Values#of} reads for {@code LIMIT lo, hi}: 0 for a NULL {@code lo} where {@code hi}
+     * is not NULL, {@code lo} otherwise.
+     */
+    public static long loOf(long lo, long hi) {
+        return lo == Numbers.LONG_NULL && hi != Numbers.LONG_NULL ? 0 : lo;
+    }
+
+    /**
      * The most rows {@code LIMIT lo, hi} returns, as {@link Values#of} resolves the bounds, which reads
      * {@code LIMIT n} as {@code LIMIT n, 0}: the distance between the bounds where both are non-negative or both
      * negative, or where {@code lo} is negative and {@code hi} is zero. -1 where the count is not a constant: a
@@ -154,6 +170,14 @@ public final class LimitBounds implements QuietCloseable {
         }
 
         /**
+         * The last rows of its input the LIMIT reads, of which it skips {@link #getSkipLast} at the end: {@code -lo}
+         * where {@code lo} is negative and not NULL, -1 where the LIMIT keeps no last rows.
+         */
+        public long getLastRowCount() {
+            return lo < 0 && lo != Numbers.LONG_NULL ? -lo : -1;
+        }
+
+        /**
          * The rows of its order a sort keeps: the first ones where {@link #isFirstN} holds, the last ones otherwise,
          * none where 0, and every row where negative.
          */
@@ -210,8 +234,8 @@ public final class LimitBounds implements QuietCloseable {
         private boolean tryOf(long lo, long hi, boolean hasHi) {
             if (!hasHi) {
                 hi = 0;
-            } else if (lo == Numbers.LONG_NULL && hi != Numbers.LONG_NULL) {
-                lo = 0;
+            } else {
+                lo = loOf(lo, hi);
             }
             final boolean isDescending = isDescending(lo, hi);
             final long first = isDescending ? hi : lo;

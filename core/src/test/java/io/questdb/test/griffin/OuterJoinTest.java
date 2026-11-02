@@ -385,6 +385,58 @@ public class OuterJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFoldedConstantConjunctsFilterAsConstants() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            final String select = "SELECT l.id lid, r.id rid, x.id xid FROM lp_outer_l l JOIN lp_outer_r r ON r.k = l.k AND ";
+            final String order = " ORDER BY lid, rid, xid";
+            final String rightRows = """
+                    lid\trid\txid
+                    null\tnull\t10
+                    null\tnull\t11
+                    null\tnull\t12
+                    null\tnull\t13
+                    null\tnull\t14
+                    """;
+            final String emptied = """
+                    SelectedRecord
+                            Empty table
+                    """;
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                final String light = isFullFat ? "" : " Light";
+                for (String folded : new String[]{"abs(1) = 2", "r.v > l.v AND abs(1) = 2"}) {
+                    assertRows("SELECT l.id lid, r.id rid FROM lp_outer_l l JOIN lp_outer_r r ON r.k = l.k AND " + folded + " ORDER BY lid, rid",
+                            isFullFat, emptied, "lid\trid\n");
+                    assertRows(select + folded + " JOIN lp_outer_r x ON x.k = r.k" + order, isFullFat, emptied, "lid\trid\txid\n");
+                    assertRows(select + folded + " LEFT JOIN lp_outer_r x ON x.k = r.k" + order, isFullFat, emptied, "lid\trid\txid\n");
+                    for (String join : new String[]{"RIGHT", "FULL"}) {
+                        assertRows(select + folded + " " + join + " JOIN lp_outer_r x ON x.k = r.k" + order, isFullFat, """
+                                Hash %s Outer Join%s
+                                          condition: x.k=r.k
+                                            Empty table
+                                """.formatted(join.equals("RIGHT") ? "Right" : "Full", light), rightRows);
+                        assertRows(select + "true " + join + " JOIN lp_outer_r x ON x.k = r.k WHERE " + folded.replace("r.v > l.v", "x.v > 0") + order,
+                                isFullFat, emptied, "lid\trid\txid\n");
+                    }
+                }
+                assertRows(select + "abs(1) = 1 LEFT JOIN lp_outer_r x ON x.k = r.k" + order, isFullFat, """
+                        Hash Left Outer Join%s
+                                  condition: x.k=r.k
+                                    Hash Join%s
+                        """.formatted(light, light), """
+                        lid\trid\txid
+                        1\t10\t10
+                        1\t10\t11
+                        1\t11\t10
+                        1\t11\t11
+                        3\t12\t12
+                        4\t13\t13
+                        """);
+            }
+        });
+    }
+
+    @Test
     public void testImpliedGeoHashKeyNullExtendsByOnClause() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ga (id INT, w GEOHASH(4c))");

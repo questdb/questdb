@@ -600,7 +600,9 @@ final class JoinBinder implements Mutable {
                 final ExpressionNode comparison = comparison(equality.getLeftName(), equality.getLeftPosition(),
                         equality.getRightName(), equality.getRightPosition());
                 final IntList owners = equality.getOwners();
-                graph.addResidual(bindJoinConjunct(comparison, comparison, join, source, lastInput, statedOrigin(owners), executionContext), owners);
+                final BoundExpression conjunct = bindJoinConjunct(comparison, comparison, join, source, lastInput, statedOrigin(owners), executionContext);
+                assert LogicalPlans.constantTruth(conjunct) < 0;
+                graph.addResidual(conjunct, owners);
             }
             bindJoinConstants(join, graph, source, whereConstants, hasBarriers, executionContext);
             for (int i = 0, n = inputs.size(); i < n; i++) {
@@ -795,7 +797,7 @@ final class JoinBinder implements Mutable {
     /**
      * Binds into the graph the residual conjuncts that the ON clause of input {@code origin}, or WHERE for -1, states:
      * each binds within the conjunction of the clause's residual conjuncts, which leaves out its join keys and constant
-     * terms.
+     * terms, and one that binds to a constant joins the graph's constant conjuncts.
      */
     private void bindJoinResiduals(JoinPlan join, JoinGraph graph, QueryModel source, int origin,
                                    SqlExecutionContext executionContext) throws SqlException {
@@ -813,7 +815,12 @@ final class JoinBinder implements Mutable {
             if (origins.getQuick(i) == origin) {
                 final ExpressionNode residual = residuals.getQuick(i);
                 final int scopeInput = origin < 0 ? lastInput : Math.max(origin, lastJoinReferenceSource(residual, join));
-                graph.addResidual(bindJoinConjunct(residual, conjunction, join, source, scopeInput, origin, executionContext), origin);
+                final BoundExpression conjunct = bindJoinConjunct(residual, conjunction, join, source, scopeInput, origin, executionContext);
+                if (LogicalPlans.constantTruth(conjunct) < 0) {
+                    graph.addResidual(conjunct, origin);
+                } else {
+                    graph.addConstantFilter(conjunct, origin);
+                }
             }
         }
     }

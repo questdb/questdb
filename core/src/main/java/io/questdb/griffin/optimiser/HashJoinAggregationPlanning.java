@@ -64,6 +64,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Decides for {@link OperatorPlanning} whether the GROUP BY of an aggregate fuses into the INNER, LEFT or RIGHT hash
@@ -127,15 +128,6 @@ final class HashJoinAggregationPlanning implements Mutable {
         projection = null;
         readSchema = null;
         slaveOutput = null;
-    }
-
-    /**
-     * True when the RIGHT join's preserved input carries a filter, an interval of its own or the intervals of a
-     * window join, which shrink the rows the ordinary plan hashes.
-     */
-    private static boolean hasFilter(LogicalPlan source) {
-        final ScanPlan scan = frameScan(source);
-        return source instanceof FilterPlan || scan.getResidual() != null || scan.getJoinIntervals().size() > 0;
     }
 
     private static boolean hasVariableArgument(BoundExpression expression, boolean isArgument) {
@@ -292,7 +284,8 @@ final class HashJoinAggregationPlanning implements Mutable {
 
     /**
      * The fusion that builds the input on {@code side}, or null when one of its keys, aggregates or filters keeps the
-     * ordinary plan.
+     * ordinary plan. The row count of the table {@code slaveRowScan} reads gives {@code slaveRows}, see
+     * {@link OperatorPlanning#keepBuildSide}.
      */
     private HashJoinAggregation orientation(
             AggregatePlan aggregate,
@@ -303,7 +296,8 @@ final class HashJoinAggregationPlanning implements Mutable {
             long masterRows,
             LogicalPlan slave,
             HashJoinAggregation.InputRead slaveRead,
-            long slaveRows
+            long slaveRows,
+            @Nullable ScanPlan slaveRowScan
     ) throws SqlException {
         final JoinInput first = join.getOrderedInputs().getQuick(0);
         final JoinInput second = join.getOrderedInputs().getQuick(1);
@@ -384,8 +378,8 @@ final class HashJoinAggregationPlanning implements Mutable {
             return null;
         }
         if (isPresized) {
-            OperatorPlanning.keepBuildSide(hashJoin.getBuildInput(), isMasterBuilt ? masterRows : slaveRows,
-                    hashJoin.getProbeInput(), PhysicalProperties.rowBoundScan(hashJoin.getProbeInput()), isMasterBuilt ? slaveRows : masterRows);
+            OperatorPlanning.keepBuildSide(hashJoin.getBuildInput(), isMasterBuilt ? masterRows : slaveRows, hashJoin.getProbeInput(),
+                    isMasterBuilt ? slaveRowScan : PhysicalProperties.rowBoundScan(master), isMasterBuilt ? slaveRows : masterRows);
         }
         hashJoin.setFilters(onFilter, postJoinFilter, isPresized);
         return hashJoin;
@@ -525,7 +519,10 @@ final class HashJoinAggregationPlanning implements Mutable {
 
     /**
      * The fusion of the aggregate's GROUP BY into the hash join under it, or null when the shape keeps the ordinary
-     * plan. Bounds the rows of its inputs as {@link OptimiserContext#rowBound} does.
+     * plan. Bounds the rows of its inputs as {@link OptimiserContext#rowBound} does. A RIGHT join builds its master,
+     * while the ordinary plan hashes its slave, so it fuses only when the slave reads its table whole, see
+     * {@link PhysicalProperties#rowFloorScan}, and the master never holds more rows than that table, see
+     * {@link OptimiserContext#rowFloor}.
      */
     HashJoinAggregation plan(AggregatePlan aggregate) throws SqlException {
         clear();
@@ -570,13 +567,10 @@ final class HashJoinAggregationPlanning implements Mutable {
         final ScanPlan masterScan = frameScan(master);
         final ScanPlan slaveScan = frameScan(slave);
         final long masterRows = context.rowBound(master);
-        // A RIGHT join builds its master, while the ordinary plan hashes its slave, the preserved input, after the
-        // filters and intervals of the slave: the fusion holds only when its build holds no more rows than those. A
-        // slave without them returns at least the rows of its table, as does a live view, which also returns the rows
-        // its table does not hold yet.
-        final long slaveRows = kind == JoinKind.RIGHT_OUTER ? context.getTableAccessInfo(slaveScan).getRowCount() : context.rowBound(slave);
-        if (kind == JoinKind.RIGHT_OUTER && (JoinInput.BuildSide.smaller(masterRows, slaveRows, JoinInput.BuildSide.MASTER) != JoinInput.BuildSide.MASTER
-                || hasFilter(slave) || context.getExecutionContext().isOverriddenIntrinsics(slaveScan.getTableToken()))) {
+        final ScanPlan slaveRowScan = kind == JoinKind.RIGHT_OUTER ? PhysicalProperties.rowFloorScan(slave) : PhysicalProperties.rowBoundScan(slave);
+        final long slaveRows = kind == JoinKind.RIGHT_OUTER ? context.rowFloor(slave, slaveRowScan) : context.rowBound(slave);
+        if (kind == JoinKind.RIGHT_OUTER && (slaveRowScan == null
+                || JoinInput.BuildSide.smaller(masterRows, slaveRows, JoinInput.BuildSide.MASTER) != JoinInput.BuildSide.MASTER)) {
             return null;
         }
         masterOutput = HashJoinAggregation.frameOutput(master);
@@ -592,7 +586,7 @@ final class HashJoinAggregationPlanning implements Mutable {
                             ? JoinInput.BuildSide.MASTER : JoinInput.BuildSide.SLAVE;
             default -> JoinInput.BuildSide.SLAVE;
         };
-        final HashJoinAggregation hashJoin = orientation(aggregate, join, side, master, masterRead, masterRows, slave, slaveRead, slaveRows);
+        final HashJoinAggregation hashJoin = orientation(aggregate, join, side, master, masterRead, masterRows, slave, slaveRead, slaveRows, slaveRowScan);
         if (hashJoin == null) {
             return null;
         }
@@ -601,7 +595,7 @@ final class HashJoinAggregationPlanning implements Mutable {
         // input with more rows costs about what building it would: SYMBOL keys keep the one build.
         if (kind == JoinKind.INNER && !hashJoin.getKeys().hasTranslatedSymbol() && (masterScan.isIntervalScan() || slaveScan.isIntervalScan())) {
             hashJoin.setAlternate(orientation(aggregate, join, side == JoinInput.BuildSide.MASTER
-                    ? JoinInput.BuildSide.SLAVE : JoinInput.BuildSide.MASTER, master, masterRead, masterRows, slave, slaveRead, slaveRows));
+                    ? JoinInput.BuildSide.SLAVE : JoinInput.BuildSide.MASTER, master, masterRead, masterRows, slave, slaveRead, slaveRows, slaveRowScan));
         }
         return hashJoin;
     }

@@ -45,6 +45,7 @@ import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * The query level the optimiser rewrites: the expression services of the binder that produced the plan and
@@ -203,12 +204,13 @@ final class OptimiserContext implements Mutable {
     }
 
     /**
-     * A lower bound of the rows the factory of the plan returns under the LIMITs whose count only execution knows, see
-     * {@link PhysicalProperties#hasRuntimeLimitsOf}: its row bound where the row count of a table gives its rows, see
-     * {@link PhysicalProperties#rowCountScan}, else 0.
+     * A lower bound of the rows the factory of the plan returns, apart from the LIMITs whose count only execution knows,
+     * see {@link PhysicalProperties#hasRuntimeLimitsOf}: the row count of the table of {@code scan}, the plan's
+     * {@link PhysicalProperties#rowCountScan} or {@link PhysicalProperties#rowFloorScan}, capped by the LIMITs of
+     * constant bounds along the way, see {@link PhysicalProperties#rowBoundLimit}; 0 when {@code scan} is null.
      */
-    long rowFloor(LogicalPlan plan) {
-        return PhysicalProperties.rowCountScan(plan) != null ? rowBound(plan) : 0;
+    long rowFloor(LogicalPlan plan, @Nullable ScanPlan scan) {
+        return scan != null ? Math.min(getTableAccessInfo(scan).getRowCount(), PhysicalProperties.rowBoundLimit(plan)) : 0;
     }
 
     private ColumnExpression column(OutputSchema output, int columnId, int position) {

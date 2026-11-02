@@ -392,6 +392,40 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDirectReadLandsSkipsByCountsOfKeys() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            createSeriesTable();
+            // the position p in key order is the row p % 20 of the key p / 20, whose id is the key plus one plus 2_000
+            // for each row of the key before it; the skips land past the keys the read counted, inside them and on the
+            // last rows of the read
+            final long[] skips = {15_000, 5_005, 15_000, 39_995, 40_000, 0};
+            final long[] limits = {10, 3, 10, 10, 10, 2};
+            final long[] counts = {10, 3, 10, 5, 0, 2};
+            try (RecordCursorFactory factory = select("SELECT id, s, payload, ts FROM t WHERE ts IN '1970-01-01' ORDER BY s, ts");
+                 RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                final RecordCursor.Counter counter = new RecordCursor.Counter();
+                for (int i = 0; i < skips.length; i++) {
+                    cursor.toTop();
+                    counter.set(skips[i]);
+                    cursor.skipRows(counter, limits[i]);
+                    Assert.assertEquals(0, counter.get());
+                    final Record record = cursor.getRecord();
+                    Assert.assertFalse("the read returns its rows from the page frames", record instanceof DelegatingRecord);
+                    long position = skips[i];
+                    int count = 0;
+                    while (cursor.hasNext()) {
+                        Assert.assertEquals(position / 20 + 1 + 2_000 * (position % 20), record.getLong(0));
+                        position++;
+                        count++;
+                    }
+                    Assert.assertEquals(counts[i], count);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testDirectReadLimitsDecodeOnlyRowGroupsOfTheirRows() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
@@ -473,6 +507,50 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
                 }
             } finally {
                 node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+            }
+        });
+    }
+
+    @Test
+    public void testFilteredDenseReadOverGatherBudgetCollectsItsRows() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 64 * 1024 * 1024L);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x id, ('k' || (x % 2_000))::SYMBOL s, timestamp_sequence(0, 10_000_000) ts
+                        FROM long_sequence(4_000)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("INSERT INTO t VALUES (4_001, 'k1', '1970-01-02')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
+            // the 500 keys outnumber the rows of each of the 4 row groups enough for a dense scan of each, but the
+            // decode cache keeps those row groups under any hint, which leaves the gather no budget past the entries of
+            // a sort of the rows, so the read collects the rows its filter keeps in one pass over the row groups instead
+            final StringSink keys = new StringSink();
+            keys.put(" AND s IN ('k0'");
+            for (int i = 1; i < 500; i++) {
+                keys.put(", 'k").put(i * 4).put('\'');
+            }
+            keys.put(')');
+            final String tail = "id, s, ts FROM t WHERE ts IN '1970-01-01'" + keys + " AND id % 3 = 0 ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            for (String limit : new String[]{"", " LIMIT 10", " LIMIT -10"}) {
+                printSql("SELECT /*+ no_index(t) */ " + tail + limit, expected);
+                PageFrameRecordCursorImpl.testDenseScanFrames.set(0);
+                PageFrameRecordCursorImpl.isWalkCounterEnabled = true;
+                try {
+                    assertQuery("SELECT " + tail + limit).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+                } finally {
+                    PageFrameRecordCursorImpl.isWalkCounterEnabled = false;
+                }
+                Assert.assertEquals("the read scans no row group", 0, PageFrameRecordCursorImpl.testDenseScanFrames.get());
+            }
+            try (RecordCursorFactory factory = select("SELECT " + tail); RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                final long stateSize = cursor.preComputedStateSize();
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertNotEquals("the read collects its rows", stateSize, cursor.preComputedStateSize());
+                Assert.assertFalse("the read returns its rows from the page frames", cursor.getRecord() instanceof DelegatingRecord);
             }
         });
     }
@@ -571,6 +649,38 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
                 }
             } finally {
                 node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
+            }
+        });
+    }
+
+    @Test
+    public void testFilteredNegativeLimitOfDenseGatherGathersItsRows() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 64 * 1024 * 1024L);
+        assertMemoryLeak(() -> {
+            createWindowTable();
+            // the 500 keys outnumber the rows of each of the 40 row groups enough for a dense scan of each, which a
+            // gather in one window takes; the passes of the keys from the last key back would find the last rows of the
+            // 40 that the filter keeps only past a third of the rows of the keys, and a collection of the rows of each
+            // key in each row group would probe the index 500 times per row group
+            final StringSink keys = new StringSink();
+            keys.put(" AND s IN ('k0'");
+            for (int i = 1; i < 500; i++) {
+                keys.put(", 'k").put(i * 4).put('\'');
+            }
+            keys.put(')');
+            final String tail = "id, s, ts FROM t WHERE ts IN '1970-01-01'" + keys + " AND id % 1_000 = 8 ORDER BY s, ts";
+            final StringSink expected = new StringSink();
+            for (String limit : new String[]{" LIMIT -10", " LIMIT -15, -5"}) {
+                printSql("SELECT /*+ no_index(t) */ " + tail + limit, expected);
+                PageFrameRecordCursorImpl.testDenseScanFrames.set(0);
+                PageFrameRecordCursorImpl.isWalkCounterEnabled = true;
+                try {
+                    assertQuery("SELECT " + tail + limit).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+                } finally {
+                    PageFrameRecordCursorImpl.isWalkCounterEnabled = false;
+                }
+                Assert.assertTrue("the gather scans row groups densely", PageFrameRecordCursorImpl.testDenseScanFrames.get() > 0);
             }
         });
     }
@@ -807,6 +917,73 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeysOfColumnAddedAfterRowsMatchNonIndexedRead() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            // the first day predates the column, so that its partition has no index of it, and the index cannot count
+            // the rows of a key there; the third day is a Parquet partition
+            execute("CREATE TABLE t (id LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT x, timestamp_sequence(0, 100_000_000) FROM long_sequence(800)");
+            execute("ALTER TABLE t ADD COLUMN s SYMBOL INDEX");
+            execute("""
+                    INSERT INTO t
+                    SELECT x + 800, timestamp_sequence(86_400_000_000, 108_000_000), ('k' || (x % 300))::SYMBOL
+                    FROM long_sequence(1_600)
+                    """);
+            execute("INSERT INTO t VALUES (2_401, '1970-01-04', 'k1')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '1970-01-03'");
+            // the native partitions of the first two days, which the passes of the keys read, and all three days, which
+            // the read gathers
+            final String[] intervals = {"ts < '1970-01-03'", "ts < '1970-01-04'"};
+            final String[] predicates = {"", " AND s IN ('k1', 'k2', NULL)", " AND s IN ('k1', 'k2', NULL) AND id > 0"};
+            final String[] limits = {"", " LIMIT 900, 910", " LIMIT -10", " LIMIT 5"};
+            final StringSink expected = new StringSink();
+            for (String interval : intervals) {
+                for (String predicate : predicates) {
+                    for (String limit : limits) {
+                        final String tail = "id, s, ts FROM t WHERE " + interval + predicate + " ORDER BY s, ts" + limit;
+                        printSql("SELECT /*+ no_index(t) */ " + tail, expected);
+                        assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().returns(expected);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testKeysOfPostingIndexMatchNonIndexedRead() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 1024L);
+        assertMemoryLeak(() -> {
+            // the index cannot count the rows of a key in a partition of a posting index, so that the read gathers the
+            // rows of its 100 keys without their counts, and lands its skips row by row
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x id, ('k' || (x % 300))::SYMBOL s, timestamp_sequence(0, 100_000_000) ts
+                        FROM long_sequence(1_600)
+                    ), INDEX(s TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
+            final StringSink keys = new StringSink();
+            keys.put(" AND s IN ('k0'");
+            for (int i = 1; i < 100; i++) {
+                keys.put(", 'k").put(i * 3).put('\'');
+            }
+            keys.put(')');
+            final String[] predicates = {keys.toString(), keys + " AND id > 0"};
+            final String[] limits = {"", " LIMIT 100, 110", " LIMIT -10", " LIMIT 5"};
+            final StringSink expected = new StringSink();
+            for (String predicate : predicates) {
+                for (String limit : limits) {
+                    final String tail = "id, s, ts FROM t WHERE ts < '1970-01-02'" + predicate + " ORDER BY s, ts" + limit;
+                    printSql("SELECT /*+ no_index(t) */ " + tail, expected);
+                    assertQuery("SELECT " + tail).noLeakCheck().sizeMayVary().inferTimestamp().withPlanContaining("symbolOrder: asc").returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testLimitFromLastRowOnMatchesNonIndexedRead() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
         node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 1024L);
@@ -903,6 +1080,40 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
                 Assert.assertEquals(ParquetDecodeHint.SCATTERED, pool.getDecodeHint());
                 Assert.assertEquals("payload decodes", 128, pool.getDecodeCount());
                 Assert.assertEquals("the read scans no row group", 0, PageFrameRecordCursorImpl.testDenseScanFrames.get());
+            } finally {
+                PageFrameRecordCursorImpl.isWalkCounterEnabled = false;
+            }
+        });
+    }
+
+    @Test
+    public void testRowIdsOfWaitingReadChooseModeForEveryRow() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            createSeriesTable();
+            // a consumer that moves to rows by their row ids reads every row of the read, so that the read chooses its
+            // mode by a model of the direct read and the gather before a skip that would bound it
+            PageFrameRecordCursorImpl.testDirectModelRuns.set(0);
+            PageFrameRecordCursorImpl.isWalkCounterEnabled = true;
+            try (RecordCursorFactory factory = select("SELECT id, s, payload, ts FROM t WHERE ts IN '1970-01-01' ORDER BY s, ts");
+                 RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                cursor.setRecordAtRows(null);
+                Assert.assertEquals(1, PageFrameRecordCursorImpl.testDirectModelRuns.get());
+                final RecordCursor.Counter counter = new RecordCursor.Counter();
+                counter.set(15_000);
+                cursor.skipRows(counter, 10);
+                Assert.assertEquals(0, counter.get());
+                final Record record = cursor.getRecord();
+                long id = 751;
+                int count = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(id, record.getLong(0));
+                    id += 2_000;
+                    count++;
+                }
+                Assert.assertEquals(10, count);
+                Assert.assertEquals(1, PageFrameRecordCursorImpl.testDirectModelRuns.get());
+                Assert.assertEquals(ParquetDecodeHint.MONOTONIC, ((AbstractPageFrameRecordCursor) cursor).getFrameMemoryPool().getDecodeHint());
             } finally {
                 PageFrameRecordCursorImpl.isWalkCounterEnabled = false;
             }

@@ -446,6 +446,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
             stepClone.setLo(step.getLo(), step.getLoExpression(), step.getLoSign(), step.getLoTimeUnit(), step.getLoPosition());
             stepClone.setHi(step.getHi(), step.getHiExpression(), step.getHiSign(), step.getHiTimeUnit(), step.getHiPosition());
             stepClone.setTableSource(step.isTableSource());
+            stepClone.setNullExtension(step.getNullExtension());
             stepClone.setAlgorithm(step.getAlgorithm());
             clone.getSteps().add(stepClone);
         }

@@ -53,6 +53,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.lv.LiveViewPageFrameCursor;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
 import io.questdb.std.Chars;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -1196,6 +1197,16 @@ public class LiveViewPageFrameCursorTest extends AbstractCairoTest {
         @Override
         public boolean containsNullValue() {
             return false;
+        }
+
+        @Override
+        public void copySortedKeysTo(DirectIntList keys) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void copySortedKeysTo(IntList keys) {
+            throw new UnsupportedOperationException();
         }
 
         @Override

@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.std.DirectIntList;
 import io.questdb.std.IntList;
 
 public class EmptySymbolMapReader implements SymbolMapReader {
@@ -36,6 +37,10 @@ public class EmptySymbolMapReader implements SymbolMapReader {
     @Override
     public boolean containsNullValue() {
         return false;
+    }
+
+    @Override
+    public void copySortedKeysTo(DirectIntList keys) {
     }
 
     @Override

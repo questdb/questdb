@@ -118,7 +118,7 @@ public final class SetOperationClause {
         final ColumnKind family = pick < 2 ? ColumnKind.STRING_LIKE : pick == 2 ? ColumnKind.TEMPORAL : ColumnKind.NUMERIC;
         final String[] lead = family == ColumnKind.STRING_LIKE && rnd.nextInt(4) == 0 ? SYMBOL_LEAD
                 : family == ColumnKind.TEMPORAL && rnd.nextBoolean() ? PRECISION_LEADS[rnd.nextInt(PRECISION_LEADS.length)]
-                : null;
+                  : null;
         final StringSink set = new StringSink();
         set.put('(');
         final int branches = lead == SYMBOL_LEAD ? 3 : 2 + rnd.nextInt(2);

@@ -133,28 +133,23 @@ final class SampleByFillGrid {
             // Anchor at effectiveOffset = bucket + calendarOffset to match
             // timestamp_floor_utc's grid.
             //
-            // Math.max clamps a positive-offset case where effectiveOffset
-            // > seed: GROUP BY's Micros.floor* clamps up; round() doesn't.
-            //
-            // setStart vs setLocalAnchor tracks the origin of the bucket:
+            // setStart vs anchorAtLocal tracks the origin of the bucket:
             //  - firstTs path: a GROUP BY bucket label on the local grid;
             //    setStart applies UTC->local conversion. (Here calendarOffset
             //    is 0, so effectiveOffset == firstTs.)
             //  - fromTs path: a raw user FROM in local-grid space;
-            //    setLocalAnchor forwards untranslated, and localAnchorAsUtc
-            //    lifts back to UTC for the Math.max comparison.
+            //    anchorAtLocal forwards it untranslated.
             //  Using setStart on the fromTs path would shift the grid by
             //  tzOffset and trip the grid-drift guard on super-day strides.
             final long effectiveOffset = bucket + calendarOffset;
-            final long anchorUtc;
+            final long anchor;
             if (currentBucketIsFirstTs) {
                 timestampSampler.setStart(effectiveOffset);
-                anchorUtc = effectiveOffset;
+                anchor = effectiveOffset;
             } else {
-                timestampSampler.setLocalAnchor(effectiveOffset);
-                anchorUtc = timestampSampler.localAnchorAsUtc(effectiveOffset);
+                anchor = timestampSampler.anchorAtLocal(effectiveOffset);
             }
-            bucket = Math.max(anchorUtc, timestampSampler.round(bucket));
+            bucket = timestampSampler.roundFromAnchor(anchor, bucket);
         }
         if (maxTimestamp == Numbers.LONG_NULL) {
             maxTimestamp = Long.MAX_VALUE;
@@ -168,13 +163,7 @@ final class SampleByFillGrid {
      */
     long firstBucketWithoutRows() {
         if (fromTs != Numbers.LONG_NULL && maxTimestamp != Numbers.LONG_NULL) {
-            // Same anchor rule as firstBucket(), fromTs path only (no firstTs).
-            // effectiveOffset is local-grid space; setLocalAnchor forwards
-            // untranslated and localAnchorAsUtc lifts back so Math.max clamps in UTC.
-            final long effectiveOffset = fromTs + calendarOffset;
-            timestampSampler.setLocalAnchor(effectiveOffset);
-            final long anchorUtc = timestampSampler.localAnchorAsUtc(effectiveOffset);
-            return Math.max(anchorUtc, timestampSampler.round(fromTs));
+            return timestampSampler.roundFromAnchor(timestampSampler.anchorAtLocal(fromTs + calendarOffset), fromTs);
         }
         maxTimestamp = Long.MIN_VALUE;
         return Long.MAX_VALUE;
