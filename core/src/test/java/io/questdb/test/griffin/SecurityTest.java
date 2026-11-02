@@ -907,7 +907,7 @@ public class SecurityTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             sqlExecutionContext.getRandom().reset();
             execute("create table tb1 as (select" +
-                    " rnd_symbol(20,4,4,20000) sym1," +
+                    " rnd_symbol(100,4,4,20000) sym1," +
                     " rnd_symbol(20,4,4,20000) sym2," +
                     " rnd_double(2) d," +
                     " timestamp_sequence(0, 1000000000) ts" +
