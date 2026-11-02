@@ -306,8 +306,8 @@ public class OrderByLimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE seq AS (SELECT x v FROM long_sequence(60_000))");
             final String[][] cases = {
-                    {"v", "3_000", "v > 57_000", "4"},
-                    {"CASE WHEN v % 3 = 0 THEN v ELSE -v END", "3_000", "v % 3 = 0 AND v > 51_000", "7"},
+                    {"v", "3_000", "v > 57_000", "3"},
+                    {"CASE WHEN v % 3 = 0 THEN v ELSE -v END", "1_000", "v % 3 = 0 AND v > 57_000", "7"},
                     {"v", "300", "v > 59_700", "13"},
                     {"v", "100", "v > 59_900", "14"}
             };

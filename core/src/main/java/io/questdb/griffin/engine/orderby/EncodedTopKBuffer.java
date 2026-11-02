@@ -319,11 +319,12 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
             keyHeap = newKeyHeap();
         }
 
-        compactionTrigger = limit > 0 && limit < maxEntries
-                ? Math.min(Math.max(limit << 1, MIN_COMPACTION_TRIGGER), maxEntries)
-                : Long.MAX_VALUE;
-        if (compactionTrigger != Long.MAX_VALUE) {
-            entryMem.setCapacity(Math.min(compactionTrigger, MAX_PRESIZE_ENTRIES) * longsPerEntry);
+        if (limit > 0 && limit < maxEntries) {
+            final long trigger = Math.min(Math.max(limit << 1, MIN_COMPACTION_TRIGGER), maxEntries);
+            entryMem.setCapacity(Math.min(trigger, MAX_PRESIZE_ENTRIES) * longsPerEntry);
+            compactionTrigger = hasRowCopies ? Math.min(Math.max(limit << 2, MIN_COMPACTION_TRIGGER), maxEntries) : trigger;
+        } else {
+            compactionTrigger = Long.MAX_VALUE;
         }
         clear();
     }
