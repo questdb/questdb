@@ -31,7 +31,6 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunction;
-import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
@@ -238,18 +237,14 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         final int size = staticIntervals.size();
-        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        final boolean isResolvedStatically = noDynamicIntervals || hasTickFilterMarker(seq, lo, lim);
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.INTERSECT, sink, isResolvedStatically);
-            if (noDynamicIntervals) {
+            parseStaticTickExpr(seq, lo, lim, position, IntervalOperation.INTERSECT);
+            if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
                     IntervalUtils.intersectInPlace(staticIntervals, size);
                 }
-            } else if (!isResolvedStatically) {
-                appendParsedDynamicIntervals();
             } else if (parsedIntervals.size() == 0) {
                 intersectEmpty();
             } else {
@@ -617,19 +612,15 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
 
         final int size = staticIntervals.size();
-        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        final boolean isResolvedStatically = noDynamicIntervals || hasTickFilterMarker(seq, lo, lim);
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.SUBTRACT, sink, isResolvedStatically);
-            if (noDynamicIntervals) {
+            parseStaticTickExpr(seq, lo, lim, position, IntervalOperation.SUBTRACT);
+            if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 IntervalUtils.invert(staticIntervals, size);
                 if (intervalApplied) {
                     IntervalUtils.intersectInPlace(staticIntervals, size);
                 }
-            } else if (!isResolvedStatically) {
-                appendParsedDynamicIntervals();
             } else {
                 // NOT IN S keeps the complement of S, so the inverted list encodes as an intersection.
                 IntervalUtils.invert(parsedIntervals, 0);
@@ -697,18 +688,14 @@ public class RuntimeIntervalModelBuilder implements Mutable {
 
         // Parse and expand the interval string (may produce multiple pairs for periodic intervals).
         final int size = staticIntervals.size();
-        final boolean noDynamicIntervals = dynamicRangeList.size() == 0;
-        final boolean isResolvedStatically = noDynamicIntervals || hasTickFilterMarker(seq, lo, lim);
         try {
             parsedIntervals.clear();
-            IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, IntervalOperation.UNION, sink, isResolvedStatically);
-            if (noDynamicIntervals) {
+            parseStaticTickExpr(seq, lo, lim, position, IntervalOperation.UNION);
+            if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
                     IntervalUtils.unionInPlace(staticIntervals, size);
                 }
-            } else if (!isResolvedStatically) {
-                appendParsedDynamicIntervals();
             } else {
                 appendStaticIntervalsUnion();
             }
@@ -802,17 +789,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         return result;
     }
 
-    /**
-     * Reports whether a static tick string may carry a '#' day filter or tick calendar. The
-     * dynamic encoding stores such a filter lossily, so the builder resolves these strings with
-     * the static parser even after a dynamic interval. The string then resolves through the same
-     * static parser in either AND/OR operand order. The scan covers the global marker as well as
-     * per-element markers inside brackets, which the parser's own marker search skips.
-     */
-    private static boolean hasTickFilterMarker(CharSequence seq, int lo, int lim) {
-        return Chars.indexOf(seq, lo, lim, '#') >= 0;
-    }
-
     private static long subtractSaturating(long value, long offset) {
         final long result = value - offset;
         if (((value ^ offset) & (value ^ result)) < 0) {
@@ -827,15 +803,6 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         dynamicRangeList.add(function);
         if (isCursor) {
             cursorFunctionPositions.add(functionPosition);
-        }
-    }
-
-    private void appendParsedDynamicIntervals() {
-        final int intervalCount = parsedIntervals.size() / IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
-        reserveEncodedIntervals(intervalCount, 0);
-        staticIntervals.add(parsedIntervals);
-        for (int i = 0; i < intervalCount; i++) {
-            addDynamicFunction(null, 0, false);
         }
     }
 
@@ -1006,6 +973,19 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         }
         lo = timestampDriver.from(lo, modelTimestampDriver.getTimestampType());
         return subtractSaturating(lo, loOffset);
+    }
+
+    /**
+     * Resolves a tick string without date variables into plain [lo, hi] pairs in parsedIntervals,
+     * also when a run-time interval precedes it. The callers then combine the whole list with the
+     * preceding expression in one step, so the result does not depend on the order of the AND or
+     * OR operands. The encoded form of the string would apply its first value with the operation
+     * and union the rest into the result, which computes (X AND a) OR b instead of X AND (a OR b),
+     * and it would store a day filter as a mask that the evaluator checks against the first day
+     * of each value only.
+     */
+    private void parseStaticTickExpr(CharSequence seq, int lo, int lim, int position, short operation) throws SqlException {
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, operation, sink, true);
     }
 
     /**

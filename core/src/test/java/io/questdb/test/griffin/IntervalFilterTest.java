@@ -27,11 +27,15 @@ package io.questdb.test.griffin;
 import io.questdb.DefaultFactoryProvider;
 import io.questdb.FactoryProvider;
 import io.questdb.cairo.TickCalendarServiceFactory;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.Numbers;
+import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.cairo.TestTickCalendarService;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -619,7 +623,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     6
                     """;
             assertQuery("SELECT k FROM x WHERE " + dayFilterPredicate).noLeakCheck().returns(mondays);
-            assertInDayFilterWithRuntimeInterval(dayFilterPredicate, "ts > dateadd('y', -30, now())", mondays);
+            assertInBothOrders(dayFilterPredicate, "ts > dateadd('y', -30, now())", mondays);
         });
     }
 
@@ -667,9 +671,9 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     6
                     """;
             final String runtimePredicate = "ts > dateadd('y', -10, now())";
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-[01..12]-[01..28]#mon'", runtimePredicate, mondays);
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-[01..12]-[01..28]#mon'", "ts NOT IN :i", mondays);
-            assertInDayFilterWithRuntimeInterval(
+            assertInBothOrders("ts IN '2024-[01..12]-[01..28]#mon'", runtimePredicate, mondays);
+            assertInBothOrders("ts IN '2024-[01..12]-[01..28]#mon'", "ts NOT IN :i", mondays);
+            assertInBothOrders(
                     "ts NOT IN '2024-[01..12]-[01..28]#mon'",
                     runtimePredicate,
                     """
@@ -680,7 +684,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             5
                             """
             );
-            assertInDayFilterWithRuntimeInterval(
+            assertInBothOrders(
                     "ts IN '2024-[01..12]-[01..28]#workday'",
                     runtimePredicate,
                     """
@@ -692,10 +696,10 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             """
             );
             // the filter judges a Monday at +05:00 by its local day
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-[01..12]-[01..28]@+05:00#mon'", runtimePredicate, mondays);
+            assertInBothOrders("ts IN '2024-[01..12]-[01..28]@+05:00#mon'", runtimePredicate, mondays);
             // a single-element date list and a per-element filter
-            assertInDayFilterWithRuntimeInterval("ts IN '[2024-[01..12]-[01..28]]#mon'", runtimePredicate, mondays);
-            assertInDayFilterWithRuntimeInterval(
+            assertInBothOrders("ts IN '[2024-[01..12]-[01..28]]#mon'", runtimePredicate, mondays);
+            assertInBothOrders(
                     "ts IN '[2024-01-05,2024-[01..12]-[01..28]#mon]'",
                     runtimePredicate,
                     """
@@ -707,7 +711,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
             );
             // Monday 18:00 for 6 hours joins Tuesday 00:00 for 6 hours, but the Tuesday interval
             // fails the filter, so Tuesday 04:30 (row 4) must not match
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-[01..12]-[01..28]T[00:00,18:00]#mon;6h'", runtimePredicate, "k\n");
+            assertInBothOrders("ts IN '2024-[01..12]-[01..28]T[00:00,18:00]#mon;6h'", runtimePredicate, "k\n");
             assertQuery("SELECT k FROM x WHERE ts IN '2024-[01..12]-[01..28]#mon'").noLeakCheck().returns(mondays);
             // $today is the Monday 2024-01-08
             assertQuery("SELECT k FROM x WHERE ts IN '$today' OR ts IN '2024-[01..12]-[01..28]#mon'").noLeakCheck().returns(mondays);
@@ -725,9 +729,9 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     3
                     6
                     """;
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-[01..09]-[01..28]#mon'", "ts > dateadd('y', -10, now())", mondays);
+            assertInBothOrders("ts IN '2024-[01..09]-[01..28]#mon'", "ts > dateadd('y', -10, now())", mondays);
             assertQuery("SELECT k FROM x WHERE ts IN '$today' OR ts IN '2024-[01..09]-[01..28]#mon'").noLeakCheck().returns(mondays);
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-[01..04]-[01..28]T[00:00,18:00]#mon;6h'", "ts > dateadd('y', -10, now())", "k\n");
+            assertInBothOrders("ts IN '2024-[01..04]-[01..28]T[00:00,18:00]#mon;6h'", "ts > dateadd('y', -10, now())", "k\n");
         });
     }
 
@@ -739,7 +743,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createDayFilterTable();
             final String runtimePredicate = "ts > dateadd('y', -30, now())";
-            assertInDayFilterWithRuntimeInterval(
+            assertInBothOrders(
                     "ts IN '[2021..2024]-[01..12]-[01..28]T12:00#mon;1h'",
                     runtimePredicate,
                     """
@@ -794,7 +798,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     6
                     """;
             assertQuery("SELECT k FROM x WHERE ts IN " + atCap).noLeakCheck().returns(mondays);
-            assertInDayFilterWithRuntimeInterval("ts IN " + atCap, runtimePredicate, mondays);
+            assertInBothOrders("ts IN " + atCap, runtimePredicate, mondays);
             bindVariableService.setStr("p", "[2004..2024]-[01..12]-[01..28]#mon");
             assertQuery("SELECT k FROM x WHERE ts IN :p").noLeakCheck().returns(mondays);
         });
@@ -858,14 +862,14 @@ public class IntervalFilterTest extends AbstractCairoTest {
             bindVariableService.setStr("d6", "2024-01-06");
             bindVariableService.setStr("d8", "2024-01-08");
 
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01-06#workday'", "ts IN :d6", "k\n");
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01-06#workday'", "ts < now()", "k\n");
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01-06#workday'", "ts > dateadd('y', -10, now())", "k\n");
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01-06#workday'", "ts IN '$today'", "k\n");
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01-06#workday'", "ts NOT IN :d8", "k\n");
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01-06#workday'", "ts NOT IN :i", "k\n");
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01-06#workday'", "ts NOT IN '$today#weekend'", "k\n");
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01-[06,07]#workday'", "ts > dateadd('y', -10, now())", "k\n");
+            assertInBothOrders("ts IN '2024-01-06#workday'", "ts IN :d6", "k\n");
+            assertInBothOrders("ts IN '2024-01-06#workday'", "ts < now()", "k\n");
+            assertInBothOrders("ts IN '2024-01-06#workday'", "ts > dateadd('y', -10, now())", "k\n");
+            assertInBothOrders("ts IN '2024-01-06#workday'", "ts IN '$today'", "k\n");
+            assertInBothOrders("ts IN '2024-01-06#workday'", "ts NOT IN :d8", "k\n");
+            assertInBothOrders("ts IN '2024-01-06#workday'", "ts NOT IN :i", "k\n");
+            assertInBothOrders("ts IN '2024-01-06#workday'", "ts NOT IN '$today#weekend'", "k\n");
+            assertInBothOrders("ts IN '2024-01-[06,07]#workday'", "ts > dateadd('y', -10, now())", "k\n");
         });
     }
 
@@ -930,22 +934,22 @@ public class IntervalFilterTest extends AbstractCairoTest {
             bindVariableService.setStr("i", "2024-01-07#workday");
 
             // 2024-09-01 is a Sunday; Monday 2024-09-02 is the only matching row
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-09#workday'", "ts NOT IN :i", "k\n6\n");
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-09#workday'", "ts > dateadd('y', -10, now())", "k\n6\n");
+            assertInBothOrders("ts IN '2024-09#workday'", "ts NOT IN :i", "k\n6\n");
+            assertInBothOrders("ts IN '2024-09#workday'", "ts > dateadd('y', -10, now())", "k\n6\n");
             // Saturday, Sunday and Monday repetitions; only Monday's hour matches
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01-06T12:00#workday;1h;1d;3'", "ts NOT IN :i", "k\n3\n");
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01-06T12:00#workday;1h;1d;3'", "ts > dateadd('y', -10, now())", "k\n3\n");
+            assertInBothOrders("ts IN '2024-01-06T12:00#workday;1h;1d;3'", "ts NOT IN :i", "k\n3\n");
+            assertInBothOrders("ts IN '2024-01-06T12:00#workday;1h;1d;3'", "ts > dateadd('y', -10, now())", "k\n3\n");
             // 2024-01-01 is a Monday, but the weekend inside January must not match
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01#workday'", "ts NOT IN :i", "k\n1\n3\n4\n");
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01#workday'", "ts > dateadd('y', -10, now())", "k\n1\n3\n4\n");
+            assertInBothOrders("ts IN '2024-01#workday'", "ts NOT IN :i", "k\n1\n3\n4\n");
+            assertInBothOrders("ts IN '2024-01#workday'", "ts > dateadd('y', -10, now())", "k\n1\n3\n4\n");
             // the Saturday bracket value holds no interval, the Monday one does
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01-[06,08]#workday'", "ts NOT IN :i", "k\n3\n");
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01-[06,08]#workday'", "ts > dateadd('y', -10, now())", "k\n3\n");
+            assertInBothOrders("ts IN '2024-01-[06,08]#workday'", "ts NOT IN :i", "k\n3\n");
+            assertInBothOrders("ts IN '2024-01-[06,08]#workday'", "ts > dateadd('y', -10, now())", "k\n3\n");
             // Monday 23:00 at -05:00 starts on Tuesday 04:00 UTC
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01-08T23:00@-05:00#mon;2h'", "ts NOT IN :i", "k\n4\n");
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01-08T23:00@-05:00#mon;2h'", "ts > dateadd('y', -10, now())", "k\n4\n");
+            assertInBothOrders("ts IN '2024-01-08T23:00@-05:00#mon;2h'", "ts NOT IN :i", "k\n4\n");
+            assertInBothOrders("ts IN '2024-01-08T23:00@-05:00#mon;2h'", "ts > dateadd('y', -10, now())", "k\n4\n");
             // the Saturday list element carries its own filter and holds no interval
-            assertInDayFilterWithRuntimeInterval("ts IN '[2024-01-06#workday,2024-01-08]'", "ts NOT IN :i", "k\n3\n");
+            assertInBothOrders("ts IN '[2024-01-06#workday,2024-01-08]'", "ts NOT IN :i", "k\n3\n");
         });
     }
 
@@ -956,9 +960,9 @@ public class IntervalFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createDayFilterTable();
             // 2024-01-06 is a Saturday, so '2024-01-06#workday' holds no interval
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01-06#workday'", "(ts IN '$today' OR ts IN '2024-01-06')", "k\n");
+            assertInBothOrders("ts IN '2024-01-06#workday'", "(ts IN '$today' OR ts IN '2024-01-06')", "k\n");
             // only the Monday of the Saturday-to-Monday range is a workday, and $today is that Monday
-            assertInDayFilterWithRuntimeInterval("ts IN '2024-01-[06..08]#workday'", "(ts IN '$today' OR ts IN '2024-01-06')", "k\n3\n");
+            assertInBothOrders("ts IN '2024-01-[06..08]#workday'", "(ts IN '$today' OR ts IN '2024-01-06')", "k\n3\n");
         });
     }
 
@@ -995,10 +999,10 @@ public class IntervalFilterTest extends AbstractCairoTest {
                         2
                         4
                         """;
-                assertInDayFilterWithRuntimeInterval("ts IN '2025-01-24#XNYS'", runtimePredicate, fridaySession);
-                assertInDayFilterWithRuntimeInterval("ts IN '2025-01-24T15:00#XNYS;1h'", runtimePredicate, fridaySession);
-                assertInDayFilterWithRuntimeInterval("ts IN '2025-01-[24..27]#XNYS'", runtimePredicate, fridayAndMondaySessions);
-                assertInDayFilterWithRuntimeInterval(
+                assertInBothOrders("ts IN '2025-01-24#XNYS'", runtimePredicate, fridaySession);
+                assertInBothOrders("ts IN '2025-01-24T15:00#XNYS;1h'", runtimePredicate, fridaySession);
+                assertInBothOrders("ts IN '2025-01-[24..27]#XNYS'", runtimePredicate, fridayAndMondaySessions);
+                assertInBothOrders(
                         "ts NOT IN '2025-01-24#XNYS'",
                         runtimePredicate,
                         """
@@ -1009,7 +1013,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                                 """
                 );
                 // the calendar applies to the Friday list element only
-                assertInDayFilterWithRuntimeInterval(
+                assertInBothOrders(
                         "ts IN '[2025-01-24#XNYS,2025-01-25]'",
                         runtimePredicate,
                         """
@@ -1346,6 +1350,197 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInTickListWithRuntimeInterval() throws Exception {
+        // The predicate written last reaches the interval model builder first. A tick string with
+        // several values that follows a run-time interval must intersect with it as one union of its
+        // values. $today and :d8 are the Monday 2024-01-08, and now() is 01:00 on that day.
+        assertMemoryLeak(() -> {
+            createDayFilterTable();
+            bindVariableService.clear();
+            bindVariableService.setStr("d8", "2024-01-08");
+            final String fri = "k\n1\n";
+            final String mon = "k\n3\n";
+
+            // a date variable
+            assertInBothOrders("ts IN '2024-01-[08,09]'", "ts IN '$today'", mon);
+            assertInBothOrders("ts IN '[2024-01-08,2024-01-09]'", "ts IN '$today'", mon);
+            assertInBothOrders("ts IN '2024-01-[08..09]'", "ts IN '$today'", mon);
+            assertInBothOrders("ts IN '2024-01-[08,09]T00:00;13h'", "ts IN '$today'", mon);
+            assertInBothOrders("ts IN '2024-01-[05,08]'", "ts NOT IN '$today'", fri);
+            // now()
+            assertInBothOrders("ts IN '2024-01-[05,09]'", "ts < now()", fri);
+            assertInBothOrders("ts IN '[2024-01-05,2024-01-09]'", "ts < now()", fri);
+            assertInBothOrders("ts IN '2024-01-[08,09]'", "ts < dateadd('h', 12, now())", mon);
+            // 2024-01-09 at +05:00 starts at 2024-01-08T19:00Z and holds the Tuesday 04:30 (row 4)
+            assertInBothOrders("ts IN '2024-01-[05,09]@+05:00'", "ts < now()", fri);
+            // the 12:00 hour of 2024-01-05, 06, 08 and 09
+            assertInBothOrders("ts IN '2024-01-[05,08]T12:00;1h;1d;2'", "ts < now()", "k\n1\n2\n");
+            // a run-time interval that holds both values
+            assertInBothOrders("ts IN '2024-01-[05,09]'", "ts > dateadd('y', -1, now())", "k\n1\n4\n");
+            // a bind variable
+            assertInBothOrders("ts IN '2024-01-[08,09]'", "ts IN :d8", mon);
+            assertInBothOrders("ts IN '2024-01-[05,08]'", "ts NOT IN :d8", fri);
+            // a run-time OR
+            assertInBothOrders("ts IN '2024-01-[06,09]'", "(ts IN '$today' OR ts IN '2024-01-06')", "k\n2\n");
+            assertQuery("SELECT k FROM x WHERE ts IN '2024-01-[05,06]' AND (ts IN '$today' OR ts IN '2024-01-[05,09]')")
+                    .noLeakCheck()
+                    .returns(fri);
+            // a static interval ahead of the run-time one
+            assertQuery("SELECT k FROM x WHERE ts IN '2024-01-[05,09]' AND ts < now() AND ts IN '2024-01-[05..09]'")
+                    .noLeakCheck()
+                    .returns(fri);
+            // a single value and a single periodic value
+            assertInBothOrders("ts IN '2024-01-05'", "ts < now()", fri);
+            assertInBothOrders("ts IN '2024-01-05T12:00;1h;1d;5'", "ts < now()", "k\n1\n2\n");
+        });
+    }
+
+    @Test
+    public void testInTickListWithRuntimeIntervalFollowsClockAndBindValues() throws Exception {
+        // Compiles each query once and runs it again after the clock or a bind value changes, as a
+        // plan from the query cache runs. The run-time interval follows the change, and the tick
+        // string stays intersected with it.
+        assertMemoryLeak(() -> {
+            createDayFilterTable();
+            try (RecordCursorFactory factory = select("SELECT k FROM x WHERE ts IN '2024-01-[05,09]' AND ts < now()")) {
+                assertFactory(factory).withContext(sqlExecutionContext).returns("k\n1\n");
+                setCurrentMicros(Micros.toMicros(2024, 1, 9, 5, 0));
+                assertFactory(factory).withContext(sqlExecutionContext).returns("k\n1\n4\n");
+                setCurrentMicros(Micros.toMicros(2024, 1, 5, 0, 0));
+                assertFactory(factory).withContext(sqlExecutionContext).returns("k\n");
+            }
+
+            setCurrentMicros(Micros.toMicros(2024, 1, 8, 1, 0));
+            try (RecordCursorFactory factory = select("SELECT k FROM x WHERE ts IN '2024-01-[08,09]' AND ts IN '$today'")) {
+                assertFactory(factory).withContext(sqlExecutionContext).returns("k\n3\n");
+                setCurrentMicros(Micros.toMicros(2024, 1, 9, 1, 0));
+                assertFactory(factory).withContext(sqlExecutionContext).returns("k\n4\n");
+                setCurrentMicros(Micros.toMicros(2024, 1, 10, 1, 0));
+                assertFactory(factory).withContext(sqlExecutionContext).returns("k\n");
+            }
+
+            bindVariableService.clear();
+            bindVariableService.setStr("p", "2024-01-08");
+            try (RecordCursorFactory factory = select("SELECT k FROM x WHERE ts IN '2024-01-[08,09]' AND ts IN :p")) {
+                assertFactory(factory).withContext(sqlExecutionContext).returns("k\n3\n");
+                bindVariableService.setStr("p", "2024-01-09");
+                assertFactory(factory).withContext(sqlExecutionContext).returns("k\n4\n");
+                bindVariableService.setStr("p", "2024-01-[05,08]");
+                assertFactory(factory).withContext(sqlExecutionContext).returns("k\n3\n");
+                bindVariableService.setStr("p", "2024-01-05");
+                assertFactory(factory).withContext(sqlExecutionContext).returns("k\n");
+            }
+        });
+    }
+
+    @Test
+    public void testInTickListWithRuntimeIntervalInQueryContexts() throws Exception {
+        // now() is 01:00 on 2024-01-08, so only the Friday 2024-01-05 (row 1) of the list matches
+        assertMemoryLeak(() -> {
+            createDayFilterTable();
+            final String fri = "k\n1\n";
+            final String plan = timestampType == TestTimestampType.NANO
+                    ? "intervals: [(\"2024-01-05T00:00:00.000000000Z\",\"2024-01-05T23:59:59.999999999Z\")]"
+                    : "intervals: [(\"2024-01-05T00:00:00.000000Z\",\"2024-01-05T23:59:59.999999Z\")]";
+            assertQuery("SELECT k FROM x WHERE ts IN '2024-01-[05,09]' AND ts < now()")
+                    .noLeakCheck()
+                    .withPlanContaining(plan)
+                    .returns(fri);
+            assertQuery("WITH c AS (SELECT k, ts FROM x WHERE ts < now()) SELECT k FROM c WHERE ts IN '2024-01-[05,09]'")
+                    .noLeakCheck()
+                    .returns(fri);
+            assertQuery("SELECT k FROM (SELECT k, ts FROM x WHERE ts IN '2024-01-[05,09]') WHERE ts < now()")
+                    .noLeakCheck()
+                    .returns(fri);
+            assertQuery("SELECT count() FROM x WHERE ts IN '2024-01-[05,09]' AND ts < now()")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+            assertQuery("SELECT k FROM x WHERE ts IN '2024-01-[05,09]' AND ts < now() ORDER BY ts DESC")
+                    .noLeakCheck()
+                    .returns(fri);
+            // $today is the Monday 2024-01-08 (row 3)
+            assertQuery("SELECT k FROM x WHERE ts IN '2024-01-[05,09]' AND ts < now() UNION ALL SELECT k FROM x WHERE ts IN '2024-01-[08,09]' AND ts IN '$today'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("k\n1\n3\n");
+        });
+    }
+
+    @Test
+    public void testInTickListWithRuntimeIntervalMaxIntervals() throws Exception {
+        // 5 years x 12 months x 28 days at 09:00 for an hour make 1,680 intervals, above the default
+        // cairo.sql.interval.max.intervals.after.merge of 1,024. 3 years at 12:00 make 1,008.
+        assertMemoryLeak(() -> {
+            createDayFilterTable();
+            final String overCap = "'[2001..2005]-[01..12]-[01..28]T09:00;1h'";
+            final String runtimePredicate = "ts > dateadd('y', -30, now())";
+            assertOverMaxIntervalsError("SELECT k FROM x WHERE ts IN " + overCap + " AND " + runtimePredicate);
+            assertOverMaxIntervalsError("SELECT k FROM x WHERE " + runtimePredicate + " AND ts IN " + overCap);
+            assertOverMaxIntervalsError("SELECT k FROM x WHERE ts IN " + overCap + " AND ts IN '$today'");
+            assertOverMaxIntervalsError("SELECT k FROM x WHERE ts NOT IN " + overCap + " AND " + runtimePredicate);
+            assertOverMaxIntervalsError("SELECT k FROM x WHERE " + runtimePredicate + " AND ts NOT IN " + overCap);
+            assertOverMaxIntervalsError("SELECT k FROM x WHERE ts IN '$today' OR ts IN " + overCap);
+            assertOverMaxIntervalsError("SELECT k FROM x WHERE ts IN " + overCap + " OR ts IN '$today'");
+
+            // the 12:00 rows on days 1 to 28 before now()
+            assertInBothOrders("ts IN '[2022..2024]-[01..12]-[01..28]T12:00;1h'", "ts < now()", "k\n1\n2\n");
+            assertInBothOrders("ts IN '[2022..2024]-[01..12]-[01..28]T12:00;1h'", runtimePredicate, "k\n1\n2\n3\n5\n6\n");
+        });
+    }
+
+    @Test
+    public void testInTickListWithRuntimeIntervalNoMatch() throws Exception {
+        // The reproducer of #8112: neither day is today, and both lie more than a year back.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE x (k INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-05T12:00:00.000000Z'),
+                    (2, '2024-01-08T12:00:00.000000Z')
+                    """);
+            setCurrentMicros(Micros.toMicros(2026, 11, 2, 10, 0));
+            bindVariableService.clear();
+            bindVariableService.setStr("p", "2026-11-02");
+            assertInBothOrders("ts IN '2024-01-[05,08]'", "ts IN '$today'", "k\n");
+            assertInBothOrders("ts IN '2024-01-[05,08]'", "ts > dateadd('y', -1, now())", "k\n");
+            assertInBothOrders("ts IN '[2024-01-05,2024-01-08]'", "ts > dateadd('y', -1, now())", "k\n");
+            assertInBothOrders("ts IN '2024-01-[05,08]T12:00;1h'", "ts > dateadd('y', -1, now())", "k\n");
+            assertInBothOrders("ts IN '2024-01-[05,08]'", "ts IN :p", "k\n");
+            // both static
+            assertInBothOrders("ts IN '2024-01-[05,08]'", "ts IN '2024-01-05'", "k\n1\n");
+        });
+    }
+
+    @Test
+    public void testInTickListWithRuntimeIntervalParseError() throws Exception {
+        // The tick string fails with the same error whichever predicate reaches the builder first.
+        assertMemoryLeak(() -> {
+            createDayFilterTable();
+            final String[][] cases = {
+                    {"'2024-01-[05,40]'", "Invalid date: 2024-01-40"},
+                    {"'[2024-01-05,2024-13-01]'", "Invalid date: 2024-13-01"},
+                    {"'2024-01-[05,08'", "Unclosed '[' in interval"},
+                    {"'2024-01-[]'", "Empty bracket expansion"},
+                    {"'2024-01-[05,08]T12:00;1x'", "Invalid duration unit: x"},
+                    {"'2024-01-[05,08]@Foo/Bar'", "invalid timezone: Foo/Bar"},
+            };
+            for (String[] c : cases) {
+                final String tick = c[0];
+                for (String sql : new String[]{
+                        "SELECT k FROM x WHERE ts < now() AND ts IN " + tick,
+                        "SELECT k FROM x WHERE ts IN " + tick + " AND ts < now()"
+                }) {
+                    assertExceptionNoLeakCheck(sql, sql.indexOf(tick), c[1]);
+                }
+            }
+            // the failed compilations leave the next query intact
+            assertInBothOrders("ts IN '2024-01-[05,09]'", "ts < now()", "k\n1\n");
+        });
+    }
+
+    @Test
     public void testIntervalBwdNoLeak() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -1382,6 +1577,52 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     0,
                     "inconvertible value: `3 day` [STRING -> LONG]"
             );
+        });
+    }
+
+    @Test
+    public void testIntervalScanMatchesRowFilter() throws Exception {
+        // Compares the interval scan on the designated timestamp ts with the row filter on tm, a
+        // non-designated copy of ts, for random AND chains of tick strings and run-time intervals
+        // in random order.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE x (k INT, tm #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
+            // one row every 37 minutes from 2023-12-28 to 2024-01-20
+            execute("""
+                    INSERT INTO x
+                    SELECT x::INT, '2023-12-28'::TIMESTAMP + (x - 1) * 2_220_000_000L, '2023-12-28'::TIMESTAMP + (x - 1) * 2_220_000_000L
+                    FROM long_sequence(900)
+                    """);
+            final StringSink sink = new StringSink();
+            final StringSink tickSink = new StringSink();
+            for (int i = 0; i < 300; i++) {
+                final long now = Micros.toMicros(2023, 12, 28, 0, 0) + rnd.nextLong(25 * Micros.DAY_MICROS);
+                setCurrentMicros(now);
+                final String bindValue = randomTickString(rnd, tickSink, true);
+                bindVariableService.clear();
+                bindVariableService.setStr("p", bindValue);
+
+                sink.clear();
+                final int predicateCount = 2 + rnd.nextInt(3);
+                for (int j = 0; j < predicateCount; j++) {
+                    if (j > 0) {
+                        sink.put(" AND ");
+                    }
+                    putRandomPredicate(rnd, sink, tickSink);
+                }
+                final String predicate = sink.toString();
+                final String rowFilterQuery = "SELECT k FROM x WHERE " + predicate.replace("%c", "tm");
+                final String intervalScanQuery = "SELECT k FROM x WHERE " + predicate.replace("%c", "ts");
+                try {
+                    assertSqlCursors(rowFilterQuery, intervalScanQuery);
+                } catch (AssertionError e) {
+                    throw new AssertionError(intervalScanQuery + " [now=" + now + ", p=" + bindValue + ']', e);
+                }
+            }
         });
     }
 
@@ -1586,7 +1827,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
             createDayFilterTable();
             bindVariableService.clear();
             bindVariableService.setStr("i", "2024-01-07#workday");
-            assertInDayFilterWithRuntimeInterval(
+            assertInBothOrders(
                     "ts NOT IN '2024-09#workday'",
                     "ts NOT IN :i",
                     """
@@ -1599,7 +1840,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                             """
             );
             // WhereClauseParser subtracts a not-equals string the same way as NOT IN.
-            assertInDayFilterWithRuntimeInterval(
+            assertInBothOrders(
                     "ts != '2024-09#workday'",
                     "ts NOT IN :i",
                     """
@@ -1665,6 +1906,29 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNotInTickListWithRuntimeInterval() throws Exception {
+        // NOT IN subtracts every value of the tick string from the run-time interval. $today and
+        // :d8 are the Monday 2024-01-08, and now() is 01:00 on that day.
+        assertMemoryLeak(() -> {
+            createDayFilterTable();
+            bindVariableService.clear();
+            bindVariableService.setStr("d8", "2024-01-08");
+            assertInBothOrders("ts NOT IN '2024-01-[05,09]'", "ts < now()", "k\n2\n");
+            assertInBothOrders("ts != '2024-01-[05,09]'", "ts < now()", "k\n2\n");
+            assertInBothOrders("ts NOT IN '[2024-01-05,2024-01-09]'", "ts < now()", "k\n2\n");
+            assertInBothOrders("ts NOT IN '2024-01-[05,06]'", "ts IN '$today'", "k\n3\n");
+            assertInBothOrders("ts NOT IN '2024-01-[08,09]'", "ts IN '$today'", "k\n");
+            assertInBothOrders("ts NOT IN '2024-01-[05,09]'", "ts IN :d8", "k\n3\n");
+            assertInBothOrders("ts NOT IN '[2024-01-08,2024-01-09]'", "ts NOT IN :d8", "k\n1\n2\n5\n6\n");
+            assertInBothOrders("ts NOT IN '[2024-01-08,2024-01-09]'", "ts NOT IN '$today'", "k\n1\n2\n5\n6\n");
+            // 2024-01-09 at +05:00 starts at 2024-01-08T19:00Z and holds the Tuesday 04:30 (row 4)
+            assertInBothOrders("ts NOT IN '2024-01-[05,09]@+05:00'", "ts > dateadd('y', -1, now())", "k\n2\n3\n5\n6\n");
+            // the 12:00 hour of 2024-01-05, 06, 08 and 09
+            assertInBothOrders("ts NOT IN '2024-01-[05,08]T12:00;1h;1d;2'", "ts > dateadd('y', -1, now())", "k\n4\n5\n6\n");
+        });
+    }
+
+    @Test
     public void testOrInDayFilterMonthWithRuntimeInterval() throws Exception {
         // $today is the Monday 2024-01-08. 2024-09-01 is a Sunday, so the first day of
         // '2024-09#workday' fails the filter, but the month still holds Monday 2024-09-02.
@@ -1703,6 +1967,37 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOrInTickListWithRuntimeInterval() throws Exception {
+        // $today and :d8 are the Monday 2024-01-08
+        assertMemoryLeak(() -> {
+            createDayFilterTable();
+            bindVariableService.clear();
+            bindVariableService.setStr("d8", "2024-01-08");
+            final String expected = """
+                    k
+                    1
+                    3
+                    4
+                    """;
+            assertOrInBothOrders("ts IN '2024-01-[05,09]'", "ts IN '$today'", expected);
+            assertOrInBothOrders("ts IN '[2024-01-05,2024-01-09]'", "ts IN '$today'", expected);
+            assertOrInBothOrders("ts IN '2024-01-[05,09]'", "ts IN :d8", expected);
+            // 2024-01-09 at +05:00 starts at 2024-01-08T19:00Z and holds the Tuesday 04:30 (row 4)
+            assertOrInBothOrders("ts IN '2024-01-[05,09]@+05:00'", "ts IN '$today'", expected);
+            assertOrInBothOrders(
+                    "ts IN '2024-01-[05,06]T12:00;1h'",
+                    "ts IN '$today'",
+                    """
+                            k
+                            1
+                            2
+                            3
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testTimestampCursorMixed() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -1735,10 +2030,103 @@ public class IntervalFilterTest extends AbstractCairoTest {
         assertExceptionNoLeakCheck(sql, sql.indexOf("'["), "Bracket expansion produces too many intervals (max 1024)");
     }
 
-    private void assertInDayFilterWithRuntimeInterval(String dayFilterPredicate, String runtimePredicate, String expected) throws Exception {
+    private static void putRandomPredicate(Rnd rnd, StringSink sink, StringSink tickSink) {
+        // %c stands for the timestamp column
+        switch (rnd.nextInt(12)) {
+            case 0 -> sink.put("%c < now()");
+            case 1 -> sink.put("%c >= now()");
+            case 2 -> sink.put("%c > dateadd('h', ").put(-rnd.nextInt(100)).put(", now())");
+            case 3 -> sink.put("%c <= dateadd('d', ").put(rnd.nextInt(5)).put(", now())");
+            case 4 -> sink.put("%c BETWEEN dateadd('d', -").put(rnd.nextInt(5)).put(", now()) AND now()");
+            case 5 -> sink.put(rnd.nextBoolean() ? "%c IN '$today'" : "%c IN '$yesterday'");
+            case 6 -> sink.put("%c NOT IN '$today'");
+            case 7 -> sink.put(rnd.nextBoolean() ? "%c IN :p" : "%c NOT IN :p");
+            case 8 -> {
+                // The OR leaf written first reaches the interval model builder first. A first leaf
+                // that holds no interval drops the other leaves (#8115), so a tick string written
+                // first carries no day filter, which is what can leave it without intervals.
+                final String runtime = rnd.nextBoolean() ? "%c IN '$today'" : "%c IN :p";
+                final boolean isRuntimeFirst = rnd.nextBoolean();
+                final String tick = "%c IN '" + randomTickString(rnd, tickSink, isRuntimeFirst) + '\'';
+                sink.put('(').put(isRuntimeFirst ? runtime : tick).put(" OR ").put(isRuntimeFirst ? tick : runtime).put(')');
+            }
+            case 9 -> {
+                final String tick = randomTickString(rnd, tickSink, true);
+                sink.put("%c NOT IN '").put(tick).put('\'');
+            }
+            default -> {
+                final String tick = randomTickString(rnd, tickSink, true);
+                sink.put("%c IN '").put(tick).put('\'');
+            }
+        }
+    }
+
+    // A tick string over the days of January 2024 that both the interval scan and the row filter
+    // resolve: lists, ranges, times, durations, repetitions, fixed offsets and day filters.
+    private static String randomTickString(Rnd rnd, StringSink sink, boolean canHaveDayFilter) {
+        sink.clear();
+        final int day = 1 + rnd.nextInt(20);
+        switch (rnd.nextInt(4)) {
+            case 0 -> sink.put("2024-01-").put(twoDigits(day));
+            case 1 -> {
+                sink.put("2024-01-[").put(twoDigits(day));
+                for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
+                    sink.put(',').put(twoDigits(1 + rnd.nextInt(20)));
+                }
+                sink.put(']');
+            }
+            case 2 -> sink.put("2024-01-[").put(twoDigits(day)).put("..").put(twoDigits(day + rnd.nextInt(5))).put(']');
+            default -> {
+                sink.put("[2024-01-").put(twoDigits(day));
+                for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
+                    sink.put(",2024-01-").put(twoDigits(1 + rnd.nextInt(20)));
+                }
+                sink.put(']');
+            }
+        }
+        final boolean hasTime = rnd.nextBoolean();
+        if (hasTime) {
+            sink.put('T').put(twoDigits(rnd.nextInt(24))).put(":00");
+        }
+        switch (rnd.nextInt(4)) {
+            case 0 -> sink.put("@+05:00");
+            case 1 -> sink.put("@-03:30");
+            default -> {
+            }
+        }
+        if (canHaveDayFilter) {
+            switch (rnd.nextInt(5)) {
+                case 0 -> sink.put("#workday");
+                case 1 -> sink.put("#mon,wed");
+                default -> {
+                }
+            }
+        }
+        if (hasTime) {
+            switch (rnd.nextInt(3)) {
+                case 0 -> sink.put(';').put(1 + rnd.nextInt(30)).put('h');
+                case 1 -> sink.put(';').put(1 + rnd.nextInt(5)).put("h;1d;").put(1 + rnd.nextInt(4));
+                default -> {
+                }
+            }
+        }
+        return sink.toString();
+    }
+
+    private static String twoDigits(int value) {
+        return value < 10 ? "0" + value : String.valueOf(value);
+    }
+
+    private void assertInBothOrders(String staticPredicate, String runtimePredicate, String expected) throws Exception {
         // the predicate written last reaches the interval model builder first
-        assertQuery("SELECT k FROM x WHERE " + runtimePredicate + " AND " + dayFilterPredicate).noLeakCheck().returns(expected);
-        assertQuery("SELECT k FROM x WHERE " + dayFilterPredicate + " AND " + runtimePredicate).noLeakCheck().returns(expected);
+        assertQuery("SELECT k FROM x WHERE " + runtimePredicate + " AND " + staticPredicate).noLeakCheck().returns(expected);
+        assertQuery("SELECT k FROM x WHERE " + staticPredicate + " AND " + runtimePredicate).noLeakCheck().returns(expected);
+    }
+
+    private void assertOrInBothOrders(String staticPredicate, String runtimePredicate, String expected) throws Exception {
+        // the OR leaf written first reaches the interval model builder first
+        assertQuery("SELECT k FROM x WHERE " + runtimePredicate + " OR " + staticPredicate).noLeakCheck().returns(expected);
+        assertQuery("SELECT k FROM x WHERE " + staticPredicate + " OR " + runtimePredicate).noLeakCheck().returns(expected);
     }
 
     private void createDayFilterTable() throws Exception {

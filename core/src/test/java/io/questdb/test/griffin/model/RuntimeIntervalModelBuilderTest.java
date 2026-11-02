@@ -46,6 +46,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -1041,37 +1042,56 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTickStringWithoutFilterAfterDynamicIntervalKeepsDynamicEncoding() throws Exception {
-        // A string without '#' keeps one dynamic slot per bracket value, even where the static parser
-        // would merge the adjacent days into one interval.
+    public void testTickStringAfterDynamicIntervalResolvesStatically() throws Exception {
+        // A tick string after a run-time interval resolves with the static parser, which merges the
+        // adjacent days into one interval, and the builder combines the whole list with the
+        // preceding expression in one step: one encoded slot per resolved interval, the first of
+        // which carries the operation and, for an intersection, the interval count.
         final String intervals = "2018-01-[10,11]";
+        final long lo = Micros.toMicros(2018, 1, 10, 0, 0);
+        final long hi = Micros.toMicros(2018, 1, 12, 0, 0) - 1;
         for (short operation : new short[]{IntervalOperation.INTERSECT, IntervalOperation.SUBTRACT, IntervalOperation.UNION}) {
+            final String label = "operation " + operation;
             ReservationFailingBuilder builder = newFailingBuilder();
             CloseCountingFunction adopted = new CloseCountingFunction();
             builder.intersectRuntimeTimestamp(adopted, 11);
             final int staticSize = builder.staticIntervalsSize();
+            final int dynamicSize = builder.dynamicRangeSize();
             switch (operation) {
                 case IntervalOperation.INTERSECT -> builder.intersectIntervals(intervals, 0, intervals.length(), 0);
                 case IntervalOperation.SUBTRACT -> builder.subtractIntervals(intervals, 0, intervals.length(), 0);
                 default -> builder.unionIntervals(intervals, 0, intervals.length(), 0);
             }
             final LongList encoded = builder.staticIntervals();
-            Assert.assertEquals("operation " + operation, staticSize + 2 * IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL, encoded.size());
-            final short first = IntervalUtils.getEncodedOperation(encoded, staticSize);
-            final short second = IntervalUtils.getEncodedOperation(encoded, staticSize + IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL);
+            final int first = staticSize;
+            final int second = staticSize + IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL;
             switch (operation) {
                 case IntervalOperation.INTERSECT -> {
-                    // the first value intersects, and the second joins it as a union
-                    Assert.assertEquals(IntervalOperation.INTERSECT, first);
-                    Assert.assertEquals(IntervalOperation.UNION, second);
+                    Assert.assertEquals(label, second, encoded.size());
+                    Assert.assertEquals(label, dynamicSize + 1, builder.dynamicRangeSize());
+                    Assert.assertEquals(IntervalOperation.INTERSECT_INTERVALS, IntervalUtils.getEncodedOperation(encoded, first));
+                    Assert.assertEquals(1, IntervalUtils.decodePeriod(encoded, first));
+                    Assert.assertEquals(lo, IntervalUtils.decodeIntervalLo(encoded, first));
+                    Assert.assertEquals(hi, IntervalUtils.decodeIntervalHi(encoded, first));
                 }
                 case IntervalOperation.SUBTRACT -> {
-                    Assert.assertEquals(IntervalOperation.SUBTRACT, first);
-                    Assert.assertEquals(IntervalOperation.SUBTRACT, second);
+                    // NOT IN keeps the complement of the list, intersected as one union
+                    Assert.assertEquals(label, second + IntervalUtils.STATIC_LONGS_PER_DYNAMIC_INTERVAL, encoded.size());
+                    Assert.assertEquals(label, dynamicSize + 2, builder.dynamicRangeSize());
+                    Assert.assertEquals(IntervalOperation.INTERSECT_INTERVALS, IntervalUtils.getEncodedOperation(encoded, first));
+                    Assert.assertEquals(2, IntervalUtils.decodePeriod(encoded, first));
+                    Assert.assertEquals(Numbers.LONG_NULL, IntervalUtils.decodeIntervalLo(encoded, first));
+                    Assert.assertEquals(lo - 1, IntervalUtils.decodeIntervalHi(encoded, first));
+                    Assert.assertEquals(IntervalOperation.NONE, IntervalUtils.getEncodedOperation(encoded, second));
+                    Assert.assertEquals(hi + 1, IntervalUtils.decodeIntervalLo(encoded, second));
+                    Assert.assertEquals(Long.MAX_VALUE, IntervalUtils.decodeIntervalHi(encoded, second));
                 }
                 default -> {
-                    Assert.assertEquals(IntervalOperation.UNION, first);
-                    Assert.assertEquals(IntervalOperation.UNION, second);
+                    Assert.assertEquals(label, second, encoded.size());
+                    Assert.assertEquals(label, dynamicSize + 1, builder.dynamicRangeSize());
+                    Assert.assertEquals(IntervalOperation.UNION, IntervalUtils.getEncodedOperation(encoded, first));
+                    Assert.assertEquals(lo, IntervalUtils.decodeIntervalLo(encoded, first));
+                    Assert.assertEquals(hi, IntervalUtils.decodeIntervalHi(encoded, first));
                 }
             }
             RuntimeIntrinsicIntervalModel model = builder.build();
