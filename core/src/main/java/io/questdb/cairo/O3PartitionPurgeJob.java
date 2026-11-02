@@ -127,11 +127,17 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
         // Retry one table per run so a failed root does not starve new purge tasks.
         retryQueue.poll();
-        if (discoverPartitions(task)) {
-            task.nextRunTimestamp = microsecondClock.getTicks() + RETRY_DELAY_MICROS;
-            retryQueue.add(task);
-        } else {
-            retryByTableDir.remove(task.getTableToken().getDirName());
+        // A throw out of the discovery keeps the task queued, or its map entry would block every later retry.
+        boolean isPending = true;
+        try {
+            isPending = discoverPartitions(task);
+        } finally {
+            if (isPending) {
+                task.nextRunTimestamp = microsecondClock.getTicks() + RETRY_DELAY_MICROS;
+                retryQueue.add(task);
+            } else {
+                retryByTableDir.remove(task.getTableToken().getDirName());
+            }
         }
         return true;
     }
