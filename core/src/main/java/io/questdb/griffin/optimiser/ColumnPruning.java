@@ -47,6 +47,7 @@ import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
@@ -132,6 +133,16 @@ final class ColumnPruning implements OptimiserPass {
     @Override
     public String getName() {
         return "column pruning";
+    }
+
+    @Override
+    public PlanStage getProducedStage() {
+        return PlanStage.DECORRELATED;
+    }
+
+    @Override
+    public PlanStage getRequiredStage() {
+        return PlanStage.DECORRELATED;
     }
 
     private void alignScanColumns(ProjectPlan project) {

@@ -38,7 +38,7 @@ import java.math.RoundingMode;
 public class CeilingDecimalZeroScaleFunctionFactory implements FunctionFactory {
     @Override
     public int getResultType(IntList argTypes) {
-        return ResultTypes.decimalRoundedToZeroScale(argTypes.getQuick(0), RoundingMode.CEILING);
+        return ResultTypes.decimalRounded(argTypes.getQuick(0), 0, RoundingMode.CEILING);
     }
 
     @Override

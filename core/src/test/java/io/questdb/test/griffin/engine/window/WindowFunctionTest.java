@@ -6634,6 +6634,38 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLagLeadOffsetMustBeInteger() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE tab (ts #TIMESTAMP, i INT) TIMESTAMP(ts)", timestampType.getTypeName());
+            execute("INSERT INTO tab VALUES (1, 1), (2, 2), (3, 3)");
+            for (String offset : new String[]{
+                    "1.5", "1.5::float", "1.5m", "#s", "true", "to_long128(1, 2)", "ARRAY[1.0]", "'1.2.3.4'::ipv4",
+                    "'1970-01-01'::date", "'1970-01-01T00:00:00.000002Z'::timestamp",
+                    "'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid", "'2'::symbol"
+            }) {
+                final int operatorPosition = offset.contains("::") ? offset.indexOf("::") : Math.max(offset.indexOf('['), 0);
+                for (String function : new String[]{"lag", "lead"}) {
+                    final String prefix = "SELECT " + function + "(i, ";
+                    assertQuery(prefix + offset + ") OVER (ORDER BY ts) FROM tab")
+                            .noLeakCheck()
+                            .fails(prefix.length() + operatorPosition, "offset must be a positive integer");
+                }
+            }
+            for (String offset : new String[]{"2::byte", "2::short", "2", "2::long", "'2'", "'2'::string", "'2'::varchar"}) {
+                assertQuery("SELECT lag(i, " + offset + ") OVER (ORDER BY ts) lag, lead(i, " + offset + ") OVER (ORDER BY ts) lead FROM tab")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                lag\tlead
+                                null\t3
+                                null\tnull
+                                1\tnull
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testLagLeadOver() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, d double, s symbol, c VARCHAR, m date) timestamp(ts)", timestampType.getTypeName());

@@ -110,6 +110,7 @@ final class LatestByFactoryGenerator {
                     columnIndexes,
                     columnSizeShifts,
                     true,
+                    false,
                     true
             );
         }

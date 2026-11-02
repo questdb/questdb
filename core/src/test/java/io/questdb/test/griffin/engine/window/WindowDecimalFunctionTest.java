@@ -1964,6 +1964,16 @@ public class WindowDecimalFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAvgRescaleZeroPrecisionRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE z (ts TIMESTAMP, d DECIMAL(2, 2)) TIMESTAMP(ts) PARTITION BY HOUR");
+            assertQuery("SELECT avg(d, 0) OVER () FROM z")
+                    .noLeakCheck()
+                    .fails("SELECT avg(d, ".length(), "rescaled decimal has invalid precision: 0");
+        });
+    }
+
+    @Test
     public void testCaseWhenWithWindow() throws Exception {
         // avg(v64)=6.00. v64: 6.00 (high, =6), 4.00 (low), 8.00 (high), 2.00 (low), 10.00 (high)
         assertMemoryLeak(() -> {

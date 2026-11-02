@@ -395,6 +395,14 @@ public final class ColumnType {
         return getHigherPrecisionTimestampType(getTimestampType(type), TIMESTAMP_MICRO);
     }
 
+    /**
+     * The timestamp type two values combine into through implicit conversions: the more precise of their
+     * {@link #getImplicitTimestampType(int) implicit timestamp types}.
+     */
+    public static int getImplicitTimestampType(int leftType, int rightType) {
+        return getHigherPrecisionTimestampType(getImplicitTimestampType(leftType), getImplicitTimestampType(rightType));
+    }
+
     public static TimestampDriver getTimestampDriver(int timestampType) {
         final short tag = tagOf(timestampType);
         // null and UNDEFINED use MicrosTimestamp

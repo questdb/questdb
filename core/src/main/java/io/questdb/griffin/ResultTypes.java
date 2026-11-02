@@ -25,18 +25,44 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.std.Decimals;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 
 import java.math.RoundingMode;
 
 /**
- * Argument-type rules that function factories share to declare {@link FunctionFactory#getResultType}.
+ * Argument-type rules that function factories share to declare {@link FunctionFactory#getResultType} and to type
+ * the functions they build.
  */
 public final class ResultTypes {
+    private static final FiberLocal<IntList> tlArgTypes = new FiberLocal<>(IntList::new);
 
     private ResultTypes() {
+    }
+
+    /**
+     * The types of {@code args}, for a factory to apply its result-type rule to the arguments it builds with, in a
+     * scratch list of the fiber that the next call on the fiber overwrites.
+     */
+    public static IntList argTypes(ObjList<Function> args) {
+        final IntList argTypes = tlArgTypes.get();
+        argTypes.clear();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            argTypes.add(args.getQuick(i).getType());
+        }
+        return argTypes;
+    }
+
+    /**
+     * The type of AND and OR: BOOLEAN over BOOLEAN operands, otherwise {@link ColumnType#UNDEFINED}, because a
+     * constant operand folds the call into the other operand, which keeps its own type.
+     */
+    public static int booleanConnective(int leftType, int rightType) {
+        return leftType == ColumnType.BOOLEAN && rightType == ColumnType.BOOLEAN ? ColumnType.BOOLEAN : ColumnType.UNDEFINED;
     }
 
     /**
@@ -64,16 +90,23 @@ public final class ResultTypes {
     }
 
     /**
-     * The type of a decimal rounded to zero decimal places: unchanged without a fraction, otherwise the integer
-     * digits plus a carry digit for every rounding mode except {@link RoundingMode#DOWN}, at least one digit.
+     * The type of a decimal rounded at a constant number of decimal places, negative to round left of the point: the
+     * decimal's own type when it has no more decimal places, otherwise its integer digits plus a carry digit for every
+     * rounding mode except {@link RoundingMode#DOWN}, at least one digit, and the decimal places kept, none left of
+     * the point.
      */
-    public static int decimalRoundedToZeroScale(int argType, RoundingMode roundingMode) {
-        final int scale = ColumnType.getDecimalScale(argType);
-        if (scale <= 0) {
-            return argType;
-        }
-        final int carry = roundingMode == RoundingMode.DOWN ? 0 : 1;
-        return ColumnType.getDecimalType(Math.max(1, ColumnType.getDecimalPrecision(argType) - scale + carry), 0);
+    public static int decimalRounded(int argType, int roundingScale, RoundingMode roundingMode) {
+        return roundingScale >= ColumnType.getDecimalScale(argType)
+                ? argType
+                : decimalRoundedAt(argType, Math.max(roundingScale, 0), roundingMode);
+    }
+
+    /**
+     * The type of a decimal rounded at a number of decimal places known only at run time: its digits plus a carry
+     * digit for every rounding mode except {@link RoundingMode#DOWN}, and its decimal places.
+     */
+    public static int decimalRoundedAtRuntime(int argType, RoundingMode roundingMode) {
+        return decimalRoundedAt(argType, ColumnType.getDecimalScale(argType), roundingMode);
     }
 
     /**
@@ -109,19 +142,23 @@ public final class ResultTypes {
     }
 
     /**
-     * The type of an element-wise aggregate across DOUBLE array arguments of one shape: their known dimensionality,
-     * or weak dimensions while no argument's dimensionality is known; {@link ColumnType#UNDEFINED} when an argument
-     * is not an array.
+     * The type of an element-wise aggregate across DOUBLE array arguments of one shape: the dimensionality every
+     * argument with a known one shares, or weak dimensions while no argument's dimensionality is known;
+     * {@link ColumnType#UNDEFINED} when an argument is not an array or two known dimensionalities differ.
      */
     public static int doubleArrayElementwise(IntList argTypes) {
-        int dims = -1;
+        int dims = 0;
         for (int i = 0, n = argTypes.size(); i < n; i++) {
             final int type = argTypes.getQuick(i);
             if (!ColumnType.isArray(type)) {
                 return ColumnType.UNDEFINED;
             }
-            if (dims < 1) {
-                dims = ColumnType.decodeWeakArrayDimensionality(type);
+            final int argDims = ColumnType.decodeWeakArrayDimensionality(type);
+            if (argDims > 0) {
+                if (dims > 0 && dims != argDims) {
+                    return ColumnType.UNDEFINED;
+                }
+                dims = argDims;
             }
         }
         return dims > 0 ? ColumnType.encodeArrayType(ColumnType.DOUBLE, dims) : ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true);
@@ -168,21 +205,10 @@ public final class ResultTypes {
         return widest;
     }
 
-    /**
-     * The timestamp type a temporal argument produces, at least microsecond precision.
-     */
-    public static int timestampAtLeastMicros(int argType) {
-        return ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(argType), ColumnType.TIMESTAMP_MICRO);
-    }
-
-    /**
-     * The timestamp type two temporal arguments combine into: the more precise of the two, at least microseconds.
-     */
-    public static int timestampAtLeastMicros(int leftType, int rightType) {
-        return ColumnType.getHigherPrecisionTimestampType(
-                ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(leftType), ColumnType.getTimestampType(rightType)),
-                ColumnType.TIMESTAMP_MICRO
-        );
+    private static int decimalRoundedAt(int argType, int scale, RoundingMode roundingMode) {
+        final int carry = roundingMode == RoundingMode.DOWN ? 0 : 1;
+        final int precision = ColumnType.getDecimalPrecision(argType) - ColumnType.getDecimalScale(argType) + scale + carry;
+        return ColumnType.getDecimalType(Math.max(1, Math.min(precision, Decimals.MAX_PRECISION)), scale);
     }
 
     private static int decimalWithExtraDigits(int leftType, int rightType, int extraDigits) {

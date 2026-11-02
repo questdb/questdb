@@ -61,6 +61,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
+    private final JoinInput.BuildSide buildSide;
     private final int columnSplit;
     private final JoinSymbolTableSource filterSymbolTableSource;
     private final int joinType;
@@ -95,9 +96,13 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             int @Nullable [] slaveSymbolKeyColumnIndices,
             JoinInput.NullExtension nullExtension,
             @Nullable Function nullKeyCheck,
-            @Nullable JoinInput.NullKeyMatch nullKeyMatch
+            @Nullable JoinInput.NullKeyMatch nullKeyMatch,
+            @Nullable JoinInput.BuildSide buildSide
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        assert buildSide != JoinInput.BuildSide.SMALLER || joinType == QueryModel.JOIN_FULL_OUTER && nullExtension == JoinInput.NullExtension.BY_KEYS
+                && masterFactory.recordCursorSupportsRandomAccess() : "hashed master lacks random access or NULL-extends by its ON residual";
+        this.buildSide = buildSide;
         this.filter = filter;
         this.nullExtension = nullExtension;
         this.nullKeyCheck = nullKeyCheck;
@@ -176,24 +181,14 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         RecordCursor masterCursor = null;
         try {
             masterCursor = masterFactory.getCursor(executionContext);
-            if (joinType == QueryModel.JOIN_FULL_OUTER) {
-                boolean swapped = false;
-                if (nullExtension == JoinInput.NullExtension.BY_KEYS && masterFactory.recordCursorSupportsRandomAccess()) {
-                    long masterSize = masterCursor.size();
-                    long slaveSize = slaveCursor.size();
-
-                    if (masterSize > 0 && slaveSize > 0 && masterSize < slaveSize) {
-                        RecordCursor temp = masterCursor;
-                        masterCursor = slaveCursor;
-                        slaveCursor = temp;
-                        swapped = true;
-                    }
-                }
-                if (swapped) {
-                    slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
-                    ((HashFullOuterJoinLightRecordCursor) cursor).of(masterCursor, slaveCursor, executionContext, true);
-                    return cursor;
-                }
+            if (buildSide == JoinInput.BuildSide.SMALLER
+                    && JoinInput.BuildSide.smaller(masterCursor.size(), slaveCursor.size(), JoinInput.BuildSide.SLAVE) == JoinInput.BuildSide.MASTER) {
+                final RecordCursor temp = masterCursor;
+                masterCursor = slaveCursor;
+                slaveCursor = temp;
+                slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
+                ((HashFullOuterJoinLightRecordCursor) cursor).of(masterCursor, slaveCursor, executionContext, true);
+                return cursor;
             }
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             cursor.of(masterCursor, slaveCursor, executionContext);

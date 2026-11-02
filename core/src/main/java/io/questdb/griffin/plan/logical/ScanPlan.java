@@ -34,6 +34,13 @@ import io.questdb.std.ObjectFactory;
 
 import java.util.Objects;
 
+/**
+ * A read of a table. Access path planning decides how the scan reads it, see {@link #getAccessPath}, and records the
+ * access path facts with it: the index and its keys, the residual and how a filter evaluates it, the intervals, the
+ * order the access path emits and the row counts operator planning depends on. Under
+ * {@link io.questdb.ParanoiaState#PLAN_PARANOIA_MODE} a read of an access path fact fails until the access path is
+ * decided, as {@link #clearAccessPath} forgets it.
+ */
 public final class ScanPlan extends LogicalPlan {
     public static final ObjectFactory<ScanPlan> FACTORY = ScanPlan::new;
     public static final int HINT_FORCE_USE_COVERING = 4;
@@ -54,6 +61,7 @@ public final class ScanPlan extends LogicalPlan {
     private final IntList referencedColumnPositions = new IntList();
     private final SortKeys requestedOrder = new SortKeys();
     private final IntList sourceColumnIndexes = new IntList();
+    private final LongList staticIntervals = new LongList();
     private AccessPath accessPath;
     private int depth;
     private int hints;
@@ -61,7 +69,7 @@ public final class ScanPlan extends LogicalPlan {
     private SortDirection indexDirection = SortDirection.ASCENDING;
     private IndexOrder indexOrder = IndexOrder.NONE;
     private IndexRead indexRead = IndexRead.NONE;
-    private boolean isIntervalScan;
+    private IntervalScan intervalScan = IntervalScan.NONE;
     private boolean isRandomAccess = true;
     private boolean isSequencedUpdate;
     private boolean isSinglePartition;
@@ -128,7 +136,8 @@ public final class ScanPlan extends LogicalPlan {
         indexDirection = SortDirection.ASCENDING;
         indexOrder = IndexOrder.NONE;
         indexRead = IndexRead.NONE;
-        isIntervalScan = false;
+        intervalScan = IntervalScan.NONE;
+        staticIntervals.clear();
         isSinglePartition = false;
         isTimestampDropped = false;
         joinIntervalStep = null;
@@ -158,6 +167,7 @@ public final class ScanPlan extends LogicalPlan {
      * How the scan reads the table, which access path planning decides; null until it has.
      */
     public AccessPath getAccessPath() {
+        checkPhysicalRead("ScanPlan.accessPath");
         return accessPath;
     }
 
@@ -192,6 +202,7 @@ public final class ScanPlan extends LogicalPlan {
      * around it. It caps how deep interval extraction speculates on sub-query bounds.
      */
     public int getDepth() {
+        checkAccessPath("ScanPlan.depth");
         return depth;
     }
 
@@ -199,6 +210,7 @@ public final class ScanPlan extends LogicalPlan {
      * The key values the index access path excludes: the symbol values it reads are all the others.
      */
     public ObjList<BoundExpression> getExcludedKeys() {
+        checkAccessPath("ScanPlan.excludedKeys");
         return excludedKeys;
     }
 
@@ -222,6 +234,7 @@ public final class ScanPlan extends LogicalPlan {
      * The id of the column whose index the access path reads, -1 for none.
      */
     public int getIndexColumnId() {
+        checkAccessPath("ScanPlan.indexColumnId");
         return indexColumnId;
     }
 
@@ -229,6 +242,7 @@ public final class ScanPlan extends LogicalPlan {
      * The direction the access path reads the row ids of each key from the index in.
      */
     public SortDirection getIndexDirection() {
+        checkAccessPath("ScanPlan.indexDirection");
         return indexDirection;
     }
 
@@ -240,6 +254,7 @@ public final class ScanPlan extends LogicalPlan {
      * The key values whose rows the index access path reads.
      */
     public ObjList<BoundExpression> getIndexKeys() {
+        checkAccessPath("ScanPlan.indexKeys");
         return indexKeys;
     }
 
@@ -247,6 +262,7 @@ public final class ScanPlan extends LogicalPlan {
      * The requested order the index access path emits its rows in.
      */
     public IndexOrder getIndexOrder() {
+        checkAccessPath("ScanPlan.indexOrder");
         return indexOrder;
     }
 
@@ -254,7 +270,16 @@ public final class ScanPlan extends LogicalPlan {
      * How the access path reads the index of {@link #getIndexColumnId}.
      */
     public IndexRead getIndexRead() {
+        checkAccessPath("ScanPlan.indexRead");
         return indexRead;
+    }
+
+    /**
+     * How the scan reads the partitions of the table through intervals, which access path planning decides.
+     */
+    public IntervalScan getIntervalScan() {
+        checkAccessPath("ScanPlan.intervalScan");
+        return intervalScan;
     }
 
     /**
@@ -262,6 +287,7 @@ public final class ScanPlan extends LogicalPlan {
      * {@link #getJoinIntervalStep}.
      */
     public LongList getJoinIntervals() {
+        checkAccessPath("ScanPlan.joinIntervals");
         return joinIntervals;
     }
 
@@ -270,6 +296,7 @@ public final class ScanPlan extends LogicalPlan {
      * reads, or null.
      */
     public WindowJoinStep getJoinIntervalStep() {
+        checkAccessPath("ScanPlan.joinIntervalStep");
         return joinIntervalStep;
     }
 
@@ -277,6 +304,7 @@ public final class ScanPlan extends LogicalPlan {
      * The conjunct whose matching symbol values the pattern access path reads from the index.
      */
     public FunctionExpression getKeyPattern() {
+        checkAccessPath("ScanPlan.keyPattern");
         return keyPattern;
     }
 
@@ -284,6 +312,7 @@ public final class ScanPlan extends LogicalPlan {
      * The sub-query whose values the index access path reads the rows of.
      */
     public CursorExpression getKeySubquery() {
+        checkAccessPath("ScanPlan.keySubquery");
         return keySubquery;
     }
 
@@ -307,6 +336,7 @@ public final class ScanPlan extends LogicalPlan {
      * {@link #keepRowCountWithin}; {@link Long#MAX_VALUE} when no choice depends on it.
      */
     public long getMaxRowCount() {
+        checkAccessPath("ScanPlan.maxRowCount");
         return maxRowCount;
     }
 
@@ -319,6 +349,7 @@ public final class ScanPlan extends LogicalPlan {
      * {@link #keepRowCountWithin}; 0 when no choice depends on it.
      */
     public long getMinRowCount() {
+        checkAccessPath("ScanPlan.minRowCount");
         return minRowCount;
     }
 
@@ -354,14 +385,17 @@ public final class ScanPlan extends LogicalPlan {
      * with it whole, its key pattern included.
      */
     public BoundExpression getResidual() {
+        checkAccessPath("ScanPlan.residual");
         return residual;
     }
 
     /**
-     * How the generator executes the filter over the residual, which operator planning records where the generator
-     * builds one whose execution it chooses: over page frames, over a covering index and within a pattern scan.
+     * How the generator applies the residual, which operator planning records where the generator builds a filter over
+     * it whose execution it chooses: over page frames, where it may also fold or gate the residual, see
+     * {@link FilterPlan.Algorithm}, over a covering index and within a pattern scan.
      */
     public FilterPlan.Algorithm getResidualAlgorithm() {
+        checkAccessPath("ScanPlan.residualAlgorithm");
         return residualAlgorithm;
     }
 
@@ -383,6 +417,15 @@ public final class ScanPlan extends LogicalPlan {
         return sourceColumnIndexes;
     }
 
+    /**
+     * The intervals of a {@link IntervalScan#STATIC static} interval scan as sorted [lo, hi] pairs at the precision
+     * of the designated timestamp, empty for any other scan.
+     */
+    public LongList getStaticIntervals() {
+        checkAccessPath("ScanPlan.staticIntervals");
+        return staticIntervals;
+    }
+
     public TableToken getTableToken() {
         return tableToken;
     }
@@ -399,6 +442,7 @@ public final class ScanPlan extends LogicalPlan {
      * The within() conjunct whose GeoHash prefixes the indexed LATEST BY access path matches, or null.
      */
     public FunctionExpression getWithin() {
+        checkAccessPath("ScanPlan.within");
         return within;
     }
 
@@ -417,6 +461,7 @@ public final class ScanPlan extends LogicalPlan {
      * Whether an index key may be NULL: a NULL literal, or a bind variable whose value execution supplies.
      */
     public boolean hasNullableKey() {
+        checkAccessPath("ScanPlan.indexKeys");
         for (int i = 0, n = indexKeys.size(); i < n; i++) {
             final BoundExpression key = indexKeys.getQuick(i);
             if (key instanceof BindVariableExpression || key instanceof ConstantExpression constant && switch (ColumnType.tagOf(constant.getDataType())) {
@@ -442,9 +487,6 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     /**
-     * Whether the consumers request the order of the native designated timestamp alone, in either direction.
-     */
-    /**
      * Whether a covering index scan has no backup for a key that may be NULL, because the {@code force_use_covering}
      * hint suppresses it.
      */
@@ -452,6 +494,9 @@ public final class ScanPlan extends LogicalPlan {
         return hasHint(HINT_FORCE_USE_COVERING) && hasNullableKey();
     }
 
+    /**
+     * Whether the consumers request the order of the native designated timestamp alone, in either direction.
+     */
     public boolean isNativeTimestampOrderRequested() {
         return requestedOrder.size() == 1 && requestedOrder.getColumnIds().getQuick(0) == nativeTimestampColumnId;
     }
@@ -465,6 +510,7 @@ public final class ScanPlan extends LogicalPlan {
      * of the rows it keeps, which the {@code enable_pre_touch} hint asks of the scan.
      */
     public boolean isResidualPreTouched() {
+        checkAccessPath("ScanPlan.residualAlgorithm");
         return residualAlgorithm == FilterPlan.Algorithm.PARALLEL && hasHint(HINT_PRE_TOUCH);
     }
 
@@ -472,6 +518,7 @@ public final class ScanPlan extends LogicalPlan {
      * Whether the access path emits the rows in the order the consumers request.
      */
     public boolean isRequestedOrderDelivered() {
+        checkAccessPath("ScanPlan.indexOrder");
         return accessPath == AccessPath.SORTED_SYMBOL_INDEX || indexOrder.isRequested();
     }
 
@@ -480,7 +527,8 @@ public final class ScanPlan extends LogicalPlan {
      * ones the execution context overrides or the ones a window join narrows the scan to.
      */
     public boolean isIntervalScan() {
-        return isIntervalScan;
+        checkAccessPath("ScanPlan.isIntervalScan");
+        return intervalScan != IntervalScan.NONE;
     }
 
     /**
@@ -499,6 +547,7 @@ public final class ScanPlan extends LogicalPlan {
      * key order.
      */
     public boolean isSinglePartition() {
+        checkAccessPath("ScanPlan.isSinglePartition");
         return isSinglePartition;
     }
 
@@ -506,6 +555,7 @@ public final class ScanPlan extends LogicalPlan {
      * Whether the access path emits rows out of designated timestamp order, so its metadata declares no timestamp.
      */
     public boolean isTimestampDropped() {
+        checkAccessPath("ScanPlan.isTimestampDropped");
         return isTimestampDropped;
     }
 
@@ -577,6 +627,11 @@ public final class ScanPlan extends LogicalPlan {
         this.depth = depth;
     }
 
+    public void setExcludedKeys(ObjList<BoundExpression> keys) {
+        excludedKeys.clear();
+        excludedKeys.addAll(keys);
+    }
+
     public void setHints(int hints) {
         this.hints = hints;
     }
@@ -586,13 +641,24 @@ public final class ScanPlan extends LogicalPlan {
         indexRead = read;
     }
 
+    public void setIndexKeys(ObjList<BoundExpression> keys) {
+        indexKeys.clear();
+        indexKeys.addAll(keys);
+    }
+
     public void setIndexOrder(IndexOrder order, SortDirection direction) {
         indexOrder = order;
         indexDirection = direction;
     }
 
-    public void setJoinIntervalStep(WindowJoinStep step) {
+    /**
+     * Narrows the intervals the scan of a window join slave reads to the static {@code intervals} of the join master,
+     * widened by the window of {@code step}.
+     */
+    public void setJoinIntervals(WindowJoinStep step, LongList intervals) {
         joinIntervalStep = step;
+        joinIntervals.clear();
+        joinIntervals.add(intervals);
     }
 
     public void setKeyPattern(FunctionExpression pattern) {
@@ -604,6 +670,7 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     public void setLimit(BoundExpression lo, BoundExpression hi) {
+        checkRewritable("ScanPlan.setLimit");
         limitLo = lo;
         limitHi = hi;
     }
@@ -622,6 +689,7 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     public void setRowOrder(RowOrder rowOrder) {
+        checkRewritable("ScanPlan.setRowOrder");
         this.rowOrder = rowOrder;
     }
 
@@ -629,8 +697,16 @@ public final class ScanPlan extends LogicalPlan {
         this.scanDirection = scanDirection;
     }
 
-    public void setIntervalScan(boolean isIntervalScan) {
-        this.isIntervalScan = isIntervalScan;
+    /**
+     * Records how the scan reads the partitions through intervals, with the intervals as sorted [lo, hi] pairs when
+     * they are {@link IntervalScan#STATIC static}.
+     */
+    public void setIntervalScan(IntervalScan intervalScan, LongList staticIntervals) {
+        this.intervalScan = intervalScan;
+        this.staticIntervals.clear();
+        if (intervalScan == IntervalScan.STATIC) {
+            this.staticIntervals.add(staticIntervals);
+        }
     }
 
     public void setSinglePartition(boolean isSinglePartition) {
@@ -651,6 +727,44 @@ public final class ScanPlan extends LogicalPlan {
     }
 
     @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.columnIds("indexedColumnIds", indexedColumnIds);
+        visitor.facts("referencedColumnIndexes", referencedColumnIndexes);
+        visitor.facts("referencedColumnNames", referencedColumnNames);
+        visitor.facts("referencedColumnPositions", referencedColumnPositions);
+        visitor.columnIds("requestedOrder", requestedOrder.getColumnIds());
+        visitor.facts("requestedOrder", requestedOrder.getDirections());
+        visitor.facts("sourceColumnIndexes", sourceColumnIndexes);
+        visitor.fact("accessPath", accessPath);
+        visitor.fact("depth", depth);
+        visitor.fact("hints", hints);
+        visitor.fact("indexDirection", indexDirection);
+        visitor.fact("indexOrder", indexOrder);
+        visitor.fact("indexRead", indexRead);
+        visitor.fact("intervalScan", intervalScan);
+        visitor.fact("isRandomAccess", isRandomAccess);
+        visitor.fact("isSequencedUpdate", isSequencedUpdate);
+        visitor.fact("isSinglePartition", isSinglePartition);
+        visitor.fact("isTimestampDropped", isTimestampDropped);
+        visitor.fact("isUpdate", isUpdate);
+        visitor.facts("joinIntervals", joinIntervals);
+        visitor.reference("joinIntervalStep", joinIntervalStep);
+        visitor.fact("maxRowCount", maxRowCount);
+        visitor.fact("metadataVersion", metadataVersion);
+        visitor.fact("minRowCount", minRowCount);
+        visitor.columnId("nativeTimestampColumnId", nativeTimestampColumnId);
+        visitor.fact("nativeTimestampType", nativeTimestampType);
+        visitor.fact("residualAlgorithm", residualAlgorithm);
+        visitor.fact("rowOrder", rowOrder);
+        visitor.fact("scanDirection", scanDirection);
+        visitor.facts("staticIntervals", staticIntervals);
+        visitor.fact("tableToken", tableToken);
+        visitor.fact("viewName", viewName);
+        visitor.fact("viewPosition", viewPosition);
+    }
+
+    @Override
     public void visitReads(PlanExpressionVisitor visitor) {
         limitLo = PlanReads.expression(limitLo, visitor);
         limitHi = PlanReads.expression(limitHi, visitor);
@@ -661,6 +775,14 @@ public final class ScanPlan extends LogicalPlan {
         keySubquery = (CursorExpression) PlanReads.expression(keySubquery, visitor);
         keyPattern = (FunctionExpression) PlanReads.expression(keyPattern, visitor);
         within = (FunctionExpression) PlanReads.expression(within, visitor);
+    }
+
+    /**
+     * Fails, under paranoia, a read of the access path fact {@code fact} before access path planning decides the
+     * access path, see {@link #getAccessPath}.
+     */
+    private void checkAccessPath(String fact) {
+        PlanFacts.checkDecided(accessPath != null, fact);
     }
 
     /**
@@ -834,6 +956,25 @@ public final class ScanPlan extends LogicalPlan {
          * The column values the covering index includes, without the rows.
          */
         COVERING
+    }
+
+    /**
+     * How a scan reads the partitions of its table through intervals: the ones the predicate implies, the ones the
+     * execution context overrides or the ones a window join narrows the scan to.
+     */
+    public enum IntervalScan {
+        /**
+         * Through no intervals: the scan reads every partition.
+         */
+        NONE,
+        /**
+         * Through the intervals planning computed, see {@link #getStaticIntervals}.
+         */
+        STATIC,
+        /**
+         * Through intervals that runtime values bound, which the generator extracts with their functions.
+         */
+        RUNTIME
     }
 
     /**

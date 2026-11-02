@@ -39,6 +39,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.IntFunction;
@@ -85,19 +86,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
     @Override
     public int getResultType(IntList argTypes) {
-        int n = argTypes.size();
-        if (n < 2) {
+        if (argTypes.size() < 2) {
             return ColumnType.UNDEFINED;
         }
-        final IntList foldedTypes = CaseCommon.foldedTypes();
-        int returnType = -1;
-        if (n % 2 == 0) {
-            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(--n), foldedTypes);
-        }
-        for (int i = 2; i < n && returnType != ColumnType.UNDEFINED; i += 2) {
-            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(i), foldedTypes);
-        }
-        return CaseCommon.getCaseFunctionType(returnType);
+        final long fold = foldValueTypes(argTypes);
+        return CaseCommon.getFoldFailureIndex(fold) < 0 ? CaseCommon.getCaseFunctionType(CaseCommon.getFoldCommonType(fold)) : ColumnType.UNDEFINED;
     }
 
     @Override
@@ -140,15 +133,17 @@ public class SwitchFunctionFactory implements FunctionFactory {
         final Function keyFunction = args.getQuick(0);
         final int keyType = keyFunction.getType();
 
+        final long fold = foldValueTypes(ResultTypes.argTypes(args));
+        final int failureIndex = CaseCommon.getFoldFailureIndex(fold);
         Function elseBranch;
         final int elseBranchPosition;
-        int returnType = -1;
-        final IntList foldedTypes = CaseCommon.foldedTypes();
         if (n % 2 == 0) {
             elseBranch = args.getLast();
             elseBranchPosition = argPositions.getLast();
-            returnType = CaseCommon.getCommonType(returnType, elseBranch.getType(), elseBranchPosition, foldedTypes, "CASE values cannot be bind variables");
             n--;
+            if (n == failureIndex) {
+                throw CaseCommon.foldError(fold, elseBranch.getType(), elseBranchPosition, "CASE values cannot be bind variables");
+            }
         } else {
             elseBranch = null;
             elseBranchPosition = -1;
@@ -184,8 +179,11 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 }
             }
 
-            returnType = CaseCommon.getCommonType(returnType, args.getQuick(i + 1).getType(), argPositions.getQuick(i + 1), foldedTypes, "CASE values cannot be bind variables");
+            if (i + 1 == failureIndex) {
+                throw CaseCommon.foldError(fold, args.getQuick(i + 1).getType(), argPositions.getQuick(i + 1), "CASE values cannot be bind variables");
+            }
         }
+        final int returnType = CaseCommon.getFoldCommonType(fold);
 
         for (int i = 2; i < n; i += 2) {
             args.setQuick(
@@ -223,6 +221,23 @@ public class SwitchFunctionFactory implements FunctionFactory {
         } else {
             throw SqlException.$(sqlPos, "CASE values cannot be bind variables");
         }
+    }
+
+    /**
+     * Folds the ELSE value and then the THEN values, see {@link CaseCommon#foldValueType}.
+     */
+    private static long foldValueTypes(IntList argTypes) {
+        final IntList foldedTypes = CaseCommon.foldedTypes();
+        int n = argTypes.size();
+        long fold = CaseCommon.EMPTY_FOLD;
+        if (n % 2 == 0) {
+            n--;
+            fold = CaseCommon.foldValueType(fold, argTypes.getQuick(n), n, foldedTypes);
+        }
+        for (int i = 2; i < n; i += 2) {
+            fold = CaseCommon.foldValueType(fold, argTypes.getQuick(i), i, foldedTypes);
+        }
+        return fold;
     }
 
     private static byte getByte(Function function, Record record) {

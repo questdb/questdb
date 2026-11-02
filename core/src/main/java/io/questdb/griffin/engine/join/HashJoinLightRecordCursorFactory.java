@@ -52,7 +52,6 @@ import org.jetbrains.annotations.Nullable;
 
 public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final JoinInput.BuildSide buildSide;
-    private final boolean isMasterFixed;
     private final RecordSink masterSink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final RecordSink slaveKeySink;
@@ -73,11 +72,10 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             Plannable joinContext,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
-            boolean isMasterFixed,
             JoinInput.BuildSide buildSide
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
-        this.isMasterFixed = isMasterFixed;
+        assert buildSide != JoinInput.BuildSide.SMALLER || masterFactory.recordCursorSupportsRandomAccess() : "hashed master lacks random access";
         this.buildSide = buildSide;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
@@ -96,7 +94,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public boolean followedOrderByAdvice() {
-        return isMasterFixed && masterFactory.followedOrderByAdvice();
+        return buildSide == JoinInput.BuildSide.FIXED_MASTER && masterFactory.followedOrderByAdvice();
     }
 
     @Override
@@ -107,9 +105,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             masterCursor = masterFactory.getCursor(executionContext);
             final boolean isMasterBuilt = switch (buildSide) {
                 case MASTER -> true;
-                case SLAVE -> false;
-                case SMALLER -> masterFactory.recordCursorSupportsRandomAccess()
-                        && JoinInput.BuildSide.smaller(masterCursor.size(), slaveCursor.size(), JoinInput.BuildSide.SLAVE) == JoinInput.BuildSide.MASTER;
+                case FIXED_MASTER, SLAVE -> false;
+                case SMALLER ->
+                        JoinInput.BuildSide.smaller(masterCursor.size(), slaveCursor.size(), JoinInput.BuildSide.SLAVE) == JoinInput.BuildSide.MASTER;
             };
             if (isMasterBuilt) {
                 final RecordCursor temp = masterCursor;
@@ -132,7 +130,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public int getScanDirection() {
-        return isMasterFixed ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
+        return buildSide == JoinInput.BuildSide.FIXED_MASTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
     }
 
     @Override

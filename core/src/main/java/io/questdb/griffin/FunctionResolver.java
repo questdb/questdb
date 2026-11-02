@@ -56,6 +56,7 @@ import io.questdb.griffin.engine.functions.cast.CastStrToDoubleArrayFunctionFact
 import io.questdb.griffin.engine.functions.cast.CastStrToGeoHashFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToTimestampFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastStrToUuidFunctionFactory;
+import io.questdb.griffin.engine.functions.cast.CastSymbolToIntFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToStrFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastUuidToVarcharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastVarcharToDecimalFunctionFactory;
@@ -178,6 +179,22 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
     public FunctionResolver(CairoConfiguration configuration, FunctionFactoryCache functionFactoryCache) {
         this.configuration = configuration;
         this.functionFactoryCache = functionFactoryCache;
+    }
+
+    /**
+     * The zero-based index of the indexed bind variable {@code name}, {@code $1} being 0; raises the error for a name
+     * that spells no positive index.
+     */
+    public static int bindVariableIndex(int position, CharSequence name) throws SqlException {
+        try {
+            final int variableIndex = Numbers.parseInt(name, 1, name.length());
+            if (variableIndex < 1) {
+                throw SqlException.$(position, "invalid bind variable index [value=").put(variableIndex).put(']');
+            }
+            return variableIndex - 1;
+        } catch (NumericException e) {
+            throw SqlException.$(position, "invalid bind variable index [value=").put(name).put(']');
+        }
     }
 
     @NotNull
@@ -453,7 +470,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
             throw e;
         } catch (Throwable e) {
             LOG.error().$("exception in function factory: ").$(e).$();
-            throw SqlException.position(position).put("exception in function factory: ").put(e.getMessage());
+            throw SqlException.factoryFailure(position, e);
         }
         if (!isDeferrable) {
             return false;
@@ -598,6 +615,9 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
                     } else if (sigArgTypeTag == ColumnType.INT) {
                         args.setQuick(k, IntConstant.NULL);
                     }
+                } else if (argTypeTag == ColumnType.SYMBOL && sigArgTypeTag == ColumnType.INT) {
+                    args.setQuick(k, new CastSymbolToIntFunctionFactory.Func(arg));
+                    implicitConversions.setQuick(k, CastSymbolToIntFunctionFactory.class);
                 } else if ((argTypeTag == ColumnType.STRING || argTypeTag == ColumnType.SYMBOL || argTypeTag == ColumnType.VARCHAR) && arg.isConstant()) {
                     if (sigArgTypeTag == ColumnType.TIMESTAMP) {
                         final CharSequence timestampStr = arg.getStrA(null);
@@ -677,7 +697,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
      */
     public Function createBindVariable(int position, CharSequence name, SqlExecutionContext executionContext) throws SqlException {
         if (name.charAt(0) != ':') {
-            return parseIndexedParameter(position, name, executionContext);
+            return createIndexedBindVariable(bindVariableIndex(position, name), position, executionContext);
         }
         return createNamedParameter(position, name, executionContext);
     }
@@ -864,7 +884,7 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
                 throw ce;
             }
             LOG.error().$("exception in function factory: ").$(e).$();
-            final SqlException ex = SqlException.position(position).put("exception in function factory: ").put(e.getMessage());
+            final SqlException ex = SqlException.factoryFailure(position, e);
             Misc.freeObjList(args, ex);
             throw ex;
         }
@@ -916,6 +936,18 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
             }
         }
         return cast != null && cast.isConstant() ? functionToConstant(cast, position) : cast;
+    }
+
+    /**
+     * The function of the indexed bind variable at the zero-based {@code variableIndex}, see {@link #bindVariableIndex}.
+     */
+    public Function createIndexedBindVariable(int variableIndex, int position, SqlExecutionContext executionContext) throws SqlException {
+        Function function = getBindVariableService(executionContext).getFunction(variableIndex);
+        if (function == null) {
+            // bind variable is undefined
+            return new IndexedParameterLinkFunction(variableIndex, ColumnType.UNDEFINED, position);
+        }
+        return new IndexedParameterLinkFunction(variableIndex, function.getType(), position);
     }
 
     public int enterExecutionRequirementPosition(int position) {
@@ -1660,15 +1692,6 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
         return null;
     }
 
-    private Function createIndexParameter(int variableIndex, int position, SqlExecutionContext executionContext) throws SqlException {
-        Function function = getBindVariableService(executionContext).getFunction(variableIndex);
-        if (function == null) {
-            // bind variable is undefined
-            return new IndexedParameterLinkFunction(variableIndex, ColumnType.UNDEFINED, position);
-        }
-        return new IndexedParameterLinkFunction(variableIndex, function.getType(), position);
-    }
-
     private Function createNamedParameter(int position, CharSequence name, SqlExecutionContext executionContext) throws SqlException {
         Function function = getBindVariableService(executionContext).getFunction(name);
         if (function == null) {
@@ -1880,19 +1903,6 @@ public class FunctionResolver implements Mutable, SwitchFunctionFactory.Equality
                 }
             default:
                 return function;
-        }
-    }
-
-    private Function parseIndexedParameter(int position, CharSequence name, SqlExecutionContext executionContext) throws SqlException {
-        // get variable index from token
-        try {
-            final int variableIndex = Numbers.parseInt(name, 1, name.length());
-            if (variableIndex < 1) {
-                throw SqlException.$(position, "invalid bind variable index [value=").put(variableIndex).put(']');
-            }
-            return createIndexParameter(variableIndex - 1, position, executionContext);
-        } catch (NumericException e) {
-            throw SqlException.$(position, "invalid bind variable index [value=").put(name).put(']');
         }
     }
 

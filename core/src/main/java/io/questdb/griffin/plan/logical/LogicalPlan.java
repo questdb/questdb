@@ -25,21 +25,22 @@
 package io.questdb.griffin.plan.logical;
 
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Mutable;
 
 /**
  * A pooled logical operation, borrowed until its compiler is reset.
  * Clearing a node releases its own references, never its inputs or expressions.
  */
-public abstract sealed class LogicalPlan implements Mutable
+public abstract sealed class LogicalPlan implements PlanFactSource
         permits UnaryPlan, DomainReadPlan, FunctionSourcePlan, HorizonJoinPlan, JoinPlan, ScanPlan, SetOperationPlan, WindowJoinPlan {
     private final OutputSchema output = new OutputSchema();
     private int position = -1;
+    private PlanStage stage;
 
     @Override
     public void clear() {
         output.clear();
         position = -1;
+        stage = null;
     }
 
     public OutputSchema getOutput() {
@@ -48,6 +49,14 @@ public abstract sealed class LogicalPlan implements Mutable
 
     public int getPosition() {
         return position;
+    }
+
+    /**
+     * The stage of the plan the node belongs to, which the optimiser records on every node once it verified the plan at
+     * that stage, under {@link io.questdb.ParanoiaState#PLAN_PARANOIA_MODE}; null for a node it has not.
+     */
+    public PlanStage getStage() {
+        return stage;
     }
 
     public abstract LogicalPlan inputAt(int index);
@@ -77,10 +86,17 @@ public abstract sealed class LogicalPlan implements Mutable
         this.position = position;
     }
 
-    /**
-     * Hands the visitor every expression and column id the node reads, not those of its inputs, and keeps what the
-     * visitor returns.
-     */
+    public void setStage(PlanStage stage) {
+        this.stage = stage;
+    }
+
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        visitor.output("output", output);
+        visitor.fact("position", position);
+    }
+
+    @Override
     public void visitReads(PlanExpressionVisitor visitor) {
     }
 
@@ -117,5 +133,21 @@ public abstract sealed class LogicalPlan implements Mutable
             }
         }
         return true;
+    }
+
+    /**
+     * Fails, under paranoia, a read of the physical fact {@code fact} of a node at a stage before physical planning
+     * decides it, see {@link #getStage} and {@link PlanStage#isRewritten}.
+     */
+    protected final void checkPhysicalRead(String fact) {
+        PlanFacts.checkDecided(stage == null || stage.isRewritten(), fact);
+    }
+
+    /**
+     * Fails, under paranoia, the rewrite {@code rewrite} of the inputs, the expressions or the order facts of a node at
+     * a stage that fixes them, see {@link #getStage} and {@link PlanStage#isRewritten}.
+     */
+    protected final void checkRewritable(String rewrite) {
+        PlanFacts.checkRewritable(stage, rewrite);
     }
 }

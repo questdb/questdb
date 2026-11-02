@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.lt;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -41,11 +40,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LtIPv4StrFunctionFactory implements FunctionFactory {
-
-    @Override
-    public int getResultType(IntList argTypes) {
-        return ColumnType.BOOLEAN;
-    }
 
     @Override
     public String getSignature() {

@@ -83,11 +83,10 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
                 Misc.freeObjList(args);
                 return BooleanConstant.TRUE;
             }
-            final SymbolFunction symbolFunction = (SymbolFunction) args.getQuick(0);
-            if (symbolFunction.isSymbolTableStatic()) {
+            if (valueFunction instanceof SymbolFunction symbolFunction && symbolFunction.isSymbolTableStatic()) {
                 return new SymbolInNullCursorFunc(symbolFunction);
             }
-            return new StrInNullCursorFunc(symbolFunction);
+            return new StrInNullCursorFunc(valueFunction);
         }
 
         // use first column to create list of values (over multiple records)
@@ -104,11 +103,10 @@ public class InSymbolCursorFunctionFactory implements FunctionFactory {
             return new StrInCursorFunc(NullConstant.NULL, cursorFunction, func);
         }
 
-        final SymbolFunction symbolFunction = (SymbolFunction) args.getQuick(0);
-        if (symbolFunction.isSymbolTableStatic()) {
+        if (valueFunction instanceof SymbolFunction symbolFunction && symbolFunction.isSymbolTableStatic()) {
             return new SymbolInCursorFunc(symbolFunction, cursorFunction, func);
         }
-        return new StrInCursorFunc(symbolFunction, cursorFunction, func);
+        return new StrInCursorFunc(valueFunction, cursorFunction, func);
     }
 
     private static class StrInCursorFunc extends BooleanFunction implements BinaryFunction {

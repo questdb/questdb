@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TimestampPrecisionUse;
@@ -56,7 +55,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory,
 
     @Override
     public int getResultType(IntList argTypes) {
-        return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(2));
+        return ColumnType.getImplicitTimestampType(argTypes.getQuick(2));
     }
 
     @Override
@@ -96,8 +95,7 @@ public class TimestampAddWithTimezoneFunctionFactory implements FunctionFactory,
         Function timestampFunc = args.getQuick(2);
         Function tzFunc = args.getQuick(3);
         int stride;
-        int timestampType = ColumnType.getTimestampType(timestampFunc.getType());
-        timestampType = ColumnType.getHigherPrecisionTimestampType(timestampType, ColumnType.TIMESTAMP_MICRO);
+        final int timestampType = ColumnType.getImplicitTimestampType(timestampFunc.getType());
         if (periodFunc.isConstant() && tzFunc.isConstant()) {
             // validate timezone and parse timezone into rules, that provide the offset by timestamp
             final CharSequence timezone = tzFunc.getStrA(null);

@@ -1077,6 +1077,7 @@ public class OrderByDescRowSkippingTest extends AbstractCairoTest {
                 columnIndexes,
                 columnSizes,
                 true,
+                false,
                 false
         );
     }

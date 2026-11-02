@@ -923,6 +923,7 @@ public class OrderByAscRowSkippingTest extends AbstractCairoTest {
                 columnIndexes,
                 columnSizes,
                 true,
+                metadata.getTimestampIndex() != -1,
                 false
         );
     }

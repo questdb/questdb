@@ -37,8 +37,8 @@ import io.questdb.griffin.PlanSink;
 public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFactory {
     private final int columnIndex;
     private final int indexDirection;
-    private final ShiftedRowCursor shiftedCursor = new ShiftedRowCursor();
     private final Function symbolFunction;
+    private ShiftedRowCursor shiftedCursor;
     private int symbolKey;
 
     public SymbolIndexRowCursorFactory(
@@ -71,6 +71,9 @@ public class SymbolIndexRowCursorFactory implements SymbolFunctionRowCursorFacto
         final long indexShift = pageFrame.getIndexRowLo() - pageFrame.getPartitionLo();
         if (indexDirection == IndexReader.DIR_BACKWARD) {
             return reader.getCursor(symbolKey, pageFrame.getIndexRowLo(), firstRow + indexShift);
+        }
+        if (shiftedCursor == null) {
+            shiftedCursor = new ShiftedRowCursor();
         }
         return shiftedCursor.of(reader.getCursor(symbolKey, firstRow + indexShift, pageFrame.getIndexRowHi() - 1), firstRow - pageFrame.getPartitionLo());
     }

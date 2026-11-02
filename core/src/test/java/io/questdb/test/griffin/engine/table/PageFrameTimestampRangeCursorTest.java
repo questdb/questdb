@@ -216,6 +216,7 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
                     columnIndexes,
                     columnSizeShifts,
                     false,
+                    false,
                     false
             )) {
                 // An index-backed row cursor yields rows in index order, not in timestamp
@@ -736,6 +737,7 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
                 columnIndexes,
                 columnSizeShifts,
                 true,
+                metadata.getTimestampIndex() != -1,
                 false
         );
     }
@@ -773,6 +775,7 @@ public class PageFrameTimestampRangeCursorTest extends AbstractCairoTest {
                 columnIndexes,
                 columnSizeShifts,
                 true,
+                metadata.getTimestampIndex() != -1,
                 false
         );
     }

@@ -25,11 +25,23 @@
 package io.questdb.test.griffin.engine.functions.bool;
 
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
+
+    @Test
+    public void testBindVariableInCursor() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s STRING, sym SYMBOL)");
+            execute("INSERT INTO t VALUES ('abc', 'abc'), ('xyz', 'xyz')");
+            assertBindVariableInCursor("SELECT $1 IN (SELECT sym FROM t) r", "r\ntrue\n", "r\nfalse\n", "r\nfalse\n");
+            assertBindVariableInCursor("SELECT $1 IN ((SELECT s FROM t LIMIT 1)) r", "r\ntrue\n", "r\nfalse\n", "r\nfalse\n");
+            assertBindVariableInCursor("SELECT $1 IN (SELECT null) r", "r\nfalse\n", "r\nfalse\n", "r\ntrue\n");
+        });
+    }
 
     @Test
     public void testMalformedVarcharInSymbolCursorMatchesNullNotPrefix() throws Exception {
@@ -337,5 +349,17 @@ public class InSymbolCursorFunctionFactoryTest extends AbstractCairoTest {
                         " from long_sequence(20)" +
                         ") timestamp(k) partition by DAY")
                 .fails(24, "supported column types are VARCHAR, SYMBOL and STRING, found: INT");
+    }
+
+    private void assertBindVariableInCursor(String sql, String expectedAbc, String expectedZzz, String expectedNull) throws Exception {
+        bindVariableService.clear();
+        try (RecordCursorFactory factory = select(sql)) {
+            bindVariableService.setStr(0, "abc");
+            assertRowsOnly(factory, expectedAbc);
+            bindVariableService.setStr(0, "zzz");
+            assertRowsOnly(factory, expectedZzz);
+            bindVariableService.setStr(0, null);
+            assertRowsOnly(factory, expectedNull);
+        }
     }
 }

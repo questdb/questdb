@@ -50,11 +50,6 @@ import io.questdb.std.str.Utf8Sequence;
 public class GtTimestampCursorFunctionFactory implements FunctionFactory {
 
     @Override
-    public int getResultType(IntList argTypes) {
-        return ColumnType.BOOLEAN;
-    }
-
-    @Override
     public String getSignature() {
         return ">(NC)";
     }

@@ -372,12 +372,22 @@ public final class OutputSchema implements Mutable {
 
     /**
      * Keeps the columns at {@code indexes}, in that order, each with every attribute; the designated timestamp
-     * stays designated when it is kept, else the schema designates none.
+     * stays designated when it is kept, else the schema designates none. Keeping every column in its place changes
+     * nothing.
      */
     public void retain(IntList indexes) {
         final int count = getColumnCount();
-        final int timestampId = getTimestampColumnId();
         final int n = indexes.size();
+        if (n == count) {
+            int i = 0;
+            while (i < n && indexes.getQuick(i) == i) {
+                i++;
+            }
+            if (i == n) {
+                return;
+            }
+        }
+        final int timestampId = getTimestampColumnId();
         for (int i = 0; i < n; i++) {
             addColumnFrom(this, indexes.getQuick(i));
         }

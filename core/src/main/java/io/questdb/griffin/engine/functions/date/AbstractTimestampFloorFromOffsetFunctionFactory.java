@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -81,7 +80,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
 
     @Override
     public int getResultType(IntList argTypes) {
-        return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(1));
+        return ColumnType.getImplicitTimestampType(argTypes.getQuick(1));
     }
 
     @Override
@@ -118,7 +117,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         final char unit = CommonUtils.getStrideUnit(unitStr, unitPos);
         args.getQuick(2).getTimestamp(null);
         validateUnit(unit, unitPos);
-        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ResultTypes.timestampAtLeastMicros(args.getQuick(1).getType()));
+        final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(ColumnType.getImplicitTimestampType(args.getQuick(1).getType()));
         final Function offsetFunc = args.getQuick(3);
         final int offsetPos = argPositions.getQuick(3);
         if (offsetFunc.isConstant()) {
@@ -144,7 +143,7 @@ abstract class AbstractTimestampFloorFromOffsetFunctionFactory implements Functi
         final char unit = CommonUtils.getStrideUnit(unitStr, argPositions.getQuick(0));
         final int unitPos = argPositions.getQuick(0);
         final Function timestampFunc = args.getQuick(1);
-        int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(timestampFunc.getType()), ColumnType.TIMESTAMP_MICRO);
+        int timestampType = ColumnType.getImplicitTimestampType(timestampFunc.getType());
         TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
         final long from = TimestampFloorFromFunctionFactory.floorOrigin(timestampDriver, args.getQuick(2).getTimestamp(null), args.getQuick(2).getType());
         final Function offsetFunc = args.getQuick(3);

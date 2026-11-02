@@ -389,6 +389,15 @@ public class CatalogueQueryTest extends AbstractCairoTest {
             queries.add("SELECT * FROM wal_transactions(NULL)");
             positions.add(31);
             messages.add("table name cannot be NULL");
+            queries.add("SELECT * FROM table_partitions(NULL::char)");
+            positions.add(35);
+            messages.add("table name cannot be NULL");
+            queries.add("SELECT * FROM table_columns(NULL::char)");
+            positions.add(32);
+            messages.add("table name cannot be NULL");
+            queries.add("SELECT * FROM wal_transactions(NULL::char)");
+            positions.add(35);
+            messages.add("table name cannot be NULL");
             queries.add("SELECT * FROM table_partitions()");
             positions.add(14);
             messages.add("function `table_partitions` requires arguments: table_partitions(STRING constant)");

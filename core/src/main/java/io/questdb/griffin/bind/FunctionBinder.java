@@ -108,6 +108,11 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     private final ObjList<BoundExpression> callArguments;
     private final ObjList<Function> callFunctions;
     private final IntList callPositions;
+    /**
+     * The stand-ins of the call the binder creates: a call creates its arguments before it canonicalizes its
+     * comparison, so each canonicalization reuses all of them.
+     */
+    private final ObjList<CanonicalTimestampConstant> canonicalTimestamps = new ObjList<>();
     private final SqlCompilerImpl compiler;
     private final BindContext ctx;
     private final Decimal128 decimal128 = new Decimal128();
@@ -123,6 +128,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     private final PostOrderTreeTraversalAlgo traverseAlgo;
     private final ObjList<BoundExpression> unconstructed = new ObjList<>();
     private final ObjObjHashMap<BoundExpression, BoundExpression> unconstructedIndex = new ObjObjHashMap<>();
+    private int canonicalTimestampCount;
     private SqlExecutionContext sqlExecutionContext;
 
     /**
@@ -883,6 +889,16 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         return isWindowArgument(node) ? CallRole.WINDOW_ARGUMENT : CallRole.ARGUMENT;
     }
 
+    /**
+     * A stand-in for the TIMESTAMP constant {@code value} at {@code timestampType}, which is not NULL.
+     */
+    private CanonicalTimestampConstant canonicalTimestamp(long value, int timestampType) {
+        if (canonicalTimestampCount == canonicalTimestamps.size()) {
+            canonicalTimestamps.add(new CanonicalTimestampConstant());
+        }
+        return canonicalTimestamps.getQuick(canonicalTimestampCount++).of(value, timestampType);
+    }
+
     private Function canonicalizeTemporalBetween(ObjList<Function> args) throws SqlException {
         final Function operand = args.getQuick(0);
         if (!isTemporalOperand(operand)) {
@@ -970,6 +986,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      * position, see {@link #validateTemporalConstant}. Returns the boolean the comparison folds to, or null.
      */
     private Function canonicalizeTemporalComparison(CharSequence operator, ObjList<Function> args, IntList positions) throws SqlException {
+        canonicalTimestampCount = 0;
         final int count = args == null ? 0 : args.size();
         if (count == 2 && FunctionResolver.isTemporalComparisonOperator(operator)) {
             return canonicalizeTemporalBinary(operator, args);
@@ -1260,6 +1277,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                     staticType, flags, position)));
             return ctx.planNodes.staticTypes.next().of(staticType, (flags & BoundExpression.NO_PARALLELISM) == 0);
         }
+        materializeCanonicalTimestamps(args);
         final Function first = args != null && args.size() == 2 ? args.getQuick(0) : null;
         final Function second = first != null ? args.getQuick(1) : null;
         final Function function = resolver.createFunction(overload, position, name, args, positions, sqlExecutionContext);
@@ -1312,8 +1330,17 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     private Function createParameter(ExpressionNode node) throws SqlException {
-        final boolean isPredefined = isBindVariableDefined(node.token);
-        final Function parameter = resolver.createBindVariable(node.position, node.token, sqlExecutionContext);
+        final BindVariableService service = sqlExecutionContext.getBindVariableService();
+        final boolean isPredefined;
+        final Function parameter;
+        if (node.token.charAt(0) == ':') {
+            isPredefined = service != null && service.getFunction(node.token) != null;
+            parameter = resolver.createBindVariable(node.position, node.token, sqlExecutionContext);
+        } else {
+            final int index = FunctionResolver.bindVariableIndex(node.position, node.token);
+            isPredefined = service != null && service.getFunction(index) != null;
+            parameter = resolver.createIndexedBindVariable(index, node.position, sqlExecutionContext);
+        }
         captureParameter(parameter, node, isPredefined);
         return parameter;
     }
@@ -1409,10 +1436,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         return replacementNodes == null || replacementNodes.size() == 0;
     }
 
-    private boolean isBindVariableDefined(CharSequence name) {
-        return definedBindVariable(name, sqlExecutionContext.getBindVariableService()) != null;
-    }
-
     private boolean isNativeTimestampColumn(int columnId) {
         final BindScope scope = ctx.scope();
         final OutputSchema input = scope.expressionInput;
@@ -1455,6 +1478,18 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
 
     private ConstantExpression markSource(ConstantExpression folded, FunctionFactoryDescriptor overload, int type, int flags, int position) {
         return markSource(folded, ctx.planNodes.functions.next().of(overload, arguments, argumentPositions, type, flags, position));
+    }
+
+    /**
+     * Replaces each stand-in among the arguments of a call the binder constructs with the constant it stands in for,
+     * which the function may keep.
+     */
+    private void materializeCanonicalTimestamps(ObjList<Function> args) {
+        for (int i = 0, n = args == null ? 0 : args.size(); i < n; i++) {
+            if (args.getQuick(i) instanceof CanonicalTimestampConstant canonical) {
+                args.setQuick(i, canonical.materialize());
+            }
+        }
     }
 
     private CursorExpression nextCursor() {
@@ -1519,7 +1554,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                         && (!constant.isLiteral() || ColumnType.isVarSize(constant.getDataType())) && constant.getDataType() == arg.getType()) {
                     final PreparedFunctions.Entry entry = ctx.preparedFunctions.begin();
                     ctx.preparedFunctions.describe(entry, constant);
-                    ctx.preparedFunctions.own(entry, arg);
+                    ctx.preparedFunctions.own(entry, arg instanceof CanonicalTimestampConstant canonical ? canonical.materialize() : arg);
                     args.setQuick(i, null);
                 } else if (arg instanceof BindableColumn leaf && leaf.isOpen() && argument instanceof ColumnExpression column
                         && column.getColumnId() == leaf.getColumnId() && column.getDataType() == leaf.getType()) {
@@ -1631,8 +1666,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      * the text no longer spells the value.
      */
     private void replaceTemporalConstant(ObjList<Function> args, int index, long value, int operandType, boolean isExact) {
-        final Function replacement = operandType == ColumnType.DATE
-                ? DateConstant.newInstance(value) : TimestampConstant.newInstance(value, operandType);
+        final Function replacement = operandType == ColumnType.DATE ? DateConstant.newInstance(value)
+                : value == Numbers.LONG_NULL ? TimestampConstant.newInstance(value, operandType) : canonicalTimestamp(value, operandType);
         Misc.free(args.getQuick(index));
         args.setQuick(index, replacement);
         final BoundExpression argument = arguments.getQuick(index);

@@ -56,10 +56,10 @@ import io.questdb.griffin.engine.table.MasterSuffixLimitFunction;
 import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.OutputSchema;
-import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.jit.CompiledFilterIRSerializer;
@@ -107,6 +107,21 @@ final class FilterFactoryGenerator {
         this.functionInstantiator = functionInstantiator;
         this.jitIRSerializer = new CompiledFilterIRSerializer(characterStore, tmpSink, tmpIndexes, tmpValues, tmpLongs);
         this.enableJitDebug = configuration.isSqlJitDebugEnabled();
+    }
+
+    /**
+     * Consumes the factory, which holds the decorrelation domains the generator placed from {@code producerLo} on, and
+     * a constant Boolean filter, including on failure: keeps the factory when the filter folds to true, else replaces it
+     * with an empty one, see {@link GenerationFrame#emptied}.
+     */
+    private static RecordCursorFactory generateFolded(GenerationFrame frame, int producerLo, RecordCursorFactory factory, Function filter, boolean isTrue) {
+        assert filter.isConstant() && filter.getBool(null) == isTrue : "folded filter differs from its constant";
+        final Throwable failure = Misc.freeBestEffort(null, filter);
+        if (failure != null) {
+            Misc.free(factory, failure);
+            CairoException.rethrowCleanupFailure(failure);
+        }
+        return isTrue ? factory : frame.emptied(producerLo, frame.producerMark(), factory);
     }
 
     private static boolean isNegated(FunctionExpression pattern) {
@@ -180,29 +195,17 @@ final class FilterFactoryGenerator {
         bindVarFunctions.clear();
     }
 
-    private RecordCursorFactory generate(
+    private RecordCursorFactory generateParallel(
             GenerationFrame frame,
             BoundExpression predicate,
             OutputSchema input,
             RecordCursorFactory base,
             Function filter,
-            int producerLo,
             SqlExecutionContext executionContext,
             boolean isUpdate,
-            boolean isParallel,
             BoundExpression limitCount,
-            boolean enablePreTouch,
-            boolean isConstantFolded
+            boolean enablePreTouch
     ) throws SqlException {
-        if (filter.isConstant() && isConstantFolded) {
-            return generateConstantFilter(frame, producerLo, base, filter);
-        }
-        if (filter.isRuntimeConstant()) {
-            return new RuntimeConstGateRecordCursorFactory(base, filter);
-        }
-        if (!isParallel) {
-            return generateJavaFilter(base, filter, false, null, null, null, 0, false, executionContext);
-        }
         final IntHashSet columns = new IntHashSet();
         try {
             collectColumnIndexes(predicate, input, columns);
@@ -304,28 +307,6 @@ final class FilterFactoryGenerator {
     }
 
     /**
-     * Consumes the factory, which holds the decorrelation domains the generator placed from {@code producerLo} on, and
-     * a constant Boolean filter, including on failure: keeps the factory when the filter is true, else replaces it with
-     * an empty one, see {@link GenerationFrame#emptied}.
-     */
-    static RecordCursorFactory generateConstantFilter(GenerationFrame frame, int producerLo, RecordCursorFactory factory, Function filter) {
-        final boolean isTrue;
-        try {
-            isTrue = filter.getBool(null);
-        } catch (Throwable th) {
-            Misc.free(factory, th);
-            Misc.free(filter, th);
-            throw th;
-        }
-        final Throwable failure = Misc.freeBestEffort(null, filter);
-        if (failure != null) {
-            Misc.free(factory, failure);
-            CairoException.rethrowCleanupFailure(failure);
-        }
-        return isTrue ? factory : frame.emptied(producerLo, frame.producerMark(), factory);
-    }
-
-    /**
      * Whether the JIT may compile a filter: the execution context enables it, the platform supports it, and the filter
      * reads the target of an UPDATE only while WAL application runs the UPDATE.
      */
@@ -382,9 +363,10 @@ final class FilterFactoryGenerator {
     }
 
     /**
-     * Consumes both executable roots on entry, including on failure; builds the parallel filter when
-     * {@code isParallel}, as operator planning records it, else the serial one. The base holds the decorrelation
-     * domains the generator placed from {@code producerLo} on, see {@link GenerationFrame#producerMark}.
+     * Consumes both executable roots on entry, including on failure; applies the filter as {@code algorithm}, which
+     * operator planning records, says: folds it, gates the base on it, or builds the parallel or the serial filter.
+     * The base holds the decorrelation domains the generator placed from {@code producerLo} on, see
+     * {@link GenerationFrame#producerMark}.
      */
     RecordCursorFactory generate(
             GenerationFrame frame,
@@ -395,11 +377,18 @@ final class FilterFactoryGenerator {
             int producerLo,
             SqlExecutionContext executionContext,
             boolean isUpdate,
-            boolean isParallel,
+            FilterPlan.Algorithm algorithm,
             BoundExpression limitCount,
             boolean enablePreTouch
     ) throws SqlException {
-        return generate(frame, predicate, input, base, filter, producerLo, executionContext, isUpdate, isParallel, limitCount, enablePreTouch, true);
+        assert algorithm.isFolded() || (algorithm == FilterPlan.Algorithm.GATE) == filter.isRuntimeConstant() : "filter algorithm differs from its function";
+        return switch (algorithm) {
+            case FOLDED_TRUE -> generateFolded(frame, producerLo, base, filter, true);
+            case FOLDED_FALSE -> generateFolded(frame, producerLo, base, filter, false);
+            case GATE -> new RuntimeConstGateRecordCursorFactory(base, filter);
+            case PARALLEL -> generateParallel(frame, predicate, input, base, filter, executionContext, isUpdate, limitCount, enablePreTouch);
+            case SERIAL, WINDOW_KEEP_FLAG -> generateJavaFilter(base, filter, false, null, null, null, 0, false, executionContext);
+        };
     }
 
     /**
@@ -496,10 +485,9 @@ final class FilterFactoryGenerator {
     }
 
     /**
-     * Filters the factory, which holds the decorrelation domains the generator placed from {@code producerLo} on, on one
-     * thread with the filter the join step applies to its joined rows, folding a constant as
-     * {@link PlanToFactoryRules#isPostJoinFilterFolded} decides. Consumes both executable roots on entry, including on
-     * failure.
+     * Filters the factory, which holds the decorrelation domains the generator placed from {@code producerLo} on, with
+     * the filter the join step applies to its joined rows, as {@link JoinInput#getFilterAlgorithm} says. Consumes both
+     * executable roots on entry, including on failure.
      */
     RecordCursorFactory generatePostJoin(
             GenerationFrame frame,
@@ -510,8 +498,8 @@ final class FilterFactoryGenerator {
             int producerLo,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        return generate(frame, predicate, step.getOutput(), base, filter, producerLo, executionContext, false, false, null,
-                false, PlanToFactoryRules.isPostJoinFilterFolded(step, predicate));
+        return generate(frame, predicate, step.getOutput(), base, filter, producerLo, executionContext, false,
+                step.getFilterAlgorithm(), null, false);
     }
 
     /**

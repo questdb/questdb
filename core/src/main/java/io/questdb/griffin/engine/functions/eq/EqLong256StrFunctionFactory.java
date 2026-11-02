@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -48,11 +47,6 @@ import org.jetbrains.annotations.Nullable;
 
 public class EqLong256StrFunctionFactory implements FunctionFactory {
     private static final FiberLocal<Long256ConstDecoder> DECODER = new FiberLocal<>(Long256ConstDecoder::new);
-
-    @Override
-    public int getResultType(IntList argTypes) {
-        return ColumnType.BOOLEAN;
-    }
 
     @Override
     public String getSignature() {

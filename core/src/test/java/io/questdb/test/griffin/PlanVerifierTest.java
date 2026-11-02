@@ -34,6 +34,7 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
+import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
@@ -41,6 +42,7 @@ import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.HashJoinAggregation;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
+import io.questdb.griffin.plan.logical.JoinGraph;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -50,6 +52,8 @@ import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
+import io.questdb.griffin.plan.logical.PlanFactRecorder;
+import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
@@ -57,10 +61,12 @@ import io.questdb.griffin.plan.logical.SetOperationKind;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
+import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
@@ -69,6 +75,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class PlanVerifierTest extends AbstractCairoTest {
+    private static final String BINDING = "SqlBinder.bind";
     private static final String PASS = "TestPass.rewrite";
     private final DecorrelationCarriers carriers = new DecorrelationCarriers();
     private final PlanVerifier verifier = PlanVerifier.newStandalone();
@@ -86,11 +93,11 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 while (!(node instanceof ScanPlan)) {
                     node = node.inputAt(0);
                 }
-                verifier.verifyAccessPaths(plan);
+                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
                 ((ScanPlan) node).clearAccessPath();
-                verifier.verify(plan, PASS);
+                verifier.verify(plan, PlanStage.REWRITTEN, PASS);
                 try {
-                    verifier.verifyAccessPaths(plan);
+                    verifier.verify(plan, PlanStage.PHYSICAL, PASS);
                     Assert.fail("expected " + PlanVerifier.ACCESS_PATH_UNPLANNED);
                 } catch (AssertionError e) {
                     TestUtils.assertContains(e.getMessage(), PlanVerifier.ACCESS_PATH_UNPLANNED);
@@ -207,7 +214,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 final SortPlan sort = find(plan, SortPlan.class);
                 Assert.assertEquals(LimitPlan.Application.SORT, find(plan, LimitPlan.class).getApplication());
                 Assert.assertEquals(SortPlan.Algorithm.LIMITED, sort.getAlgorithm());
-                verifier.verifyAccessPaths(plan);
+                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
                 sort.setAlgorithm(SortPlan.Algorithm.LONG_TOP_K);
                 assertFails(plan, PlanVerifier.LIMIT_APPLICATION, "LimitPlan");
             }
@@ -258,7 +265,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 for (String query : queries) {
                     try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
                         Assert.assertNotNull(query, factory);
-                        verifier.verify(compiler.getPlanForTesting(), PASS);
+                        verifier.verify(compiler.getPlanForTesting(), PlanStage.REWRITTEN, PASS);
                     }
                 }
             }
@@ -276,10 +283,10 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 final LogicalPlan plan = compiler.getPlanForTesting();
                 final SortPlan sort = (SortPlan) find(plan, SortPlan.class);
                 final ScanPlan scan = (ScanPlan) find(plan, ScanPlan.class);
-                verifier.verifyAccessPaths(plan);
+                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
                 final SortPlan.Algorithm algorithm = sort.getAlgorithm();
                 sort.setAlgorithm(null);
-                verifier.verify(plan, PASS);
+                verifier.verify(plan, PlanStage.REWRITTEN, PASS);
                 assertAccessPathsFail(plan, PlanVerifier.CHOICE_UNPLANNED, "SortPlan");
                 sort.setAlgorithm(algorithm);
                 final FilterPlan.Algorithm residualAlgorithm = scan.getResidualAlgorithm();
@@ -287,7 +294,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 scan.setResidualAlgorithm(null);
                 assertAccessPathsFail(plan, PlanVerifier.CHOICE_UNPLANNED, "ScanPlan");
                 scan.setResidualAlgorithm(residualAlgorithm);
-                verifier.verifyAccessPaths(plan);
+                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
             }
         });
     }
@@ -296,6 +303,32 @@ public class PlanVerifierTest extends AbstractCairoTest {
     public void testColumnType() {
         final FunctionSourcePlan source = source();
         assertFails(filter(source, column(1, ColumnType.BOOLEAN)), PlanVerifier.COLUMN_TYPE, "FilterPlan");
+    }
+
+    @Test
+    public void testCopyFact() {
+        final FunctionSourcePlan source = source();
+        final FilterPlan original = filter(source, OuterColumnExpression.FACTORY.newInstance().of(9, ColumnType.BOOLEAN, 0));
+        final FilterPlan copy = filter(source, column(5, ColumnType.BOOLEAN));
+        final IntIntHashMap renamedIds = new IntIntHashMap();
+        renamedIds.put(9, 5);
+        final PlanFactRecorder sourceFacts = new PlanFactRecorder();
+        final PlanFactRecorder copiedFacts = new PlanFactRecorder();
+        sourceFacts.rename(renamedIds);
+        PlanVerifier.verifyCopy(original, copy, sourceFacts, copiedFacts);
+        original.setAlgorithm(FilterPlan.Algorithm.SERIAL);
+        assertCopyFails(original, copy, sourceFacts, copiedFacts, "algorithm", "FilterPlan");
+        copy.setAlgorithm(FilterPlan.Algorithm.SERIAL);
+        PlanVerifier.verifyCopy(original, copy, sourceFacts, copiedFacts);
+
+        final AggregatePlan producer = AggregatePlan.FACTORY.newInstance().of(source, 0);
+        final AggregatePlan producerCopy = AggregatePlan.FACTORY.newInstance().of(source, 0);
+        sourceFacts.pair(producer, producerCopy);
+        final DomainReadPlan read = DomainReadPlan.FACTORY.newInstance().of(producer, 0);
+        final DomainReadPlan readCopy = DomainReadPlan.FACTORY.newInstance().of(producerCopy, 0);
+        PlanVerifier.verifyCopy(read, readCopy, sourceFacts, copiedFacts);
+        readCopy.setProducer(producer);
+        assertCopyFails(read, readCopy, sourceFacts, copiedFacts, "producer", "DomainReadPlan");
     }
 
     @Test
@@ -345,8 +378,24 @@ public class PlanVerifierTest extends AbstractCairoTest {
     public void testDependentStepSurvivesDecorrelation() {
         final JoinPlan join = join(source(), source(5, 6));
         join.getInputs().getQuick(1).setDependent(true);
-        verifier.verifyBound(join);
+        verifier.verify(join, PlanStage.BOUND, BINDING);
         assertFails(join, PlanVerifier.DEPENDENT_STEP, "JoinPlan");
+    }
+
+    @Test
+    public void testDistinctAlgorithm() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE dt (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            assertAlgorithmContradicts("SELECT DISTINCT ts, v, max(v) OVER () m FROM dt", DistinctPlan.class, distinct -> {
+                Assert.assertEquals(DistinctPlan.Algorithm.TIME_SERIES, distinct.getAlgorithm());
+                distinct.setAlgorithm(DistinctPlan.Algorithm.HASH);
+            }, PlanVerifier.DISTINCT_ALGORITHM);
+            assertAlgorithmContradicts("SELECT DISTINCT v, max(v) OVER () m FROM dt", DistinctPlan.class, distinct -> {
+                Assert.assertEquals(DistinctPlan.Algorithm.HASH, distinct.getAlgorithm());
+                distinct.setAlgorithm(DistinctPlan.Algorithm.TIME_SERIES);
+            }, PlanVerifier.DISTINCT_ALGORITHM);
+            assertAlgorithmUnplanned("SELECT DISTINCT v, max(v) OVER () m FROM dt", DistinctPlan.class, distinct -> distinct.setAlgorithm(null));
+        });
     }
 
     @Test
@@ -369,14 +418,14 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 final DomainReadPlan read = find(plan, DomainReadPlan.class);
                 Assert.assertNotNull(read);
                 Assert.assertEquals(DomainReadPlan.Algorithm.SHARED, read.getAlgorithm());
-                verifier.verifyAccessPaths(plan);
+                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
 
                 final AggregatePlan producer = read.getProducer();
                 final AggregatePlan.Algorithm algorithm = producer.getAlgorithm();
                 read.setAlgorithm(DomainReadPlan.Algorithm.REGENERATED);
                 assertFails(plan, PlanVerifier.DOMAIN_READ_ALGORITHM, "DomainReadPlan");
                 producer.setAlgorithm(null);
-                verifier.verify(plan, PASS);
+                verifier.verify(plan, PlanStage.REWRITTEN, PASS);
                 read.setAlgorithm(DomainReadPlan.Algorithm.SHARED);
                 assertFails(plan, PlanVerifier.DOMAIN_READ_ALGORITHM, "DomainReadPlan");
                 producer.setAlgorithm(algorithm);
@@ -392,10 +441,11 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 outside.getOutput().copyFrom(producer.getOutput());
                 outside.setAlgorithm(producer.getAlgorithm());
                 outside.setSharedConsumerCount(producer.getSharedConsumerCount());
+                forgetStage(plan);
                 read.setProducer(outside);
                 assertFails(plan, PlanVerifier.DOMAIN_READ_PRODUCER, "DomainReadPlan");
                 read.setProducer(producer);
-                verifier.verifyAccessPaths(plan);
+                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
             }
         });
     }
@@ -421,7 +471,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 Assert.assertNotNull(read);
                 final AggregatePlan producer = read.getProducer();
                 Assert.assertEquals(AggregatePlan.SharedRead.SOURCE, producer.getSharedRead());
-                verifier.verifyAccessPaths(plan);
+                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
 
                 final AggregatePlan.Algorithm algorithm = producer.getAlgorithm();
                 producer.setAlgorithm(null);
@@ -429,7 +479,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 assertFails(plan, PlanVerifier.DOMAIN_READ_ALGORITHM, "DomainReadPlan");
                 producer.setAlgorithm(algorithm);
                 read.setAlgorithm(DomainReadPlan.Algorithm.SHARED);
-                verifier.verifyAccessPaths(plan);
+                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
             }
         });
     }
@@ -457,14 +507,14 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 final LogicalPlan plan = compiler.getPlanForTesting();
                 final SetOperationPlan operation = find(plan, SetOperationPlan.class);
                 Assert.assertNotNull(operation);
-                verifier.verifyAccessPaths(plan);
+                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
 
                 operation.of(operation.getLeft(), operation.getRight(), SetOperationKind.EXCEPT_ALL, operation.getPosition(),
                         operation.getRightPosition(), operation.isSymbolRestorationRequired());
                 assertFails(plan, PlanVerifier.DOMAIN_READ_RELEASED, "DomainReadPlan");
                 operation.of(operation.getLeft(), operation.getRight(), SetOperationKind.UNION_ALL, operation.getPosition(),
                         operation.getRightPosition(), operation.isSymbolRestorationRequired());
-                verifier.verifyAccessPaths(plan);
+                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
             }
         });
     }
@@ -490,7 +540,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
                     node = node.inputAt(0);
                 }
                 final FunctionExpression predicate = (FunctionExpression) ((FilterPlan) node).getPredicate();
-                verifier.verify(plan, PASS);
+                verifier.verify(plan, PlanStage.REWRITTEN, PASS);
                 predicate.getArguments().setQuick(1, predicate.argumentAt(0));
                 assertFails(plan, PlanVerifier.EXPRESSION_SHARED, "ScanPlan");
             }
@@ -517,7 +567,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 final FunctionExpression comparison = (FunctionExpression) predicate.argumentAt(1);
                 Assert.assertTrue(comparison.argumentAt(1) instanceof CursorExpression);
                 comparison.getArguments().setQuick(0, comparison.argumentAt(1));
-                verifier.verify(plan, PASS);
+                verifier.verify(plan, PlanStage.REWRITTEN, PASS);
             }
         });
     }
@@ -544,16 +594,44 @@ public class PlanVerifierTest extends AbstractCairoTest {
         assertFails(fill, PlanVerifier.FILL_TIMESTAMP, "FillPlan");
         fill.deriveOutput();
         Assert.assertEquals(2, fill.getOutput().getTimestampIndex());
-        verifier.verify(fill, PASS);
+        verifier.verify(fill, PlanStage.REWRITTEN, PASS);
     }
 
     @Test
     public void testFilterAlgorithmWithoutChoice() {
         final FunctionSourcePlan source = source();
         final FilterPlan filter = filter(source, ConstantExpression.FACTORY.newInstance().ofBoolean(true, 0));
-        verifier.verify(filter, PASS);
+        verifier.verify(filter, PlanStage.REWRITTEN, PASS);
         filter.setAlgorithm(FilterPlan.Algorithm.SERIAL);
         assertFails(filter, PlanVerifier.FILTER_ALGORITHM, "FilterPlan");
+    }
+
+    @Test
+    public void testFilterShapeContradictsPredicate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fs (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            assertAlgorithmContradicts("SELECT * FROM (SELECT x, count() c FROM fs GROUP BY x ORDER BY x LIMIT 3) WHERE abs(-1) = 2",
+                    FilterPlan.class, filter -> {
+                        Assert.assertEquals(FilterPlan.Algorithm.FOLDED_FALSE, filter.getAlgorithm());
+                        filter.setAlgorithm(FilterPlan.Algorithm.SERIAL);
+                    }, PlanVerifier.FILTER_ALGORITHM);
+            assertAlgorithmContradicts("SELECT * FROM (SELECT x, count() c FROM fs GROUP BY x ORDER BY x LIMIT 3) WHERE c > 0",
+                    FilterPlan.class, filter -> {
+                        Assert.assertEquals(FilterPlan.Algorithm.SERIAL, filter.getAlgorithm());
+                        filter.setAlgorithm(FilterPlan.Algorithm.GATE);
+                    }, PlanVerifier.FILTER_ALGORITHM);
+            assertAlgorithmContradicts("SELECT ts, x FROM fs WHERE now() > '2000-01-01'", ScanPlan.class, scan -> {
+                Assert.assertEquals(FilterPlan.Algorithm.GATE, scan.getResidualAlgorithm());
+                scan.setResidualAlgorithm(FilterPlan.Algorithm.PARALLEL);
+            }, PlanVerifier.FILTER_ALGORITHM);
+            assertAlgorithmContradicts("SELECT * FROM fs a JOIN fs b ON a.x = b.x AND a.ts < b.ts", JoinPlan.class, join -> {
+                final JoinInput step = join.getOrderedInputs().getQuick(1);
+                Assert.assertEquals(FilterPlan.Algorithm.SERIAL, step.getFilterAlgorithm());
+                step.setFilterAlgorithm(FilterPlan.Algorithm.FOLDED_TRUE);
+            }, PlanVerifier.FILTER_ALGORITHM);
+            assertAlgorithmUnplanned("SELECT * FROM (SELECT x, count() c FROM fs GROUP BY x ORDER BY x LIMIT 3) WHERE c > 0", FilterPlan.class,
+                    filter -> filter.setAlgorithm(null));
+        });
     }
 
     @Test
@@ -568,7 +646,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 final LogicalPlan plan = compiler.getPlanForTesting();
                 final FilterPlan filter = find(plan, FilterPlan.class);
                 Assert.assertFalse(filter.hasUpdateScan());
-                verifier.verifyAccessPaths(plan);
+                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
                 filter.setUpdateScan(true);
                 assertAccessPathsFail(plan, PlanVerifier.FILTER_UPDATE_SCAN, "FilterPlan");
             }
@@ -598,10 +676,9 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 final LogicalPlan plan = compiler.getPlanForTesting();
                 final JoinInput step = find(plan, JoinPlan.class).getOrderedInputs().getQuick(1);
                 Assert.assertEquals(JoinInput.Algorithm.TEMPORAL_TIME_FRAME, step.getAlgorithm());
-                verifier.verifyAccessPaths(plan);
+                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
                 step.setAlgorithm(null);
-                step.setMasterSide(null);
-                verifier.verify(plan, PASS);
+                verifier.verify(plan, PlanStage.REWRITTEN, PASS);
                 assertAccessPathsFail(plan, PlanVerifier.CHOICE_UNPLANNED, "JoinPlan");
             }
         });
@@ -613,16 +690,35 @@ public class PlanVerifierTest extends AbstractCairoTest {
             execute("CREATE TABLE bs_a (k INT, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE bs_b (k INT, x INT)");
             // A consumer reads the order of the master, which then drives the join.
-            assertAlgorithmContradicts("SELECT a.ts, b.x FROM bs_a a JOIN bs_b b ON a.k = b.k ORDER BY a.ts", JoinPlan.class, join -> {
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    RecordCursorFactory ignored = compiler.compile("SELECT a.ts, b.x FROM bs_a a JOIN bs_b b ON a.k = b.k ORDER BY a.ts",
+                            sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                final JoinInput step = find(compiler.getPlanForTesting(), JoinPlan.class).getOrderedInputs().getQuick(1);
+                Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, step.getBuildSide());
+                Assert.assertFalse(step.isSmallerDriven());
+            }
+            // A FULL join hashes the smaller input at execution, as its master supports random access; a master fixed by
+            // a consumer is for INNER joins only.
+            assertAlgorithmContradicts("SELECT a.x, b.x FROM bs_a a FULL JOIN bs_b b ON a.k = b.k", JoinPlan.class, join -> {
                 final JoinInput step = join.getOrderedInputs().getQuick(1);
-                Assert.assertEquals(JoinInput.MasterSide.FIXED, step.getMasterSide());
-                Assert.assertEquals(JoinInput.BuildSide.SLAVE, step.getBuildSide());
-                step.setBuildSide(JoinInput.BuildSide.MASTER);
+                Assert.assertEquals(JoinInput.Algorithm.LIGHT_HASH, step.getAlgorithm());
+                Assert.assertEquals(JoinInput.BuildSide.SMALLER, step.getBuildSide());
+                step.setBuildSide(JoinInput.BuildSide.FIXED_MASTER);
             }, PlanVerifier.JOIN_BUILD_SIDE);
+            // A FULL join over a master without random access hashes its slave.
+            assertAlgorithmContradicts("SELECT a.x, b.x FROM (SELECT * FROM bs_a UNION ALL SELECT * FROM bs_a) a FULL JOIN bs_b b ON a.k = b.k",
+                    JoinPlan.class, join -> {
+                        final JoinInput step = join.getOrderedInputs().getQuick(1);
+                        Assert.assertEquals(JoinInput.Algorithm.LIGHT_HASH, step.getAlgorithm());
+                        Assert.assertEquals(JoinInput.BuildSide.SLAVE, step.getBuildSide());
+                        step.setBuildSide(JoinInput.BuildSide.SMALLER);
+                    }, PlanVerifier.JOIN_BUILD_SIDE);
             // Both tables bound their inputs, and the master supports random access, so the plan picks the input to hash.
             assertAlgorithmContradicts("SELECT a.x, b.x FROM bs_a a JOIN bs_b b ON a.k = b.k", JoinPlan.class, join -> {
                 final JoinInput step = join.getOrderedInputs().getQuick(1);
-                Assert.assertEquals(JoinInput.MasterSide.SMALLER, step.getMasterSide());
+                Assert.assertTrue(step.isSmallerDriven());
                 Assert.assertEquals(JoinInput.BuildSide.SLAVE, step.getBuildSide());
                 step.setBuildSide(JoinInput.BuildSide.SMALLER);
             }, PlanVerifier.JOIN_BUILD_SIDE);
@@ -630,7 +726,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
             assertAlgorithmContradicts("SELECT a.x, l.x FROM bs_a a JOIN (SELECT x::INT k, x::INT x FROM long_sequence(3)) l ON a.k = l.k",
                     JoinPlan.class, join -> {
                         final JoinInput step = join.getOrderedInputs().getQuick(1);
-                        Assert.assertEquals(JoinInput.MasterSide.SMALLER, step.getMasterSide());
+                        Assert.assertTrue(step.isSmallerDriven());
                         Assert.assertEquals(JoinInput.BuildSide.SMALLER, step.getBuildSide());
                         step.setBuildSide(JoinInput.BuildSide.SLAVE);
                     }, PlanVerifier.JOIN_BUILD_SIDE);
@@ -660,10 +756,9 @@ public class PlanVerifierTest extends AbstractCairoTest {
             assertAlgorithmContradicts("SELECT u.x, b.x FROM (SELECT * FROM " + union + " LIMIT 3) u JOIN bs_b b ON u.k = b.k", JoinPlan.class, join -> {
                 final JoinInput step = join.getOrderedInputs().getQuick(1);
                 Assert.assertEquals(JoinInput.Algorithm.LIGHT_HASH, step.getAlgorithm());
-                Assert.assertEquals(JoinInput.MasterSide.FIXED, step.getMasterSide());
-                step.setMasterSide(JoinInput.MasterSide.SMALLER);
+                Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, step.getBuildSide());
                 step.setBuildSide(JoinInput.BuildSide.MASTER);
-            }, PlanVerifier.INPUT_RANDOM_ACCESS);
+            }, PlanVerifier.JOIN_BUILD_SIDE);
             // The parallel filter of the master returns the last master rows that the negative LIMIT reads in master
             // order.
             execute("CREATE TABLE bs_m (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -675,9 +770,9 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 final LogicalPlan plan = compiler.getPlanForTesting();
                 Assert.assertEquals(LimitPlan.Application.MASTER_SUFFIX, find(plan, LimitPlan.class).getApplication());
                 final JoinInput step = find(plan, JoinPlan.class).getOrderedInputs().getQuick(1);
-                Assert.assertEquals(JoinInput.MasterSide.FIXED, step.getMasterSide());
-                verifier.verifyAccessPaths(plan);
-                step.setMasterSide(JoinInput.MasterSide.SMALLER);
+                Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, step.getBuildSide());
+                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
+                step.setBuildSide(JoinInput.BuildSide.SLAVE);
                 assertFails(plan, PlanVerifier.LIMIT_APPLICATION, "LimitPlan");
             }
             execute("INSERT INTO bs_a VALUES (1, 1, '2024-01-01'), (2, 2, '2024-01-01')");
@@ -690,9 +785,9 @@ public class PlanVerifierTest extends AbstractCairoTest {
             ) {
                 final LogicalPlan plan = compiler.getPlanForTesting();
                 final JoinInput step = find(plan, JoinPlan.class).getOrderedInputs().getQuick(1);
-                Assert.assertEquals(JoinInput.MasterSide.SMALLER, step.getMasterSide());
+                Assert.assertTrue(step.isSmallerDriven());
                 Assert.assertEquals(JoinInput.BuildSide.SMALLER, step.getBuildSide());
-                verifier.verifyAccessPaths(plan);
+                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
             }
         });
     }
@@ -733,7 +828,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
         join.getFilterConjunctOrigins().add(-1);
         join.getFilterConjuncts().add(column(6, ColumnType.BOOLEAN));
         join.getFilterConjunctOrigins().add(1);
-        verifier.verify(join, PASS);
+        verifier.verify(join, PlanStage.REWRITTEN, PASS);
         join.getFilterConjunctOrigins().setQuick(1, 2);
         assertFails(join, PlanVerifier.JOIN_FILTER_ORIGIN, "JoinPlan");
         join.getFilterConjunctOrigins().setQuick(1, -2);
@@ -765,7 +860,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 final LogicalPlan plan = compiler.getPlanForTesting();
                 final HorizonJoinPlan horizon = find(plan, HorizonJoinPlan.class);
                 Assert.assertNotNull(horizon.getSlaves().getQuick(0).getKeyCheck());
-                verifier.verifyAccessPaths(plan);
+                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
                 horizon.getSlaves().getQuick(0).setKeyCheck(null);
                 assertAccessPathsFail(plan, PlanVerifier.JOIN_KEY_LOOKUP, "HorizonJoinPlan");
             }
@@ -781,7 +876,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
         step.setNullExtension(JoinInput.NullExtension.BY_ON_RESIDUAL);
         assertFails(join, PlanVerifier.JOIN_NULL_EXTENSION, "JoinPlan");
         step.setOnResidual(column(6, ColumnType.BOOLEAN));
-        verifier.verify(join, PASS);
+        verifier.verify(join, PlanStage.REWRITTEN, PASS);
         step.setJoinType(JoinKind.INNER);
         assertFails(join, PlanVerifier.JOIN_NULL_EXTENSION, "JoinPlan");
     }
@@ -972,11 +1067,27 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 final LogicalPlan plan = compiler.getPlanForTesting();
                 final JoinInput step = find(plan, JoinPlan.class).getOrderedInputs().getQuick(1);
                 Assert.assertEquals(JoinInput.Algorithm.TEMPORAL, step.getAlgorithm());
-                verifier.verify(plan, PASS);
+                verifier.verify(plan, PlanStage.REWRITTEN, PASS);
                 step.setAlgorithm(JoinInput.Algorithm.TEMPORAL_TIME_FRAME);
                 assertFails(plan, PlanVerifier.JOIN_ALGORITHM, "JoinPlan");
             }
         });
+    }
+
+    @Test
+    public void testJoinUnordered() {
+        final JoinPlan join = join(source(), source(5, 6));
+        join.setGraph(JoinGraph.FACTORY.newInstance());
+        verifier.verify(join, PlanStage.BOUND, BINDING);
+        try {
+            verifier.verify(join, PlanStage.JOINS_ORDERED, PASS);
+            Assert.fail("expected " + PlanVerifier.JOIN_UNORDERED);
+        } catch (AssertionError e) {
+            TestUtils.assertContains(e.getMessage(), PlanVerifier.JOIN_UNORDERED);
+            TestUtils.assertContains(e.getMessage(), " at JoinPlan position ");
+        }
+        join.setGraph(null);
+        verifier.verify(join, PlanStage.JOINS_ORDERED, PASS);
     }
 
     @Test
@@ -1012,7 +1123,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
         final FunctionSourcePlan slave = source(5, 6);
         final JoinPlan join = join(master, filter(slave, OuterColumnExpression.FACTORY.newInstance().of(2, ColumnType.BOOLEAN, 0)));
         join.getInputs().getQuick(1).setDependent(true);
-        verifier.verifyBound(join);
+        verifier.verify(join, PlanStage.BOUND, BINDING);
         join.getInputs().getQuick(1).setDependent(false);
         assertFails(join, PlanVerifier.OUTER_COLUMN_SCOPE, "FilterPlan");
     }
@@ -1022,7 +1133,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
         final JoinPlan join = join(source(), filter(source(5, 6), OuterColumnExpression.FACTORY.newInstance().of(9, ColumnType.BOOLEAN, 0)));
         join.getInputs().getQuick(1).setDependent(true);
         try {
-            verifier.verifyBound(join);
+            verifier.verify(join, PlanStage.BOUND, BINDING);
             Assert.fail();
         } catch (AssertionError e) {
             TestUtils.assertContains(e.getMessage(), PlanVerifier.OUTER_COLUMN_UNRESOLVED);
@@ -1051,7 +1162,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
         filter.getOutput().protectName(1);
         assertFails(filter, PlanVerifier.OUTPUT_FORWARDING + " [column id 2]", "FilterPlan");
         filter.deriveOutput();
-        verifier.verify(filter, PASS);
+        verifier.verify(filter, PlanStage.REWRITTEN, PASS);
     }
 
     @Test
@@ -1067,7 +1178,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 arguments.add(ConstantExpression.FACTORY.newInstance().ofInt(1, 0));
                 arguments.add(ConstantExpression.FACTORY.newInstance().ofInt(1, 0));
                 final FunctionExpression unfolded = FunctionExpression.FACTORY.newInstance().of(comparison, arguments, BoundExpression.CONSTANT);
-                verifier.verify(filter(source(), ConstantExpression.FACTORY.newInstance().ofBoolean(true, 0)), PASS);
+                verifier.verify(filter(source(), ConstantExpression.FACTORY.newInstance().ofBoolean(true, 0)), PlanStage.REWRITTEN, PASS);
                 assertFails(filter(source(), unfolded), PlanVerifier.PREDICATE_CONSTANT, "FilterPlan");
             }
         });
@@ -1089,7 +1200,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
         assertFails(project, PlanVerifier.UNRESOLVED_COLUMN + " [column id 4]", "ProjectPlan");
         project.getExpressions().setQuick(0, column(1, ColumnType.INT));
         project.getExpressions().setQuick(1, column(3, ColumnType.INT));
-        verifier.verify(project, PASS);
+        verifier.verify(project, PlanStage.REWRITTEN, PASS);
     }
 
     @Test
@@ -1099,7 +1210,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
         project.getExpressions().add(column(3, ColumnType.INT));
         project.getOutput().add(3, "x", ColumnType.INT, true);
         project.getOutput().add(4, "y", ColumnType.INT, true);
-        verifier.verify(project, PASS);
+        verifier.verify(project, PlanStage.REWRITTEN, PASS);
         project.getUpdateTargetTypes().add(ColumnType.INT);
         project.getUpdateTargetTypes().add(ColumnType.INT);
         assertFails(project, PlanVerifier.UNRESOLVED_COLUMN + " [column id 3]", "ProjectPlan");
@@ -1132,17 +1243,17 @@ public class PlanVerifierTest extends AbstractCairoTest {
         Assert.assertEquals(3, filter.getOutput().getColumnCount());
         Assert.assertEquals(5, filter.getOutput().getColumnId(0));
         Assert.assertEquals(2, filter.getOutput().getTimestampIndex());
-        verifier.verify(filter, PASS);
+        verifier.verify(filter, PlanStage.REWRITTEN, PASS);
         final SortPlan sort = SortPlan.FACTORY.newInstance().of(source(), 4);
         sort.getColumnIds().add(3);
         sort.getDirections().add(SortDirection.DESCENDING);
         sort.replaceInput(0, filter);
         Assert.assertEquals(2, sort.getOutput().getTimestampIndex());
-        verifier.verify(sort, PASS);
+        verifier.verify(sort, PlanStage.REWRITTEN, PASS);
         sort.getColumnIds().setQuick(0, 5);
         sort.replaceInput(0, filter);
         Assert.assertEquals(-1, sort.getOutput().getTimestampIndex());
-        verifier.verify(sort, PASS);
+        verifier.verify(sort, PlanStage.REWRITTEN, PASS);
     }
 
     @Test
@@ -1275,7 +1386,32 @@ public class PlanVerifierTest extends AbstractCairoTest {
         sort.getOutput().copyFrom(source.getOutput());
         assertFails(sort, PlanVerifier.SORT_TIMESTAMP, "SortPlan");
         sort.deriveOutput();
-        verifier.verify(sort, PASS);
+        verifier.verify(sort, PlanStage.REWRITTEN, PASS);
+    }
+
+    @Test
+    public void testStageRequired() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE staged (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    RecordCursorFactory ignored = compiler.compile("SELECT a FROM staged WHERE a > 1 ORDER BY a", sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                final LogicalPlan plan = compiler.getPlanForTesting();
+                plan.walkTopDown(node -> {
+                    Assert.assertEquals(PlanStage.PHYSICAL, node.getStage());
+                    return TreeWalk.CONTINUE;
+                });
+                verifier.requireStage(plan, PlanStage.PHYSICAL, PASS);
+                try {
+                    verifier.requireStage(plan, PlanStage.REWRITTEN, PASS);
+                    Assert.fail("expected " + PlanVerifier.STAGE);
+                } catch (AssertionError e) {
+                    TestUtils.assertContains(e.getMessage(), PlanVerifier.STAGE + " in REWRITTEN at ");
+                    TestUtils.assertContains(e.getMessage(), "after " + PASS);
+                }
+            }
+        });
     }
 
     @Test
@@ -1307,7 +1443,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
     @Test
     public void testValidPlanPasses() {
         final FunctionSourcePlan source = source();
-        verifier.verify(filter(source, column(2, ColumnType.BOOLEAN)), PASS);
+        verifier.verify(filter(source, column(2, ColumnType.BOOLEAN)), PlanStage.REWRITTEN, PASS);
     }
 
     @Test
@@ -1436,7 +1572,8 @@ public class PlanVerifierTest extends AbstractCairoTest {
                 final AggregatePlan aggregate = find(plan, AggregatePlan.class);
                 Assert.assertNotNull(aggregate);
                 Assert.assertTrue(aggregate.getChild() instanceof ProjectPlan project && project.getChild() instanceof HorizonJoinPlan);
-                verifier.verifyAccessPaths(plan);
+                verifier.verify(plan, PlanStage.PHYSICAL, PASS);
+                forgetStage(plan);
                 aggregate.replaceInput(0, aggregate.getChild().inputAt(0));
                 assertFails(plan, PlanVerifier.HORIZON_CONSUMER, "HorizonJoinPlan");
             }
@@ -1479,9 +1616,9 @@ public class PlanVerifierTest extends AbstractCairoTest {
                     final LogicalPlan plan = compiler.getPlanForTesting();
                     final HorizonJoinPlan horizon = find(plan, HorizonJoinPlan.class);
                     Assert.assertNotNull(horizon);
-                    verifier.verifyAccessPaths(plan);
+                    verifier.verify(plan, PlanStage.PHYSICAL, PASS);
                     ((ScanPlan) horizon.getSlaves().getQuick(0).getInput()).setRandomAccess(false);
-                    verifier.verify(plan, PASS);
+                    verifier.verify(plan, PlanStage.REWRITTEN, PASS);
                     assertAccessPathsFail(plan, PlanVerifier.HORIZON_SLAVE_TIME_FRAME, "HorizonJoinPlan");
                 }
             }
@@ -1510,6 +1647,17 @@ public class PlanVerifierTest extends AbstractCairoTest {
         final FilterPlan filter = FilterPlan.FACTORY.newInstance().of(input, predicate, 1);
         filter.getOutput().copyFrom(input.getOutput());
         return filter;
+    }
+
+    /**
+     * Forgets the stage the optimiser recorded on every node of a compiled plan, so that the test may rewrite the plan
+     * into a violation.
+     */
+    private static void forgetStage(LogicalPlan plan) {
+        plan.walkTopDown(node -> {
+            node.setStage(null);
+            return TreeWalk.CONTINUE;
+        });
     }
 
     private static <T extends LogicalPlan> T find(LogicalPlan plan, Class<T> type) {
@@ -1575,7 +1723,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
 
     private void assertAccessPathsFail(LogicalPlan plan, String invariant, String nodeName) {
         try {
-            verifier.verifyAccessPaths(plan);
+            verifier.verify(plan, PlanStage.PHYSICAL, PASS);
             Assert.fail("expected " + invariant);
         } catch (AssertionError e) {
             TestUtils.assertContains(e.getMessage(), invariant);
@@ -1591,7 +1739,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
             final LogicalPlan plan = compiler.getPlanForTesting();
             final T node = find(plan, type);
             Assert.assertNotNull(node);
-            verifier.verifyAccessPaths(plan);
+            verifier.verify(plan, PlanStage.PHYSICAL, PASS);
             change.apply(node);
             assertFails(plan, invariant, type.getSimpleName());
         }
@@ -1605,9 +1753,9 @@ public class PlanVerifierTest extends AbstractCairoTest {
             final LogicalPlan plan = compiler.getPlanForTesting();
             final T node = find(plan, type);
             Assert.assertNotNull(node);
-            verifier.verifyAccessPaths(plan);
+            verifier.verify(plan, PlanStage.PHYSICAL, PASS);
             change.apply(node);
-            verifier.verify(plan, PASS);
+            verifier.verify(plan, PlanStage.REWRITTEN, PASS);
             assertAccessPathsFail(plan, PlanVerifier.CHOICE_UNPLANNED, type.getSimpleName());
         }
     }
@@ -1624,10 +1772,20 @@ public class PlanVerifierTest extends AbstractCairoTest {
             final LogicalPlan plan = compiler.getPlanForTesting();
             final JoinInput step = lightHashStep(plan);
             Assert.assertNotNull(sql, step);
-            Assert.assertEquals(sql, JoinInput.MasterSide.FIXED, step.getMasterSide());
-            verifier.verifyAccessPaths(plan);
-            step.setMasterSide(JoinInput.MasterSide.SMALLER);
+            Assert.assertEquals(sql, JoinInput.BuildSide.FIXED_MASTER, step.getBuildSide());
+            verifier.verify(plan, PlanStage.PHYSICAL, PASS);
+            step.setBuildSide(JoinInput.BuildSide.SLAVE);
             assertAccessPathsFail(plan, PlanVerifier.TIMESTAMP_READ, consumer);
+        }
+    }
+
+    private void assertCopyFails(LogicalPlan source, LogicalPlan copy, PlanFactRecorder sourceFacts, PlanFactRecorder copiedFacts, String fact,
+                                 String nodeName) {
+        try {
+            PlanVerifier.verifyCopy(source, copy, sourceFacts, copiedFacts);
+            Assert.fail("expected " + PlanVerifier.COPY_FACT);
+        } catch (AssertionError e) {
+            TestUtils.assertContains(e.getMessage(), PlanVerifier.COPY_FACT + " in " + fact + " at " + nodeName + " position ");
         }
     }
 
@@ -1644,7 +1802,7 @@ public class PlanVerifierTest extends AbstractCairoTest {
 
     private void assertFails(LogicalPlan plan, String invariant, String nodeName) {
         try {
-            verifier.verify(plan, PASS);
+            verifier.verify(plan, PlanStage.REWRITTEN, PASS);
             Assert.fail("expected " + invariant);
         } catch (AssertionError e) {
             TestUtils.assertContains(e.getMessage(), invariant);

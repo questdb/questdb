@@ -34,6 +34,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
@@ -126,20 +127,16 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
                     .put(", nArgs=").put(nArgs)
                     .put(']');
         }
-        int resultNDims = nDims;
         boolean indexArgsAreConstant = true;
         for (int i = 1, n = argsCopy.size(); i < n; i++) {
-            Function arg = argsCopy.getQuick(i);
-            final int argType = arg.getType();
-            if (isIndexArg(argType)) {
-                resultNDims--;
-                if (!arg.isConstant()) {
-                    indexArgsAreConstant = false;
-                }
+            final Function arg = argsCopy.getQuick(i);
+            if (isIndexArg(arg.getType()) && !arg.isConstant()) {
+                indexArgsAreConstant = false;
             }
         }
-        if (resultNDims != 0) {
-            return new SliceDoubleArrayFunction(arrayArg, resultNDims, argsCopy, argPositionsCopy);
+        final int type = getResultType(ResultTypes.argTypes(argsCopy));
+        if (ColumnType.isArray(type)) {
+            return new SliceDoubleArrayFunction(arrayArg, type, argsCopy, argPositionsCopy);
         }
         if (!indexArgsAreConstant) {
             return new AccessDoubleArrayFunction(arrayArg, argsCopy, argPositionsCopy);
@@ -436,11 +433,11 @@ public class DoubleArrayAccessFunctionFactory implements FunctionFactory {
         private final Function arrayArg;
         private final DerivedArrayView derivedArray = new DerivedArrayView();
 
-        public SliceDoubleArrayFunction(Function arrayArg, int resultNDims, ObjList<Function> allArgs, IntList allArgPositions) {
+        public SliceDoubleArrayFunction(Function arrayArg, int type, ObjList<Function> allArgs, IntList allArgPositions) {
             this.arrayArg = arrayArg;
             this.allArgs = allArgs;
             this.allArgPositions = allArgPositions;
-            this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, resultNDims);
+            this.type = type;
         }
 
         @Override

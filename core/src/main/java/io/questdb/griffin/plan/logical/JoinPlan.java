@@ -46,6 +46,7 @@ public final class JoinPlan extends LogicalPlan {
      * Appends an input, last in occurrence and execution order alike.
      */
     public void addInput(JoinInput input) {
+        checkRewritable("JoinPlan.addInput");
         inputs.add(input);
         orderedInputs.add(input);
     }
@@ -138,6 +139,7 @@ public final class JoinPlan extends LogicalPlan {
      * holds the inputs of those steps in occurrence order and takes over the filter conjuncts their ON clauses state.
      */
     public void nestSteps(int start, int end, JoinPlan nested, JoinInput step, int occurrence) {
+        checkRewritable("JoinPlan.nestSteps");
         final ObjList<JoinInput> nestedInputs = nested.inputs;
         int keptCount = 0;
         for (int i = 0, n = filterConjuncts.size(); i < n; i++) {
@@ -171,6 +173,7 @@ public final class JoinPlan extends LogicalPlan {
 
     @Override
     public void replaceInput(int index, LogicalPlan input) {
+        checkRewritable("JoinPlan.replaceInput");
         inputOccurrenceAt(index).setInput(input);
     }
 
@@ -179,11 +182,28 @@ public final class JoinPlan extends LogicalPlan {
     }
 
     public void setGraph(JoinGraph graph) {
+        checkRewritable("JoinPlan.setGraph");
         this.graph = graph;
     }
 
     public void setLeadingCrossJoinFixed(boolean isLeadingCrossJoinFixed) {
         this.isLeadingCrossJoinFixed = isLeadingCrossJoinFixed;
+    }
+
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.facts("filterConjunctOrigins", filterConjunctOrigins);
+        for (int i = 0, n = inputs.size(); i < n; i++) {
+            inputs.getQuick(i).visitFacts(visitor);
+        }
+        visitor.fact("orderedInputs", orderedInputs.size());
+        for (int i = 0, n = orderedInputs.size(); i < n; i++) {
+            visitor.reference("orderedInputs", orderedInputs.getQuick(i));
+        }
+        visitor.reference("graph", graph);
+        visitor.fact("hasExplicitTimestamp", hasExplicitTimestamp);
+        visitor.fact("isLeadingCrossJoinFixed", isLeadingCrossJoinFixed);
     }
 
     @Override

@@ -71,6 +71,7 @@ public final class AggregatePlan extends GroupingPlan {
      * {@link Algorithm#HASH_JOIN}, builds one.
      */
     public Algorithm getAlgorithm() {
+        checkPhysicalRead("AggregatePlan.algorithm");
         return algorithm;
     }
 
@@ -78,6 +79,7 @@ public final class AggregatePlan extends GroupingPlan {
      * How the GROUP BY fuses into the hash join under it, recorded with {@link Algorithm#HASH_JOIN}; null otherwise.
      */
     public HashJoinAggregation getHashJoin() {
+        checkPhysicalRead("AggregatePlan.hashJoin");
         return hashJoin;
     }
 
@@ -96,6 +98,7 @@ public final class AggregatePlan extends GroupingPlan {
      * see {@link DomainReadPlan.Algorithm#SHARED}. A domain read that builds the domain's plan again reads none.
      */
     public int getSharedConsumerCount() {
+        checkPhysicalRead("AggregatePlan.sharedConsumerCount");
         return sharedConsumerCount;
     }
 
@@ -104,6 +107,7 @@ public final class AggregatePlan extends GroupingPlan {
      * of {@link #getSharedOperation()} when the aggregate reads its input that way, see {@link SharedRead#SET_OPERATION_HEAD}.
      */
     public LogicalPlan getSharedHead() {
+        checkPhysicalRead("AggregatePlan.sharedHead");
         return sharedHead;
     }
 
@@ -123,6 +127,7 @@ public final class AggregatePlan extends GroupingPlan {
      * leading branch of the aggregate's input from, see {@link #getSharedHead()}.
      */
     public SetOperationPlan getSharedOperation() {
+        checkPhysicalRead("AggregatePlan.sharedOperation");
         return sharedOperation;
     }
 
@@ -131,6 +136,7 @@ public final class AggregatePlan extends GroupingPlan {
      * operator planning records; null for an aggregate without a shared source, and before planning.
      */
     public SharedRead getSharedRead() {
+        checkPhysicalRead("AggregatePlan.sharedRead");
         return sharedRead;
     }
 
@@ -148,6 +154,7 @@ public final class AggregatePlan extends GroupingPlan {
      * {@link #getReaderCount()}, which read it through shared cursors whenever its GROUP BY serves them.
      */
     public boolean hasSharedConsumers() {
+        checkPhysicalRead("AggregatePlan.sharedConsumerCount");
         return sharedConsumerCount > 0 || readerCount > 0;
     }
 
@@ -193,6 +200,21 @@ public final class AggregatePlan extends GroupingPlan {
 
     public void setSharedSource(JoinInput sharedSource) {
         this.sharedSource = sharedSource;
+    }
+
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.columnIds("sharedInputIds", sharedInputIds);
+        visitor.columnIds("sharedSourceIds", sharedSourceIds);
+        visitor.fact("algorithm", algorithm);
+        visitor.reference("hashJoin", hashJoin);
+        visitor.fact("readerCount", readerCount);
+        visitor.fact("sharedConsumerCount", sharedConsumerCount);
+        visitor.reference("sharedHead", sharedHead);
+        visitor.reference("sharedOperation", sharedOperation);
+        visitor.fact("sharedRead", sharedRead);
+        visitor.reference("sharedSource", sharedSource);
     }
 
     /**

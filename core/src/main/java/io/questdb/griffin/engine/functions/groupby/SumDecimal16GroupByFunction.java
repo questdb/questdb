@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.decimal.Decimal64Function;
@@ -40,7 +41,7 @@ class SumDecimal16GroupByFunction extends Decimal64Function implements GroupByFu
     private int valueIndex;
 
     public SumDecimal16GroupByFunction(@NotNull Function arg) {
-        super(ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL64), ColumnType.getDecimalScale(arg.getType())));
+        super(ResultTypes.decimalSum(arg.getType()));
         this.arg = arg;
     }
 

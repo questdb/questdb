@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TimestampPrecisionUse;
@@ -44,7 +43,7 @@ public class DateTruncFunctionFactory implements FunctionFactory, MonotonicTimes
     @Override
     public int getResultType(IntList argTypes) {
         final int type = argTypes.getQuick(1);
-        return ColumnType.isTimestamp(type) ? ResultTypes.timestampAtLeastMicros(type) : ColumnType.UNDEFINED;
+        return ColumnType.isTimestamp(type) ? ColumnType.getImplicitTimestampType(type) : ColumnType.UNDEFINED;
     }
 
     @Override
@@ -111,7 +110,7 @@ public class DateTruncFunctionFactory implements FunctionFactory, MonotonicTimes
     }
 
     private static int timestampType(Function innerFunction) {
-        return ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(innerFunction.getType()), ColumnType.TIMESTAMP_MICRO);
+        return ColumnType.getImplicitTimestampType(innerFunction.getType());
     }
 
     private static String unit(CharSequence kind, int position) throws SqlException {

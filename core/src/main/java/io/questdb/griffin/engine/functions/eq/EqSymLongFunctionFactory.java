@@ -49,11 +49,6 @@ import org.jetbrains.annotations.Nullable;
  */
 public class EqSymLongFunctionFactory implements FunctionFactory {
     @Override
-    public int getResultType(IntList argTypes) {
-        return ColumnType.BOOLEAN;
-    }
-
-    @Override
     public String getSignature() {
         return "=(KL)";
     }

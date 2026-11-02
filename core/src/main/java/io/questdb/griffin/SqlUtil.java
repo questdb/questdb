@@ -1088,6 +1088,19 @@ public class SqlUtil {
     }
 
     /**
+     * The table name a constant argument of a table function spells.
+     *
+     * @throws SqlException at the argument's position when the name is NULL, of any text type
+     */
+    public static CharSequence getTableName(Function arg, int argPosition) throws SqlException {
+        final CharSequence tableName = arg.getStrA(null);
+        if (tableName == null) {
+            throw SqlException.$(argPosition, "table name cannot be NULL");
+        }
+        return tableName;
+    }
+
+    /**
      * Extracts the interval/stride expression from a timestamp_floor or
      * timestamp_floor_utc function call, handling 2/3/5-param overloads.
      */

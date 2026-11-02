@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TimestampPrecisionUse;
@@ -75,7 +74,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory, MonotonicTi
 
     @Override
     public int getResultType(IntList argTypes) {
-        return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(2));
+        return ColumnType.getImplicitTimestampType(argTypes.getQuick(2));
     }
 
     @Override
@@ -105,7 +104,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory, MonotonicTi
     public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
         final Function periodFunc = args.getQuick(0);
         if (periodFunc.isConstant()) {
-            addMethod(periodFunc.getChar(null), timestampType(args.getQuick(2)), argPositions.getQuick(0));
+            addMethod(periodFunc.getChar(null), ColumnType.getImplicitTimestampType(args.getQuick(2).getType()), argPositions.getQuick(0));
             if (args.getQuick(1).isConstant()) {
                 constantStride(args.getQuick(1), argPositions.getQuick(1));
             }
@@ -118,7 +117,7 @@ public class TimestampAddFunctionFactory implements FunctionFactory, MonotonicTi
         Function periodFunc = args.getQuick(0);
         Function strideFunc = args.getQuick(1);
         Function timestampFunc = args.getQuick(2);
-        int timestampType = timestampType(timestampFunc);
+        int timestampType = ColumnType.getImplicitTimestampType(timestampFunc.getType());
 
         if (periodFunc.isConstant()) {
             char period = periodFunc.getChar(null);
@@ -146,10 +145,6 @@ public class TimestampAddFunctionFactory implements FunctionFactory, MonotonicTi
             throw SqlException.$(position, "`null` is not a valid stride");
         }
         return stride;
-    }
-
-    private static int timestampType(Function timestampFunc) {
-        return ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(timestampFunc.getType()), ColumnType.TIMESTAMP_MICRO);
     }
 
     /**

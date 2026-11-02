@@ -25,14 +25,13 @@
 package io.questdb.griffin.plan.logical;
 
 import io.questdb.std.IntList;
-import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
 /**
  * Arguments evaluated for each row of the preceding join inputs.
  */
-public final class UnnestSpec implements Mutable {
+public final class UnnestSpec implements PlanFactSource {
     public static final ObjectFactory<UnnestSpec> FACTORY = UnnestSpec::new;
     private final ObjList<CharSequence> columnAliases = new ObjList<>();
     private final ObjList<BoundExpression> expressions = new ObjList<>();
@@ -100,7 +99,18 @@ public final class UnnestSpec implements Mutable {
         return this;
     }
 
-    void visitReads(PlanExpressionVisitor visitor) {
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        visitor.facts("columnAliases", columnAliases);
+        visitor.facts("jsonColumnNames", jsonColumnNames);
+        visitor.facts("jsonColumnTypes", jsonColumnTypes);
+        visitor.output("output", output);
+        visitor.fact("hasOrdinality", hasOrdinality);
+        visitor.fact("isStandalone", isStandalone);
+    }
+
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
         PlanReads.expressions(expressions, visitor);
     }
 }

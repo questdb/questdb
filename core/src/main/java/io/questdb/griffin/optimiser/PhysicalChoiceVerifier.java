@@ -27,6 +27,7 @@ package io.questdb.griffin.optimiser;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.DomainReadPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
@@ -130,34 +131,44 @@ final class PhysicalChoiceVerifier {
     }
 
     /**
-     * Whether the join step records the input it hashes as operator planning settles it: none for a step that is not a
-     * light INNER hash join, or whose master side is undecided, and the slave for one whose master is fixed. A step the
-     * smaller input drives records an input to hash only where its master is one input, both inputs have a row bound,
-     * see {@link PhysicalProperties#rowBoundScan}, and every LIMIT whose count only execution knows that bounds the
-     * other input bounds it too, see {@link PhysicalProperties#hasRuntimeLimitsOf}. Where the row counts of tables give
-     * the rows of both inputs, see {@link PhysicalProperties#rowCountScan}, one never holds more rows than the other, so
-     * it leaves the choice to execution, {@link JoinInput.BuildSide#SMALLER}, only where such LIMITs differ between
-     * them or codegen decides the random access of the master.
+     * Whether the join step records the input it hashes as operator planning settles it, see
+     * {@link JoinInput#getBuildSide}: none for a step that is not a light hash join or for a LEFT or RIGHT one, and the
+     * smaller input at execution for a FULL one NULL-extended by its keys whose master supports random access, else the
+     * slave. An INNER step whose master side is undecided records none, and one whose master a consumer fixed records
+     * {@link JoinInput.BuildSide#FIXED_MASTER}. A step the smaller input drives hashes the slave when its master lacks
+     * random access, and records an input to hash only where its master is one input, both inputs have a row bound, see
+     * {@link PhysicalProperties#rowBoundScan}, and every LIMIT whose count only execution knows that bounds the other
+     * input bounds it too, see {@link PhysicalProperties#hasRuntimeLimitsOf}. Where the row counts of tables give the
+     * rows of both inputs, see {@link PhysicalProperties#rowCountScan}, one never holds more rows than the other, so it
+     * leaves the choice to execution, {@link JoinInput.BuildSide#SMALLER}, only where such LIMITs differ between them.
      */
     private static boolean isBuildSideSettled(JoinPlan join, int position, JoinInput step) {
+        if (!step.isAlgorithmDecided()) {
+            return true;
+        }
         final JoinInput.BuildSide side = step.getBuildSide();
-        if (step.getAlgorithm() != JoinInput.Algorithm.LIGHT_HASH || step.getJoinType() != JoinKind.INNER || step.getMasterSide() == null) {
+        if (step.getAlgorithm() != JoinInput.Algorithm.LIGHT_HASH) {
             return side == null;
         }
-        if (step.getMasterSide() == JoinInput.MasterSide.FIXED) {
-            return side == JoinInput.BuildSide.SLAVE;
+        final boolean isMasterRandomAccess = position > 0
+                && PhysicalProperties.masterSupportsRandomAccess(join, position) == PhysicalProperties.Capability.YES;
+        if (step.getJoinType() == JoinKind.FULL_OUTER) {
+            return side == (step.getNullExtension() == JoinInput.NullExtension.BY_KEYS && isMasterRandomAccess
+                    ? JoinInput.BuildSide.SMALLER : JoinInput.BuildSide.SLAVE);
+        }
+        if (step.getJoinType() != JoinKind.INNER || side == null) {
+            return side == null;
         }
         final LogicalPlan master = join.getOrderedInputs().getQuick(0).getInput();
         final LogicalPlan slave = step.getInput();
         final boolean isBounded = position == 1 && hasRowBound(master) && hasRowBound(slave);
         return switch (side) {
-            case SMALLER ->
-                    !isBounded || PhysicalProperties.rowCountScan(master) == null || PhysicalProperties.rowCountScan(slave) == null
-                            || PhysicalProperties.masterSupportsRandomAccess(join, position) == PhysicalProperties.Capability.UNKNOWN
-                            || !PhysicalProperties.hasRuntimeLimitsOf(slave, master) || !PhysicalProperties.hasRuntimeLimitsOf(master, slave);
-            case SLAVE -> isBounded && PhysicalProperties.hasRuntimeLimitsOf(slave, master);
-            case MASTER -> isBounded && PhysicalProperties.hasRuntimeLimitsOf(master, slave);
-            case null -> false;
+            case FIXED_MASTER -> true;
+            case SMALLER -> isMasterRandomAccess && (!isBounded || PhysicalProperties.rowCountScan(master) == null
+                    || PhysicalProperties.rowCountScan(slave) == null
+                    || !PhysicalProperties.hasRuntimeLimitsOf(slave, master) || !PhysicalProperties.hasRuntimeLimitsOf(master, slave));
+            case SLAVE -> !isMasterRandomAccess || isBounded && PhysicalProperties.hasRuntimeLimitsOf(slave, master);
+            case MASTER -> isMasterRandomAccess && isBounded && PhysicalProperties.hasRuntimeLimitsOf(master, slave);
         };
     }
 
@@ -226,20 +237,17 @@ final class PhysicalChoiceVerifier {
      * master with NULL, which keeps its page frames.
      */
     private static boolean isMasterPageFrameRead(WindowJoinPlan windowJoin, int index, boolean isPlanned) {
-        for (int i = 0; i < index; i++) {
-            if (windowJoin.getSteps().getQuick(i).getNullExtension() != WindowJoinStep.NullExtension.NULL_PADDING) {
-                return false;
-            }
-        }
-        return !isUnsatisfied(PhysicalProperties.supportsPageFrameCursor(windowJoin.getMaster()), isPlanned);
+        return windowJoin.getNullExtension(index) == WindowJoinStep.NullExtension.NULL_PADDING
+                && !isUnsatisfied(PhysicalProperties.supportsPageFrameCursor(windowJoin.getMaster()), isPlanned);
     }
 
     /**
      * Whether the join step reads its master back by row id, which requires a master with random access: a markout
-     * join, and a light hash join that hashes its master.
+     * join, a SPLICE join, and a light hash join that hashes its master.
      */
     private static boolean isMasterReadByRowId(JoinInput step) {
-        return step.getAlgorithm() == JoinInput.Algorithm.MARKOUT || step.getBuildSide() == JoinInput.BuildSide.MASTER;
+        return step.getAlgorithm() == JoinInput.Algorithm.MARKOUT || step.getAlgorithm() == JoinInput.Algorithm.SPLICE
+                || step.isAlgorithmDecided() && step.getBuildSide() == JoinInput.BuildSide.MASTER;
     }
 
     /**
@@ -252,7 +260,7 @@ final class PhysicalChoiceVerifier {
             return false;
         }
         for (int i = 1, n = ordered.size(); i < n; i++) {
-            if (ordered.getQuick(i).getMasterSide() == JoinInput.MasterSide.SMALLER) {
+            if (ordered.getQuick(i).isSmallerDriven()) {
                 return true;
             }
         }
@@ -354,10 +362,11 @@ final class PhysicalChoiceVerifier {
     }
 
     /**
-     * Whether the join step reads its slave back by row id, which requires a slave with random access.
+     * Whether the join step reads its slave back by row id, which requires a slave with random access: a light hash
+     * join, a linear temporal join and a SPLICE join.
      */
     private static boolean isSlaveReadByRowId(JoinInput.Algorithm algorithm) {
-        return algorithm == JoinInput.Algorithm.LIGHT_HASH || algorithm == JoinInput.Algorithm.TEMPORAL;
+        return algorithm == JoinInput.Algorithm.LIGHT_HASH || algorithm == JoinInput.Algorithm.TEMPORAL || algorithm == JoinInput.Algorithm.SPLICE;
     }
 
     /**
@@ -455,6 +464,25 @@ final class PhysicalChoiceVerifier {
     }
 
     /**
+     * Checks the algorithm operator planning records for the DISTINCT, see {@link DistinctPlan.Algorithm}: the
+     * time-series one exactly over an input with random access and a designated timestamp.
+     */
+    static String distinct(DistinctPlan distinct, boolean isPlanned) {
+        final DistinctPlan.Algorithm algorithm = distinct.getAlgorithm();
+        if (algorithm == null) {
+            return isPlanned ? PlanVerifier.CHOICE_UNPLANNED : null;
+        }
+        final LogicalPlan input = distinct.getChild();
+        final PhysicalProperties.Capability isRandomAccess = PhysicalProperties.supportsRandomAccess(input);
+        final int timestampIndex = PhysicalProperties.timestampIndex(input);
+        if (isRandomAccess == PhysicalProperties.Capability.UNKNOWN || timestampIndex == PhysicalProperties.UNKNOWN_TIMESTAMP) {
+            return null;
+        }
+        return (algorithm == DistinctPlan.Algorithm.TIME_SERIES) == (isRandomAccess == PhysicalProperties.Capability.YES && timestampIndex >= 0)
+                ? null : PlanVerifier.DISTINCT_ALGORITHM;
+    }
+
+    /**
      * Checks how a domain read reads its producer: through a shared cursor exactly when the producer's GROUP BY serves
      * them, else by building the producer's plan again, which only a producer the generator may build again allows, see
      * {@link #isRegenerable}.
@@ -528,12 +556,17 @@ final class PhysicalChoiceVerifier {
         if (isPlanned && filter.hasUpdateScan() != LogicalPlans.hasUpdateScan(filter.getChild())) {
             return PlanVerifier.FILTER_UPDATE_SCAN;
         }
-        final boolean hasChoice = !PlanToFactoryRules.isFusedFilter(filter) && OperatorPlanning.isFiltering(filter.getPredicate());
+        final boolean isFused = PlanToFactoryRules.isFusedFilter(filter);
         final FilterPlan.Algorithm algorithm = filter.getAlgorithm();
         if (algorithm == null) {
-            return isPlanned && hasChoice ? PlanVerifier.CHOICE_UNPLANNED : null;
+            return isPlanned && !isFused ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
-        return !hasChoice || (algorithm == FilterPlan.Algorithm.WINDOW_KEEP_FLAG) != PlanToFactoryRules.isWindowKeepFlag(filter)
+        if (isFused) {
+            return PlanVerifier.FILTER_ALGORITHM;
+        }
+        final FilterPlan.Algorithm folded = OperatorPlanning.foldedAlgorithm(filter.getPredicate(), true);
+        return folded != null ? algorithm != folded ? PlanVerifier.FILTER_ALGORITHM : null
+                : !algorithm.isFiltering() || (algorithm == FilterPlan.Algorithm.WINDOW_KEEP_FLAG) != PlanToFactoryRules.isWindowKeepFlag(filter)
                 ? PlanVerifier.FILTER_ALGORITHM : null;
     }
 
@@ -559,7 +592,7 @@ final class PhysicalChoiceVerifier {
                             && !isUnsatisfied(PhysicalProperties.supportsTimeFrameCursor(step.getInput()), isPlanned);
             case TEMPORAL_STOLEN_FILTER ->
                     joinType == JoinKind.ASOF && !isLinear(step) && isTimeFrameFilterStolen(step, isPlanned);
-            case SPLICE, FULL_FAT_SPLICE -> joinType == JoinKind.SPLICE;
+            case SPLICE -> joinType == JoinKind.SPLICE;
             case MARKOUT -> joinType.isRelational() && step.getMarkoutTimestampColumnId() >= 0 && position > 0
                     && PhysicalProperties.masterScanDirection(join, position) == PhysicalProperties.ScanDirection.FORWARD;
             case NESTED_LOOP -> joinType.isRelational() && step.getKeys().size() == 0;
@@ -580,6 +613,9 @@ final class PhysicalChoiceVerifier {
         }
         if (step.getNullKeyMatch() != PlanToFactoryRules.nullKeyMatch(step)) {
             return PlanVerifier.JOIN_NULL_KEY_MATCH;
+        }
+        if (step.getFilterAlgorithm() != OperatorPlanning.joinFilterAlgorithm(step)) {
+            return PlanVerifier.FILTER_ALGORITHM;
         }
         if (algorithm == JoinInput.Algorithm.FULL_FAT_TEMPORAL && PlanToFactoryRules.fullFatTemporalRejectedColumn(step) >= 0) {
             return PlanVerifier.JOIN_SLAVE_VALUE_TYPE;
@@ -661,18 +697,20 @@ final class PhysicalChoiceVerifier {
 
     static String scan(ScanPlan scan, boolean isPlanned) {
         final ScanPlan.AccessPath accessPath = scan.getAccessPath();
-        if (isPlanned && accessPath == null) {
-            return PlanVerifier.ACCESS_PATH_UNPLANNED;
+        if (accessPath == null) {
+            return isPlanned ? PlanVerifier.ACCESS_PATH_UNPLANNED : null;
         }
-        if (scan.getIndexRead() != ScanPlan.IndexRead.NONE && scan.getIndexColumnId() < 0
-                || accessPath == null && (scan.getIndexColumnId() >= 0 || scan.getResidual() != null || scan.getIndexKeys().size() > 0)) {
+        if (scan.getIndexRead() != ScanPlan.IndexRead.NONE && scan.getIndexColumnId() < 0) {
             return PlanVerifier.ACCESS_PATH;
         }
         final boolean hasChoice = OperatorPlanning.hasResidualFilterChoice(scan);
-        if (scan.getResidualAlgorithm() != null && !hasChoice) {
-            return PlanVerifier.FILTER_ALGORITHM;
+        final FilterPlan.Algorithm algorithm = scan.getResidualAlgorithm();
+        if (algorithm == null) {
+            return isPlanned && hasChoice ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
-        return isPlanned && hasChoice && scan.getResidualAlgorithm() == null ? PlanVerifier.CHOICE_UNPLANNED : null;
+        final FilterPlan.Algorithm folded = accessPath == ScanPlan.AccessPath.PAGE_FRAMES ? OperatorPlanning.foldedAlgorithm(scan.getResidual(), true) : null;
+        return !hasChoice || (folded != null ? algorithm != folded : !algorithm.isFiltering() || algorithm == FilterPlan.Algorithm.WINDOW_KEEP_FLAG)
+                ? PlanVerifier.FILTER_ALGORITHM : null;
     }
 
     static String setOperation(SetOperationPlan operation, boolean isPlanned) {
@@ -752,7 +790,7 @@ final class PhysicalChoiceVerifier {
                     index == 0 && PlanToFactoryRules.stolenFilter(windowJoin.getMaster()) != null && OperatorPlanning.isParallelWindowJoinStep(step);
             case PARALLEL ->
                     isMasterPageFrameRead(windowJoin, index, isPlanned) && OperatorPlanning.isParallelWindowJoinStep(step);
-            case SERIAL -> true;
+            case SERIAL -> !isUnsatisfied(PhysicalProperties.supportsTimeFrameCursor(step.getSlave()), isPlanned);
         };
         return isValid ? null : PlanVerifier.WINDOW_JOIN_ALGORITHM;
     }

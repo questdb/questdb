@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TimestampPrecisionUse;
@@ -50,7 +49,7 @@ import io.questdb.std.datetime.CommonUtils;
 public class TimestampCeilFunctionFactory implements FunctionFactory, MonotonicTimestampFunctionFactory {
     @Override
     public int getResultType(IntList argTypes) {
-        return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(1));
+        return ColumnType.getImplicitTimestampType(argTypes.getQuick(1));
     }
 
     @Override
@@ -98,7 +97,7 @@ public class TimestampCeilFunctionFactory implements FunctionFactory, MonotonicT
             case 'T':
             case 'U':
             case 'n':
-                return new TimestampCeilFunction(args.getQuick(1), c, ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(args.getQuick(1).getType()), ColumnType.TIMESTAMP_MICRO));
+                return new TimestampCeilFunction(args.getQuick(1), c, ColumnType.getImplicitTimestampType(args.getQuick(1).getType()));
             default:
                 throw invalidUnit(c, argPositions.getQuick(0));
         }

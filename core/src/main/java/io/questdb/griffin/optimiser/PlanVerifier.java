@@ -56,6 +56,8 @@ import io.questdb.griffin.plan.logical.LogicalPlanPrinter;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
+import io.questdb.griffin.plan.logical.PlanFactRecorder;
+import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
@@ -77,11 +79,11 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.TestOnly;
 
 /**
- * Checks the invariants of a logical plan tree after binding, after each optimisation pass and after access path
- * planning, when {@code PLAN_PARANOIA_MODE} is on: its structure, its column scopes and the reads each node exposes
- * here, the physical choices operator planning records through {@link PhysicalChoiceVerifier}, and decorrelation's
- * output through {@link DecorrelationVerifier}. A violation fails with the invariant, the node and the stage that
- * produced the plan.
+ * Checks the invariants of a logical plan tree at the stage each step of the optimiser leaves it at, see
+ * {@link PlanStage}, when {@code PLAN_PARANOIA_MODE} is on: its structure, its column scopes and the reads each node
+ * exposes here, the physical choices operator planning records through {@link PhysicalChoiceVerifier}, and
+ * decorrelation's output through {@link DecorrelationVerifier}. A violation fails with the invariant, the node and the
+ * step that produced the plan.
  */
 public final class PlanVerifier {
     public static final String ACCESS_PATH = "scan access path facts contradict its kind";
@@ -92,11 +94,13 @@ public final class PlanVerifier {
     public static final String AGGREGATE_TYPE = "aggregate output type differs from its expression";
     public static final String CHOICE_UNPLANNED = "physical choice is not recorded after access path planning";
     public static final String COLUMN_TYPE = "column expression type differs from the column it reads";
+    public static final String COPY_FACT = "plan copy differs from its source in a fact";
     public static final String CURSOR_PLAN = "sub-query cursor has no plan";
     public static final String DECORRELATION_CARRIER = "decorrelation carrier reads a column that a step matching per outer row null-extends";
     public static final String DECORRELATION_CARRIER_UNRESOLVED = "decorrelation carrier is a column of neither its step nor a step before it";
     public static final String DECORRELATION_STEP_LOST = "join step that does not commute is missing from the plan after decorrelation";
     public static final String DEPENDENT_STEP = "dependent join step survives decorrelation";
+    public static final String DISTINCT_ALGORITHM = "DISTINCT algorithm contradicts the random access or the designated timestamp of its input";
     public static final String DOMAIN_READ_ALGORITHM = "domain read reads its domain otherwise than the domain serves it";
     public static final String DOMAIN_READ_COLUMNS = "domain read column is paired with no key of its domain for the same outer column";
     public static final String DOMAIN_READ_PRODUCER = "domain read reads a decorrelation domain outside the plan";
@@ -132,6 +136,7 @@ public final class PlanVerifier {
     public static final String JOIN_SCOPE = "join step scope differs from its ordered prefix";
     public static final String JOIN_SLAVE_VALUE_TYPE = "full-fat temporal join stores a slave column its map value cannot hold";
     public static final String JOIN_TIMESTAMP = "join designated timestamp is not the one its steps designate";
+    public static final String JOIN_UNORDERED = "join keeps its unordered join graph after join ordering";
     public static final String LATEST_BY_ALGORITHM = "LATEST BY over a table scan has an algorithm for a derived input";
     public static final String LIMIT_APPLICATION = "LIMIT application contradicts the sort, the scan or the join under it";
     public static final String NODE_SHARED = "node is reached through two paths";
@@ -162,6 +167,7 @@ public final class PlanVerifier {
     public static final String SORT_ALGORITHM = "sort algorithm contradicts the sort or its input";
     public static final String SORT_KEYS = "sort has no keys or keys and directions differ in length";
     public static final String SORT_TIMESTAMP = "sort designates a timestamp other than its first key";
+    public static final String STAGE = "plan is not at the stage the pass requires";
     public static final String TIMESTAMP_READ = "consumer reads a designated timestamp its input does not designate";
     public static final String TIMESTAMP_TYPE = "designated timestamp is not a timestamp column";
     public static final String UNRESOLVED_COLUMN = "column id is not in scope";
@@ -194,12 +200,11 @@ public final class PlanVerifier {
     private OutputSchema aliasScope;
     private BoundExpression expressionRoot;
     private OutputSchema expressionScope;
-    private boolean isAccessPathRequired;
-    private boolean isDependentStepAllowed;
     private LogicalPlan node;
     private String pass;
     private LogicalPlan root;
     private String site;
+    private PlanStage stage;
     private final ExpressionVisitor expressionNodes = this::expressionNode;
     private final PlanVisitor sharedSources = this::sharedSource;
 
@@ -232,6 +237,15 @@ public final class PlanVerifier {
     }
 
     /**
+     * Fails when a node of the copy differs from its source in a fact, see {@link PlanFactRecorder}:
+     * {@code sourceFacts} holds the renaming of the copy and pairs each plan object of the source with its copy, and
+     * {@code copiedFacts} records the copy.
+     */
+    public static void verifyCopy(LogicalPlan source, LogicalPlan copy, PlanFactRecorder sourceFacts, PlanFactRecorder copiedFacts) {
+        verifyCopy(source, copy, sourceFacts, copiedFacts, source);
+    }
+
+    /**
      * Records the ON condition facts of every join step of the plan that does not commute, which
      * {@link #verifyDecorrelation} compares decorrelation's output with.
      */
@@ -240,39 +254,47 @@ public final class PlanVerifier {
     }
 
     /**
-     * Verifies the plan a pass produced; dependent join steps and outer columns must be gone.
+     * Fails when the plan is not at {@code stage}, the stage {@code pass} requires, see {@link LogicalPlan#getStage}.
      */
-    public void verify(LogicalPlan root, String pass) {
-        check(root, pass, false);
-    }
-
-    /**
-     * Verifies the plan access path planning produced; every scan the generator builds has an access path, and every
-     * sort, LIMIT, filter, GROUP BY, LATEST BY over a derived input, join step and window join step the generator
-     * builds has the physical choice operator planning records for it.
-     */
-    public void verifyAccessPaths(LogicalPlan root) {
-        isAccessPathRequired = true;
-        try {
-            check(root, "access path planning", false);
-        } finally {
-            isAccessPathRequired = false;
+    public void requireStage(LogicalPlan root, PlanStage stage, String pass) {
+        if (root.getStage() != stage) {
+            throw failure(STAGE, -1, stage.name(), root, pass, root);
         }
     }
 
     /**
-     * Verifies the binder's output, where a dependent join step still reads the inputs before it through outer columns.
+     * Verifies the invariants of {@code stage} on the plan {@code pass} produced. Before {@link PlanStage#DECORRELATED},
+     * a dependent join step reads the inputs before it through outer columns; from {@link PlanStage#JOINS_ORDERED} on,
+     * every join is ordered; from {@link PlanStage#REWRITTEN} on, the physical choices operator planning records agree
+     * with the rules {@link PhysicalChoiceVerifier} checks, and at {@link PlanStage#PHYSICAL} every scan the generator
+     * builds has an access path, and every sort, LIMIT, filter, GROUP BY, LATEST BY over a derived input, join step and
+     * window join step the generator builds has the physical choice operator planning records for it.
      */
-    public void verifyBound(LogicalPlan root) {
-        verifyBound(root, "SqlBinder.bind");
-    }
-
-    /**
-     * Verifies the output of a pass that runs before decorrelation, where a dependent join step still reads the inputs
-     * before it through outer columns.
-     */
-    public void verifyBound(LogicalPlan root, String pass) {
-        check(root, pass, true);
+    public void verify(LogicalPlan root, PlanStage stage, String pass) {
+        this.root = root;
+        this.pass = pass;
+        this.stage = stage;
+        clear();
+        try {
+            plan(root);
+            for (int i = 0, n = domainReads.size(); i < n; i++) {
+                node = domainReads.getQuick(i);
+                final int producerIndex = visited.indexOf(domainReads.getQuick(i).getProducer());
+                if (producerIndex < 0) {
+                    fail(DOMAIN_READ_PRODUCER);
+                }
+                if (isReleasedBefore(producerIndex, visited.indexOf(node))) {
+                    fail(DOMAIN_READ_RELEASED);
+                }
+            }
+        } finally {
+            clear();
+            this.root = null;
+            this.pass = null;
+            this.stage = null;
+            node = null;
+            site = null;
+        }
     }
 
     /**
@@ -340,53 +362,47 @@ public final class PlanVerifier {
         return text == null ? other == null : other != null && Chars.equals(text, other);
     }
 
-    private void accessPath(ScanPlan scan) {
-        final OutputSchema output = scan.getOutput();
-        site = "scan access path";
-        final int indexColumnId = scan.getIndexColumnId();
-        if (indexColumnId >= 0) {
-            readColumn(output, indexColumnId);
+    private static void verifyCopy(LogicalPlan source, LogicalPlan copy, PlanFactRecorder sourceFacts, PlanFactRecorder copiedFacts,
+                                   LogicalPlan root) {
+        sourceFacts.record(source);
+        copiedFacts.record(copy);
+        final String fact = sourceFacts.firstDifference(copiedFacts);
+        if (fact != null) {
+            throw failure(COPY_FACT, -1, fact, source, "plan copy", root);
         }
-        predicate(output, scan.getResidual());
-        for (int i = 0, n = scan.getIndexKeys().size(); i < n; i++) {
-            expression(output, scan.getIndexKeys().getQuick(i));
+        for (int i = 0, n = source.inputCount(); i < n; i++) {
+            verifyCopy(source.inputAt(i), copy.inputAt(i), sourceFacts, copiedFacts, root);
         }
-        for (int i = 0, n = scan.getExcludedKeys().size(); i < n; i++) {
-            expression(output, scan.getExcludedKeys().getQuick(i));
-        }
-        if (scan.getKeySubquery() != null) {
-            expression(output, scan.getKeySubquery());
-        }
-        predicate(output, scan.getKeyPattern());
-        predicate(output, scan.getWithin());
-        failIfViolated(PhysicalChoiceVerifier.scan(scan, isAccessPathRequired));
     }
 
-    private void check(LogicalPlan root, String pass, boolean isDependentStepAllowed) {
-        this.root = root;
-        this.pass = pass;
-        this.isDependentStepAllowed = isDependentStepAllowed;
-        clear();
-        try {
-            plan(root);
-            for (int i = 0, n = domainReads.size(); i < n; i++) {
-                node = domainReads.getQuick(i);
-                final int producerIndex = visited.indexOf(domainReads.getQuick(i).getProducer());
-                if (producerIndex < 0) {
-                    fail(DOMAIN_READ_PRODUCER);
-                }
-                if (isReleasedBefore(producerIndex, visited.indexOf(node))) {
-                    fail(DOMAIN_READ_RELEASED);
-                }
-            }
-        } finally {
-            clear();
-            this.root = null;
-            this.pass = null;
-            this.isDependentStepAllowed = false;
-            node = null;
-            site = null;
+    /**
+     * Checks the access path of a scan, which access path planning records on a {@link PlanStage#REWRITTEN} plan.
+     */
+    private void accessPath(ScanPlan scan) {
+        if (!hasPhysicalChoices()) {
+            return;
         }
+        if (scan.getAccessPath() != null) {
+            final OutputSchema output = scan.getOutput();
+            site = "scan access path";
+            final int indexColumnId = scan.getIndexColumnId();
+            if (indexColumnId >= 0) {
+                readColumn(output, indexColumnId);
+            }
+            predicate(output, scan.getResidual());
+            for (int i = 0, n = scan.getIndexKeys().size(); i < n; i++) {
+                expression(output, scan.getIndexKeys().getQuick(i));
+            }
+            for (int i = 0, n = scan.getExcludedKeys().size(); i < n; i++) {
+                expression(output, scan.getExcludedKeys().getQuick(i));
+            }
+            if (scan.getKeySubquery() != null) {
+                expression(output, scan.getKeySubquery());
+            }
+            predicate(output, scan.getKeyPattern());
+            predicate(output, scan.getWithin());
+        }
+        failIfViolated(PhysicalChoiceVerifier.scan(scan, isPlanned()));
     }
 
     private void clear() {
@@ -515,12 +531,16 @@ public final class PlanVerifier {
             }
         }
         domainReads.add(read);
-        failIfViolated(PhysicalChoiceVerifier.domainRead(read, isAccessPathRequired));
+        if (hasPhysicalChoices()) {
+            failIfViolated(PhysicalChoiceVerifier.domainRead(read, isPlanned()));
+        }
     }
 
     private void fill(FillPlan fill) {
         forwards(fill, FILL_TIMESTAMP);
-        failIfViolated(PhysicalChoiceVerifier.fill(fill, isAccessPathRequired));
+        if (hasPhysicalChoices()) {
+            failIfViolated(PhysicalChoiceVerifier.fill(fill, isPlanned()));
+        }
         final int count = fill.getTargetColumnIds().size();
         if (fill.getModes().size() != count || fill.getValues().size() != count) {
             fail(FILL_SHAPE);
@@ -615,16 +635,28 @@ public final class PlanVerifier {
             if (plain.getSharedInputIds().size() != plain.getSharedSourceIds().size()) {
                 fail(SHARED_SOURCE_IDS);
             }
-            failIfViolated(PhysicalChoiceVerifier.aggregate(plain, isAccessPathRequired));
+            if (hasPhysicalChoices()) {
+                failIfViolated(PhysicalChoiceVerifier.aggregate(plain, isPlanned()));
+            }
         }
         if (aggregate instanceof SampleByPlan sample) {
-            failIfViolated(PhysicalChoiceVerifier.sampleBy(sample, isAccessPathRequired));
+            if (hasPhysicalChoices()) {
+                failIfViolated(PhysicalChoiceVerifier.sampleBy(sample, isPlanned()));
+            }
             noColumnReads(sample.getFrom());
             noColumnReads(sample.getTo());
             for (int i = 0, n = sample.getFillValues().size(); i < n; i++) {
                 noColumnReads(sample.getFillValues().getQuick(i));
             }
         }
+    }
+
+    /**
+     * Whether the plan carries the physical choices operator planning records, which {@link PhysicalChoiceVerifier}
+     * checks: from {@link PlanStage#REWRITTEN} on, see {@link PlanStage#isRewritten}.
+     */
+    private boolean hasPhysicalChoices() {
+        return stage.isRewritten();
     }
 
     private void horizonJoin(HorizonJoinPlan horizon) {
@@ -635,7 +667,9 @@ public final class PlanVerifier {
         if (horizon.getConsumer() == null || isAggregated != (horizon.getConsumer() == HorizonJoinPlan.Consumer.AGGREGATE)) {
             fail(HORIZON_CONSUMER);
         }
-        failIfViolated(PhysicalChoiceVerifier.horizon(horizon, isAccessPathRequired));
+        if (hasPhysicalChoices()) {
+            failIfViolated(PhysicalChoiceVerifier.horizon(horizon, isPlanned()));
+        }
         final OutputSchema master = horizon.getMaster().getOutput();
         final OutputSchema output = horizon.getOutput();
         if (output.getColumnCount() < master.getColumnCount() + 2
@@ -669,6 +703,13 @@ public final class PlanVerifier {
     }
 
     /**
+     * Whether operator planning has recorded every physical choice of the plan, at {@link PlanStage#PHYSICAL}.
+     */
+    private boolean isPlanned() {
+        return stage == PlanStage.PHYSICAL;
+    }
+
+    /**
      * True when a right branch of {@link #releasedBranches} holds the node at walk position {@code producerIndex} and
      * not the one at {@code readIndex}: its set operation releases the node before the other reads it, see
      * {@link PlanToFactoryRules#isRightReleasedFirst}.
@@ -685,6 +726,9 @@ public final class PlanVerifier {
     }
 
     private void join(JoinPlan join) {
+        if (stage != PlanStage.BOUND && join.getGraph() != null) {
+            fail(JOIN_UNORDERED);
+        }
         final ObjList<JoinInput> inputs = join.getInputs();
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
         if (ordered.size() > 0) {
@@ -702,7 +746,9 @@ public final class PlanVerifier {
         joinScope.clear();
         for (int i = 0, n = steps.size(); i < n; i++) {
             final JoinInput step = steps.getQuick(i);
-            failIfViolated(PhysicalChoiceVerifier.joinStep(join, ordered.size() > 0 ? i : -1, step, isAccessPathRequired));
+            if (hasPhysicalChoices()) {
+                failIfViolated(PhysicalChoiceVerifier.joinStep(join, ordered.size() > 0 ? i : -1, step, isPlanned()));
+            }
             joinStep(step, isUnordered);
             joinStepKind(steps, i);
         }
@@ -773,7 +819,7 @@ public final class PlanVerifier {
                 plan(step.getInput());
                 continue;
             }
-            if (!isDependentStepAllowed) {
+            if (stage.compareTo(PlanStage.DECORRELATED) >= 0) {
                 fail(DEPENDENT_STEP);
             }
             final int base = outerInputs.size();
@@ -796,10 +842,12 @@ public final class PlanVerifier {
             }
         }
         masterKeys(joinScope, step.getKeys());
-        site = "key check";
-        predicate(joinScope, step.getKeyCheck());
-        site = "NULL key check";
-        predicate(joinScope, step.getNullKeyCheck());
+        if (step.getAlgorithm() != null) {
+            site = "key check";
+            predicate(joinScope, step.getKeyCheck());
+            site = "NULL key check";
+            predicate(joinScope, step.getNullKeyCheck());
+        }
         if (step.getMarkoutTimestampColumnId() >= 0) {
             site = "markout timestamp";
             timestampColumn(joinScope, step.getMarkoutTimestampColumnId());
@@ -843,7 +891,9 @@ public final class PlanVerifier {
 
     private void latestBy(LatestByPlan latest) {
         forwards(latest, OUTPUT_TIMESTAMP);
-        failIfViolated(PhysicalChoiceVerifier.latestBy(latest, isAccessPathRequired));
+        if (hasPhysicalChoices()) {
+            failIfViolated(PhysicalChoiceVerifier.latestBy(latest, isPlanned()));
+        }
         final OutputSchema input = latest.getChild().getOutput();
         site = "LATEST BY keys";
         resolveAll(input, latest.getKeyColumnIds());
@@ -870,7 +920,9 @@ public final class PlanVerifier {
         }
         noColumnReads(limit.getLo());
         noColumnReads(limit.getHi());
-        failIfViolated(PhysicalChoiceVerifier.limit(limit, isAccessPathRequired));
+        if (hasPhysicalChoices()) {
+            failIfViolated(PhysicalChoiceVerifier.limit(limit, isPlanned()));
+        }
     }
 
     private void masterKeys(OutputSchema scope, ObjList<JoinKey> keys) {
@@ -942,11 +994,18 @@ public final class PlanVerifier {
                     fail(EXPRESSION_NULL);
                 }
                 predicate(filter.getChild().getOutput(), filter.getPredicate());
-                failIfViolated(PhysicalChoiceVerifier.filter(filter, isAccessPathRequired));
+                if (hasPhysicalChoices()) {
+                    failIfViolated(PhysicalChoiceVerifier.filter(filter, isPlanned()));
+                }
             }
             case ProjectPlan project -> project(project);
             case GroupingPlan grouping -> grouping(grouping);
-            case DistinctPlan distinct -> forwards(distinct, OUTPUT_TIMESTAMP);
+            case DistinctPlan distinct -> {
+                forwards(distinct, OUTPUT_TIMESTAMP);
+                if (hasPhysicalChoices()) {
+                    failIfViolated(PhysicalChoiceVerifier.distinct(distinct, isPlanned()));
+                }
+            }
             case DomainReadPlan read -> domainRead(read);
             case FillPlan fill -> fill(fill);
             case WindowPlan window -> window(window);
@@ -960,9 +1019,11 @@ public final class PlanVerifier {
             default -> {
             }
         }
-        failIfViolated(PhysicalChoiceVerifier.timestampReads(plan, isAccessPathRequired));
-        if (plan instanceof WindowPlan window) {
-            failIfViolated(PhysicalChoiceVerifier.windowOrder(window));
+        if (hasPhysicalChoices()) {
+            failIfViolated(PhysicalChoiceVerifier.timestampReads(plan, isPlanned()));
+            if (plan instanceof WindowPlan window) {
+                failIfViolated(PhysicalChoiceVerifier.windowOrder(window));
+            }
         }
         site = null;
         reads(plan);
@@ -976,7 +1037,8 @@ public final class PlanVerifier {
         if (predicate.getDataType() != ColumnType.BOOLEAN) {
             fail(PREDICATE_TYPE);
         }
-        if (LogicalPlans.isConstant(predicate) && !(predicate instanceof ConstantExpression)) {
+        if (!(predicate instanceof ConstantExpression) && !(predicate instanceof ColumnExpression)
+                && (predicate.getFunctionFlags() & BoundExpression.CONSTANT) != 0) {
             fail(PREDICATE_CONSTANT);
         }
     }
@@ -1106,7 +1168,9 @@ public final class PlanVerifier {
             fail(SET_OPERATION_CAST);
         }
         requestedColumn(operation.getRequestedOrderColumnId(), operation.getOutput());
-        failIfViolated(PhysicalChoiceVerifier.setOperation(operation, isAccessPathRequired));
+        if (hasPhysicalChoices()) {
+            failIfViolated(PhysicalChoiceVerifier.setOperation(operation, isPlanned()));
+        }
         if (PlanToFactoryRules.isRightReleasedFirst(operation)) {
             releasedBranches.add(visited.indexOf(operation.getRight()));
             releasedBranches.add(visited.size());
@@ -1136,7 +1200,9 @@ public final class PlanVerifier {
         site = "sort keys";
         resolveAll(sort.getOutput(), keys);
         forwards(sort, SORT_TIMESTAMP);
-        failIfViolated(PhysicalChoiceVerifier.sort(sort, isAccessPathRequired));
+        if (hasPhysicalChoices()) {
+            failIfViolated(PhysicalChoiceVerifier.sort(sort, isPlanned()));
+        }
     }
 
     private void stepPredicates(JoinInput step) {
@@ -1187,7 +1253,9 @@ public final class PlanVerifier {
             resolveAll(input, spec.getOrderByColumnIds());
         }
         site = null;
-        failIfViolated(PhysicalChoiceVerifier.window(window, isAccessPathRequired));
+        if (hasPhysicalChoices()) {
+            failIfViolated(PhysicalChoiceVerifier.window(window, isPlanned()));
+        }
         final OutputSchema output = window.getOutput();
         final int inputColumns = output.getColumnCount() - count;
         if (inputColumns < 0) {
@@ -1244,7 +1312,9 @@ public final class PlanVerifier {
             }
             site = "window join filter";
             predicate(joinScope, step.getFilter());
-            failIfViolated(PhysicalChoiceVerifier.windowJoinStep(windowJoin, s, step, isAccessPathRequired));
+            if (hasPhysicalChoices()) {
+                failIfViolated(PhysicalChoiceVerifier.windowJoinStep(windowJoin, s, step, isPlanned()));
+            }
             final ObjList<FunctionExpression> aggregates = step.getAggregates();
             if (step.getAggregateColumnIds().size() != aggregates.size()) {
                 fail(WINDOW_JOIN_SHAPE);

@@ -31,6 +31,7 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
+import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
@@ -76,11 +77,11 @@ public class ProjectPlanTest {
     public void testVerifierLeavesMutablePlansWithoutReferenceCounts() {
         final ProjectPlan project = project(source(), 2, 1, 3);
         final PlanVerifier verifier = PlanVerifier.newStandalone();
-        verifier.verifyBound(project);
+        verifier.verify(project, PlanStage.BOUND, "SqlBinder.bind");
         Assert.assertEquals(-1, project.getDistinctColumnCount());
         project.getExpressions().setQuick(2, new ColumnExpression().of(1, ColumnType.LONG, 0));
         Assert.assertFalse(LogicalPlans.isColumnOnlyProjection(project));
-        verifier.verifyBound(project);
+        verifier.verify(project, PlanStage.BOUND, "SqlBinder.bind");
         Assert.assertFalse(LogicalPlans.isColumnOnlyProjection(project));
         Assert.assertEquals(-1, project.getDistinctColumnCount());
     }

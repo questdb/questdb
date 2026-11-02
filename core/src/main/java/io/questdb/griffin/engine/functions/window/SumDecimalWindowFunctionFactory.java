@@ -150,17 +150,10 @@ public class SumDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
         int argType = arg.getType();
         int tag = ColumnType.tagOf(argType);
         int argPos = argPositions.getQuick(0);
-        int argScale = ColumnType.getDecimalScale(argType);
-        // sum widens: D8/D16 -> D64, D32/D64 -> D128, D128/D256 -> D256
-        int outputType = switch (tag) {
-            case ColumnType.DECIMAL8, ColumnType.DECIMAL16 ->
-                    ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL64), argScale);
-            case ColumnType.DECIMAL32, ColumnType.DECIMAL64 ->
-                    ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128), argScale);
-            case ColumnType.DECIMAL128, ColumnType.DECIMAL256 ->
-                    ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL256), argScale);
-            default -> throw SqlException.$(argPos, "sum is not yet implemented for ").put(ColumnType.nameOf(tag));
-        };
+        if (!ColumnType.isDecimalType(tag)) {
+            throw SqlException.$(argPos, "sum is not yet implemented for ").put(ColumnType.nameOf(tag));
+        }
+        int outputType = ResultTypes.decimalSum(argType);
 
         if (rowsHi < rowsLo) {
             boolean isRange = framingMode == WindowExpression.FRAMING_RANGE;

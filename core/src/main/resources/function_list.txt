@@ -612,8 +612,8 @@ io.questdb.griffin.engine.functions.groupby.LastCharGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastShortGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastBooleanGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastByteGroupByFunctionFactory
-io.questdb.griffin.engine.functions.groupby.LastSymbolGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastStrGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.LastSymbolGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastVarcharGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastTimestampGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.LastDateGroupByFunctionFactory
@@ -721,6 +721,8 @@ io.questdb.griffin.engine.functions.groupby.CountDistinctUuidGroupByFunctionFact
 # 'approx_count_distinct' group by function
 io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIntGroupByDefaultFunctionFactory
 io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIntGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctSymbolGroupByDefaultFunctionFactory
+io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctSymbolGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctLongGroupByDefaultFunctionFactory
 io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctLongGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.ApproxCountDistinctIPv4GroupByDefaultFunctionFactory
@@ -824,8 +826,8 @@ io.questdb.griffin.engine.functions.table.ParquetScanFunctionFactory
 io.questdb.griffin.engine.functions.table.HydrateTableMetadataFunctionFactory
 io.questdb.griffin.engine.functions.table.WaitWalTableFunctionFactory
 
-io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.FirstStrGroupByFunctionFactory
+io.questdb.griffin.engine.functions.groupby.FirstSymbolGroupByFunctionFactory
 
 
 # 'approx_percentile'

@@ -43,10 +43,11 @@ public final class FilterPlan extends ForwardingPlan {
     }
 
     /**
-     * How the generator executes the filter over its input, which operator planning records; null for a filter fused
-     * into the scan under it, whose scan records it, and for a predicate the generator folds or gates once.
+     * How the generator applies the predicate over its input, which operator planning records; null for a filter fused
+     * into the scan under it, whose scan records it, see {@link ScanPlan#getResidualAlgorithm}.
      */
     public Algorithm getAlgorithm() {
+        checkPhysicalRead("FilterPlan.algorithm");
         return algorithm;
     }
 
@@ -59,6 +60,7 @@ public final class FilterPlan extends ForwardingPlan {
      * planning records.
      */
     public boolean hasUpdateScan() {
+        checkPhysicalRead("FilterPlan.hasUpdateScan");
         return hasUpdateScan;
     }
 
@@ -78,16 +80,39 @@ public final class FilterPlan extends ForwardingPlan {
     }
 
     @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.fact("algorithm", algorithm);
+        visitor.fact("hasUpdateScan", hasUpdateScan);
+    }
+
+    @Override
     public void visitReads(PlanExpressionVisitor visitor) {
         predicate = PlanReads.expression(predicate, visitor);
     }
 
     /**
-     * How the generator executes a filter: on one thread, in parallel over the page frames of the factory under it,
-     * where it applies the LIMIT it is given, or, for the keep flag of SUBSAMPLE, within the light cached window under
-     * it, which selects the rows its sole row-selecting function keeps.
+     * How the generator applies a predicate over its input: it folds a constant, keeping the input when the constant
+     * is true and replacing it with an empty factory when it is false, gates the input once on a runtime constant, or
+     * builds a filter, on one thread, in parallel over the page frames of the factory under it, where it applies the
+     * LIMIT it is given, or, for the keep flag of SUBSAMPLE, within the light cached window under it, which selects the
+     * rows its sole row-selecting function keeps.
      */
     public enum Algorithm {
-        PARALLEL, SERIAL, WINDOW_KEEP_FLAG
+        FOLDED_FALSE, FOLDED_TRUE, GATE, PARALLEL, SERIAL, WINDOW_KEEP_FLAG;
+
+        /**
+         * Whether the generator folds the predicate, building no filter.
+         */
+        public boolean isFolded() {
+            return this == FOLDED_TRUE || this == FOLDED_FALSE;
+        }
+
+        /**
+         * Whether the generator builds a filter that evaluates the predicate on each row.
+         */
+        public boolean isFiltering() {
+            return this == PARALLEL || this == SERIAL || this == WINDOW_KEEP_FLAG;
+        }
     }
 }

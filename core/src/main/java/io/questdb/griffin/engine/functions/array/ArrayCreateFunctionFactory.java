@@ -37,6 +37,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
@@ -98,9 +99,6 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         Function arg0 = args.getQuick(0);
         int arg0Pos = argPositions.getQuick(0);
         int type0 = arg0.getType();
-        // once we support more than the DOUBLE array type, use
-        // short commonElemType = (short) type0;
-        int commonElemType = ColumnType.DOUBLE;
         if (!ColumnType.isArray(type0)) {
             validateElemType(type0, arg0Pos);
             for (int i = 1; i < outerDimLen; i++) {
@@ -110,9 +108,8 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
                     throw SqlException.$(argPositions.getQuick(i), "mixed array and non-array elements");
                 }
                 validateElemType(typeI, argPositions.getQuick(i));
-                // once we support more than the DOUBLE array type, uncomment this:
-                // commonElemType = commonWideningType(commonElemType, typeI):
             }
+            final short commonElemType = ColumnType.decodeArrayElementType(getResultType(ResultTypes.argTypes(args)));
             if (!ColumnType.isSupportedArrayElementType(commonElemType)) {
                 throw SqlException.position(arg0Pos)
                         .put("unsupported array element type [type=")
@@ -132,7 +129,6 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
         // First argument is an array, validate that all of them arrays. Mixed array and
         // non-array arguments aren't allowed, because they must all come together to form
         // a new array with one more dimension.
-        commonElemType = ColumnType.decodeArrayElementType(type0);
         SqlUtil.checkArrayDimensionsKnown(type0, arg0Pos);
         final int nestedDims = ColumnType.decodeArrayDimensionality(type0);
         for (int i = 1, n = args.size(); i < n; i++) {
@@ -146,8 +142,8 @@ public class ArrayCreateFunctionFactory implements FunctionFactory {
             if (ColumnType.decodeArrayDimensionality(typeI) != nestedDims) {
                 throw SqlException.$(argPosI, "sub-arrays don't match in number of dimensions");
             }
-            commonElemType = commonWideningType(commonElemType, decodeArrayElementType(typeI));
         }
+        final short commonElemType = ColumnType.decodeArrayElementType(getResultType(ResultTypes.argTypes(args)));
 
         FUNCTION_ARRAY:
         if (arg0 instanceof FunctionArrayFunction) {

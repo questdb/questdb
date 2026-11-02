@@ -34,6 +34,7 @@ import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.PlanRewriter;
+import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
@@ -68,6 +69,16 @@ final class NegativeLimitReversal implements OptimiserPass {
     @Override
     public String getName() {
         return "negative limit reversal";
+    }
+
+    @Override
+    public PlanStage getProducedStage() {
+        return PlanStage.DECORRELATED;
+    }
+
+    @Override
+    public PlanStage getRequiredStage() {
+        return PlanStage.DECORRELATED;
     }
 
     /**

@@ -92,6 +92,7 @@ public class ReaderLeakTest extends AbstractCairoTest {
                                                 columnIndexes,
                                                 columnSizes,
                                                 true,
+                                                metadata.getTimestampIndex() != -1,
                                                 false
                                         )
                                 )

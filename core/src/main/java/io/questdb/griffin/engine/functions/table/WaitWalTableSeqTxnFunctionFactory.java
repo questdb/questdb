@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -57,10 +58,7 @@ public class WaitWalTableSeqTxnFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        if (args.getQuick(0).isNullConstant()) {
-            throw SqlException.$(argPositions.getQuick(0), "tableName cannot be NULL");
-        }
-        final CharSequence tableName = args.getQuick(0).getStrA(null);
+        final CharSequence tableName = SqlUtil.getTableName(args.getQuick(0), argPositions.getQuick(0));
         final Function seqTxnArg = args.getQuick(1);
         if (!seqTxnArg.isConstant() && !seqTxnArg.isRuntimeConstant()) {
             throw SqlException.$(argPositions.getQuick(1), "seq_txn argument must be a constant or runtime constant");

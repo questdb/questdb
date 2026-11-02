@@ -44,6 +44,7 @@ public final class LimitPlan extends ForwardingPlan {
      * Which operator applies the LIMIT, or null before operator planning decided it.
      */
     public Application getApplication() {
+        checkPhysicalRead("LimitPlan.application");
         return application;
     }
 
@@ -64,6 +65,12 @@ public final class LimitPlan extends ForwardingPlan {
 
     public void setApplication(Application application) {
         this.application = application;
+    }
+
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.fact("application", application);
     }
 
     @Override

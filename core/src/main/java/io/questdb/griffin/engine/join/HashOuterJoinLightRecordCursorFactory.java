@@ -45,6 +45,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
 import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
@@ -53,6 +54,7 @@ import static io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCur
 
 public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
 
+    private final JoinInput.BuildSide buildSide;
     private final int columnSplit;
     private final int joinType;
     private final RecordSink masterKeySink;
@@ -77,9 +79,13 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
             Plannable context,
             int joinType,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            @Nullable JoinInput.BuildSide buildSide
     ) {
         super(metadata, context, masterFactory, slaveFactory);
+        assert buildSide != JoinInput.BuildSide.SMALLER || joinType == QueryModel.JOIN_FULL_OUTER && masterFactory.recordCursorSupportsRandomAccess()
+                : "hashed master lacks random access";
+        this.buildSide = buildSide;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
         try {
@@ -147,24 +153,14 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
         RecordCursor masterCursor = null;
         try {
             masterCursor = masterFactory.getCursor(executionContext);
-            if (joinType == QueryModel.JOIN_FULL_OUTER) {
-                boolean swapped = false;
-                if (masterFactory.recordCursorSupportsRandomAccess()) {
-                    long masterSize = masterCursor.size();
-                    long slaveSize = slaveCursor.size();
-
-                    if (masterSize > 0 && slaveSize > 0 && masterSize < slaveSize) {
-                        RecordCursor temp = masterCursor;
-                        masterCursor = slaveCursor;
-                        slaveCursor = temp;
-                        swapped = true;
-                    }
-                }
-                if (swapped) {
-                    slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
-                    ((HashFullOuterJoinLightRecordCursor) cursor).of(masterCursor, slaveCursor, executionContext, true);
-                    return cursor;
-                }
+            if (buildSide == JoinInput.BuildSide.SMALLER
+                    && JoinInput.BuildSide.smaller(masterCursor.size(), slaveCursor.size(), JoinInput.BuildSide.SLAVE) == JoinInput.BuildSide.MASTER) {
+                final RecordCursor temp = masterCursor;
+                masterCursor = slaveCursor;
+                slaveCursor = temp;
+                slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
+                ((HashFullOuterJoinLightRecordCursor) cursor).of(masterCursor, slaveCursor, executionContext, true);
+                return cursor;
             }
             slaveCursor.setParquetDecodeHint(ParquetDecodeHint.SCATTERED);
             cursor.of(masterCursor, slaveCursor, executionContext);

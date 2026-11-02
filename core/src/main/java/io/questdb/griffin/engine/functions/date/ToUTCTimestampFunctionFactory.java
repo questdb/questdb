@@ -30,7 +30,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TimestampPrecisionUse;
@@ -58,7 +57,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory, Monotonic
 
     @Override
     public int getResultType(IntList argTypes) {
-        return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(0));
+        return ColumnType.getImplicitTimestampType(argTypes.getQuick(0));
     }
 
     @Override
@@ -91,7 +90,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory, Monotonic
     public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
         final Function timezoneFunc = args.getQuick(1);
         if (timezoneFunc.isConstant()) {
-            ToTimezoneTimestampFunctionFactory.constantZoneRules(timezoneFunc.getStrA(null), argPositions.getQuick(1), ResultTypes.timestampAtLeastMicros(args.getQuick(0).getType()));
+            ToTimezoneTimestampFunctionFactory.constantZoneRules(timezoneFunc.getStrA(null), argPositions.getQuick(1), ColumnType.getImplicitTimestampType(args.getQuick(0).getType()));
         }
         return true;
     }
@@ -107,8 +106,7 @@ public class ToUTCTimestampFunctionFactory implements FunctionFactory, Monotonic
         final Function timestampFunc = args.getQuick(0);
         final Function timezoneFunc = args.getQuick(1);
         final int timezonePos = argPositions.getQuick(1);
-        int timestampType = ColumnType.getTimestampType(timestampFunc.getType());
-        timestampType = ColumnType.getHigherPrecisionTimestampType(timestampType, ColumnType.TIMESTAMP_MICRO);
+        final int timestampType = ColumnType.getImplicitTimestampType(timestampFunc.getType());
         if (timezoneFunc.isConstant()) {
             final Function function = toUTCConstFunction(timestampFunc, timezoneFunc, timezonePos, timestampType);
             args.setQuick(0, null);

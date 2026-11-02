@@ -24,6 +24,7 @@
 
 package io.questdb.griffin;
 
+import io.questdb.ParanoiaState;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.WindowExpression;
@@ -49,6 +50,9 @@ import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
+import io.questdb.griffin.plan.logical.PlanFactRecorder;
+import io.questdb.griffin.plan.logical.PlanFactSource;
+import io.questdb.griffin.plan.logical.PlanFacts;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
@@ -62,6 +66,7 @@ import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
 
 /**
@@ -73,7 +78,8 @@ import io.questdb.std.ObjectPool;
  * below the configured expression pool capacity for bound expressions or the configured model pool capacity for plan
  * nodes. The pools also number the columns the nodes define: an id is unique across the statement, whichever query
  * level or pass allocates it, so a plan can refer to any column of the statement and a subtree can move between levels
- * without renumbering.
+ * without renumbering. Under {@link ParanoiaState#PLAN_PARANOIA_MODE}, clearing the pools checks that every plan node
+ * and part they keep holds the facts of a new one, see {@link PlanFactSource#visitFacts}.
  */
 public final class PlanNodePools implements Mutable {
     public final ObjectPool<AggregatePlan> aggregates;
@@ -116,6 +122,8 @@ public final class PlanNodePools implements Mutable {
     public final ObjectPool<WindowPlan> windowPlans;
     public final ObjectPool<WindowSpec> windowSpecs;
     public final ObjectPool<WindowExpression> windowSyntax;
+    private final PlanFactRecorder clearedFacts = ParanoiaState.PLAN_PARANOIA_MODE ? new PlanFactRecorder() : null;
+    private final PlanFactRecorder newFacts = ParanoiaState.PLAN_PARANOIA_MODE ? new PlanFactRecorder() : null;
     private boolean hasSharedSources;
     private int nextColumnId;
 
@@ -197,6 +205,9 @@ public final class PlanNodePools implements Mutable {
         windowSyntax.clear();
         hasSharedSources = false;
         nextColumnId = 0;
+        if (clearedFacts != null) {
+            verifyCleared();
+        }
     }
 
     /**
@@ -239,5 +250,45 @@ public final class PlanNodePools implements Mutable {
 
     public void rewindSyntheticNodes(int mark) {
         syntheticNodes.rewind(mark);
+    }
+
+    private void verifyCleared() {
+        verifyCleared(aggregates, AggregatePlan.FACTORY);
+        verifyCleared(distincts, DistinctPlan.FACTORY);
+        verifyCleared(domainReads, DomainReadPlan.FACTORY);
+        verifyCleared(fills, FillPlan.FACTORY);
+        verifyCleared(filters, FilterPlan.FACTORY);
+        verifyCleared(functionSources, FunctionSourcePlan.FACTORY);
+        verifyCleared(horizonJoinPlans, HorizonJoinPlan.FACTORY);
+        verifyCleared(horizonJoinSlaves, HorizonJoinSlave.FACTORY);
+        verifyCleared(joinInputs, JoinInput.FACTORY);
+        verifyCleared(joins, JoinPlan.FACTORY);
+        verifyCleared(latestByPlans, LatestByPlan.FACTORY);
+        verifyCleared(limits, LimitPlan.FACTORY);
+        verifyCleared(projects, ProjectPlan.FACTORY);
+        verifyCleared(sampleByPlans, SampleByPlan.FACTORY);
+        verifyCleared(scans, ScanPlan.FACTORY);
+        verifyCleared(setOperations, SetOperationPlan.FACTORY);
+        verifyCleared(sorts, SortPlan.FACTORY);
+        verifyCleared(unnestSpecs, UnnestSpec.FACTORY);
+        verifyCleared(windowJoinPlans, WindowJoinPlan.FACTORY);
+        verifyCleared(windowJoinSteps, WindowJoinStep.FACTORY);
+        verifyCleared(windowPlans, WindowPlan.FACTORY);
+        verifyCleared(windowSpecs, WindowSpec.FACTORY);
+    }
+
+    /**
+     * Fails when an object the pool keeps, which clearing the pool cleared, holds a fact a new object does not.
+     */
+    private <T extends PlanFactSource> void verifyCleared(ObjectPool<T> pool, ObjectFactory<T> factory) {
+        newFacts.record(factory.newInstance());
+        for (int i = 0, n = pool.getCapacity(); i < n; i++) {
+            final T object = pool.peekQuick(i);
+            clearedFacts.record(object);
+            final String fact = clearedFacts.firstDifference(newFacts);
+            if (fact != null) {
+                throw new AssertionError(PlanFacts.CLEARED_FACT + ": " + object.getClass().getSimpleName() + '.' + fact);
+            }
+        }
     }
 }

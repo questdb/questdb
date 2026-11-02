@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -56,7 +57,10 @@ public class TestSumXDoubleGroupByFunctionFactory implements FunctionFactory {
             IntList argPositions,
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
-    ) {
+    ) throws SqlException {
+        if (!args.getQuick(1).isConstant()) {
+            throw SqlException.$(argPositions.getQuick(1), "constant expected");
+        }
         return new TestSumDoubleGroupByFunction(args.getQuick(0), args.getQuick(1));
     }
 }

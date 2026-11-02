@@ -31,9 +31,43 @@ import io.questdb.std.ObjectFactory;
  */
 public final class DistinctPlan extends ForwardingPlan {
     public static final ObjectFactory<DistinctPlan> FACTORY = DistinctPlan::new;
+    private Algorithm algorithm;
+
+    @Override
+    public void clear() {
+        super.clear();
+        algorithm = null;
+    }
+
+    /**
+     * How the generator removes the duplicates, which operator planning records; null before it planned the DISTINCT.
+     */
+    public Algorithm getAlgorithm() {
+        checkPhysicalRead("DistinctPlan.algorithm");
+        return algorithm;
+    }
 
     public DistinctPlan of(LogicalPlan input, int position) {
         configure(input, position);
         return this;
+    }
+
+    public void setAlgorithm(Algorithm algorithm) {
+        this.algorithm = algorithm;
+    }
+
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.fact("algorithm", algorithm);
+    }
+
+    /**
+     * How the generator removes duplicate tuples: over an input with random access and a designated timestamp, it
+     * compares the tuples of each timestamp alone and keeps the input's order; otherwise it hashes every tuple, and may
+     * stop at the LIMIT over it.
+     */
+    public enum Algorithm {
+        HASH, TIME_SERIES
     }
 }

@@ -93,13 +93,9 @@ public class DoubleArraySubtractFunctionFactory implements FunctionFactory {
             this.rightArg = rightArg;
             this.arrayOut = new DirectArray(configuration);
             this.leftArgPos = leftArgPos;
-            final int dimsLeft = ColumnType.decodeWeakArrayDimensionality(leftArg.getType());
-            final int dimsRight = ColumnType.decodeWeakArrayDimensionality(rightArg.getType());
-            if (dimsLeft > 0 && dimsRight > 0) {
-                this.type = ColumnType.encodeArrayType(ColumnType.DOUBLE, Math.max(dimsLeft, dimsRight));
+            this.type = ResultTypes.doubleArrayBroadcast(leftArg.getType(), rightArg.getType());
+            if (!ColumnType.isArrayWithWeakDims(type)) {
                 arrayOut.setType(type);
-            } else {
-                this.type = ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true);
             }
             this.position = position;
         }

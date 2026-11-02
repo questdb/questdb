@@ -382,6 +382,18 @@ public class ApproxCountDistinctIntGroupByFunctionFactoryTest extends AbstractCa
     }
 
     @Test
+    public void testSymbolCountsDistinctValues() throws Exception {
+        assertQuery("select approx_count_distinct(s) a, approx_count_distinct(s, 10) b, approx_count_distinct(s::int) c from x")
+                .ddl("create table x as (select rnd_symbol('a', 'b', 'c', '1') s from long_sequence(100))")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        a\tb\tc
+                        4\t4\t1
+                        """);
+    }
+
+    @Test
     public void testSampleFillLinear() throws Exception {
         assertQuery("select ts, approx_count_distinct(s) from x sample by 1s fill(linear)")
                 .ddl("create table x as (select * from (select rnd_int(0, 16, 0) s, timestamp_sequence(0, 100000) ts from long_sequence(100)) timestamp(ts))")

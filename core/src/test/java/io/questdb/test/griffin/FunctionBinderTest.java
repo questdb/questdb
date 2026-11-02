@@ -1148,6 +1148,23 @@ public class FunctionBinderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndexedParameterBindsItsIndexOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE k (l LONG)");
+            execute("INSERT INTO k VALUES (1), (2), (3)");
+            bindVariableService.clear();
+            assertQuery("SELECT l FROM k WHERE l = $0").noLeakCheck().fails(26, "invalid bind variable index [value=0]");
+            assertQuery("SELECT l FROM k WHERE l = $2147483648").noLeakCheck().fails(26, "invalid bind variable index [value=$2147483648]");
+            bindVariableService.setLong(1, 2);
+            assertQuery("SELECT l FROM k WHERE l = $2").noLeakCheck().returns("l\n2\n");
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 3);
+            assertQuery("SELECT l FROM k WHERE l = $1").noLeakCheck().returns("l\n3\n");
+            bindVariableService.clear();
+        });
+    }
+
+    @Test
     public void testInconvertibleConstantFoldReportsCallPosition() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE k (l LONG)");

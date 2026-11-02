@@ -1238,6 +1238,38 @@ public class RoundDecimalFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRoundUntypedNull() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (i INT)");
+            execute("INSERT INTO t VALUES (2), (-1), (null)");
+            assertQuery("""
+                    SELECT floor(null, i) f, ceil(null, i) c, ceiling(null, i) cg, round_down(null, i) rd,
+                        round_half_even(null, i) rhe, floor(null, -1) fn
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            f\tc\tcg\trd\trhe\tfn
+                            null\tnull\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull
+                            null\tnull\tnull\tnull\tnull\tnull
+                            """);
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 2);
+            assertQuery("SELECT floor(null, $1) f FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            f
+                            null
+                            null
+                            null
+                            """);
+        });
+    }
+
+    @Test
     public void testRoundZeroWithNegativeScales() {
         // Test rounding zero values with negative scales (should remain zero)
 

@@ -215,16 +215,17 @@ public final class PhysicalProperties {
             return supportsTimeFrameCursor(filter.getChild(), null);
         }
         return switch (scan.getAccessPath()) {
-            case PAGE_FRAMES -> pageFrameTimeFrame(scan, scan.isRandomAccess());
+            case PAGE_FRAMES -> supportsPageFrameTimeFrameCursor(scan, scan.isRandomAccess());
             case SYMBOL_PATTERN ->
-                    scan.getIndexRead() == ScanPlan.IndexRead.COVERING ? Capability.NO : pageFrameTimeFrame(scan, true);
+                    scan.getIndexRead() == ScanPlan.IndexRead.COVERING ? Capability.NO : supportsPageFrameTimeFrameCursor(scan, true);
             case null -> Capability.UNKNOWN;
             default -> Capability.NO;
         };
     }
 
     /**
-     * Whether the cursor of the factory serves a long top-K over the output column.
+     * Whether the cursor of the factory serves a long top-K over the output column: a column of a projection that reads
+     * an earlier column of the projection, not of its input, serves none.
      */
     public static Capability supportsLongTopK(LogicalPlan plan, int columnIndex) {
         return supportsLongTopK(plan, null, columnIndex);
@@ -235,6 +236,17 @@ public final class PhysicalProperties {
      */
     public static Capability supportsPageFrameCursor(LogicalPlan plan) {
         return capability(derive(plan, null), PAGE_FRAMES);
+    }
+
+    /**
+     * Whether a page-frame factory that reads the whole frames of the scan, in the direction it records, with random
+     * access when {@code isRandomAccess}, serves time-frame cursors. Time frames follow the partitions of the table's
+     * own designated timestamp, so a scan that designates another column has none. A table without a designated
+     * timestamp has a single partition, which any timestamp follows.
+     */
+    public static Capability supportsPageFrameTimeFrameCursor(ScanPlan scan, boolean isRandomAccess) {
+        return Capability.of(isRandomAccess && scanTimestampIndex(scan) >= 0 && scan.getScanDirection() != SortDirection.DESCENDING
+                && (scan.getNativeTimestampColumnId() == -1 || scan.getOutput().getTimestampColumnId() == scan.getNativeTimestampColumnId()));
     }
 
     /**
@@ -269,8 +281,7 @@ public final class PhysicalProperties {
             case ScanPlan scan -> scanTableToken(scan);
             case FilterPlan filter -> {
                 final ScanPlan scan = PlanToFactoryRules.fusedScan(filter);
-                yield scan != null ? scanTableToken(scan)
-                        : filteredTableToken(filter.getPredicate(), filter.getAlgorithm(), tableToken(filter.getChild()));
+                yield scan != null ? scanTableToken(scan) : filteredTableToken(filter.getAlgorithm(), tableToken(filter.getChild()));
             }
             case ProjectPlan project -> switch (PlanToFactoryRules.projectionFactory(project)) {
                 case WINDOW, VIRTUAL -> null;
@@ -323,9 +334,11 @@ public final class PhysicalProperties {
             return computed(Capability.NO, ScanDirection.FORWARD, Capability.NO);
         }
         final int input = derive(aggregate.getChild(), null);
-        // A shared source the aggregate re-reads hides the base chain of the source.
-        final Capability isLongSequence = aggregate.getSharedSource() == null ? capability(input, LONG_SEQUENCE)
-                : and(Capability.UNKNOWN, capability(input, LONG_SEQUENCE));
+        final Capability isLongSequence = switch (aggregate.getSharedRead()) {
+            case SOURCE -> Capability.NO;
+            case SET_OPERATION_HEAD, NONE -> capability(input, LONG_SEQUENCE);
+            case null -> aggregate.getSharedSource() == null ? capability(input, LONG_SEQUENCE) : and(Capability.UNKNOWN, capability(input, LONG_SEQUENCE));
+        };
         if (factory == PlanToFactoryRules.AggregateFactory.COUNT) {
             return computed(Capability.NO, ScanDirection.FORWARD, isLongSequence);
         }
@@ -503,12 +516,16 @@ public final class PhysicalProperties {
         };
     }
 
+    /**
+     * The time-series DISTINCT keeps the order of its input and serves random access, the hash one neither, see
+     * {@link DistinctPlan.Algorithm}.
+     */
     private static int distinct(DistinctPlan distinct, int input) {
-        final int timestampIndex = timestamp(distinct.getChild(), null, false);
-        final Capability isTimeSeries = and(capability(input, RANDOM_ACCESS),
-                timestampIndex == UNKNOWN_TIMESTAMP ? Capability.UNKNOWN : Capability.of(timestampIndex >= 0));
-        return choose(isTimeSeries, computed(Capability.YES, direction(input), capability(input, LONG_SEQUENCE)),
-                computed(Capability.NO, ScanDirection.FORWARD, capability(input, LONG_SEQUENCE)));
+        return switch (distinct.getAlgorithm()) {
+            case TIME_SERIES -> computed(Capability.YES, direction(input), capability(input, LONG_SEQUENCE));
+            case HASH -> computed(Capability.NO, ScanDirection.FORWARD, capability(input, LONG_SEQUENCE));
+            case null -> unknown(ScanDirection.UNKNOWN, capability(input, LONG_SEQUENCE));
+        };
     }
 
     /**
@@ -529,37 +546,35 @@ public final class PhysicalProperties {
         if (scan != null) {
             return scan(scan);
         }
-        return filtered(filter.getPredicate(), derive(filter.getChild(), null), parallel(filter.getAlgorithm()), false, true);
+        return filtered(filter.getAlgorithm(), derive(filter.getChild(), null), false);
     }
 
     /**
-     * The filter codegen builds over its input: none for a constant it folds, a gate for a runtime constant, else the
-     * parallel filter, which absorbs a LIMIT it is given, or the serial one, as {@code isParallel} records.
+     * The filter codegen builds over its input as {@code algorithm}, which operator planning records, says: none for a
+     * constant it folds to true, the empty factory for one it folds to false, a gate for a runtime constant, else the
+     * parallel filter, which absorbs a LIMIT it is given, or the serial one.
      */
-    private static int filtered(BoundExpression predicate, int input, Capability isParallel, boolean hasLimit, boolean isConstantFolded) {
-        if (isConstantFolded && predicate instanceof ConstantExpression constant) {
-            return constant.getLongValue() != 0 ? input : EMPTY;
-        }
-        if (!(predicate instanceof ColumnExpression) && (predicate.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0) {
-            return with(input, ORDER_ADVICE, Capability.NO);
-        }
-        return properties(choose(isParallel, Capability.YES, capability(input, RANDOM_ACCESS)), Capability.NO,
-                and(isParallel, Capability.of(hasLimit)), Capability.NO, direction(input), capability(input, LONG_SEQUENCE));
+    private static int filtered(@Nullable FilterPlan.Algorithm algorithm, int input, boolean hasLimit) {
+        return switch (algorithm) {
+            case FOLDED_TRUE -> input;
+            case FOLDED_FALSE -> EMPTY;
+            case GATE -> with(input, ORDER_ADVICE, Capability.NO);
+            case PARALLEL -> properties(Capability.YES, Capability.NO, Capability.of(hasLimit), Capability.NO, direction(input),
+                    capability(input, LONG_SEQUENCE));
+            case SERIAL, WINDOW_KEEP_FLAG -> properties(capability(input, RANDOM_ACCESS), Capability.NO, Capability.NO, Capability.NO,
+                    direction(input), capability(input, LONG_SEQUENCE));
+            case null -> unknown(ScanDirection.UNKNOWN, Capability.UNKNOWN);
+        };
     }
 
     /**
-     * The table the filter codegen builds over an input that reports {@code input} reports: the input's for a constant
-     * it folds to true, for the gate of a runtime constant and for the parallel filter, which keep the input's cursor
-     * or read its page frames; none for a constant it folds to false and for the serial filter.
+     * The table the filter codegen builds over an input that reports {@code input} reports, see {@link #filtered}: the
+     * input's for a constant it folds to true, for the gate of a runtime constant and for the parallel filter, which
+     * keep the input's cursor or read its page frames; none for a constant it folds to false and for the serial filter.
      */
-    private static TableToken filteredTableToken(BoundExpression predicate, @Nullable FilterPlan.Algorithm algorithm, TableToken input) {
-        if (predicate instanceof ConstantExpression constant) {
-            return constant.getLongValue() != 0 ? input : null;
-        }
-        if (!(predicate instanceof ColumnExpression) && (predicate.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0) {
-            return input;
-        }
-        return algorithm == FilterPlan.Algorithm.PARALLEL ? input : null;
+    private static TableToken filteredTableToken(@Nullable FilterPlan.Algorithm algorithm, TableToken input) {
+        return algorithm == FilterPlan.Algorithm.FOLDED_TRUE || algorithm == FilterPlan.Algorithm.GATE
+                || algorithm == FilterPlan.Algorithm.PARALLEL ? input : null;
     }
 
     /**
@@ -640,31 +655,23 @@ public final class PhysicalProperties {
             final JoinKind joinType = step.getJoinType();
             final Capability isFollowingAdvice = capability(properties, ORDER_ADVICE);
             final ScanDirection direction = direction(properties);
-            BoundExpression filter = step.getPostJoinFilter();
             if (joinType.isRelational()) {
                 final Capability isMarkout = markout(step);
                 final boolean isMasterNullExtended = joinType.isMasterNulling();
-                final boolean isSwappable = step.getMasterSide() == JoinInput.MasterSide.SMALLER;
+                final boolean isSwappable = step.isSmallerDriven();
                 final boolean isKeyed = step.getKeys().size() > 0;
                 final Capability isJoinFollowingAdvice = isSwappable ? Capability.NO : isKeyed ? (isMasterNullExtended ? Capability.NO : isFollowingAdvice)
                                                                                        : isMasterNullExtended ? capability(derive(step.getInput(), null), ORDER_ADVICE) : isFollowingAdvice;
                 properties = joined(choose(isMarkout, Capability.YES, isJoinFollowingAdvice),
                         choose(isMarkout, direction, isKeyed && isMasterNullExtended || isSwappable ? ScanDirection.OTHER : direction));
-                // An outer join applies its ON residual itself; an inner one filters the matched pairs with it.
-                if (!isMasterNullExtended && !joinType.isSlaveNulling() && step.getOnResidual() != null) {
-                    if (filter == null) {
-                        filter = step.getOnResidual();
-                    } else {
-                        // The conjunction of the ON residual and the post-join filter, which codegen never folds.
-                        properties = filtered(filter, properties, Capability.NO, false, false);
-                        filter = null;
-                    }
-                }
             } else {
                 properties = joined(isFollowingAdvice, direction);
             }
-            if (filter != null) {
-                properties = filtered(filter, properties, Capability.NO, false, PlanToFactoryRules.isPostJoinFilterFolded(step, filter));
+            if (step.getAlgorithm() == null) {
+                return unknown(ScanDirection.UNKNOWN, Capability.NO);
+            }
+            if (step.getFilterAlgorithm() != null) {
+                properties = filtered(step.getFilterAlgorithm(), properties, false);
             }
         }
         return properties;
@@ -767,15 +774,6 @@ public final class PhysicalProperties {
         return properties;
     }
 
-    /**
-     * Time frames follow the partitions of the table's own designated timestamp, so a scan that designates another
-     * column has none. A table without a designated timestamp has a single partition, which any timestamp follows.
-     */
-    private static Capability pageFrameTimeFrame(ScanPlan scan, boolean isRandomAccess) {
-        return Capability.of(isRandomAccess && scanTimestampIndex(scan) >= 0 && scan.getScanDirection() != SortDirection.DESCENDING
-                && (scan.getNativeTimestampColumnId() == -1 || scan.getOutput().getTimestampColumnId() == scan.getNativeTimestampColumnId()));
-    }
-
     private static int pageFrames(ScanPlan scan) {
         final ScanDirection direction = ScanDirection.of(scan.getScanDirection());
         return properties(Capability.of(scan.isRandomAccess()), Capability.YES, Capability.NO,
@@ -873,7 +871,7 @@ public final class PhysicalProperties {
         final int properties = switch (accessPath) {
             case EMPTY, UPDATE_STUB -> EMPTY;
             case PAGE_FRAMES -> residual == null || isLiveView ? pageFrames(scan)
-                    : filtered(residual, pageFrames(scan), residualParallel(scan), scan.getFilterLimit() != null, true);
+                    : filtered(scan.getResidualAlgorithm(), pageFrames(scan), scan.getFilterLimit() != null);
             case SORTED_SYMBOL_INDEX ->
                     properties(Capability.YES, Capability.NO, Capability.NO, Capability.YES, ScanDirection.FORWARD, Capability.NO);
             case SYMBOL_INDEX -> symbolIndex(scan);
@@ -892,7 +890,7 @@ public final class PhysicalProperties {
             case LATEST_BY_SUBQUERY, LATEST_BY_ALL_INDEXED, LATEST_BY_STATIC_SYMBOL, LATEST_BY_SYMBOLS, LATEST_BY_ALL ->
                     computed(Capability.YES, ScanDirection.FORWARD, Capability.NO);
         };
-        return isLiveView && residual != null ? filtered(residual, properties, residualParallel(scan), scan.getFilterLimit() != null, true) : properties;
+        return isLiveView && residual != null ? filtered(scan.getResidualAlgorithm(), properties, scan.getFilterLimit() != null) : properties;
     }
 
     /**
@@ -906,8 +904,7 @@ public final class PhysicalProperties {
             return null;
         }
         return switch (scan.getAccessPath()) {
-            case PAGE_FRAMES ->
-                    scan.getResidual() == null ? table : filteredTableToken(scan.getResidual(), scan.getResidualAlgorithm(), table);
+            case PAGE_FRAMES -> scan.getResidual() == null ? table : filteredTableToken(scan.getResidualAlgorithm(), table);
             case SORTED_SYMBOL_INDEX, EXCLUDED_SYMBOL_INDEX, SYMBOL_SUBQUERY, LATEST_BY_SUBQUERY, LATEST_BY_ALL_INDEXED,
                  LATEST_BY_STATIC_SYMBOL, LATEST_BY_SYMBOLS, LATEST_BY_ALL -> table;
             case SYMBOL_INDEX -> scan.getIndexRead() == ScanPlan.IndexRead.COVERING ? null : table;
@@ -930,11 +927,16 @@ public final class PhysicalProperties {
         if (scan.getAccessPath() != ScanPlan.AccessPath.PAGE_FRAMES) {
             return Capability.NO;
         }
-        return wrapped(scan.getResidual(), pageFrameTimeFrame(scan, scan.isRandomAccess()));
+        final Capability timeFrame = supportsPageFrameTimeFrameCursor(scan, scan.isRandomAccess());
+        return scan.getResidual() == null ? timeFrame : wrapped(scan.getResidualAlgorithm(), timeFrame);
     }
 
+    /**
+     * The designated timestamp of the scan's factory: the scan's own, unless its access path drops it. A scan whose
+     * access path is undecided keeps it, as access path planning drops it only for a consumer that does not require it.
+     */
     private static int scanTimestampIndex(ScanPlan scan) {
-        return scan.isTimestampDropped() ? -1 : scan.getOutput().getTimestampIndex();
+        return scan.getAccessPath() != null && scan.isTimestampDropped() ? -1 : scan.getOutput().getTimestampIndex();
     }
 
     private static int setOperation(SetOperationPlan operation) {
@@ -978,10 +980,6 @@ public final class PhysicalProperties {
     }
 
     /**
-     * The direction of the factory under the filter a parallel GROUP BY or window join steals from the plan: the
-     * frames of a self-filtering pattern scan, else the direction of {@code properties}, the properties of the plan.
-     */
-    /**
      * The table the sorted LIMIT over the sort under {@code plan}, read through stable projections, reports: the
      * input's when the input delivers the order and applies the LIMIT, so no sort runs, and the parallel top-K's, which
      * reports the table of the page frames it reads unless it builds a projection over itself; none for a sort.
@@ -1007,13 +1005,17 @@ public final class PhysicalProperties {
         };
     }
 
+    /**
+     * The direction of the factory under the filter a parallel GROUP BY or window join steals from the plan: the
+     * frames of a self-filtering pattern scan, else the direction of {@code properties}, the properties of the plan.
+     */
     private static ScanDirection stolenFilterDirection(LogicalPlan plan, int properties) {
         LogicalPlan filtered = plan;
         while (true) {
             if (filtered instanceof ProjectPlan project && !LogicalPlans.isComputedProjection(project)) {
                 filtered = project.getChild();
             } else if (filtered instanceof FilterPlan filter && !(filter.getChild() instanceof ScanPlan)
-                    && filter.getPredicate() instanceof ConstantExpression constant && constant.getLongValue() != 0) {
+                    && filter.getAlgorithm() == FilterPlan.Algorithm.FOLDED_TRUE) {
                 filtered = filter.getChild();
             } else {
                 break;
@@ -1076,23 +1078,22 @@ public final class PhysicalProperties {
                 }
                 final int index = input.getOutput().getColumnIndexById(column.getColumnId());
                 if (index < 0) {
-                    yield Capability.UNKNOWN;
+                    yield Capability.NO;
                 }
                 if (!LogicalPlans.isComputedProjection(project)) {
                     yield supportsLongTopK(input, sortedLimit, index);
                 }
                 final int type = input.getOutput().getColumnType(index);
-                if (project.hasUpdateConversions()) {
-                    yield Capability.UNKNOWN;
-                }
-                if (type != ColumnType.LONG && !ColumnType.isTimestamp(type)) {
+                if (type != ColumnType.LONG && !ColumnType.isTimestamp(type)
+                        || project.hasUpdateConversions() && LogicalPlans.isUpdateCast(type, project.getUpdateTargetTypes().getQuick(columnIndex))) {
                     yield Capability.NO;
                 }
                 yield and(capability(project(project, sortedLimit), RANDOM_ACCESS),
                         supportsLongTopK(input, sortedLimit, index));
             }
-            case FilterPlan filter -> PlanToFactoryRules.isFusedFilter(filter)
-                    || !LogicalPlans.isConstant(filter.getPredicate()) ? Capability.NO : supportsLongTopK(filter.getChild(), null, columnIndex);
+            case FilterPlan filter -> PlanToFactoryRules.isFusedFilter(filter) ? Capability.NO
+                    : filter.getAlgorithm() == FilterPlan.Algorithm.FOLDED_TRUE ? supportsLongTopK(filter.getChild(), null, columnIndex)
+                    : wrapped(filter.getAlgorithm(), Capability.NO);
             case SortPlan sort -> {
                 final Capability isPassedThrough = isSortPassedThrough(sort, sortedLimit);
                 yield isPassedThrough == Capability.YES ? supportsLongTopK(sort.getChild(), null, columnIndex) : isPassedThrough;
@@ -1113,7 +1114,7 @@ public final class PhysicalProperties {
                 case null -> Capability.UNKNOWN;
             };
             case FilterPlan filter -> PlanToFactoryRules.isFusedFilter(filter) ? Capability.NO
-                    : wrapped(filter.getPredicate(), supportsSharedCursors(filter.getChild(), null));
+                    : wrapped(filter.getAlgorithm(), supportsSharedCursors(filter.getChild(), null));
             case ProjectPlan project ->
                     PlanToFactoryRules.projectionFactory(project) != PlanToFactoryRules.ProjectionFactory.SELECTION
                             ? Capability.NO : supportsSharedCursors(project.getChild(), sortedLimit);
@@ -1139,7 +1140,7 @@ public final class PhysicalProperties {
             case ScanPlan scan -> scanTimeFrame(scan);
             case FilterPlan filter ->
                     PlanToFactoryRules.fusedScan(filter) instanceof ScanPlan scan ? scanTimeFrame(scan)
-                            : wrapped(filter.getPredicate(), supportsTimeFrameCursor(filter.getChild(), null));
+                            : wrapped(filter.getAlgorithm(), supportsTimeFrameCursor(filter.getChild(), null));
             case ProjectPlan project -> switch (PlanToFactoryRules.projectionFactory(project)) {
                 case WINDOW, VIRTUAL -> Capability.NO;
                 case WINDOW_JOIN -> windowJoinTimeFrame((WindowJoinPlan) project.getChild());
@@ -1246,9 +1247,9 @@ public final class PhysicalProperties {
 
     /**
      * Folds the steps of the window join: a step whose filter is constant false null-extends its master, keeping the
-     * master's properties but its page frames when it pads a count, see {@link WindowJoinStep#getNullExtension}, and any
-     * other step is a serial or parallel window join, of which only the serial one follows the master's advice and
-     * exposes its base chain.
+     * master's properties, and any other step is a serial or parallel window join, of which only the serial one follows
+     * the master's advice and exposes its base chain. The page frames of the master pass through only when every step
+     * pads with NULL, see {@link WindowJoinPlan#getNullExtension()}.
      */
     private static int windowJoin(WindowJoinPlan windowJoin) {
         if (windowJoin.isEmpty()) {
@@ -1259,21 +1260,16 @@ public final class PhysicalProperties {
         final ObjList<WindowJoinStep> steps = windowJoin.getSteps();
         for (int i = 0, n = steps.size(); i < n; i++) {
             final WindowJoinStep step = steps.getQuick(i);
-            switch (step.getNullExtension()) {
-                case NONE -> {
-                    final WindowJoinStep.Algorithm algorithm = step.getAlgorithm();
-                    final Capability isSerial = algorithm == null ? Capability.UNKNOWN : Capability.of(algorithm == WindowJoinStep.Algorithm.SERIAL);
-                    final ScanDirection direction = algorithm == WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER
-                            ? stolenFilterDirection(windowJoin.getMaster(), master) : direction(properties);
-                    properties = properties(Capability.NO, Capability.NO, Capability.NO, and(isSerial, capability(properties, ORDER_ADVICE)),
-                            direction, and(isSerial, capability(properties, LONG_SEQUENCE)));
-                }
-                case EMPTY_VALUES -> properties = with(properties, PAGE_FRAMES, Capability.NO);
-                case NULL_PADDING -> {
-                }
+            if (step.getNullExtension() == WindowJoinStep.NullExtension.NONE) {
+                final WindowJoinStep.Algorithm algorithm = step.getAlgorithm();
+                final Capability isSerial = algorithm == null ? Capability.UNKNOWN : Capability.of(algorithm == WindowJoinStep.Algorithm.SERIAL);
+                final ScanDirection direction = algorithm == WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER
+                        ? stolenFilterDirection(windowJoin.getMaster(), master) : direction(properties);
+                properties = properties(Capability.NO, Capability.NO, Capability.NO, and(isSerial, capability(properties, ORDER_ADVICE)),
+                        direction, and(isSerial, capability(properties, LONG_SEQUENCE)));
             }
         }
-        return properties;
+        return windowJoin.getNullExtension() == WindowJoinStep.NullExtension.NULL_PADDING ? properties : with(properties, PAGE_FRAMES, Capability.NO);
     }
 
     /**
@@ -1328,12 +1324,16 @@ public final class PhysicalProperties {
     }
 
     /**
-     * The property of the factory the generator builds over an input with the property {@code input} for the
-     * predicate: the input's when the predicate is absent or folds to true, none when it folds to false or when a
-     * filter or gate wraps the input.
+     * The property of the factory the generator builds over an input with the property {@code input} for a predicate it
+     * applies as {@code algorithm} says, see {@link #filtered}: the input's when it folds the predicate to true, none
+     * when it folds it to false or when a filter or gate wraps the input, unknown before operator planning.
      */
-    private static Capability wrapped(@Nullable BoundExpression predicate, Capability input) {
-        return predicate == null || predicate instanceof ConstantExpression constant && constant.getLongValue() != 0 ? input : Capability.NO;
+    private static Capability wrapped(@Nullable FilterPlan.Algorithm algorithm, Capability input) {
+        return switch (algorithm) {
+            case FOLDED_TRUE -> input;
+            case null -> Capability.UNKNOWN;
+            default -> Capability.NO;
+        };
     }
 
     /**

@@ -396,6 +396,22 @@ public class ExtractFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullPart() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts " + timestampType.getTypeName() + ")");
+            assertQuery("SELECT extract(null, ts) FROM t")
+                    .noLeakCheck()
+                    .fails(15, "part cannot be NULL");
+            assertQuery("SELECT extract(null::string, ts) FROM t")
+                    .noLeakCheck()
+                    .fails(19, "part cannot be NULL");
+            assertQuery("SELECT ts FROM t WHERE extract(null, ts) = 2020")
+                    .noLeakCheck()
+                    .fails(31, "part cannot be NULL");
+        });
+    }
+
+    @Test
     public void testQuarterFirst1() throws Exception {
         assertQuery("select extract(quarter from '2022-01-11T22:00:30.555555123Z'::" + timestampType.getTypeName() + ")")
                 .ddl(null)

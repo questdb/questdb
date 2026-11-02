@@ -87,6 +87,7 @@ public final class WindowPlan extends UnaryPlan {
      * The window factory operator planning records for the window; null before planning.
      */
     public Algorithm getAlgorithm() {
+        checkPhysicalRead("WindowPlan.algorithm");
         return algorithm;
     }
 
@@ -128,6 +129,19 @@ public final class WindowPlan extends UnaryPlan {
 
     public void setAlgorithm(Algorithm algorithm) {
         this.algorithm = algorithm;
+    }
+
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.columnIds("functionColumnIds", functionColumnIds);
+        visitor.columnIds("queryOrder", queryOrder.getColumnIds());
+        visitor.facts("queryOrder", queryOrder.getDirections());
+        for (int i = 0, n = specs.size(); i < n; i++) {
+            specs.getQuick(i).visitFacts(visitor);
+        }
+        visitor.fact("algorithm", algorithm);
+        visitor.fact("isSelectOrdered", isSelectOrdered);
     }
 
     @Override

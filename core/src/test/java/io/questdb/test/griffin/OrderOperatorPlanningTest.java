@@ -139,7 +139,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                 // which fixes the master.
                 sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
                 assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class,
-                        join -> Assert.assertEquals(JoinInput.MasterSide.FIXED, join.getOrderedInputs().getQuick(1).getMasterSide()));
+                        join -> Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
                 // The GROUP BY fused into the join builds its own hash table and computes only aggregates whose result
                 // does not depend on the order of rows, and its output designates no timestamp, so nothing reads the
                 // order of the join, which lets the smaller input drive it.
@@ -147,7 +147,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                 assertPlanned(engine, sqlExecutionContext, sql, AggregatePlan.class,
                         aggregate -> Assert.assertEquals(AggregatePlan.Algorithm.HASH_JOIN, aggregate.getAlgorithm()));
                 assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class,
-                        join -> Assert.assertEquals(JoinInput.MasterSide.SMALLER, join.getOrderedInputs().getQuick(1).getMasterSide()));
+                        join -> Assert.assertTrue(join.getOrderedInputs().getQuick(1).isSmallerDriven()));
             } finally {
                 sqlExecutionContext.popTimestampRequiredFlag();
             }
@@ -170,7 +170,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             sqlExecutionContext.pushTimestampRequiredFlag(true);
             try {
                 assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class,
-                        join -> Assert.assertEquals(JoinInput.MasterSide.SMALLER, join.getOrderedInputs().getQuick(1).getMasterSide()));
+                        join -> Assert.assertTrue(join.getOrderedInputs().getQuick(1).isSmallerDriven()));
             } finally {
                 sqlExecutionContext.popTimestampRequiredFlag();
             }
@@ -352,9 +352,9 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             final String unordered = "SELECT a.x, b.y FROM t a JOIN u b ON a.x = b.x";
             final String ordered = unordered + " ORDER BY a.ts";
             assertPlanned(engine, sqlExecutionContext, unordered, JoinPlan.class,
-                    join -> Assert.assertEquals(JoinInput.MasterSide.SMALLER, join.getOrderedInputs().getQuick(1).getMasterSide()));
+                    join -> Assert.assertTrue(join.getOrderedInputs().getQuick(1).isSmallerDriven()));
             assertPlanned(engine, sqlExecutionContext, ordered, JoinPlan.class,
-                    join -> Assert.assertEquals(JoinInput.MasterSide.FIXED, join.getOrderedInputs().getQuick(1).getMasterSide()));
+                    join -> Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
             // The smaller master drives the hash join from its slave unless a consumer reads the master's order.
             assertQuery(unordered)
                     .noRandomAccess()
@@ -424,12 +424,12 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             createTables();
             final String empty = "SELECT a.ts, a.x FROM t a JOIN u b ON a.x = b.x AND false";
             assertPlanned(engine, sqlExecutionContext, empty, JoinPlan.class,
-                    join -> Assert.assertEquals(JoinInput.MasterSide.SMALLER, join.getOrderedInputs().getQuick(1).getMasterSide()));
+                    join -> Assert.assertTrue(join.getOrderedInputs().getQuick(1).isSmallerDriven()));
             // The constant-false step emits no rows, yet its empty factory designates the timestamp the side keeps.
             assertPlanned(engine, sqlExecutionContext, "SELECT ts, count() FROM (" + empty + ") SAMPLE BY 1d ALIGN TO FIRST OBSERVATION", JoinPlan.class,
-                    join -> Assert.assertEquals(JoinInput.MasterSide.FIXED, join.getOrderedInputs().getQuick(1).getMasterSide()));
+                    join -> Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
             assertPlanned(engine, sqlExecutionContext, "SELECT a.ts, count() FROM t a JOIN u b ON a.x = b.x WHERE false SAMPLE BY 1d ALIGN TO FIRST OBSERVATION", JoinPlan.class,
-                    join -> Assert.assertEquals(JoinInput.MasterSide.FIXED, join.getOrderedInputs().getQuick(1).getMasterSide()));
+                    join -> Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
         });
     }
 
@@ -574,7 +574,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             createSwappableJoinTables();
             final String sql = SWAPPABLE_JOIN + " ORDER BY ts";
             assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class,
-                    join -> Assert.assertEquals(JoinInput.MasterSide.FIXED, join.getOrderedInputs().getQuick(1).getMasterSide()));
+                    join -> Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
             assertQuery(sql)
                     .timestamp("ts")
                     .noRandomAccess()
@@ -1245,7 +1245,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createSwappableJoinTables();
             assertPlanned(engine, sqlExecutionContext, SWAPPABLE_JOIN, JoinPlan.class,
-                    join -> Assert.assertEquals(JoinInput.MasterSide.SMALLER, join.getOrderedInputs().getQuick(1).getMasterSide()));
+                    join -> Assert.assertTrue(join.getOrderedInputs().getQuick(1).isSmallerDriven()));
             assertQuery(SWAPPABLE_JOIN)
                     .noRandomAccess()
                     .withPlan("""
@@ -1810,7 +1810,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                                         Frame forward scan on: a
                     """;
             assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class,
-                    join -> Assert.assertEquals(JoinInput.MasterSide.SMALLER, join.getOrderedInputs().getQuick(1).getMasterSide()));
+                    join -> Assert.assertTrue(join.getOrderedInputs().getQuick(1).isSmallerDriven()));
             assertQuery(sql)
                     .noRandomAccess()
                     .withPlan(swappedPlan)
@@ -1839,7 +1839,7 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                             """);
             final String ordered = sql + " ORDER BY ts";
             assertPlanned(engine, sqlExecutionContext, ordered, JoinPlan.class,
-                    join -> Assert.assertEquals(JoinInput.MasterSide.FIXED, join.getOrderedInputs().getQuick(1).getMasterSide()));
+                    join -> Assert.assertEquals(JoinInput.BuildSide.FIXED_MASTER, join.getOrderedInputs().getQuick(1).getBuildSide()));
             assertQuery(ordered)
                     .timestamp("ts")
                     .noRandomAccess()

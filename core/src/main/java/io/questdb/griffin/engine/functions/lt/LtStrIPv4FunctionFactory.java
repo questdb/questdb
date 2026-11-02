@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.lt;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -41,11 +40,6 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class LtStrIPv4FunctionFactory implements FunctionFactory {
-    @Override
-    public int getResultType(IntList argTypes) {
-        return ColumnType.BOOLEAN;
-    }
-
     @Override
     public String getSignature() {
         return "<(SX)";
@@ -74,6 +68,11 @@ public class LtStrIPv4FunctionFactory implements FunctionFactory {
             return new RuntimeConstStrFunc(strFunc, ipv4Func);
         }
         throw SqlException.$(strFuncPosition, "STRING constant expected");
+    }
+
+    @Override
+    public boolean supportImplicitCastCharToStr() {
+        return false;
     }
 
     private static class ConstStrFunc extends ComparisonFunction implements UnaryFunction {

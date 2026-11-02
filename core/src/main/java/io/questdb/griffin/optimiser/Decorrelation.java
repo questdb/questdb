@@ -52,6 +52,7 @@ import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
@@ -207,7 +208,18 @@ final class Decorrelation implements OptimiserPass {
         return "decorrelation";
     }
 
-    void verify(LogicalPlan plan, PlanVerifier verifier) {
+    @Override
+    public PlanStage getProducedStage() {
+        return PlanStage.DECORRELATED;
+    }
+
+    @Override
+    public PlanStage getRequiredStage() {
+        return PlanStage.JOINS_ORDERED;
+    }
+
+    @Override
+    public void verify(LogicalPlan plan, PlanVerifier verifier) {
         try {
             verifier.verifyDecorrelation(plan, getName(), verificationCarriers);
         } finally {

@@ -32,7 +32,6 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.IntList;
@@ -43,7 +42,7 @@ import io.questdb.std.Rnd;
 public class TimestampShuffleFunctionFactory implements FunctionFactory {
     @Override
     public int getResultType(IntList argTypes) {
-        return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(0), argTypes.getQuick(1));
+        return ColumnType.getImplicitTimestampType(argTypes.getQuick(0), argTypes.getQuick(1));
     }
 
     @Override
@@ -63,8 +62,7 @@ public class TimestampShuffleFunctionFactory implements FunctionFactory {
         Function arg2 = args.getQuick(1);
         int argType = ColumnType.getTimestampType(arg.getType());
         int arg2Type = ColumnType.getTimestampType(arg2.getType());
-        int timestampType = ColumnType.getHigherPrecisionTimestampType(argType, arg2Type);
-        timestampType = ColumnType.getHigherPrecisionTimestampType(timestampType, ColumnType.TIMESTAMP_MICRO);
+        int timestampType = ColumnType.getImplicitTimestampType(arg.getType(), arg2.getType());
         TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
         long start = driver.from(arg.getTimestamp(null), argType);
         long end = driver.from(arg2.getTimestamp(null), arg2Type);

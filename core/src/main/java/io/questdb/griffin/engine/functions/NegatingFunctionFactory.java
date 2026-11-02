@@ -91,4 +91,9 @@ public class NegatingFunctionFactory implements FunctionFactory {
         }
         throw SqlException.$(position, "negating operation is not supported for result of function ").put(delegate.getSignature());
     }
+
+    @Override
+    public boolean supportImplicitCastCharToStr() {
+        return delegate.supportImplicitCastCharToStr();
+    }
 }

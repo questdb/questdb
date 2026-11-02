@@ -115,6 +115,17 @@ public final class JoinKey implements Mutable {
         }
     }
 
+    static void visitFacts(ObjList<JoinKey> keys, PlanFactVisitor visitor) {
+        visitor.fact("keys", keys.size());
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final JoinKey key = keys.getQuick(i);
+            visitor.fact("lookupKeyIndex", key.lookupKeyIndex);
+            visitor.fact("masterName", key.masterName);
+            visitor.fact("position", key.position);
+            visitor.fact("slaveName", key.slaveName);
+        }
+    }
+
     static boolean visitReads(ObjList<JoinKey> keys, PlanExpressionVisitor visitor) {
         boolean isChanged = false;
         for (int i = 0, n = keys.size(); i < n; i++) {

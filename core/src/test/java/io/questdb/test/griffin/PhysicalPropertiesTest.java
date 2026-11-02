@@ -24,10 +24,15 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.engine.table.ExtraNullColumnCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.optimiser.PlanVerifier;
 import io.questdb.griffin.plan.logical.AggregatePlan;
@@ -38,6 +43,7 @@ import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.PhysicalProperties.Capability;
 import io.questdb.griffin.plan.logical.PhysicalProperties.ScanDirection;
+import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
@@ -118,6 +124,39 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterShapeRecordedByPlanning() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            final String limited = "SELECT * FROM (SELECT x, count() c FROM t GROUP BY x ORDER BY x LIMIT 3) WHERE ";
+            assertFilterAlgorithm(FilterPlan.Algorithm.FOLDED_FALSE, limited + "abs(-1) = 2");
+            assertFilterAlgorithm(FilterPlan.Algorithm.GATE, limited + "now() > '2000-01-01'");
+            assertFilterAlgorithm(FilterPlan.Algorithm.SERIAL, limited + "c > 0");
+            assertResidualAlgorithm(FilterPlan.Algorithm.GATE, Capability.YES, "SELECT ts, x FROM t WHERE now() > '2000-01-01'");
+            assertPlanned(engine, sqlExecutionContext, limited + "abs(-1) = 2", FilterPlan.class, filter -> {
+                Assert.assertEquals(Capability.YES, PhysicalProperties.supportsRandomAccess(filter));
+                Assert.assertEquals(Capability.NO, PhysicalProperties.supportsLongTopK(filter, 0));
+                Assert.assertEquals(Capability.NO, PhysicalProperties.supportsTimeFrameCursor(filter));
+            });
+            assertPlanned(engine, sqlExecutionContext, "SELECT * FROM t a JOIN t b ON a.x = b.x AND a.ts < b.ts", JoinPlan.class,
+                    join -> Assert.assertEquals(FilterPlan.Algorithm.SERIAL, join.getOrderedInputs().getQuick(1).getFilterAlgorithm()));
+            assertQuery(limited + "abs(-1) = 2")
+                    .expectSize()
+                    .withPlan("""
+                            Empty table
+                            """)
+                    .returns("x\tc\n");
+            assertQuery(limited + "now() > '2000-01-01' ORDER BY x")
+                    .expectSize()
+                    .returns("""
+                            x\tc
+                            1\t1
+                            2\t1
+                            3\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testFoldedConstantPredicatesKeepPropertiesKnown() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
@@ -151,6 +190,54 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                             3\t3
                             4\t4
                             """);
+        });
+    }
+
+    @Test
+    public void testFullJoinHashesSmallerInputAtExecution() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fm (k INT, a INT)");
+            execute("CREATE TABLE fs (k INT, b INT)");
+            execute("INSERT INTO fs VALUES (1, 10), (2, 20)");
+            final String keyed = "SELECT fm.k mk, fm.a, fs.k sk, fs.b FROM fm FULL JOIN fs ON fm.k = fs.k ORDER BY sk, mk";
+            final String filtered = "SELECT fm.k mk, fm.a, fs.k sk, fs.b FROM fm FULL JOIN fs ON fm.k = fs.k AND fm.a < fs.b ORDER BY sk, mk";
+            for (String sql : new String[]{keyed, filtered}) {
+                assertPlanned(engine, sqlExecutionContext, sql, JoinPlan.class, join -> {
+                    final JoinInput step = join.getOrderedInputs().getQuick(1);
+                    Assert.assertEquals(JoinInput.Algorithm.LIGHT_HASH, step.getAlgorithm());
+                    Assert.assertEquals(JoinInput.BuildSide.SMALLER, step.getBuildSide());
+                    Assert.assertFalse(step.isSmallerDriven());
+                });
+            }
+            final String emptyMaster = """
+                    mk\ta\tsk\tb
+                    null\tnull\t1\t10
+                    null\tnull\t2\t20
+                    """;
+            assertQuery(keyed).returns(emptyMaster);
+            assertQuery(filtered).returns(emptyMaster);
+            execute("INSERT INTO fm VALUES (1, 5)");
+            final String smallerMaster = """
+                    mk\ta\tsk\tb
+                    1\t5\t1\t10
+                    null\tnull\t2\t20
+                    """;
+            assertQuery(keyed).returns(smallerMaster);
+            assertQuery(filtered).returns(smallerMaster);
+            execute("INSERT INTO fm VALUES (2, 50), (3, 7)");
+            assertQuery(keyed).returns("""
+                    mk\ta\tsk\tb
+                    3\t7\tnull\tnull
+                    1\t5\t1\t10
+                    2\t50\t2\t20
+                    """);
+            assertQuery(filtered).returns("""
+                    mk\ta\tsk\tb
+                    2\t50\tnull\tnull
+                    3\t7\tnull\tnull
+                    1\t5\t1\t10
+                    null\tnull\t2\t20
+                    """);
         });
     }
 
@@ -395,6 +482,31 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                             3
                             """);
         });
+    }
+
+    @Test
+    public void testNullPaddingDeniesLongTopKOfPaddedColumns() {
+        final GenericRecordMetadata baseMetadata = new GenericRecordMetadata();
+        baseMetadata.add(new TableColumnMetadata("x", ColumnType.LONG));
+        baseMetadata.add(new TableColumnMetadata("c", ColumnType.LONG));
+        final GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(baseMetadata);
+        metadata.add(new TableColumnMetadata("s", ColumnType.LONG));
+        final RecordCursorFactory base = new AbstractRecordCursorFactory(baseMetadata) {
+            @Override
+            public boolean recordCursorSupportsLongTopK(int columnIndex) {
+                return getMetadata().getColumnType(columnIndex) == ColumnType.LONG;
+            }
+
+            @Override
+            public boolean recordCursorSupportsRandomAccess() {
+                return true;
+            }
+        };
+        try (RecordCursorFactory padded = new ExtraNullColumnCursorFactory(metadata, 2, base)) {
+            Assert.assertTrue(padded.recordCursorSupportsLongTopK(0));
+            Assert.assertTrue(padded.recordCursorSupportsLongTopK(1));
+            Assert.assertFalse(padded.recordCursorSupportsLongTopK(2));
+        }
     }
 
     @Test
@@ -793,6 +905,27 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUndecidedAccessPathKeepsScanTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            try (
+                    SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                    RecordCursorFactory ignored = compiler.compile("SELECT ts, x FROM t", sqlExecutionContext).getRecordCursorFactory()
+            ) {
+                LogicalPlan plan = compiler.getPlanForTesting();
+                while (!(plan instanceof ScanPlan)) {
+                    plan = plan.inputAt(0);
+                }
+                final ScanPlan scan = (ScanPlan) plan;
+                Assert.assertEquals(0, scan.getOutput().getTimestampIndex());
+                Assert.assertEquals(0, PhysicalProperties.timestampIndex(scan));
+                scan.clearAccessPath();
+                Assert.assertEquals(0, PhysicalProperties.timestampIndex(scan));
+            }
+        });
+    }
+
+    @Test
     public void testWindowJoinAlgorithmFollowsAggregates() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY");
@@ -922,7 +1055,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                     RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
             ) {
                 final LogicalPlan plan = compiler.getPlanForTesting();
-                PlanVerifier.newStandalone().verifyAccessPaths(plan);
+                PlanVerifier.newStandalone().verify(plan, PlanStage.PHYSICAL, "access path planning");
                 final Capability isRandomAccess = PhysicalProperties.supportsRandomAccess(plan);
                 final Capability isPageFrameSupported = PhysicalProperties.supportsPageFrameCursor(plan);
                 final Capability isTimeFrameSupported = PhysicalProperties.supportsTimeFrameCursor(plan);

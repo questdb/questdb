@@ -150,7 +150,22 @@ public final class ProjectPlan extends UnaryPlan {
     }
 
     public void setRequestedOrderColumnId(int requestedOrderColumnId) {
+        checkRewritable("ProjectPlan.setRequestedOrderColumnId");
         this.requestedOrderColumnId = requestedOrderColumnId;
+    }
+
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.columnIds("requestedOrder", requestedOrder.getColumnIds());
+        visitor.facts("requestedOrder", requestedOrder.getDirections());
+        visitor.facts("updateTargetTypes", updateTargetTypes);
+        visitor.fact("distinctColumnCount", distinctColumnCount);
+        visitor.fact("distinctWindowColumnCount", distinctWindowColumnCount);
+        visitor.fact("hasPrunedComputedColumns", hasPrunedComputedColumns);
+        visitor.fact("hasTimestampDeclaration", hasTimestampDeclaration);
+        visitor.fact("isImplied", isImplied);
+        visitor.columnId("requestedOrderColumnId", requestedOrderColumnId);
     }
 
     @Override

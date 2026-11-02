@@ -85,7 +85,7 @@ public final class SymbolKeyExtractor implements Mutable {
      */
     public static Function instantiateValue(BoundExpression value, OutputSchema input, RecordMetadata metadata,
                                             FunctionInstantiator instantiator, SqlExecutionContext executionContext) throws SqlException {
-        if (value instanceof ConstantExpression constant) {
+        if (value instanceof ConstantExpression constant && ColumnType.tagOf(constant.getDataType()) != ColumnType.STRING) {
             return switch (ColumnType.tagOf(constant.getDataType())) {
                 case ColumnType.CHAR -> constant.getLongValue() == 0 ? StrConstant.NULL
                         : StrConstant.fromValue(SingleCharCharSequence.get((char) constant.getLongValue()));

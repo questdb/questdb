@@ -74,6 +74,7 @@ public class RndSymbolWeightedFunctionFactory implements FunctionFactory {
         final int pairCount = args.size() / 2;
         final ObjList<String> symbols = new ObjList<>(pairCount);
         final DoubleList weights = new DoubleList(pairCount);
+        double totalWeight = 0.0;
 
         // Extract symbol-weight pairs
         for (int i = 0; i < pairCount; i++) {
@@ -85,7 +86,10 @@ public class RndSymbolWeightedFunctionFactory implements FunctionFactory {
             if (!symbolFunc.isConstant()) {
                 throw SqlException.$(argPositions.getQuick(symbolIdx), "constant expected");
             }
-            CharSequence symbolValue = symbolFunc.getStrA(null);
+            final int symbolType = symbolFunc.getType();
+            final CharSequence symbolValue = ColumnType.isSymbolOrStringOrVarchar(symbolType) || ColumnType.isChar(symbolType)
+                    ? symbolFunc.getStrA(null)
+                    : null;
             if (symbolValue == null) {
                 throw SqlException.$(argPositions.getQuick(symbolIdx), "STRING constant expected");
             }
@@ -96,12 +100,21 @@ public class RndSymbolWeightedFunctionFactory implements FunctionFactory {
             if (!weightFunc.isConstant()) {
                 throw SqlException.$(argPositions.getQuick(weightIdx), "constant weight expected");
             }
-            double weight = weightFunc.getDouble(null);
+            final double weight = switch (ColumnType.tagOf(weightFunc.getType())) {
+                case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT,
+                     ColumnType.DOUBLE, ColumnType.NULL, ColumnType.CHAR, ColumnType.STRING, ColumnType.VARCHAR ->
+                        weightFunc.getDouble(null);
+                default -> throw SqlException.$(argPositions.getQuick(weightIdx), "numeric weight expected");
+            };
 
             if (weight < 0 || Double.isNaN(weight)) {
                 throw SqlException.$(argPositions.getQuick(weightIdx), "weight must be non-negative");
             }
             weights.add(weight);
+            totalWeight += weight;
+        }
+        if (totalWeight == 0) {
+            throw SqlException.$(position, "total weight must be positive");
         }
 
         return new Func(symbols, weights);
@@ -125,10 +138,6 @@ public class RndSymbolWeightedFunctionFactory implements FunctionFactory {
             double totalWeight = 0.0;
             for (int i = 0; i < count; i++) {
                 totalWeight += weights.getQuick(i);
-            }
-
-            if (totalWeight == 0) {
-                throw new IllegalArgumentException("total weight must be positive");
             }
 
             // Build cumulative probability distribution

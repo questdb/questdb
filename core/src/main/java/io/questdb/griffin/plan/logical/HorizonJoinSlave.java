@@ -24,14 +24,13 @@
 
 package io.questdb.griffin.plan.logical;
 
-import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjectPool;
 
 import java.util.Objects;
 
-public final class HorizonJoinSlave implements Mutable {
+public final class HorizonJoinSlave implements PlanFactSource {
     public static final ObjectFactory<HorizonJoinSlave> FACTORY = HorizonJoinSlave::new;
     private final ObjectPool<JoinKey> keyPool = new ObjectPool<>(JoinKey.FACTORY, 1, 1);
     private final ObjList<JoinKey> keys = new ObjList<>();
@@ -92,7 +91,15 @@ public final class HorizonJoinSlave implements Mutable {
         this.input = Objects.requireNonNull(input);
     }
 
-    void visitReads(PlanExpressionVisitor visitor) {
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        JoinKey.visitFacts(keys, visitor);
+        visitor.fact("alias", alias);
+        visitor.fact("position", position);
+    }
+
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
         JoinKey.visitReads(keys, visitor);
         keyCheck = PlanReads.expression(keyCheck, visitor);
     }

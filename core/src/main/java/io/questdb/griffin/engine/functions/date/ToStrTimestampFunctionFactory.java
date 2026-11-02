@@ -31,7 +31,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
-import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.StrFunction;
@@ -64,7 +63,7 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
     @Override
     public boolean isConstructionDeferrable(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration) throws SqlException {
         final Function var = args.getQuick(0);
-        timestampFormat(args.getQuick(1), argPositions, ColumnType.getTimestampDriver(ResultTypes.timestampAtLeastMicros(var.getType())));
+        timestampFormat(args.getQuick(1), argPositions, ColumnType.getTimestampDriver(ColumnType.getImplicitTimestampType(var.getType())));
         return !var.isConstant();
     }
 
@@ -77,7 +76,7 @@ public class ToStrTimestampFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         Function var = args.getQuick(0);
-        TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(var.getType()), ColumnType.TIMESTAMP_MICRO));
+        TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getImplicitTimestampType(var.getType()));
         DateFormat timestampFormat = timestampFormat(args.getQuick(1), argPositions, driver);
         if (var.isConstant()) {
             long value = var.getTimestamp(null);

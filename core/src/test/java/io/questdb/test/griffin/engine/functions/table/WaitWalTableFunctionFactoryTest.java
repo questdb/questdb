@@ -148,13 +148,18 @@ public class WaitWalTableFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullCharTableName() throws Exception {
+        assertMemoryLeak(() -> assertException("select wait_wal_table(null::char)", 26, "table name cannot be NULL"));
+    }
+
+    @Test
     public void testNullTableNameOneArg() throws Exception {
         assertMemoryLeak(() -> {
             try {
                 select("select wait_wal_table(null::string)").close();
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage(), e.getMessage().contains("tableName cannot be NULL"));
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("table name cannot be NULL"));
             }
         });
     }
@@ -166,7 +171,7 @@ public class WaitWalTableFunctionFactoryTest extends AbstractCairoTest {
                 select("select wait_wal_table(null::string, 1)").close();
                 Assert.fail("expected SqlException");
             } catch (SqlException e) {
-                Assert.assertTrue(e.getMessage(), e.getMessage().contains("tableName cannot be NULL"));
+                Assert.assertTrue(e.getMessage(), e.getMessage().contains("table name cannot be NULL"));
             }
         });
     }

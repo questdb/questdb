@@ -49,12 +49,15 @@ public class RndIPv4CCFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "rnd_ipv4(ii)";
+        return "rnd_ipv4(si)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        CharSequence subnetStr = args.getQuick(0).getStrA(null);
+        final CharSequence subnetStr = args.getQuick(0).getStrA(null);
+        if (subnetStr == null) {
+            throw SqlException.$(argPositions.getQuick(0), "subnet cannot be NULL");
+        }
         int nullRate = args.getQuick(1).getInt(null);
 
         try {

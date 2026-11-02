@@ -52,17 +52,22 @@ public final class WindowJoinPlan extends LogicalPlan {
     }
 
     /**
-     * How the window join null-extends its master through all its steps, see {@link WindowJoinStep#getNullExtension}:
-     * {@link WindowJoinStep.NullExtension#NONE} when it is empty or a step joins, so its factory does not pass the master
-     * through, {@link WindowJoinStep.NullExtension#NULL_PADDING} when every step pads with NULL, so it also passes the
-     * master's page and time frames through, and {@link WindowJoinStep.NullExtension#EMPTY_VALUES} otherwise.
+     * How the window join null-extends its master through all its steps, see {@link #getNullExtension(int)}, and
+     * {@link WindowJoinStep.NullExtension#NONE} when it is empty.
      */
     public WindowJoinStep.NullExtension getNullExtension() {
-        if (isEmpty) {
-            return WindowJoinStep.NullExtension.NONE;
-        }
+        return isEmpty ? WindowJoinStep.NullExtension.NONE : getNullExtension(steps.size());
+    }
+
+    /**
+     * How the first {@code stepCount} steps null-extend the master, see {@link WindowJoinStep#getNullExtension}:
+     * {@link WindowJoinStep.NullExtension#NONE} when one of them joins, so the factory of the last one does not pass the
+     * master through, {@link WindowJoinStep.NullExtension#NULL_PADDING} when every one pads with NULL, so it also passes
+     * the master's page and time frames through, and {@link WindowJoinStep.NullExtension#EMPTY_VALUES} otherwise.
+     */
+    public WindowJoinStep.NullExtension getNullExtension(int stepCount) {
         WindowJoinStep.NullExtension nullExtension = WindowJoinStep.NullExtension.NULL_PADDING;
-        for (int i = 0, n = steps.size(); i < n; i++) {
+        for (int i = 0; i < stepCount; i++) {
             switch (steps.getQuick(i).getNullExtension()) {
                 case NONE -> {
                     return WindowJoinStep.NullExtension.NONE;
@@ -104,6 +109,7 @@ public final class WindowJoinPlan extends LogicalPlan {
 
     @Override
     public void replaceInput(int index, LogicalPlan input) {
+        checkRewritable("WindowJoinPlan.replaceInput");
         if (index == 0) {
             master = Objects.requireNonNull(input);
         } else {
@@ -113,6 +119,15 @@ public final class WindowJoinPlan extends LogicalPlan {
 
     public void setEmpty(boolean isEmpty) {
         this.isEmpty = isEmpty;
+    }
+
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        for (int i = 0, n = steps.size(); i < n; i++) {
+            steps.getQuick(i).visitFacts(visitor);
+        }
+        visitor.fact("isEmpty", isEmpty);
     }
 
     @Override

@@ -55,18 +55,18 @@ public class DoubleArrayElemAvgFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        int resolvedDims = AbstractDoubleArrayElemFunction.validateArgsAndResolveDims(
+        final int type = AbstractDoubleArrayElemFunction.validateArgsAndResolveType(
                 position, args, argPositions, "array_elem_avg"
         );
-        return new Func(configuration, position, new ObjList<>(args), resolvedDims);
+        return new Func(configuration, position, new ObjList<>(args), type);
     }
 
     private static final class Func extends AbstractDoubleArrayElemFunction {
         private final DoubleList compensation = new DoubleList();
         private final IntList counts = new IntList();
 
-        Func(CairoConfiguration configuration, int position, ObjList<Function> args, int resolvedDims) {
-            super(configuration, position, args, resolvedDims);
+        Func(CairoConfiguration configuration, int position, ObjList<Function> args, int type) {
+            super(configuration, position, args, type);
         }
 
         @Override

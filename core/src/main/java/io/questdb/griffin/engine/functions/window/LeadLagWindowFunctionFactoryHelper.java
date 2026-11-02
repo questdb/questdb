@@ -88,7 +88,11 @@ public class LeadLagWindowFunctionFactoryHelper {
                 throw SqlException.$(argPositions.getQuick(1), "offset must be a constant");
             }
 
-            offset = offsetFunc.getLong(null);
+            offset = switch (ColumnType.tagOf(offsetFunc.getType())) {
+                case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.NULL,
+                     ColumnType.CHAR, ColumnType.STRING, ColumnType.VARCHAR -> offsetFunc.getLong(null);
+                default -> throw SqlException.$(argPositions.getQuick(1), "offset must be a positive integer");
+            };
             if (offset < 0) {
                 throw SqlException.$(argPositions.getQuick(1), "offset must be a positive integer");
             }

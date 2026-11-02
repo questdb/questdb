@@ -38,6 +38,7 @@ import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
@@ -118,6 +119,16 @@ final class JoinOrdering implements OptimiserPass {
     @Override
     public String getName() {
         return "join order";
+    }
+
+    @Override
+    public PlanStage getProducedStage() {
+        return PlanStage.JOINS_ORDERED;
+    }
+
+    @Override
+    public PlanStage getRequiredStage() {
+        return PlanStage.BOUND;
     }
 
     /**

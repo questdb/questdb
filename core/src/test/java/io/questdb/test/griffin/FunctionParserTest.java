@@ -1121,6 +1121,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
     @Test
     public void testFunctionFactoryException() {
+        final RuntimeException failure = new RuntimeException("oops");
         functions.add(new FunctionFactory() {
             @Override
             public String getSignature() {
@@ -1129,11 +1130,17 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
 
             @Override
             public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-                throw new RuntimeException("oops");
+                throw failure;
             }
         });
-        final GenericRecordMetadata metadata = new GenericRecordMetadata();
-        assertFail(0, "exception in function factory", "x()", metadata);
+        try {
+            parseFunction("x()", new GenericRecordMetadata(), createFunctionParser());
+            fail();
+        } catch (SqlException e) {
+            assertEquals(0, e.getPosition());
+            TestUtils.assertEquals("exception in function factory: oops", e.getFlyweightMessage());
+            assertSame(failure, e.getCause());
+        }
     }
 
     @Test

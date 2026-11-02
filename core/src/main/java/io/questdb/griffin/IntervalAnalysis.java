@@ -40,6 +40,7 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -48,7 +49,8 @@ import io.questdb.std.str.StringSink;
 
 /**
  * The timestamp intervals a scan predicate implies, computed from the bound plan without instantiating any function.
- * The facts match the {@link RuntimeIntervalModel} codegen builds from the same predicate.
+ * Access path planning records static intervals on the scan, from which codegen builds the {@link RuntimeIntervalModel};
+ * codegen extracts intervals that runtime values bound from the same predicate again, with the functions of those values.
  */
 public final class IntervalAnalysis {
     private final PlaceholderBounds bounds = new PlaceholderBounds();
@@ -79,6 +81,13 @@ public final class IntervalAnalysis {
     public void analyse(BoundExpression predicate, int timestampColumnId, int timestampType, int depth, BoundExpressionRewriter rewriter) throws SqlException {
         bounds.clear();
         residual = extractor.analyse(predicate, timestampColumnId, timestampType, depth, bounds, rewriter);
+    }
+
+    /**
+     * How a scan reads its partitions through the intervals, see {@link IntervalExtractor#getIntervalScan()}.
+     */
+    public ScanPlan.IntervalScan getIntervalScan() {
+        return extractor.getIntervalScan();
     }
 
     /**

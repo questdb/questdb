@@ -100,6 +100,32 @@ public class OutputSchemaTest {
     }
 
     @Test
+    public void testRetainEveryColumnInPlaceKeepsTheSchema() {
+        final OutputSchema schema = new OutputSchema();
+        schema.add(1, "a", ColumnType.INT, true);
+        schema.add(2, "ts", ColumnType.TIMESTAMP, true);
+        schema.add(3, "b", ColumnType.LONG, null, false, "t");
+        schema.protectName(2);
+        schema.setTimestampIndex(1);
+        Assert.assertEquals(2, schema.getColumnIndexById(3));
+        final IntList indexes = new IntList();
+        indexes.add(0);
+        indexes.add(1);
+        indexes.add(2);
+        schema.retain(indexes);
+        Assert.assertEquals(3, schema.getColumnCount());
+        Assert.assertEquals(1, schema.getColumnId(0));
+        Assert.assertEquals("ts", schema.getColumnName(1));
+        Assert.assertEquals(ColumnType.LONG, schema.getColumnType(2));
+        Assert.assertEquals("t", schema.getColumnQualifier(2));
+        Assert.assertFalse(schema.isVisible(2));
+        Assert.assertTrue(schema.isNameProtected(2));
+        Assert.assertEquals(1, schema.getTimestampIndex());
+        Assert.assertEquals(2, schema.getColumnIndexById(3));
+        Assert.assertEquals(0, schema.getColumnIndexById(1));
+    }
+
+    @Test
     public void testRetainReordersAndRelocatesTimestamp() {
         final OutputSchema schema = new OutputSchema();
         schema.add(1, "a", ColumnType.INT, true);

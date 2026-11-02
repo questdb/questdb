@@ -27,8 +27,8 @@ package io.questdb.griffin.optimiser;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
-import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableAccessInfo;
+import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.SqlException;
@@ -113,7 +113,8 @@ final class OperatorPlanning implements Mutable {
     private final ObjList<JoinInput> generatedInputs = new ObjList<>();
     private final HashJoinAggregationPlanning hashJoinPlanning;
     private final IntList readIds;
-    private final ObjList<LogicalPlan> undecidedMasters = new ObjList<>();
+    private final IntList undecidedInputIndexes = new IntList();
+    private final ObjList<JoinPlan> undecidedJoins = new ObjList<>();
     private final ObjList<JoinInput> undecidedSteps;
     private int frameInputLo;
     private boolean isFullFatJoins;
@@ -132,7 +133,8 @@ final class OperatorPlanning implements Mutable {
         generatedInputs.clear();
         hashJoinPlanning.clear();
         frameInputLo = 0;
-        undecidedMasters.clear();
+        undecidedInputIndexes.clear();
+        undecidedJoins.clear();
         undecidedSteps.clear();
     }
 
@@ -171,14 +173,15 @@ final class OperatorPlanning implements Mutable {
                 case JoinPlan join when join.getOrderedInputs().size() == 1 ->
                         plan = join.getOrderedInputs().getQuick(0).getInput();
                 case FilterPlan filter when !PlanToFactoryRules.isFusedFilter(filter) -> {
-                    final BoundExpression predicate = filter.getPredicate();
-                    if (!LogicalPlans.isConstant(predicate)) {
-                        return true;
+                    switch (filter.getAlgorithm()) {
+                        case FOLDED_TRUE -> plan = filter.getChild();
+                        case FOLDED_FALSE -> {
+                            return false;
+                        }
+                        default -> {
+                            return true;
+                        }
                     }
-                    if (predicate instanceof ConstantExpression constant && constant.getLongValue() == 0) {
-                        return false;
-                    }
-                    plan = filter.getChild();
                 }
                 case FilterPlan filter -> {
                     return hasScanFilter((ScanPlan) filter.getChild());
@@ -211,7 +214,7 @@ final class OperatorPlanning implements Mutable {
     private static boolean hasScanFilter(ScanPlan scan) {
         final BoundExpression residual = scan.getResidual();
         return switch (scan.getAccessPath()) {
-            case PAGE_FRAMES -> residual != null && !LogicalPlans.isConstant(residual);
+            case PAGE_FRAMES -> residual != null && !scan.getResidualAlgorithm().isFolded();
             case SYMBOL_INDEX -> scan.getIndexRead() == ScanPlan.IndexRead.COVERING && residual != null;
             case SYMBOL_PATTERN -> true;
             case null, default -> false;
@@ -258,13 +261,6 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * True when the generator gates its input once on the predicate, a runtime constant.
-     */
-    static boolean isGate(BoundExpression predicate) {
-        return !LogicalPlans.isConstant(predicate) && !isFiltering(predicate);
-    }
-
-    /**
      * Whether a capability an algorithm choice reads holds; the plan must carry it.
      */
     private static boolean isKnownYes(PhysicalProperties.Capability capability) {
@@ -298,6 +294,13 @@ final class OperatorPlanning implements Mutable {
             }
             default -> false;
         };
+    }
+
+    /**
+     * True when an expression of the flags is a runtime constant and no constant.
+     */
+    private static boolean isRuntimeConstant(int functionFlags) {
+        return (functionFlags & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) == BoundExpression.RUNTIME_CONSTANT;
     }
 
     /**
@@ -498,15 +501,6 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * True when the factories of the master of the join step at {@code inputIndex} and of its slave report one table,
-     * see {@link PhysicalProperties#tableToken}.
-     */
-    private boolean isSelfJoin(JoinPlan join, int inputIndex) {
-        final TableToken master = PhysicalProperties.masterTableToken(join, inputIndex);
-        return master != null && master.equals(PhysicalProperties.tableToken(join.getOrderedInputs().getQuick(inputIndex).getInput()));
-    }
-
-    /**
      * True when the leading cross input is fixed and the unkeyed step can cache its slave rows: the loop rewinds it for every
      * master row, as every nested loop but a RIGHT join's does, the slave is a join, whose rewind repeats the join, and
      * every step of that join is {@link LogicalPlans#isStableJoinStep stable}, so every evaluation yields its rows.
@@ -541,20 +535,20 @@ final class OperatorPlanning implements Mutable {
         final boolean isGateStolen = consumer == FilterConsumer.TEMPORAL_JOIN;
         final boolean isStolen;
         if (!PlanToFactoryRules.isFusedFilter(filter)) {
-            final BoundExpression predicate = filter.getPredicate();
+            final FilterPlan.Algorithm algorithm = filter.getAlgorithm();
             isStolen = isPageFrameSource(filter.getChild())
-                    && (isFiltering(predicate) ? filter.getAlgorithm() == FilterPlan.Algorithm.PARALLEL : isGateStolen && isGate(predicate));
+                    && (algorithm == FilterPlan.Algorithm.PARALLEL || isGateStolen && algorithm == FilterPlan.Algorithm.GATE);
         } else {
             final ScanPlan scan = (ScanPlan) filter.getChild();
-            final BoundExpression residual = scan.getResidual();
+            final FilterPlan.Algorithm algorithm = scan.getResidualAlgorithm();
             final boolean isLimited = PhysicalProperties.implementsLimit(filter) == PhysicalProperties.Capability.YES;
             final boolean isCovering = scan.getIndexRead() == ScanPlan.IndexRead.COVERING;
-            final boolean isParallel = scan.getResidualAlgorithm() == FilterPlan.Algorithm.PARALLEL;
+            final boolean isParallel = algorithm == FilterPlan.Algorithm.PARALLEL;
             isStolen = switch (scan.getAccessPath()) {
-                case PAGE_FRAMES -> residual != null && (isFiltering(residual)
-                        ? (isParallel || isSerialScanFilterStolen) && !isLimited : isGateStolen && isGate(residual));
+                case PAGE_FRAMES -> algorithm != null && (algorithm.isFiltering()
+                        ? (isParallel || isSerialScanFilterStolen) && !isLimited : isGateStolen && algorithm == FilterPlan.Algorithm.GATE);
                 case SYMBOL_INDEX ->
-                        isCovering && residual != null && isFiltering(residual) && !scan.hasCoveringBackup()
+                        isCovering && algorithm != null && !scan.hasCoveringBackup()
                                 && (isParallel ? !isLimited : consumer == FilterConsumer.FRAME_REDUCER);
                 case SYMBOL_PATTERN -> !isCovering ? isParallel : isParallel ? !isLimited : isSerialScanFilterStolen;
                 case null, default -> false;
@@ -698,19 +692,24 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * Records the input the light INNER hash join step that the smaller input drives hashes: the slave when it never
-     * holds more rows than the master, see {@link #isNeverLarger}, else the master when it never holds more rows than
-     * the slave and has random access, and keeps the row counts the choice holds for, see {@link #keepBuildSide}. Any
+     * Records the input the light INNER hash join step at {@code inputIndex} that the smaller input drives hashes: the
+     * slave when its master, the first {@code inputIndex} ordered inputs, lacks the random access a hashed master needs
+     * or when the slave never holds more rows than the master, see {@link #isNeverLarger}, else the master when it never
+     * holds more rows than the slave, and keeps the row counts the choice holds for, see {@link #keepBuildSide}. Any
      * other step leaves the choice to execution, {@link JoinInput.BuildSide#SMALLER}: one over a master of several
-     * inputs, {@code master} null, one with an input without a bound, one where neither input is proven never to hold
-     * more rows than the other, such as one whose filter, interval or GROUP BY leaves an unknown part of its table, and
-     * one whose smaller master has the random access codegen decides.
+     * inputs, one with an input without a bound, and one where neither input is proven never to hold more rows than the
+     * other, such as one whose filter, interval or GROUP BY leaves an unknown part of its table.
      */
-    private void planBuildSide(JoinInput step, @Nullable LogicalPlan master) {
-        if (master == null) {
+    private void planBuildSide(JoinPlan join, int inputIndex, JoinInput step) {
+        if (PhysicalProperties.masterSupportsRandomAccess(join, inputIndex) != PhysicalProperties.Capability.YES) {
+            step.setBuildSide(JoinInput.BuildSide.SLAVE);
+            return;
+        }
+        if (inputIndex != 1) {
             step.setBuildSide(JoinInput.BuildSide.SMALLER);
             return;
         }
+        final LogicalPlan master = join.getOrderedInputs().getQuick(0).getInput();
         final LogicalPlan slave = step.getInput();
         final long masterRows = context.rowBound(master);
         final long slaveRows = context.rowBound(slave);
@@ -725,7 +724,7 @@ final class OperatorPlanning implements Mutable {
         if (isNeverLarger(slave, slaveRows, master, masterFloor)) {
             step.setBuildSide(JoinInput.BuildSide.SLAVE);
             keepBuildSide(slave, slaveRows, master, masterScan, masterFloor);
-        } else if (isNeverLarger(master, masterRows, slave, slaveFloor) && isRandomAccess(master)) {
+        } else if (isNeverLarger(master, masterRows, slave, slaveFloor)) {
             step.setBuildSide(JoinInput.BuildSide.MASTER);
             keepBuildSide(master, masterRows, slave, slaveScan, slaveFloor);
         } else {
@@ -748,14 +747,29 @@ final class OperatorPlanning implements Mutable {
     private void planFilter(FilterPlan filter) {
         final boolean isParallelEnabled = context.getExecutionContext().isParallelFilterEnabled();
         if (!PlanToFactoryRules.isFusedFilter(filter)) {
-            filter.setAlgorithm(!isFiltering(filter.getPredicate()) ? null
+            final FilterPlan.Algorithm folded = foldedAlgorithm(filter.getPredicate(), true);
+            filter.setAlgorithm(folded != null ? folded
                     : PlanToFactoryRules.isWindowKeepFlag(filter) ? FilterPlan.Algorithm.WINDOW_KEEP_FLAG
                       : isParallelEnabled && isKnownYes(PhysicalProperties.supportsPageFrameCursor(filter.getChild())) ? FilterPlan.Algorithm.PARALLEL : FilterPlan.Algorithm.SERIAL);
             return;
         }
         final ScanPlan scan = (ScanPlan) filter.getChild();
-        scan.setResidualAlgorithm(!hasResidualFilterChoice(scan) ? null
+        if (!hasResidualFilterChoice(scan)) {
+            scan.setResidualAlgorithm(null);
+            return;
+        }
+        final FilterPlan.Algorithm folded = scan.getAccessPath() == ScanPlan.AccessPath.PAGE_FRAMES ? foldedAlgorithm(scan.getResidual(), true) : null;
+        scan.setResidualAlgorithm(folded != null ? folded
                 : isParallelEnabled && isParallelResidual(scan) ? FilterPlan.Algorithm.PARALLEL : FilterPlan.Algorithm.SERIAL);
+    }
+
+    /**
+     * Decides how the generator removes the duplicates of the DISTINCT, see {@link DistinctPlan.Algorithm}.
+     */
+    private void planDistinct(DistinctPlan distinct) {
+        final LogicalPlan input = distinct.getChild();
+        distinct.setAlgorithm(isKnownYes(PhysicalProperties.supportsRandomAccess(input)) && timestampIndex(input) >= 0
+                ? DistinctPlan.Algorithm.TIME_SERIES : DistinctPlan.Algorithm.HASH);
     }
 
     /**
@@ -815,6 +829,7 @@ final class OperatorPlanning implements Mutable {
             final LogicalPlan slave = step.getInput();
             if (step.getJoinType().isRelational()) {
                 planRelationalStep(join, i, step);
+                step.setFilterAlgorithm(joinFilterAlgorithm(step));
                 continue;
             }
             switch (step.getJoinType()) {
@@ -832,9 +847,11 @@ final class OperatorPlanning implements Mutable {
                 }
                 case SPLICE -> {
                     validateTimeSeriesOrders(join, i, slave, step.getPosition());
-                    step.setAlgorithm(isFullFatJoins ? JoinInput.Algorithm.FULL_FAT_SPLICE : JoinInput.Algorithm.SPLICE);
+                    validateSplice(join, i, step);
+                    step.setAlgorithm(JoinInput.Algorithm.SPLICE);
                 }
             }
+            step.setFilterAlgorithm(joinFilterAlgorithm(step));
         }
     }
 
@@ -874,6 +891,31 @@ final class OperatorPlanning implements Mutable {
         }
         latest.setAlgorithm(!isRandomAccess(base) ? LatestByPlan.Algorithm.MATERIALIZED
                 : isAscending ? LatestByPlan.Algorithm.ASCENDING_LIGHT : LatestByPlan.Algorithm.LIGHT);
+    }
+
+    /**
+     * Records the input a light hash join step hashes, see {@link JoinInput#getBuildSide}: an INNER step over a master
+     * without random access hashes the slave in the master's order, and any other INNER step waits for
+     * {@link #settleMasterSides}; a FULL step NULL-extended by its keys over a master with random access hashes the
+     * smaller input at execution, and any other FULL step the slave.
+     */
+    private void planLightBuildSide(JoinPlan join, int inputIndex, JoinInput step) {
+        final PhysicalProperties.Capability isMasterRandomAccess = PhysicalProperties.masterSupportsRandomAccess(join, inputIndex);
+        switch (step.getJoinType()) {
+            case INNER -> {
+                if (isMasterRandomAccess == PhysicalProperties.Capability.NO) {
+                    step.setBuildSide(JoinInput.BuildSide.FIXED_MASTER);
+                } else {
+                    undecidedSteps.add(step);
+                    undecidedJoins.add(join);
+                    undecidedInputIndexes.add(inputIndex);
+                }
+            }
+            case FULL_OUTER -> step.setBuildSide(step.getNullExtension() == JoinInput.NullExtension.BY_KEYS
+                    && isMasterRandomAccess == PhysicalProperties.Capability.YES ? JoinInput.BuildSide.SMALLER : JoinInput.BuildSide.SLAVE);
+            default -> {
+            }
+        }
     }
 
     /**
@@ -943,14 +985,8 @@ final class OperatorPlanning implements Mutable {
         } else {
             final boolean isSlaveRandomAccess = PlanToFactoryRules.isSlaveEmptied(step) || isRandomAccess(slave);
             step.setAlgorithm(isSlaveRandomAccess && !isFullFatJoins ? JoinInput.Algorithm.LIGHT_HASH : JoinInput.Algorithm.HASH);
-            if (step.getMasterSide() == null) {
-                if (PhysicalProperties.masterSupportsRandomAccess(join, inputIndex) == PhysicalProperties.Capability.NO) {
-                    step.setMasterSide(JoinInput.MasterSide.FIXED);
-                    step.setBuildSide(JoinInput.BuildSide.SLAVE);
-                } else {
-                    undecidedSteps.add(step);
-                    undecidedMasters.add(inputIndex == 1 ? join.getOrderedInputs().getQuick(0).getInput() : null);
-                }
+            if (step.getAlgorithm() == JoinInput.Algorithm.LIGHT_HASH) {
+                planLightBuildSide(join, inputIndex, step);
             }
         }
     }
@@ -1126,23 +1162,23 @@ final class OperatorPlanning implements Mutable {
         }
         final SqlExecutionContext executionContext = context.getExecutionContext();
         final int masterTimestampIndex = timestampIndex(master);
-        boolean hasPageFrames = isPageFrameSource(master);
-        boolean isFilterStolen = !hasPageFrames && isStolenFilter(master, FilterConsumer.WINDOW_JOIN);
+        final boolean isPageFrameMaster = isPageFrameSource(master);
         for (int i = 0, n = windowJoin.getSteps().size(); i < n; i++) {
             final WindowJoinStep step = windowJoin.getSteps().getQuick(i);
             validateTimeSeriesOrders(master, step.getSlave(), step.getPosition());
             validateTimestampAggregates(step.getAggregates(), step.getScope(), masterTimestampIndex, false);
             if (step.getNullExtension() != WindowJoinStep.NullExtension.NONE) {
-                hasPageFrames &= step.getNullExtension() == WindowJoinStep.NullExtension.NULL_PADDING;
-                isFilterStolen = false;
                 continue;
             }
+            final boolean hasPageFrames = isPageFrameMaster && windowJoin.getNullExtension(i) == WindowJoinStep.NullExtension.NULL_PADDING;
+            final boolean isFilterStolen = i == 0 && !isPageFrameMaster && isStolenFilter(master, FilterConsumer.WINDOW_JOIN);
             final boolean isParallel = executionContext.isParallelWindowJoinEnabled() && (hasPageFrames || isFilterStolen)
                     && isParallelWindowJoinStep(step);
+            if (!isParallel && !isKnownYes(PhysicalProperties.supportsTimeFrameCursor(step.getSlave()))) {
+                throw SqlException.position(step.getPosition()).put("right side of window join must be a table, not sub-query");
+            }
             step.setAlgorithm(!isParallel ? WindowJoinStep.Algorithm.SERIAL
                     : isFilterStolen ? WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER : WindowJoinStep.Algorithm.PARALLEL);
-            hasPageFrames = false;
-            isFilterStolen = false;
         }
     }
 
@@ -1162,18 +1198,8 @@ final class OperatorPlanning implements Mutable {
         final JoinInput step = ordered.getQuick(inputCount - 1);
         final JoinKind joinType = step.getJoinType();
         final boolean isMasterNullExtended = joinType == JoinKind.RIGHT_OUTER || joinType == JoinKind.FULL_OUTER;
-        BoundExpression filter = step.getPostJoinFilter();
-        boolean isConstantFolded = joinType == JoinKind.UNNEST || filter instanceof ConstantExpression constant && constant.isLiteral();
-        if (!joinType.isTemporal() && joinType != JoinKind.UNNEST && !isMasterNullExtended && joinType != JoinKind.LEFT_OUTER
-                && step.getOnResidual() != null) {
-            if (filter == null) {
-                filter = step.getOnResidual();
-                isConstantFolded = filter instanceof ConstantExpression constant && constant.isLiteral();
-            } else {
-                isConstantFolded = false;
-            }
-        }
-        if (filter != null && !(isConstantFolded && LogicalPlans.isConstant(filter))) {
+        final FilterPlan.Algorithm filterAlgorithm = step.getFilterAlgorithm();
+        if (filterAlgorithm != null && !filterAlgorithm.isFolded()) {
             isAdviceRead = false;
         }
         switch (step.getAlgorithm()) {
@@ -1190,10 +1216,10 @@ final class OperatorPlanning implements Mutable {
                 if (isMasterNullExtended) {
                     return;
                 }
-                if (step.getMasterSide() == null) {
+                if (!step.isAlgorithmDecided()) {
                     if (isAdviceRead && PhysicalProperties.masterFollowsOrderAdvice(join, inputCount - 1) == PhysicalProperties.Capability.YES
                             || isDirectionRead && PhysicalProperties.masterScanDirection(join, inputCount - 1) != PhysicalProperties.ScanDirection.OTHER) {
-                        step.setMasterSide(JoinInput.MasterSide.FIXED);
+                        step.setBuildSide(JoinInput.BuildSide.FIXED_MASTER);
                     }
                 }
                 readJoinOrder(join, inputCount - 1, isAdviceRead, isDirectionRead);
@@ -1216,8 +1242,8 @@ final class OperatorPlanning implements Mutable {
         }
         for (int i = 1, n = ordered.size(); i < n; i++) {
             final JoinInput step = ordered.getQuick(i);
-            if (step.getMasterSide() == null) {
-                step.setMasterSide(JoinInput.MasterSide.FIXED);
+            if (!step.isAlgorithmDecided()) {
+                step.setBuildSide(JoinInput.BuildSide.FIXED_MASTER);
             }
         }
     }
@@ -1236,7 +1262,7 @@ final class OperatorPlanning implements Mutable {
                 if (PlanToFactoryRules.isFusedFilter(filter)) {
                     return;
                 }
-                readOrder(filter.getChild(), isAdviceRead && LogicalPlans.isConstant(filter.getPredicate()), isDirectionRead);
+                readOrder(filter.getChild(), isAdviceRead && filter.getAlgorithm().isFolded(), isDirectionRead);
             }
             case ProjectPlan project -> readOrder(project.getChild(), isAdviceRead, isDirectionRead);
             case SortPlan sort -> {
@@ -1250,9 +1276,8 @@ final class OperatorPlanning implements Mutable {
                 }
             }
             case DistinctPlan distinct -> {
-                final LogicalPlan input = distinct.getChild();
-                if (isRandomAccess(input) && PhysicalProperties.timestampIndex(input) >= 0) {
-                    readOrder(input, false, isDirectionRead);
+                if (distinct.getAlgorithm() == DistinctPlan.Algorithm.TIME_SERIES) {
+                    readOrder(distinct.getChild(), false, isDirectionRead);
                 }
             }
             case WindowPlan window -> readOrder(window.getChild(), isAdviceRead, isDirectionRead);
@@ -1290,8 +1315,9 @@ final class OperatorPlanning implements Mutable {
     /**
      * The slave column of the single symbol key of the ASOF join step at {@code inputIndex}, see {@link #symbolKey},
      * when the generator maps the master's key onto the slave's symbol table: the master column is a SYMBOL, STRING or
-     * VARCHAR, but not the SYMBOL column at the slave column's position in a self-join, see {@link #isSelfJoin},
-     * which already reads the slave's symbol table. {@link SymbolKey#NONE} otherwise.
+     * VARCHAR, but not the SYMBOL column at the slave column's position in a self-join, see
+     * {@link PlanToFactoryRules#isSelfJoin}, which already reads the slave's symbol table. {@link SymbolKey#NONE}
+     * otherwise.
      */
     private SymbolKey singleSymbolKey(JoinPlan join, int inputIndex, JoinInput step) {
         if (JoinKey.lookupKeyCount(step.getKeys()) != 1) {
@@ -1306,7 +1332,7 @@ final class OperatorPlanning implements Mutable {
             return SymbolKey.NONE;
         }
         return switch (master.getColumnType(masterIndex)) {
-            case ColumnType.SYMBOL -> masterIndex == slaveIndex && isSelfJoin(join, inputIndex)
+            case ColumnType.SYMBOL -> masterIndex == slaveIndex && PlanToFactoryRules.isSelfJoin(join, inputIndex)
                     ? SymbolKey.NONE : symbolKey(step.getInput(), slaveId);
             case ColumnType.STRING, ColumnType.VARCHAR, ColumnType.VARCHAR_SLICE -> symbolKey(step.getInput(), slaveId);
             default -> SymbolKey.NONE;
@@ -1439,6 +1465,22 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * Rejects a SPLICE step whose master or slave factory lacks random access, which the SPLICE join reads both back
+     * by, and a SPLICE step under full-fat joins.
+     */
+    private void validateSplice(JoinPlan join, int inputIndex, JoinInput step) throws SqlException {
+        if (!isKnownYes(PhysicalProperties.masterSupportsRandomAccess(join, inputIndex))) {
+            throw SqlException.$(step.getPosition(), "left side of splice join doesn't support random access");
+        }
+        if (!isKnownYes(PhysicalProperties.supportsRandomAccess(step.getInput()))) {
+            throw SqlException.$(step.getPosition(), "right side of splice join doesn't support random access");
+        }
+        if (isFullFatJoins) {
+            throw SqlException.$(step.getPosition(), "splice join doesn't support full fat mode");
+        }
+    }
+
+    /**
      * Rejects a time series join step whose master, the first {@code inputCount} ordered inputs of the join,
      * designates no timestamp, which binding defers for a master ordered by a key that is not a timestamp, or whose
      * master or slave does not emit its rows in ascending designated timestamp order.
@@ -1512,6 +1554,18 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * How the generator applies the predicate over its input when it builds no filter that evaluates the predicate on
+     * each row: it folds a constant, when {@code isFoldable}, to true or false, and gates its input once on a runtime
+     * constant; null when it builds such a filter.
+     */
+    static FilterPlan.Algorithm foldedAlgorithm(BoundExpression predicate, boolean isFoldable) {
+        if (predicate instanceof ConstantExpression constant) {
+            return !isFoldable ? null : constant.getLongValue() != 0 ? FilterPlan.Algorithm.FOLDED_TRUE : FilterPlan.Algorithm.FOLDED_FALSE;
+        }
+        return isRuntimeConstant(predicate.getFunctionFlags()) && !(predicate instanceof ColumnExpression) ? FilterPlan.Algorithm.GATE : null;
+    }
+
+    /**
      * True when every key and aggregate function of the aggregate supports parallelism.
      */
     static boolean hasParallelFunctions(AggregatePlan aggregate) {
@@ -1519,9 +1573,10 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * True when the generator builds a filter over the residual of the scan whose execution it chooses: a filter over
-     * page frames, a fused live view's filter over its scan, the filter over a covering index and the pattern scan's
-     * filter; an index scan applies its residual itself.
+     * True when operator planning records how the generator applies the residual of the scan, see
+     * {@link ScanPlan#getResidualAlgorithm}: over page frames, where it may fold or gate it, as over a fused live view's
+     * scan, and the filter over a covering index and the pattern scan's filter; an index scan applies its residual
+     * itself.
      */
     static boolean hasResidualFilterChoice(ScanPlan scan) {
         final BoundExpression residual = scan.getResidual();
@@ -1529,7 +1584,8 @@ final class OperatorPlanning implements Mutable {
             return false;
         }
         return switch (scan.getAccessPath()) {
-            case PAGE_FRAMES, SORTED_SYMBOL_INDEX -> isFiltering(residual);
+            case PAGE_FRAMES -> true;
+            case SORTED_SYMBOL_INDEX -> isFiltering(residual);
             case SYMBOL_INDEX -> scan.getIndexRead() == ScanPlan.IndexRead.COVERING;
             case SYMBOL_PATTERN -> true;
             case null, default -> false;
@@ -1561,11 +1617,18 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * True when the generator builds a filter for the predicate, which it neither folds nor gates once.
+     * True when the generator builds a filter for the predicate, which it neither folds nor gates once, see
+     * {@link #foldedAlgorithm}.
      */
     static boolean isFiltering(BoundExpression predicate) {
-        return !LogicalPlans.isConstant(predicate)
-                && (predicate instanceof ColumnExpression || (predicate.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) == 0);
+        return foldedAlgorithm(predicate, true) == null;
+    }
+
+    /**
+     * True when the generator gates its input once on the predicate, a runtime constant, see {@link #foldedAlgorithm}.
+     */
+    static boolean isGate(BoundExpression predicate) {
+        return foldedAlgorithm(predicate, true) == FilterPlan.Algorithm.GATE;
     }
 
     /**
@@ -1643,6 +1706,25 @@ final class OperatorPlanning implements Mutable {
      */
     static boolean isTopKLimit(LimitPlan limit, boolean isTimestampOrdered) {
         return !isTimestampOrdered && isTopKCount(limit.getLo(), limit.getHi());
+    }
+
+    /**
+     * How the generator applies the filter over the rows the join step joins, see {@link JoinInput#getFilterAlgorithm}:
+     * on one thread, after folding a constant as {@link PlanToFactoryRules#isPostJoinFilterFolded} decides, or gating a
+     * runtime constant; null when the step has no such filter.
+     */
+    static FilterPlan.Algorithm joinFilterAlgorithm(JoinInput step) {
+        final BoundExpression postJoinFilter = step.getPostJoinFilter();
+        final BoundExpression onResidual = PlanToFactoryRules.isOnResidualFiltered(step) ? step.getOnResidual() : null;
+        if (onResidual != null && postJoinFilter != null) {
+            return isRuntimeConstant(BoundExpressionRewriter.conjunctionFlags(onResidual, postJoinFilter)) ? FilterPlan.Algorithm.GATE : FilterPlan.Algorithm.SERIAL;
+        }
+        final BoundExpression filter = onResidual != null ? onResidual : postJoinFilter;
+        if (filter == null) {
+            return null;
+        }
+        final FilterPlan.Algorithm folded = foldedAlgorithm(filter, PlanToFactoryRules.isPostJoinFilterFolded(step, filter));
+        return folded != null ? folded : FilterPlan.Algorithm.SERIAL;
     }
 
     /**
@@ -1749,6 +1831,7 @@ final class OperatorPlanning implements Mutable {
     void planOperators(LogicalPlan plan, boolean isTimestampRequired) throws SqlException {
         switch (plan) {
             case FilterPlan filter -> planFilter(filter);
+            case DistinctPlan distinct -> planDistinct(distinct);
             case SortPlan sort -> planSort(sort, isTimestampRequired);
             case LimitPlan limit -> planLimit(limit);
             case WindowPlan window -> planWindow(window);
@@ -1804,20 +1887,18 @@ final class OperatorPlanning implements Mutable {
 
     /**
      * Lets the smaller input drive every light INNER hash join whose order no decision read since
-     * {@link #planOperators} planned it, and records the input each one hashes: the slave of a step whose master a
-     * decision fixed, else the input {@link #planBuildSide} decides.
+     * {@link #planOperators} planned it, recording the input {@link #planBuildSide} decides it hashes; a decision that
+     * read the order of a step's master recorded {@link JoinInput.BuildSide#FIXED_MASTER} for it.
      */
     void settleMasterSides() {
         for (int i = 0, n = undecidedSteps.size(); i < n; i++) {
             final JoinInput step = undecidedSteps.getQuick(i);
-            if (step.getMasterSide() == null) {
-                step.setMasterSide(JoinInput.MasterSide.SMALLER);
-                planBuildSide(step, undecidedMasters.getQuick(i));
-            } else {
-                step.setBuildSide(JoinInput.BuildSide.SLAVE);
+            if (!step.isAlgorithmDecided()) {
+                planBuildSide(undecidedJoins.getQuick(i), undecidedInputIndexes.getQuick(i), step);
             }
         }
-        undecidedMasters.clear();
+        undecidedInputIndexes.clear();
+        undecidedJoins.clear();
         undecidedSteps.clear();
     }
 

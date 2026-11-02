@@ -240,6 +240,9 @@ final class JoinFactoryGenerator {
         }
     }
 
+    /**
+     * Whether the factories report one table, as {@link PlanToFactoryRules#isSelfJoin} decides from the plan.
+     */
     private static boolean isSelfJoin(RecordCursorFactory master, RecordCursorFactory slave) {
         return master.getTableToken() != null && master.getTableToken().equals(slave.getTableToken());
     }
@@ -835,7 +838,6 @@ final class JoinFactoryGenerator {
                             context,
                             masterSymbolKeyCols,
                             slaveSymbolKeyCols,
-                            step.getMasterSide() == JoinInput.MasterSide.FIXED,
                             step.getBuildSide()
                     );
                 }
@@ -862,7 +864,8 @@ final class JoinFactoryGenerator {
                             slaveSymbolKeyCols,
                             step.getNullExtension(),
                             nullKeyCheck,
-                            step.getNullKeyMatch()
+                            step.getNullKeyMatch(),
+                            step.getBuildSide()
                     );
                 }
 
@@ -880,7 +883,8 @@ final class JoinFactoryGenerator {
                         context,
                         modelJoinType,
                         masterSymbolKeyCols,
-                        slaveSymbolKeyCols
+                        slaveSymbolKeyCols,
+                        step.getBuildSide()
                 );
             }
 
@@ -1124,7 +1128,8 @@ final class JoinFactoryGenerator {
             }
             final RecordMetadata masterMetadata = master.getMetadata();
             final RecordMetadata slaveMetadata = slave.getMetadata();
-            final boolean isSelfJoin = isSelfJoin(master, slave);
+            final boolean isSelfJoin = PlanToFactoryRules.isSelfJoin(join, position);
+            assert isSelfJoin == isSelfJoin(master, slave) : "self-join differs from the factories";
             final int markoutTimestampIndex = masterOutput.getColumnIndexById(step.getMarkoutTimestampColumnId());
             final boolean isMarkout = step.getAlgorithm() == JoinInput.Algorithm.MARKOUT;
             metadata = createJoinMetadata(masterAlias, masterMetadata, step.getBindingAlias(),
@@ -1132,7 +1137,7 @@ final class JoinFactoryGenerator {
             final BoundExpression onResidual = step.getOnResidual();
             if (onResidual != null) {
                 final Function onFilter = functionInstantiator.instantiate(onResidual, step.getOutput(), metadata, executionContext);
-                if (joinType.isOuter() && !isMarkout) {
+                if (!PlanToFactoryRules.isOnResidualFiltered(step)) {
                     // Outer residual ON is owned by the join and must run before unmatched rows are NULL-extended.
                     joinFilter = onFilter;
                 } else if (postJoinFilter == null) {
@@ -1214,7 +1219,8 @@ final class JoinFactoryGenerator {
                 continue;
             }
             if (step.getAlgorithm() == JoinInput.Algorithm.TEMPORAL_STOLEN_FILTER) {
-                master = generateStolenFilterTemporal(frame, step, masterOutput, masterAlias, master, producerLo, executionContext);
+                master = generateStolenFilterTemporal(frame, step, PlanToFactoryRules.isSelfJoin(join, i), masterOutput, masterAlias, master,
+                        producerLo, executionContext);
                 masterOutput = step.getOutput();
                 masterAlias = null;
                 continue;
@@ -1249,11 +1255,10 @@ final class JoinFactoryGenerator {
                 master = new RuntimeConstGateRecordCursorFactory(master, slaveRows);
             }
             master = switch (step.getJoinType()) {
-                case ASOF, LT ->
-                        generateTemporal(frame, step, masterOutput, masterAlias, master, slave, slave.getMetadata(), null, null,
-                                producerLo, executionContext);
-                case SPLICE ->
-                        generateSplice(frame, step, masterOutput, masterAlias, master, slave, producerLo, executionContext);
+                case ASOF, LT -> generateTemporal(frame, step, PlanToFactoryRules.isSelfJoin(join, i), masterOutput, masterAlias, master,
+                        slave, slave.getMetadata(), null, null, producerLo, executionContext);
+                case SPLICE -> generateSplice(frame, step, PlanToFactoryRules.isSelfJoin(join, i), masterOutput, masterAlias, master, slave,
+                        producerLo, executionContext);
                 default ->
                         generate(frame, join, i, masterOutput, masterAlias, master, slave, producerLo, slaveProducerLo, stepSlaveRows,
                                 executionContext);
@@ -1647,32 +1652,23 @@ final class JoinFactoryGenerator {
     }
 
     /**
-     * Prepared keys must be installed before entry. Consumes both factories, including failure.
+     * Prepared keys must be installed before entry. Consumes both factories, including failure. Operator planning
+     * validates that both support random access.
      */
     RecordCursorFactory generateJoinSplice(
             GenerationFrame frame,
-            boolean isFullFat,
             RecordCursorFactory master,
             RecordMetadata masterMetadata,
             CharSequence masterAlias,
             RecordCursorFactory slave,
             RecordMetadata slaveMetadata,
             CharSequence slaveAlias,
-            int joinPosition,
             Plannable condition
     ) throws SqlException {
+        assert master.recordCursorSupportsRandomAccess() && slave.recordCursorSupportsRandomAccess() : "splice join input lacks random access";
         JoinRecordMetadata joinMetadata = null;
         boolean isTransferred = false;
         try {
-            if (!master.recordCursorSupportsRandomAccess()) {
-                throw SqlException.$(joinPosition, "left side of splice join doesn't support random access");
-            }
-            if (!slave.recordCursorSupportsRandomAccess()) {
-                throw SqlException.$(joinPosition, "right side of splice join doesn't support random access");
-            }
-            if (isFullFat) {
-                throw SqlException.$(joinPosition, "splice join doesn't support full fat mode");
-            }
             // Neither side's timestamp describes the combined SPLICE stream.
             joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata, -1);
             final JoinKeyLayout joinKeys = frame.joinKeys;
@@ -1700,11 +1696,13 @@ final class JoinFactoryGenerator {
 
     /**
      * Consumes both factories on entry. The joined factories hold the decorrelation domains the generator placed from
-     * {@code producerLo} on, see {@link GenerationFrame#producerMark}.
+     * {@code producerLo} on, see {@link GenerationFrame#producerMark}. {@code isSelfJoin} is
+     * {@link PlanToFactoryRules#isSelfJoin} of the step.
      */
     RecordCursorFactory generateSplice(
             GenerationFrame frame,
             JoinInput step,
+            boolean isSelfJoin,
             OutputSchema masterOutput,
             CharSequence masterAlias,
             RecordCursorFactory master,
@@ -1723,15 +1721,15 @@ final class JoinFactoryGenerator {
             if (step.getOnResidual() != null) {
                 throw new IllegalStateException("SPLICE join has an ON residual");
             }
-            final boolean isSelfJoin = isSelfJoin(master, slave);
+            assert isSelfJoin == isSelfJoin(master, slave) : "self-join differs from the factories";
             final JoinKeyLayout joinKeys = frame.joinKeys;
             resolveKeys(masterOutput, step.getInput().getOutput(), step.getKeys(), joinKeys);
             joinKeys.of(masterMetadata, slaveMetadata, joinKeys.masterIndexes, joinKeys.slaveIndexes, isSelfJoin);
             // Unlike ASOF/LT, designated-timestamp equality remains an actual SPLICE key.
             final Plannable condition = joinKeys.masterIndexes.size() == 0 ? null : createCondition(step);
             isTransferred = true;
-            final RecordCursorFactory joined = generateJoinSplice(frame, step.getAlgorithm() == JoinInput.Algorithm.FULL_FAT_SPLICE, master,
-                    masterMetadata, masterAlias, slave, slaveMetadata, step.getBindingAlias(), step.getPosition(), condition);
+            final RecordCursorFactory joined = generateJoinSplice(frame, master, masterMetadata, masterAlias, slave, slaveMetadata,
+                    step.getBindingAlias(), condition);
             return step.getPostJoinFilter() == null ? joined
                     : filterGenerator.generatePostJoin(frame, step, step.getPostJoinFilter(), joined, producerLo, executionContext);
         } catch (Throwable th) {
@@ -1747,11 +1745,12 @@ final class JoinFactoryGenerator {
      * Builds the ASOF join step that steals the filter of its slave: the join reads the time frames under the filter,
      * through the columns of the selection the generator builds the slave from, if any. The joined factories hold the
      * decorrelation domains the generator placed from {@code producerLo} on, see {@link GenerationFrame#producerMark}.
-     * Consumes the master, including on failure.
+     * Consumes the master, including on failure. {@code isSelfJoin} is {@link PlanToFactoryRules#isSelfJoin} of the step.
      */
     RecordCursorFactory generateStolenFilterTemporal(
             GenerationFrame frame,
             JoinInput step,
+            boolean isSelfJoin,
             OutputSchema masterOutput,
             CharSequence masterAlias,
             RecordCursorFactory master,
@@ -1783,8 +1782,8 @@ final class JoinFactoryGenerator {
                     throw th;
                 }
             }
-            factory = generateTemporal(frame, step, masterOutput, masterAlias, master, slave, slaveMetadata, crossIndex, prepared,
-                    producerLo, executionContext);
+            factory = generateTemporal(frame, step, isSelfJoin, masterOutput, masterAlias, master, slave, slaveMetadata, crossIndex,
+                    prepared, producerLo, executionContext);
         } catch (Throwable th) {
             frame.popPreparedFilter(th);
             throw th;
@@ -1795,11 +1794,13 @@ final class JoinFactoryGenerator {
 
     /**
      * Consumes both factories on entry. The joined factories hold the decorrelation domains the generator placed from
-     * {@code producerLo} on, see {@link GenerationFrame#producerMark}.
+     * {@code producerLo} on, see {@link GenerationFrame#producerMark}. {@code isSelfJoin} is
+     * {@link PlanToFactoryRules#isSelfJoin} of the step.
      */
     RecordCursorFactory generateTemporal(
             GenerationFrame frame,
             JoinInput step,
+            boolean isSelfJoin,
             OutputSchema masterOutput,
             CharSequence masterAlias,
             RecordCursorFactory master,
@@ -1824,7 +1825,7 @@ final class JoinFactoryGenerator {
             if (step.getOnResidual() != null) {
                 throw new IllegalStateException("temporal join has an ON residual");
             }
-            final boolean isSelfJoin = isSelfJoin(master, slave);
+            assert isSelfJoin == isSelfJoin(master, slave) : "self-join differs from the factories";
             final boolean isKeyed = PlanToFactoryRules.isKeyedTemporalJoin(step, masterOutput, masterMetadata.getTimestampIndex(),
                     slaveMetadata.getTimestampIndex());
             if (isKeyed) {
@@ -2162,9 +2163,7 @@ final class JoinFactoryGenerator {
                 executionContext.storeTelemetry(TelemetryEvent.PARALLEL_WINDOW_JOIN, TelemetryOrigin.NO_MATTERS);
                 return result;
             }
-            if (!slave.supportsTimeFrameCursor()) {
-                throw SqlException.position(step.getPosition()).put("right side of window join must be a table, not sub-query");
-            }
+            assert slave.supportsTimeFrameCursor() : "serial window join slave serves no time frames";
             isTransferred = true;
             result = leftSymbolIndex != -1
                     ? new WindowJoinFastRecordCursorFactory(asm, configuration, outerMetadata, joinMetadata, master, slave,

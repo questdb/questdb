@@ -218,6 +218,21 @@ public abstract sealed class GroupingPlan extends UnaryPlan permits AggregatePla
     }
 
     @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.fact("bucketKeyIndex", bucketKeyIndex);
+        visitor.fact("hasConstantLeadingGroupBy", hasConstantLeadingGroupBy);
+        visitor.fact("hasDirectTableInput", hasDirectTableInput);
+        visitor.fact("hasExplicitGrouping", hasExplicitGrouping);
+        visitor.fact("hasKeySpellingKept", hasKeySpellingKept);
+        visitor.fact("periodPosition", periodPosition);
+        visitor.fact("periodToken", periodToken);
+        visitor.fact("periodUnit", periodUnit);
+        visitor.fact("periodUnitPosition", periodUnitPosition);
+        visitor.fact("stride", stride);
+    }
+
+    @Override
     public void visitReads(PlanExpressionVisitor visitor) {
         PlanReads.expressions(groupingExpressions, visitor);
         PlanReads.functions(aggregates, visitor);

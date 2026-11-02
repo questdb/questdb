@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.Constants;
@@ -39,19 +40,8 @@ public class CaseFunctionFactory implements FunctionFactory {
 
     @Override
     public int getResultType(IntList argTypes) {
-        final int n = argTypes.size();
-        final IntList foldedTypes = CaseCommon.foldedTypes();
-        int returnType = -1;
-        for (int i = 1; i < n; i += 2) {
-            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(i), foldedTypes);
-            if (returnType == ColumnType.UNDEFINED) {
-                return ColumnType.UNDEFINED;
-            }
-        }
-        if (n % 2 == 1) {
-            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(n - 1), foldedTypes);
-        }
-        return CaseCommon.getCaseFunctionType(returnType);
+        final long fold = foldValueTypes(argTypes);
+        return CaseCommon.getFoldFailureIndex(fold) < 0 ? CaseCommon.getCaseFunctionType(CaseCommon.getFoldCommonType(fold)) : ColumnType.UNDEFINED;
     }
 
     @Override
@@ -68,10 +58,10 @@ public class CaseFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         int n = args.size();
-        int returnType = -1;
         final ObjList<Function> vars = new ObjList<>(n);
         final ObjList<Function> argsToPoke = new ObjList<>(n);
-        final IntList foldedTypes = CaseCommon.foldedTypes();
+        final long fold = foldValueTypes(ResultTypes.argTypes(args));
+        final int failureIndex = CaseCommon.getFoldFailureIndex(fold);
 
         Function elseBranch;
         int elseBranchPosition;
@@ -84,7 +74,6 @@ public class CaseFunctionFactory implements FunctionFactory {
             elseBranchPosition = 0;
         }
 
-        // compute return type in this loop
         for (int i = 0; i < n; i += 2) {
             final Function bool = args.getQuick(i);
             if (!ColumnType.isBoolean(bool.getType())) {
@@ -92,7 +81,9 @@ public class CaseFunctionFactory implements FunctionFactory {
             }
 
             final Function value = args.getQuick(i + 1);
-            returnType = CaseCommon.getCommonType(returnType, value.getType(), argPositions.getQuick(i + 1), foldedTypes, "CASE values cannot be bind variables");
+            if (i + 1 == failureIndex) {
+                throw CaseCommon.foldError(fold, value.getType(), argPositions.getQuick(i + 1), "CASE values cannot be bind variables");
+            }
 
             vars.add(bool);
             vars.add(value);
@@ -102,9 +93,12 @@ public class CaseFunctionFactory implements FunctionFactory {
         }
 
         if (elseBranch != null) {
-            returnType = CaseCommon.getCommonType(returnType, elseBranch.getType(), elseBranchPosition, foldedTypes, "CASE values cannot be bind variables");
+            if (n == failureIndex) {
+                throw CaseCommon.foldError(fold, elseBranch.getType(), elseBranchPosition, "CASE values cannot be bind variables");
+            }
             argsToPoke.add(elseBranch);
         }
+        final int returnType = CaseCommon.getFoldCommonType(fold);
 
         // next calculate cast functions
         for (int i = 1; i < n; i += 2) {
@@ -139,5 +133,21 @@ public class CaseFunctionFactory implements FunctionFactory {
     @Override
     public int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) throws SqlException {
         throw SqlException.$(sqlPos, "CASE values cannot be bind variables");
+    }
+
+    /**
+     * Folds the THEN values and then the ELSE value, see {@link CaseCommon#foldValueType}.
+     */
+    private static long foldValueTypes(IntList argTypes) {
+        final IntList foldedTypes = CaseCommon.foldedTypes();
+        final int n = argTypes.size();
+        long fold = CaseCommon.EMPTY_FOLD;
+        for (int i = 1; i < n; i += 2) {
+            fold = CaseCommon.foldValueType(fold, argTypes.getQuick(i), i, foldedTypes);
+        }
+        if (n % 2 == 1) {
+            fold = CaseCommon.foldValueType(fold, argTypes.getQuick(n - 1), n - 1, foldedTypes);
+        }
+        return fold;
     }
 }

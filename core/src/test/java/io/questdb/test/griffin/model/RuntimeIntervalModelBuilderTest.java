@@ -43,7 +43,9 @@ import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -956,6 +958,55 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         Assert.assertEquals(1, head.closeCount);
         Assert.assertEquals(1, lo.closeCount);
         Assert.assertEquals(1, hi.closeCount);
+    }
+
+    @Test
+    public void testUnionPointsMatchesUnionOfEachPoint() {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final long[] specials = {Numbers.LONG_NULL, Numbers.LONG_NULL + 1, -1, 0, 1, Long.MAX_VALUE - 1, Long.MAX_VALUE};
+        final LongList points = new LongList();
+        final LongList pointsCopy = new LongList();
+        for (int iteration = 0; iteration < 2_000; iteration++) {
+            final RuntimeIntervalModelBuilder each = newBuilder();
+            final RuntimeIntervalModelBuilder batch = newBuilder();
+            final int prior = rnd.nextInt(5);
+            final CloseCountingFunction eachFunction = new CloseCountingFunction();
+            final CloseCountingFunction batchFunction = new CloseCountingFunction();
+            for (RuntimeIntervalModelBuilder builder : new RuntimeIntervalModelBuilder[]{each, batch}) {
+                final Rnd priorRnd = new Rnd(iteration, prior);
+                switch (prior) {
+                    case 1 -> builder.intersectEmpty();
+                    case 2 -> {
+                        for (int i = 0, n = 1 + priorRnd.nextInt(4); i < n; i++) {
+                            final long lo = priorRnd.nextLong(40) - 10;
+                            builder.union(lo, lo + priorRnd.nextLong(5));
+                        }
+                    }
+                    case 3 -> builder.intersect(-5, 20);
+                    case 4 -> builder.unionRuntimeTimestamp(builder == each ? eachFunction : batchFunction, 0);
+                    default -> {
+                    }
+                }
+            }
+            points.clear();
+            for (int i = 0, n = rnd.nextInt(30); i < n; i++) {
+                points.add(rnd.nextInt(8) == 0 ? specials[rnd.nextInt(specials.length)] : rnd.nextLong(40) - 10);
+            }
+            pointsCopy.clear();
+            pointsCopy.add(points);
+            for (int i = 0, n = points.size(); i < n; i++) {
+                each.union(points.getQuick(i), points.getQuick(i));
+            }
+            batch.unionPoints(pointsCopy);
+            Assert.assertEquals(each.getStaticIntervals(), batch.getStaticIntervals());
+            Assert.assertEquals(each.hasIntervalFilters(), batch.hasIntervalFilters());
+            Assert.assertEquals(each.isStatic(), batch.isStatic());
+            Assert.assertEquals(each.isEmptySet(), batch.isEmptySet());
+            each.clear();
+            batch.clear();
+            Assert.assertEquals(prior == 4 ? 1 : 0, eachFunction.closeCount);
+            Assert.assertEquals(prior == 4 ? 1 : 0, batchFunction.closeCount);
+        }
     }
 
     @Test

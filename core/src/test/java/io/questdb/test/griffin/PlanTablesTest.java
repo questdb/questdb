@@ -179,6 +179,112 @@ public class PlanTablesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCompileAllocationPerIndexedSymbolKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'k1'),
+                    ('2024-01-01T00:00:01.000000Z', 'x'),
+                    ('2024-01-01T00:00:02.000000Z', 'k209')
+                    """);
+            final int extraKeyCount = 200;
+            final String fewKeys = symbolInQuery(10);
+            final String manyKeys = symbolInQuery(10 + extraKeyCount);
+            try (
+                    TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope();
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                final long fewKeysBytes = compileAllocatedBytes(scope.getBean(), compiler, fewKeys);
+                final long manyKeysBytes = compileAllocatedBytes(scope.getBean(), compiler, manyKeys);
+                // a key function with its text, about 360 bytes, and the index row cursor factory that reads the key
+                Assert.assertTrue("an indexed symbol key allocates more than one key function", manyKeysBytes - fewKeysBytes <= 600L * extraKeyCount);
+            }
+            assertQuery(manyKeys)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts
+                            2024-01-01T00:00:00.000000Z\tk1
+                            2024-01-01T00:00:02.000000Z\tk209
+                            """);
+        });
+    }
+
+    @Test
+    public void testCompileAllocationPerIndexedSymbolBindKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, s SYMBOL INDEX) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'k1'),
+                    ('2024-01-01T00:00:01.000000Z', 'x'),
+                    ('2024-01-01T00:00:02.000000Z', 'k1009')
+                    """);
+            final int extraKeyCount = 1_000;
+            bindVariableService.clear();
+            for (int i = 0; i < 10 + extraKeyCount; i++) {
+                bindVariableService.setStr(i, "k" + i);
+            }
+            final String fewKeys = bindSymbolInQuery(10);
+            final String manyKeys = bindSymbolInQuery(10 + extraKeyCount);
+            try (
+                    TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope();
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                final long fewKeysBytes = compileAllocatedBytes(scope.getBean(), compiler, fewKeys);
+                final long manyKeysBytes = compileAllocatedBytes(scope.getBean(), compiler, manyKeys);
+                // the bind variable key function and the row cursor factory that reads its key, without the
+                // row cursor only a read from a row id needs
+                Assert.assertTrue("an indexed symbol bind key allocates more than its key", manyKeysBytes - fewKeysBytes <= 132L * extraKeyCount);
+            }
+            assertQuery(manyKeys)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\ts
+                            2024-01-01T00:00:00.000000Z\tk1
+                            2024-01-01T00:00:02.000000Z\tk1009
+                            """);
+        });
+    }
+
+    @Test
+    public void testCompileAllocationPerTimestampInLiteral() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 0),
+                    ('2024-01-01T00:00:01.000000Z', 1),
+                    ('2024-01-01T00:03:29.000000Z', 209)
+                    """);
+            final int extraLiteralCount = 200;
+            final String fewLiterals = timestampInQuery(10);
+            final String manyLiterals = timestampInQuery(10 + extraLiteralCount);
+            try (
+                    TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope();
+                    SqlCompiler compiler = engine.getSqlCompiler()
+            ) {
+                final long fewLiteralsBytes = compileAllocatedBytes(scope.getBean(), compiler, fewLiterals);
+                final long manyLiteralsBytes = compileAllocatedBytes(scope.getBean(), compiler, manyLiterals);
+                // the text constant the literal binds to, which reads as VARCHAR nowhere, and the point interval of the
+                // scan, about 120 bytes together
+                Assert.assertTrue("a timestamp IN literal allocates more than its text and its interval", manyLiteralsBytes - fewLiteralsBytes <= 136L * extraLiteralCount);
+            }
+            assertQuery(manyLiterals)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t0
+                            2024-01-01T00:00:01.000000Z\t1
+                            2024-01-01T00:03:29.000000Z\t209
+                            """);
+        });
+    }
+
+    @Test
     public void testCompileHoldsOneReaderAtATime() throws Exception {
         assertMemoryLeak(() -> {
             final int tableCount = 20;
@@ -657,6 +763,33 @@ public class PlanTablesTest extends AbstractCairoTest {
             minBytes = Math.min(minBytes, threadMXBean.getCurrentThreadAllocatedBytes() - allocatedBefore);
         }
         return minBytes / compileCount;
+    }
+
+    private static String bindSymbolInQuery(int keyCount) {
+        final StringSink sql = new StringSink();
+        sql.put("SELECT * FROM t WHERE s IN (");
+        for (int i = 0; i < keyCount; i++) {
+            sql.put(i > 0 ? ", $" : "$").put(i + 1);
+        }
+        return sql.put(')').toString();
+    }
+
+    private static String symbolInQuery(int keyCount) {
+        final StringSink sql = new StringSink();
+        sql.put("SELECT * FROM t WHERE s IN (");
+        for (int i = 0; i < keyCount; i++) {
+            sql.put(i > 0 ? ", 'k" : "'k").put(i).put('\'');
+        }
+        return sql.put(')').toString();
+    }
+
+    private static String timestampInQuery(int literalCount) {
+        final StringSink sql = new StringSink();
+        sql.put("SELECT * FROM t WHERE ts IN (");
+        for (int i = 0; i < literalCount; i++) {
+            sql.put(i > 0 ? ", '" : "'").putISODate(1_704_067_200_000_000L + (i % 2 == 0 ? i : literalCount - i) * 1_000_000L).put('\'');
+        }
+        return sql.put(')').toString();
     }
 
     private void assertPattern(String predicate, String expectedValues) throws Exception {

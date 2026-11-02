@@ -55,6 +55,7 @@ public final class DomainReadPlan extends LogicalPlan {
      * How the generator reads the producer's rows, which operator planning records; null before planning.
      */
     public Algorithm getAlgorithm() {
+        checkPhysicalRead("DomainReadPlan.algorithm");
         return algorithm;
     }
 
@@ -98,7 +99,16 @@ public final class DomainReadPlan extends LogicalPlan {
      * Reads the producer of a copied read from the copy of the producer.
      */
     public void setProducer(AggregatePlan producer) {
+        checkRewritable("DomainReadPlan.setProducer");
         this.producer = producer;
+    }
+
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.columnIds("producerColumnIds", producerColumnIds);
+        visitor.fact("algorithm", algorithm);
+        visitor.reference("producer", producer);
     }
 
     /**

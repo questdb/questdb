@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.optimiser;
 
+import io.questdb.ParanoiaState;
 import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.plan.logical.AggregatePlan;
@@ -44,6 +45,7 @@ import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
+import io.questdb.griffin.plan.logical.PlanFactRecorder;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
@@ -62,8 +64,12 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
 /**
- * Copies bound plan subtrees and renames the columns plan nodes read. {@link #copy} gives every column the
- * subtree defines a fresh id, while references to columns defined outside it keep theirs; {@link #remap}
+ * Copies plan subtrees before physical planning and renames the columns plan nodes read. {@link #copy} copies the facts
+ * of the nodes but the physical facts only physical planning records, see
+ * {@link io.questdb.griffin.plan.logical.PlanStage}, and gives every column the subtree defines a fresh id, while
+ * references to columns defined outside it keep theirs; under {@link ParanoiaState#PLAN_PARANOIA_MODE} it compares the
+ * copy with the source fact by fact, see {@link PlanFactRecorder}, so that a fact the source carries and the copy lacks
+ * fails the copy; {@link #remap}
  * renames, in place, the columns and outer columns one node reads and forwards. Plan nodes come from the
  * statement's plan-node pools, expressions from the level's {@link BoundExpressionRewriter} and column ids from the
  * {@link OptimiserContext} allocator, so copies live as long as the original; a changed expression is a fresh
@@ -74,6 +80,7 @@ import io.questdb.std.ObjList;
 final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
     private final IntIntHashMap columnIds;
     private final OptimiserContext context;
+    private final PlanFactRecorder copiedFacts = ParanoiaState.PLAN_PARANOIA_MODE ? new PlanFactRecorder() : null;
     private final ObjList<JoinInput> copiedInputs = new ObjList<>();
     private final ObjList<AggregatePlan> copiedProducers = new ObjList<>();
     private final ObjList<DomainReadPlan> copiedReads = new ObjList<>();
@@ -82,6 +89,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
     private final ObjList<AggregatePlan> originalProducers = new ObjList<>();
     private final PlanNodePools planNodes;
     private final ObjList<AggregatePlan> sharingCopies = new ObjList<>();
+    private final PlanFactRecorder sourceFacts = ParanoiaState.PLAN_PARANOIA_MODE ? new PlanFactRecorder() : null;
     private IntIntHashMap remappedIds;
 
     LogicalPlanCopier(OptimiserContext context, PlanNodePools planNodes, IntIntHashMap columnIds) {
@@ -153,8 +161,6 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
     private AggregatePlan cloneAggregate(AggregatePlan aggregate) {
         final AggregatePlan clone = planNodes.aggregates.next().of(aggregate.getChild(), aggregate.getPosition());
         cloneGrouping(aggregate, clone);
-        clone.setAlgorithm(aggregate.getAlgorithm());
-        clone.setSharedConsumerCount(aggregate.getSharedConsumerCount());
         clone.getSharedInputIds().addAll(aggregate.getSharedInputIds());
         clone.getSharedSourceIds().addAll(aggregate.getSharedSourceIds());
         if (aggregate.getSharedSource() != null) {
@@ -181,7 +187,6 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         clone.setTimezone(fill.getTimezone());
         clone.setPeriod(fill.getStride(), fill.getPeriodUnit(), fill.getPeriodUnitPosition());
         clone.setTimestampColumnId(fill.getTimestampColumnId());
-        clone.setAlgorithm(fill.getAlgorithm());
         return clone;
     }
 
@@ -203,7 +208,6 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
     private HorizonJoinPlan cloneHorizonJoin(HorizonJoinPlan horizon) {
         final HorizonJoinPlan clone = planNodes.horizonJoinPlans.next().of(horizon.getMaster(), horizon.getMasterAlias(),
                 horizon.getHorizonAlias(), horizon.getPosition());
-        clone.setAlgorithm(horizon.getAlgorithm());
         clone.setConsumer(horizon.getConsumer());
         clone.getOffsets().addAll(horizon.getOffsets());
         clone.getOffsetValues().addAll(horizon.getOffsetValues());
@@ -213,9 +217,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
             for (int k = 0, m = slave.getKeys().size(); k < m; k++) {
                 final JoinKey key = slave.getKeys().getQuick(k);
                 slaveClone.addKey(key.getMasterColumnId(), key.getSlaveColumnId(), key.getPosition());
-                slaveClone.getKeys().getLast().setLookupKeyIndex(key.getLookupKeyIndex());
             }
-            slaveClone.setKeyCheck(slave.getKeyCheck());
             clone.getSlaves().add(slaveClone);
         }
         return clone;
@@ -247,25 +249,19 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         for (int i = 0, n = input.getKeys().size(); i < n; i++) {
             final JoinKey key = input.getKeys().getQuick(i);
             clone.addKey(key.getMasterColumnId(), key.getSlaveColumnId(), key.getMasterName(), key.getSlaveName(), key.getPosition());
-            clone.getKeys().getLast().setLookupKeyIndex(key.getLookupKeyIndex());
         }
         clone.setHints(input.getHints());
         clone.setSubquery(input.isSubquery());
-        clone.setKeyCheck(input.getKeyCheck());
         clone.setKeyFilter(input.getKeyFilter());
         clone.setNullExtension(input.getNullExtension());
-        clone.setNullKeyCheck(input.getNullKeyCheck());
-        clone.setNullKeyMatch(input.getNullKeyMatch());
         clone.setOnResidual(input.getOnResidual());
         clone.setPostJoinFilter(input.getPostJoinFilter());
         clone.setToleranceInterval(input.getToleranceInterval());
-        if (input.getAlgorithm() != null) {
-            clone.setAlgorithm(input.getAlgorithm());
-            clone.setMasterSide(input.getMasterSide());
-            clone.setBuildSide(input.getBuildSide());
-        }
         originalInputs.add(input);
         copiedInputs.add(clone);
+        if (sourceFacts != null) {
+            sourceFacts.pair(input, clone);
+        }
         return clone;
     }
 
@@ -273,12 +269,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         final LogicalPlan clone = switch (plan) {
             case ScanPlan scan -> cloneScan(scan);
             case FunctionSourcePlan source -> context.getFunctionSources().copy(source);
-            case FilterPlan filter -> {
-                final FilterPlan filterClone = planNodes.filters.next().of(filter.getChild(), filter.getPredicate(), filter.getPosition());
-                filterClone.setAlgorithm(filter.getAlgorithm());
-                filterClone.setUpdateScan(filter.hasUpdateScan());
-                yield filterClone;
-            }
+            case FilterPlan filter -> planNodes.filters.next().of(filter.getChild(), filter.getPredicate(), filter.getPosition());
             case ProjectPlan project -> cloneProject(project);
             case SampleByPlan sampleBy -> cloneSampleBy(sampleBy);
             case AggregatePlan aggregate -> cloneAggregate(aggregate);
@@ -288,7 +279,6 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
             case DomainReadPlan read -> {
                 final DomainReadPlan readClone = planNodes.domainReads.next().of(read.getProducer(), read.getPosition());
                 readClone.getProducerColumnIds().addAll(read.getProducerColumnIds());
-                readClone.setAlgorithm(read.getAlgorithm());
                 copiedReads.add(readClone);
                 yield readClone;
             }
@@ -296,7 +286,6 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
                 final LatestByPlan latestClone = planNodes.latestByPlans.next().of(latest.getChild(), latest.getTimestampColumnId(), latest.getPosition());
                 latestClone.getKeyColumnIds().addAll(latest.getKeyColumnIds());
                 latestClone.setTimestampOrderInherited(latest.isTimestampOrderInherited());
-                latestClone.setAlgorithm(latest.getAlgorithm());
                 yield latestClone;
             }
             case JoinPlan join -> cloneJoin(join);
@@ -309,15 +298,10 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
                 operationClone.setCastRequired(operation.isCastRequired());
                 operationClone.getSymbolColumns().addAll(operation.getSymbolColumns());
                 operationClone.setRequestedOrder(operation.getRequestedOrderColumnId(), operation.getRequestedOrderDirection());
-                operationClone.setMerge(operation.isMerged(), operation.getRightBranchSort());
                 yield operationClone;
             }
             case SortPlan sort -> cloneSort(sort);
-            case LimitPlan limit -> {
-                final LimitPlan limitClone = planNodes.limits.next().of(limit.getChild(), limit.getLo(), limit.getHi(), limit.getPosition());
-                limitClone.setApplication(limit.getApplication());
-                yield limitClone;
-            }
+            case LimitPlan limit -> planNodes.limits.next().of(limit.getChild(), limit.getLo(), limit.getHi(), limit.getPosition());
         };
         clone.getOutput().copyFrom(plan.getOutput());
         return clone;
@@ -347,7 +331,6 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         clone.setFillInput(sampleBy.isFillInput());
         clone.setJoinInput(sampleBy.isJoinInput());
         clone.setTimestampRequired(sampleBy.isTimestampRequired());
-        clone.setAlgorithm(sampleBy.getAlgorithm());
         return clone;
     }
 
@@ -369,22 +352,6 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         clone.setLimit(scan.getLimitLo(), scan.getLimitHi());
         clone.setRowOrder(scan.getRowOrder());
         clone.setScanDirection(scan.getScanDirection());
-        clone.setAccessPath(scan.getAccessPath(), scan.getResidual());
-        clone.setResidualAlgorithm(scan.getResidualAlgorithm());
-        clone.setDepth(scan.getDepth());
-        clone.setIndex(scan.getIndexColumnId(), scan.getIndexRead());
-        clone.setIndexOrder(scan.getIndexOrder(), scan.getIndexDirection());
-        clone.getIndexKeys().addAll(scan.getIndexKeys());
-        clone.getExcludedKeys().addAll(scan.getExcludedKeys());
-        clone.setKeySubquery(scan.getKeySubquery());
-        clone.setKeyPattern(scan.getKeyPattern());
-        clone.setWithin(scan.getWithin());
-        clone.setIntervalScan(scan.isIntervalScan());
-        clone.setSinglePartition(scan.isSinglePartition());
-        clone.setTimestampDropped(scan.isTimestampDropped());
-        clone.setJoinIntervalStep(scan.getJoinIntervalStep());
-        clone.getJoinIntervals().add(scan.getJoinIntervals());
-        clone.keepRowCountWithin(scan.getMinRowCount(), scan.getMaxRowCount());
         return clone;
     }
 
@@ -395,7 +362,6 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         if (!sort.isLimited()) {
             clone.markUnlimited();
         }
-        clone.setAlgorithm(sort.getAlgorithm());
         return clone;
     }
 
@@ -420,7 +386,6 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
             specClone.getOrderByDirections().addAll(spec.getOrderByDirections());
             specClone.getOrderByNames().addAll(spec.getOrderByNames());
             specClone.getOrderByPositions().addAll(spec.getOrderByPositions());
-            specClone.setOrderDelivered(spec.isOrderDelivered());
             clone.getSpecs().add(specClone);
         }
         clone.getFunctionColumnIds().addAll(window.getFunctionColumnIds());
@@ -428,7 +393,6 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         if (window.isSelectOrdered()) {
             clone.markSelectOrdered();
         }
-        clone.setAlgorithm(window.getAlgorithm());
         return clone;
     }
 
@@ -447,8 +411,10 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
             stepClone.setHi(step.getHi(), step.getHiExpression(), step.getHiSign(), step.getHiTimeUnit(), step.getHiPosition());
             stepClone.setTableSource(step.isTableSource());
             stepClone.setNullExtension(step.getNullExtension());
-            stepClone.setAlgorithm(step.getAlgorithm());
             clone.getSteps().add(stepClone);
+            if (sourceFacts != null) {
+                sourceFacts.pair(step, stepClone);
+            }
         }
         clone.setEmpty(windowJoin.isEmpty());
         return clone;
@@ -456,6 +422,9 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
 
     private LogicalPlan copyTree(LogicalPlan plan) {
         final LogicalPlan copy = cloneNode(plan);
+        if (sourceFacts != null) {
+            sourceFacts.pair(plan, copy);
+        }
         remap(copy, columnIds);
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             copy.replaceInput(i, copyTree(plan.inputAt(i)));
@@ -492,9 +461,15 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         originalInputs.clear();
         originalProducers.clear();
         sharingCopies.clear();
+        if (sourceFacts != null) {
+            sourceFacts.rename(columnIds);
+        }
         plan.walkBottomUp(nodeColumnIds);
         final LogicalPlan copy = copyTree(plan);
         shareCopiedSources();
+        if (sourceFacts != null) {
+            PlanVerifier.verifyCopy(plan, copy, sourceFacts, copiedFacts);
+        }
         return copy;
     }
 

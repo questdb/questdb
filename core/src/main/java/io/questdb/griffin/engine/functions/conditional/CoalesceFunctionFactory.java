@@ -30,6 +30,7 @@ import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -76,14 +77,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
 
     @Override
     public int getResultType(IntList argTypes) {
-        final IntList foldedTypes = CaseCommon.foldedTypes();
-        int returnType = -1;
-        for (int i = 0, n = argTypes.size(); i < n; i++) {
-            returnType = CaseCommon.getCommonTypeOrUndefined(returnType, argTypes.getQuick(i), foldedTypes);
-            if (returnType == ColumnType.UNDEFINED) {
-                return ColumnType.UNDEFINED;
-            }
+        final long fold = foldValueTypes(argTypes);
+        if (CaseCommon.getFoldFailureIndex(fold) >= 0) {
+            return ColumnType.UNDEFINED;
         }
+        final int returnType = CaseCommon.getFoldCommonType(fold);
         return switch (tagOf(returnType)) {
             case STRING, SYMBOL -> STRING;
             case BOOLEAN, SHORT, BYTE, CHAR -> isNull(argTypes.getQuick(0)) ? returnType : argTypes.getQuick(0);
@@ -112,20 +110,13 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             args = new ObjList<>(args);
         }
 
-        // Similar to CASE function.
-        // compute return type in this loop
         final int argsSize = args.size();
-        int returnType = -1;
-        final IntList foldedTypes = CaseCommon.foldedTypes();
-        for (int i = 0; i < argsSize; i++) {
-            returnType = CaseCommon.getCommonType(
-                    returnType,
-                    args.getQuick(i).getType(),
-                    argPositions.getQuick(i),
-                    foldedTypes,
-                    "coalesce cannot be used with bind variables"
-            );
+        final long fold = foldValueTypes(ResultTypes.argTypes(args));
+        final int failureIndex = CaseCommon.getFoldFailureIndex(fold);
+        if (failureIndex >= 0) {
+            throw CaseCommon.foldError(fold, args.getQuick(failureIndex).getType(), argPositions.getQuick(failureIndex), "coalesce cannot be used with bind variables");
         }
+        final int returnType = CaseCommon.getFoldCommonType(fold);
 
         for (int i = 0; i < argsSize; i++) {
             args.setQuick(i, CaseCommon.getCastFunction(args.getQuick(i), argPositions.getQuick(i), returnType, configuration, sqlExecutionContext));
@@ -188,6 +179,18 @@ public class CoalesceFunctionFactory implements FunctionFactory {
     @Override
     public int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) throws SqlException {
         throw SqlException.$(sqlPos, "coalesce cannot be used with bind variables");
+    }
+
+    /**
+     * Folds the arguments in order, see {@link CaseCommon#foldValueType}.
+     */
+    private static long foldValueTypes(IntList argTypes) {
+        final IntList foldedTypes = CaseCommon.foldedTypes();
+        long fold = CaseCommon.EMPTY_FOLD;
+        for (int i = 0, n = argTypes.size(); i < n; i++) {
+            fold = CaseCommon.foldValueType(fold, argTypes.getQuick(i), i, foldedTypes);
+        }
+        return fold;
     }
 
     private static boolean isNotNull(Long256 value) {

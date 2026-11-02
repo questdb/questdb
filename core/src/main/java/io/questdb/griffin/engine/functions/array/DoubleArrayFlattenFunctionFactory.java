@@ -46,7 +46,7 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
 
     @Override
     public int getResultType(IntList argTypes) {
-        return ColumnType.encodeArrayType(ColumnType.decodeArrayElementType(argTypes.getQuick(0)), 1);
+        return flattenedType(argTypes.getQuick(0));
     }
 
     @Override
@@ -65,6 +65,10 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0));
     }
 
+    private static int flattenedType(int arrayType) {
+        return ColumnType.encodeArrayType(ColumnType.decodeArrayElementType(arrayType), 1);
+    }
+
     private static class Func extends ArrayFunction implements UnaryFunction {
         private final Function arrayArg;
         private final DerivedArrayView derivedView = new DerivedArrayView();
@@ -72,7 +76,7 @@ public class DoubleArrayFlattenFunctionFactory implements FunctionFactory {
 
         public Func(Function arrayArg) {
             this.arrayArg = arrayArg;
-            this.type = ColumnType.encodeArrayType(ColumnType.decodeArrayElementType(arrayArg.getType()), 1);
+            this.type = flattenedType(arrayArg.getType());
             outArray.setType(type);
         }
 

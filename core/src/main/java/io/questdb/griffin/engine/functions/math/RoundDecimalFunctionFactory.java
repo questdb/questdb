@@ -31,14 +31,15 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.DecimalUtil;
 import io.questdb.griffin.FunctionFactory;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.DecimalFunction;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
-import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -57,6 +58,10 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
      * @return a function that will round the provided value.
      */
     public static Function newInstance(int position, Function value, Function roundingScale, RoundingMode roundingMode) {
+        if (ColumnType.isNull(value.getType())) {
+            Misc.free(roundingScale);
+            return value;
+        }
         if (roundingScale.isConstant()) {
             return newConstantInstance(position, value, roundingScale.getInt(null), roundingMode);
         }
@@ -67,7 +72,7 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
         final int type = value.getType();
         final int precision = ColumnType.getDecimalPrecision(type);
         int fromScale = ColumnType.getDecimalScale(type);
-        int targetType = getTargetType(precision + getRoundingModePrecisionImpact(roundingMode), fromScale);
+        int targetType = ResultTypes.decimalRoundedAtRuntime(type, roundingMode);
 
         var transformer = new DynamicTransformer(roundingScale, fromScale, precision - fromScale, roundingMode, position, targetType);
         return new DynamicScaleFunction(DecimalTransformerFactory.newInstance(value, targetType, transformer), value, roundingScale);
@@ -100,20 +105,6 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
         }
     }
 
-    /**
-     * Returns the additional precision that we may add to our target precision depending on the rounding mode.
-     */
-    private static int getRoundingModePrecisionImpact(RoundingMode roundingMode) {
-        return roundingMode == RoundingMode.DOWN ? 0 : 1;
-    }
-
-    /**
-     * The type of a rounded value, with the precision clamped to what a decimal type can declare.
-     */
-    private static int getTargetType(int precision, int scale) {
-        return ColumnType.getDecimalType(Math.max(1, Math.min(precision, Decimals.MAX_PRECISION)), scale);
-    }
-
     private static Function newConstantInstance(int position, Function value, int roundingScale, RoundingMode roundingMode) {
         final int type = value.getType();
         final int precision = ColumnType.getDecimalPrecision(type);
@@ -127,23 +118,22 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
             return value;
         }
 
+        final int targetType = ResultTypes.decimalRounded(type, roundingScale, roundingMode);
         if (roundingScale >= 0) {
-            return newConstantPositiveInstance(value, precision, scale, roundingScale, roundingMode);
+            return newConstantPositiveInstance(value, scale, roundingScale, roundingMode, targetType);
         } else {
-            return newConstantNegativeInstance(position, value, precision, scale, roundingScale, roundingMode);
+            return newConstantNegativeInstance(position, value, precision, scale, roundingScale, roundingMode, targetType);
         }
     }
 
     /**
      * Round a decimal by a constant negative scale that is lesser than the decimal's scale.
      */
-    private static Function newConstantNegativeInstance(int position, Function value, int precision, int scale, int roundingScale, RoundingMode roundingMode) {
+    private static Function newConstantNegativeInstance(int position, Function value, int precision, int scale, int roundingScale, RoundingMode roundingMode, int targetType) {
         assert scale > roundingScale;
 
         // In this case, we will always have a scale of 0 (we don't support a negative scale):
         // floor(120, -2) -> 100
-        int targetType = getTargetType(precision - scale + getRoundingModePrecisionImpact(roundingMode), 0);
-
         final DecimalTransformer transformer = roundingScale < scale - precision
                 ? new PastIntegerDigitsTransformer(roundingMode, position, targetType)
                 : new ConstantNegativeTransformer(scale, roundingScale, roundingMode, position, targetType);
@@ -153,13 +143,11 @@ public class RoundDecimalFunctionFactory implements FunctionFactory {
     /**
      * Round a decimal by a constant positive scale that is greater than the decimal's scale.
      */
-    private static Function newConstantPositiveInstance(Function value, int precision, int scale, int roundingScale, RoundingMode roundingMode) {
+    private static Function newConstantPositiveInstance(Function value, int scale, int roundingScale, RoundingMode roundingMode, int targetType) {
         assert scale > roundingScale;
 
         // We will reduce the decimal to take as little space as possible, removing any trailing zeroes:
         // floor(123.456, 2) -> 123.4
-        int targetType = getTargetType(precision + roundingScale - scale + getRoundingModePrecisionImpact(roundingMode), roundingScale);
-
         var transformer = new ConstantPositiveTransformer(roundingScale, roundingMode);
         return DecimalTransformerFactory.newInstance(value, targetType, transformer);
     }

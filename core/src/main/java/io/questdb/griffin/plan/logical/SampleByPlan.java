@@ -59,6 +59,7 @@ public final class SampleByPlan extends GroupingPlan {
      * The SAMPLE BY factory operator planning records for the node; null before planning.
      */
     public Algorithm getAlgorithm() {
+        checkPhysicalRead("SampleByPlan.algorithm");
         return algorithm;
     }
 
@@ -136,6 +137,16 @@ public final class SampleByPlan extends GroupingPlan {
 
     public void setTo(BoundExpression to) {
         this.to = to;
+    }
+
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.facts("fillModes", fillModes);
+        visitor.fact("algorithm", algorithm);
+        visitor.fact("isFillInput", isFillInput);
+        visitor.fact("isJoinInput", isJoinInput);
+        visitor.fact("isTimestampRequired", isTimestampRequired);
     }
 
     @Override

@@ -46,9 +46,12 @@ import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanStage;
+import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.Subquery;
+import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.UniqueColumnNames;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
@@ -60,18 +63,23 @@ import io.questdb.std.ObjectPool;
 import org.jetbrains.annotations.TestOnly;
 
 /**
- * Runs the semantics-preserving plan rewrites, each an {@link OptimiserPass}, in a fixed order: {@link JoinOrdering},
- * then {@link Decorrelation}, then the passes it lists, in list order. The first two run outside the list
- * because the plan invariants after them differ: join ordering rewrites a bound plan whose dependent join steps still
- * read the inputs before them through outer columns, and decorrelation removes those steps, which
- * {@link PlanVerifier#verifyDecorrelation} checks against the barrier joins recorded before it, while the carriers it
- * records hold only until the next pass renames columns. Every later pass rewrites a plan without dependent steps. The
- * optimiser owns the temporary lists the passes hold across expression rewrites and call bindings and the
- * {@link OptimiserContext} of the query level being rewritten, borrows the leaf members of the compiler's
- * {@link CompilerTemporaries}, which the binder and the generators use in windows no optimisation can run in, and hands
- * them, with the statement binder's plan-node pools, to each pass through its constructor.
+ * Runs the semantics-preserving plan rewrites, each an {@link OptimiserPass}, in a fixed order that advances the plan
+ * through the stages of {@link PlanStage}: {@link JoinOrdering} turns a {@link PlanStage#BOUND} plan into a
+ * {@link PlanStage#JOINS_ORDERED} one, {@link Decorrelation} into a {@link PlanStage#DECORRELATED} one, the passes it
+ * lists keep it decorrelated until {@link OrderPlanning} leaves it {@link PlanStage#REWRITTEN}, and
+ * {@link #planAccessPaths} makes it {@link PlanStage#PHYSICAL}. Under {@link ParanoiaState#PLAN_PARANOIA_MODE} the
+ * optimiser checks that the plan is at the stage each step requires, records the stage each step produces on every
+ * node of the plan and verifies the plan at it. The first two passes run outside the list because the optimiser records
+ * between them the barrier joins that decorrelation's own check, see {@link Decorrelation#verify}, compares its output
+ * with, while the carriers decorrelation records hold only until the next pass renames columns. The optimiser owns the
+ * temporary lists the passes hold across expression rewrites and call bindings and the {@link OptimiserContext} of the
+ * query level being rewritten, borrows the leaf members of the compiler's {@link CompilerTemporaries}, which the binder
+ * and the generators use in windows no optimisation can run in, and hands them, with the statement binder's plan-node
+ * pools, to each pass through its constructor.
  */
 public final class SqlOptimiser implements Mutable {
+    private static final String ACCESS_PATH_PLANNING = "access path planning";
+    private static final String BINDING = "SqlBinder.bind";
     private final AccessPathPlanning accessPathPlanning;
     private final AggregateInputOrder aggregateInputOrder;
     private final AggregateRewrite aggregateRewrite;
@@ -92,6 +100,11 @@ public final class SqlOptimiser implements Mutable {
     private final ObjList<JoinInput> tmpSteps = new ObjList<>();
     private final PlanVerifier verifier;
     private final WindowCallMerge windowCallMerge;
+    private PlanStage reachedStage;
+    private final PlanVisitor stageMarks = plan -> {
+        plan.setStage(reachedStage);
+        return TreeWalk.CONTINUE;
+    };
 
     /**
      * Allocates plan nodes from the given pools, whose owner empties them once the optimised plan and
@@ -194,26 +207,15 @@ public final class SqlOptimiser implements Mutable {
         context.of(executionContext);
         LogicalPlan plan = aggregateRewrite.normaliseSums(root);
         if (verifier != null) {
-            verifier.verifyBound(plan);
+            reachStage(plan, PlanStage.BOUND, BINDING);
         }
-        plan = joinOrdering.apply(plan);
+        plan = apply(joinOrdering, plan);
         if (verifier != null) {
-            verifier.verifyBound(plan, joinOrdering.getName());
             verifier.recordBarrierJoins(plan);
         }
-        plan = decorrelation.apply(plan);
-        if (verifier != null) {
-            decorrelation.verify(plan, verifier);
-        }
-        if (verifier != null) {
-            verifier.verify(plan, decorrelation.getName());
-        }
+        plan = apply(decorrelation, plan);
         for (int i = 0, n = passes.size(); i < n; i++) {
-            final OptimiserPass pass = passes.getQuick(i);
-            plan = pass.apply(plan);
-            if (verifier != null) {
-                verifier.verify(plan, pass.getName());
-            }
+            plan = apply(passes.getQuick(i), plan);
         }
         return plan;
     }
@@ -221,22 +223,26 @@ public final class SqlOptimiser implements Mutable {
     /**
      * Decides how every scan of an optimised plan, and of each sub-query plan it reads, reads its table, see
      * {@link AccessPathPlanning}, and how the generator implements the order-sensitive operators over them, see
-     * {@link OperatorPlanning#planOperators}. Runs just before the plan generates, at generation depth {@code depth},
-     * under the execution context generation runs under. {@code isTimestampRequired}: the statement consuming the plan
+     * {@link OperatorPlanning#planOperators}, which turns the {@link PlanStage#REWRITTEN} plans into
+     * {@link PlanStage#PHYSICAL} ones; a plan is planned once. Runs just before the plan generates, at generation depth
+     * {@code depth}, under the execution context generation runs under. {@code isTimestampRequired}: the statement consuming the plan
      * requires its designated timestamp. Raises the static error generation raises for a scan before it reads the
      * scan's access path, and rejects a plan the generator cannot build.
      */
     public void planAccessPaths(LogicalPlan root, int depth, boolean isTimestampRequired, SqlExecutionContext executionContext) throws SqlException {
         context.of(executionContext);
+        if (verifier != null) {
+            verifier.requireStage(root, PlanStage.REWRITTEN, ACCESS_PATH_PLANNING);
+        }
         accessPathPlanning.plan(root, depth, isTimestampRequired);
         if (verifier != null) {
             final boolean hasSharedSources = context.hasSharedSources();
-            verifier.verifyAccessPaths(root);
+            reachStage(root, PlanStage.PHYSICAL, ACCESS_PATH_PLANNING);
             verifier.verifySharedSources(root, hasSharedSources);
             final ObjList<Subquery> subqueries = accessPathPlanning.getSubqueries();
             for (int i = 0, n = subqueries.size(); i < n; i++) {
                 final LogicalPlan subqueryRoot = subqueries.getQuick(i).getRoot();
-                verifier.verifyAccessPaths(subqueryRoot);
+                reachStage(subqueryRoot, PlanStage.PHYSICAL, ACCESS_PATH_PLANNING);
                 verifier.verifySharedSources(subqueryRoot, hasSharedSources);
             }
         }
@@ -247,5 +253,31 @@ public final class SqlOptimiser implements Mutable {
      */
     public void setFullFatJoins(boolean isFullFatJoins) {
         operatorPlanning.setFullFatJoins(isFullFatJoins);
+    }
+
+    /**
+     * Runs the pass over the plan; under paranoia, checks that the plan is at the stage the pass requires, checks the
+     * plan the pass returns by the pass's own checks, then records the stage the pass produces and verifies the plan at
+     * it.
+     */
+    private LogicalPlan apply(OptimiserPass pass, LogicalPlan plan) throws SqlException {
+        if (verifier == null) {
+            return pass.apply(plan);
+        }
+        verifier.requireStage(plan, pass.getRequiredStage(), pass.getName());
+        final LogicalPlan rewritten = pass.apply(plan);
+        pass.verify(rewritten, verifier);
+        reachStage(rewritten, pass.getProducedStage(), pass.getName());
+        return rewritten;
+    }
+
+    /**
+     * Records {@code stage} on every node of the plan {@code step} produced, see {@link LogicalPlan#getStage}, and
+     * verifies the invariants of the stage on the plan.
+     */
+    private void reachStage(LogicalPlan plan, PlanStage stage, String step) {
+        reachedStage = stage;
+        plan.walkTopDown(stageMarks);
+        verifier.verify(plan, stage, step);
     }
 }

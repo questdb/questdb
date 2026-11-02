@@ -27,14 +27,13 @@ package io.questdb.griffin.plan.logical;
 import io.questdb.griffin.engine.window.LiveViewWindowDescription;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.IntList;
-import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
 /**
  * Bound keys and normalized frame parameters; no parser nodes or executable state.
  */
-public final class WindowSpec implements Mutable {
+public final class WindowSpec implements PlanFactSource {
     public static final ObjectFactory<WindowSpec> FACTORY = WindowSpec::new;
     private final IntList orderByColumnIds = new IntList(0);
     private final ObjList<SortDirection> orderByDirections = new ObjList<>(0);
@@ -45,10 +44,10 @@ public final class WindowSpec implements Mutable {
     private int exclusionKindPos;
     private int framingMode;
     private boolean isIgnoreNulls;
-    private boolean isOrderDelivered;
     private boolean isSubsampleKeepFlag;
     private LiveViewWindowDescription liveViewDescription;
     private int nullsDescPos;
+    private OrderSource orderSource;
     private long rowsHi;
     private int rowsHiExprPos;
     private char rowsHiExprTimeUnit;
@@ -79,10 +78,10 @@ public final class WindowSpec implements Mutable {
         exclusionKindPos = 0;
         framingMode = 0;
         isIgnoreNulls = false;
-        isOrderDelivered = false;
         isSubsampleKeepFlag = false;
         liveViewDescription = null;
         nullsDescPos = 0;
+        orderSource = null;
         rowsHi = 0;
         rowsHiExprPos = 0;
         rowsHiExprTimeUnit = 0;
@@ -175,10 +174,12 @@ public final class WindowSpec implements Mutable {
 
     /**
      * True when the input of the window delivers the rows in this window's ORDER BY, so the window need not order
-     * them; operator planning decides it.
+     * them; operator planning decides it, see {@link OrderSource}, before which a read fails under
+     * {@link io.questdb.ParanoiaState#PLAN_PARANOIA_MODE}.
      */
     public boolean isOrderDelivered() {
-        return isOrderDelivered;
+        PlanFacts.checkDecided(orderSource != null, "WindowSpec.orderSource");
+        return orderSource == OrderSource.INPUT;
     }
 
     /**
@@ -258,10 +259,34 @@ public final class WindowSpec implements Mutable {
     }
 
     public void setOrderDelivered(boolean isOrderDelivered) {
-        this.isOrderDelivered = isOrderDelivered;
+        orderSource = isOrderDelivered ? OrderSource.INPUT : OrderSource.WINDOW;
     }
 
-    void visitReads(PlanExpressionVisitor visitor) {
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        visitor.facts("orderByDirections", orderByDirections);
+        visitor.facts("orderByNames", orderByNames);
+        visitor.facts("orderByPositions", orderByPositions);
+        visitor.fact("exclusionKind", exclusionKind);
+        visitor.fact("exclusionKindPos", exclusionKindPos);
+        visitor.fact("framingMode", framingMode);
+        visitor.fact("isIgnoreNulls", isIgnoreNulls);
+        visitor.fact("isSubsampleKeepFlag", isSubsampleKeepFlag);
+        visitor.fact("liveViewDescription", liveViewDescription);
+        visitor.fact("nullsDescPos", nullsDescPos);
+        visitor.fact("orderSource", orderSource);
+        visitor.fact("rowsHi", rowsHi);
+        visitor.fact("rowsHiExprPos", rowsHiExprPos);
+        visitor.fact("rowsHiExprTimeUnit", rowsHiExprTimeUnit);
+        visitor.fact("rowsHiKindPos", rowsHiKindPos);
+        visitor.fact("rowsLo", rowsLo);
+        visitor.fact("rowsLoExprPos", rowsLoExprPos);
+        visitor.fact("rowsLoExprTimeUnit", rowsLoExprTimeUnit);
+        visitor.fact("rowsLoKindPos", rowsLoKindPos);
+    }
+
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
         PlanReads.expressions(partitionBy, visitor);
         PlanReads.columnIds(orderByColumnIds, orderByPositions, visitor);
     }
@@ -284,5 +309,20 @@ public final class WindowSpec implements Mutable {
             }
         }
         return true;
+    }
+
+    /**
+     * What orders the rows a window function reads by the window's ORDER BY, which operator planning decides; null
+     * until it has.
+     */
+    public enum OrderSource {
+        /**
+         * The input of the window delivers the order.
+         */
+        INPUT,
+        /**
+         * The window orders the rows itself.
+         */
+        WINDOW
     }
 }

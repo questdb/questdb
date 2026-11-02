@@ -645,7 +645,7 @@ public final class FunctionInstantiator implements Mutable {
      * Consumes the input and returns its only owning root.
      */
     private Function convertUpdateFunction(Function function, int targetType, int position, SqlExecutionContext executionContext) throws SqlException {
-        if (targetType >= 0 && function.getType() != targetType && !ColumnType.isBuiltInWideningCast(function.getType(), targetType)) {
+        if (LogicalPlans.isUpdateCast(function.getType(), targetType)) {
             final Function cast = resolver.createImplicitCast(position, function, targetType, executionContext);
             if (cast != null) {
                 function = cast;

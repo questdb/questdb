@@ -29,14 +29,13 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.window.WindowContextImpl;
 import io.questdb.std.IntList;
-import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 
 import java.util.Objects;
 
-public final class WindowJoinStep implements Mutable {
+public final class WindowJoinStep implements PlanFactSource {
     public static final ObjectFactory<WindowJoinStep> FACTORY = WindowJoinStep::new;
     private final IntList aggregateColumnIds = new IntList();
     private final ObjList<FunctionExpression> aggregates = new ObjList<>();
@@ -257,7 +256,30 @@ public final class WindowJoinStep implements Mutable {
         this.slave = Objects.requireNonNull(slave);
     }
 
-    void visitReads(PlanExpressionVisitor visitor) {
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        visitor.columnIds("aggregateColumnIds", aggregateColumnIds);
+        visitor.output("masterScope", masterScope);
+        visitor.output("scope", scope);
+        visitor.fact("algorithm", algorithm);
+        visitor.fact("hi", hi);
+        visitor.fact("hiPosition", hiPosition);
+        visitor.fact("hiSign", hiSign);
+        visitor.fact("hiTimeUnit", hiTimeUnit);
+        visitor.fact("isIncludePrevailing", isIncludePrevailing);
+        visitor.fact("isTableSource", isTableSource);
+        visitor.fact("lo", lo);
+        visitor.fact("loPosition", loPosition);
+        visitor.fact("loSign", loSign);
+        visitor.fact("loTimeUnit", loTimeUnit);
+        visitor.fact("masterAlias", masterAlias);
+        visitor.fact("nullExtension", nullExtension);
+        visitor.fact("position", position);
+        visitor.fact("slaveAlias", slaveAlias);
+    }
+
+    @Override
+    public void visitReads(PlanExpressionVisitor visitor) {
         PlanReads.functions(aggregates, visitor);
         filter = PlanReads.expression(filter, visitor);
         loExpression = PlanReads.expression(loExpression, visitor);

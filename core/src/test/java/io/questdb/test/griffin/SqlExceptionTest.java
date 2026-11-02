@@ -47,6 +47,23 @@ public class SqlExceptionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFactoryFailureCauseResetsOnFlyweightReuse() {
+        SqlException.setFlyweightReusedForTesting(true);
+        try {
+            final IllegalStateException failure = new IllegalStateException("broken");
+            final SqlException factoryFailure = SqlException.factoryFailure(17, failure);
+            Assert.assertSame(failure, factoryFailure.getCause());
+            TestUtils.assertEquals("[17] exception in function factory: broken", factoryFailure.getMessage());
+
+            final SqlException other = SqlException.$(23, "rejected");
+            Assert.assertSame(factoryFailure, other);
+            Assert.assertNull(other.getCause());
+        } finally {
+            SqlException.setFlyweightReusedForTesting(false);
+        }
+    }
+
+    @Test
     public void testParserErr() {
         TestUtils.assertEquals(
                 "[17] found [tok=')', len=1] expected ',', or 'colName'",

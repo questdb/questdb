@@ -47,6 +47,7 @@ import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
@@ -74,6 +75,7 @@ public final class IntervalExtractor implements Mutable {
     };
     private final boolean isNestedOffset;
     private final LongList parsedIntervals;
+    private final LongList points = new LongList();
     private IntervalAnalysis analysis;
     private IntervalBoundSource bounds;
     private boolean isBoundSpeculationAllowed;
@@ -136,6 +138,25 @@ public final class IntervalExtractor implements Mutable {
             verifyAnalysis(predicate, timestampColumnId, timestampType, depth, rewriter, residual);
         }
         return residual;
+    }
+
+    /**
+     * How a scan reads its partitions through the extracted intervals: through none without an interval filter, and
+     * through static ones when no runtime value bounds them.
+     */
+    public ScanPlan.IntervalScan getIntervalScan() {
+        if (!intervals.hasIntervalFilters()) {
+            return ScanPlan.IntervalScan.NONE;
+        }
+        return intervals.isStatic() ? ScanPlan.IntervalScan.STATIC : ScanPlan.IntervalScan.RUNTIME;
+    }
+
+    /**
+     * The extracted intervals as sorted [lo, hi] pairs; valid only for a {@link ScanPlan.IntervalScan#STATIC static}
+     * {@link #getIntervalScan() interval scan}.
+     */
+    public LongList getStaticIntervals() {
+        return intervals.getStaticIntervals();
     }
 
     public boolean isIntrinsicFalse() {
@@ -669,6 +690,7 @@ public final class IntervalExtractor implements Mutable {
                 return predicate;
             }
         }
+        points.clear();
         for (int i = count - 1; i > 0; i--) {
             final ConstantExpression constant = (ConstantExpression) predicate.argumentAt(i);
             final CharSequence seq = intervalElement(constant);
@@ -680,10 +702,15 @@ public final class IntervalExtractor implements Mutable {
                     final long value = timestampValue(constant);
                     intervals.subtractInterval(value, value);
                 }
-            } else {
+            } else if (seq != null) {
+                intervals.unionPoints(points);
+                points.clear();
                 unionElement(constant, seq);
+            } else {
+                points.add(timestampValue(constant));
             }
         }
+        intervals.unionPoints(points);
         isIntrinsicFalse |= intervals.isEmptySet();
         return null;
     }

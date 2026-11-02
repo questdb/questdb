@@ -60,6 +60,23 @@ public final class BoundExpressionRewriter implements Mutable {
     private boolean isReplacementPlaced;
 
     /**
+     * The flags of the conjunction of the two expressions, see {@link #combineConjunction}.
+     */
+    public static int conjunctionFlags(BoundExpression left, BoundExpression right) {
+        final int leftFlags = left.getFunctionFlags();
+        final int rightFlags = right.getFunctionFlags();
+        int flags = leftFlags & rightFlags & BoundExpression.CONSTANT;
+        flags |= (leftFlags | rightFlags) & (BoundExpression.NON_DETERMINISTIC | BoundExpression.RANDOM | BoundExpression.NO_RANDOM_ACCESS | BoundExpression.NO_PARALLELISM);
+        flags |= leftFlags & rightFlags & BoundExpression.STABLE_WITHIN_EXECUTION;
+        if ((leftFlags & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) != 0
+                && (rightFlags & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) != 0
+                && ((leftFlags | rightFlags) & BoundExpression.RUNTIME_CONSTANT) != 0) {
+            flags |= BoundExpression.RUNTIME_CONSTANT;
+        }
+        return flags;
+    }
+
+    /**
      * Allocates descriptions from the given pools, which their owner empties, and retargets the given preparations;
      * the temporary lists are borrowed for single calls only.
      */
@@ -457,20 +474,6 @@ public final class BoundExpressionRewriter implements Mutable {
             return functions.next().of(call, args, substitutedFlags(call, args));
         }
         return expression;
-    }
-
-    private static int conjunctionFlags(BoundExpression left, BoundExpression right) {
-        final int leftFlags = left.getFunctionFlags();
-        final int rightFlags = right.getFunctionFlags();
-        int flags = leftFlags & rightFlags & BoundExpression.CONSTANT;
-        flags |= (leftFlags | rightFlags) & (BoundExpression.NON_DETERMINISTIC | BoundExpression.RANDOM | BoundExpression.NO_RANDOM_ACCESS | BoundExpression.NO_PARALLELISM);
-        flags |= leftFlags & rightFlags & BoundExpression.STABLE_WITHIN_EXECUTION;
-        if ((leftFlags & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) != 0
-                && (rightFlags & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) != 0
-                && ((leftFlags | rightFlags) & BoundExpression.RUNTIME_CONSTANT) != 0) {
-            flags |= BoundExpression.RUNTIME_CONSTANT;
-        }
-        return flags;
     }
 
     /**

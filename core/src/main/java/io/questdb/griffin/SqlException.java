@@ -48,6 +48,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
     private final StringSink message = new StringSink();
     private final StringSink tableName = new StringSink();
     private int error;
+    private Throwable factoryFailure;
     private boolean isTableBusy;
     private int position;
 
@@ -84,6 +85,16 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException emptyWindowContext(int position) {
         return SqlException.$(position, "window function called in non-window context, make sure to add OVER clause");
+    }
+
+    /**
+     * The error of a function factory that threw something other than a SqlException or an
+     * ImplicitCastException. The throwable becomes the exception's {@link #getCause() cause}.
+     */
+    public static SqlException factoryFailure(int position, Throwable failure) {
+        final SqlException ex = position(position).put("exception in function factory: ").put(failure.getMessage());
+        ex.factoryFailure = failure;
+        return ex;
     }
 
     /**
@@ -164,6 +175,7 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
         ex.position = position;
         ex.error = 0;
         ex.isTableBusy = false;
+        ex.factoryFailure = null;
         return ex;
     }
 
@@ -208,6 +220,14 @@ public class SqlException extends Exception implements Sinkable, FlyweightMessag
 
     public static SqlException walRecoverable(int position) {
         return position(position).errorCode(EXCEPTION_WAL_RECOVERABLE);
+    }
+
+    /**
+     * The throwable of a {@link #factoryFailure(int, Throwable) function factory failure}, otherwise null.
+     */
+    @Override
+    public Throwable getCause() {
+        return factoryFailure;
     }
 
     public int getErrorCode() {

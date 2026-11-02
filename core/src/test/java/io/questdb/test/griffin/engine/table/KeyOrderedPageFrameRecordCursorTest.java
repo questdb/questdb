@@ -477,6 +477,40 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExhaustedGatherAfterWarmRead() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        node1.setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 1024L);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x id, ('k' || (x % 2_000))::SYMBOL s, timestamp_sequence(0, 1_000_000) ts
+                        FROM long_sequence(40_000)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("INSERT INTO t VALUES (40_001, 'k1', '1970-01-02')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
+            try (
+                    RecordCursorFactory factory = select("SELECT id, s, ts FROM t WHERE ts IN '1970-01-01' ORDER BY s, ts");
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertTrue(cursor.hasNext());
+                cursor.toTop();
+                final RecordCursor.Counter counter = new RecordCursor.Counter();
+                counter.set(40_000);
+                cursor.skipRows(counter, 5);
+                Assert.assertEquals(0, counter.get());
+                Assert.assertFalse(cursor.hasNext());
+                cursor.toTop();
+                long count = 0;
+                while (cursor.hasNext()) {
+                    count++;
+                }
+                Assert.assertEquals(40_000, count);
+            }
+        });
+    }
+
+    @Test
     public void testFilteredCollectionStaysWithinQueryMemoryLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("""

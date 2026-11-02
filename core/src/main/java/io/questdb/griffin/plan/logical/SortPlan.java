@@ -65,6 +65,7 @@ public final class SortPlan extends ForwardingPlan {
      * How the sort is implemented, or null before operator planning decided it.
      */
     public Algorithm getAlgorithm() {
+        checkPhysicalRead("SortPlan.algorithm");
         return algorithm;
     }
 
@@ -116,6 +117,16 @@ public final class SortPlan extends ForwardingPlan {
 
     public void setAlgorithm(Algorithm algorithm) {
         this.algorithm = algorithm;
+    }
+
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.facts("directions", directions);
+        visitor.fact("algorithm", algorithm);
+        visitor.fact("isLimited", isLimited);
+        visitor.fact("isMarkoutHorizon", isMarkoutHorizon);
+        visitor.fact("isReversal", isReversal);
     }
 
     @Override

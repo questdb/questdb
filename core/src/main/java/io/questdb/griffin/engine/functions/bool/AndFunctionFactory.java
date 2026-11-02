@@ -25,11 +25,11 @@
 package io.questdb.griffin.engine.functions.bool;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.BooleanFunction;
@@ -44,9 +44,7 @@ public class AndFunctionFactory implements FunctionFactory {
 
     @Override
     public int getResultType(IntList argTypes) {
-        // A constant operand folds the call into the other operand, which keeps its own type.
-        return argTypes.getQuick(0) == ColumnType.BOOLEAN && argTypes.getQuick(1) == ColumnType.BOOLEAN
-                ? ColumnType.BOOLEAN : ColumnType.UNDEFINED;
+        return ResultTypes.booleanConnective(argTypes.getQuick(0), argTypes.getQuick(1));
     }
 
     @Override

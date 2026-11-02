@@ -48,6 +48,7 @@ public final class LatestByPlan extends ForwardingPlan {
      * the LATEST BY reads a table scan.
      */
     public Algorithm getAlgorithm() {
+        checkPhysicalRead("LatestByPlan.algorithm");
         return algorithm;
     }
 
@@ -75,6 +76,13 @@ public final class LatestByPlan extends ForwardingPlan {
 
     public void setTimestampOrderInherited(boolean isTimestampOrderInherited) {
         this.isTimestampOrderInherited = isTimestampOrderInherited;
+    }
+
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.fact("algorithm", algorithm);
+        visitor.fact("isTimestampOrderInherited", isTimestampOrderInherited);
     }
 
     @Override

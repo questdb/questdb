@@ -4478,7 +4478,7 @@ public class CompiledFilterIRSerializer implements Mutable {
      * expression must keep doing.
      */
     private void maybeWidenCmpConstOperand(BoundExpression constNode, BoundExpression other) {
-        if (constNode == null) {
+        if (constNode == null || other == null || kind(other) != OPERATION) {
             return;
         }
         // The integer arm keeps its CONSTANT-only shape. The floating-point one carries its own
@@ -4488,9 +4488,6 @@ public class CompiledFilterIRSerializer implements Mutable {
                 && isIntegerConst(constNode) && arithExprType(constNode) == I8_TYPE)
                 || isNarrowIntCmpWideningConst(constNode);
         if (!isWideningConst) {
-            return;
-        }
-        if (other == null || kind(other) != OPERATION) {
             return;
         }
         final int otherType = arithExprType(other);

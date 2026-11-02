@@ -53,6 +53,7 @@ public abstract sealed class UnaryPlan extends LogicalPlan
 
     @Override
     public void replaceInput(int index, LogicalPlan input) {
+        checkRewritable("UnaryPlan.replaceInput");
         checkInputIndex(index);
         this.child = Objects.requireNonNull(input);
     }
@@ -64,6 +65,7 @@ public abstract sealed class UnaryPlan extends LogicalPlan
     }
 
     protected void configure(LogicalPlan input, int position) {
+        checkRewritable("UnaryPlan.configure");
         this.child = Objects.requireNonNull(input);
         setPosition(position);
     }

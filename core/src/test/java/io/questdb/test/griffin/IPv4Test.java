@@ -1848,6 +1848,26 @@ public class IPv4Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4ComparedWithChar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ip IPV4)");
+            execute("INSERT INTO t VALUES ('1.2.3.4'), ('200.1.1.1'), (null)");
+            assertSqlCursors(
+                    """
+                            SELECT ip::string <> 'a' c0, 'a' <> ip::string c1, ip::string != '2' c2, 'a' < ip::string c3,
+                                ip::string < '2' c4, ip::string >= 'a' c5, 'a' >= ip::string c6, ip::string > '2' c7, ip::string <= 'a' c8
+                            FROM t
+                            """,
+                    """
+                            SELECT ip <> 'a' c0, 'a' <> ip c1, ip != '2' c2, 'a' < ip c3,
+                                ip < '2' c4, ip >= 'a' c5, 'a' >= ip c6, ip > '2' c7, ip <= 'a' c8
+                            FROM t
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testIPv4ContainsEqSubnet() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test (col ipv4)");
@@ -6161,6 +6181,27 @@ public class IPv4Test extends AbstractCairoTest {
                         12.6.45.145
                         12.6.93.114
                         """));
+    }
+
+    @Test
+    public void testRndIPv4Arguments() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT rnd_ipv4('1.1.1.1/32', 0) a, rnd_ipv4('1.1.1.1/32'::varchar, 0) b, rnd_ipv4('1.1.1.1/32'::symbol, 0) c")
+                    .noLeakCheck()
+                    .returnsOnce("""
+                            a\tb\tc
+                            1.1.1.1\t1.1.1.1\t1.1.1.1
+                            """);
+            assertQuery("SELECT rnd_ipv4(1, 1)")
+                    .noLeakCheck()
+                    .fails(7, "there is no matching function `rnd_ipv4` with the argument types: (INT, INT)");
+            assertQuery("SELECT rnd_ipv4(null, 0)")
+                    .noLeakCheck()
+                    .fails(16, "subnet cannot be NULL");
+            assertQuery("SELECT rnd_ipv4(null::string, 0)")
+                    .noLeakCheck()
+                    .fails(20, "subnet cannot be NULL");
+        });
     }
 
     @Test

@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.Long256Function;
 import io.questdb.std.IntList;
@@ -55,8 +56,12 @@ public class RndLong256NFunctionFactory implements FunctionFactory {
     }
 
     @Override
-    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new RndFunction(args.getQuick(0).getInt(null));
+    public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        final int count = args.getQuick(0).getInt(null);
+        if (count < 1 || count > Integer.MAX_VALUE / 4) {
+            throw SqlException.$(argPositions.getQuick(0), "invalid long256 count");
+        }
+        return new RndFunction(count);
     }
 
     private static class RndFunction extends Long256Function implements Function {

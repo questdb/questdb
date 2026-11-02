@@ -5645,6 +5645,20 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStringRegClassNull() throws Exception {
+        assertMemoryLeak(() -> assertQuery("""
+                SELECT null::string::regclass s, null::varchar::regclass v, null::symbol::regclass sy, null::char::regclass c,
+                    'pg_class'::regclass k
+                """)
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        s\tv\tsy\tc\tk
+                        null\tnull\tnull\tnull\t1259
+                        """));
+    }
+
+    @Test
     public void testSymbolColumnToSymbolInGroupBy1() throws Exception {
         assertQuery("SELECT cast(timestamp as LONG) AS timestamp, symbol::SYMBOL AS \"ID\", round(avg(price))::LONG AS \"Evt1\" " +
                 "FROM 'trades'" +

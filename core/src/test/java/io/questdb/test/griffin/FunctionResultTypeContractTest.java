@@ -51,12 +51,13 @@ import java.util.HashSet;
 import java.util.List;
 
 /**
- * Builds every registered function over every argument type its signature accepts, as columns, constants,
- * typed and untyped NULLs and bind variables, and over the constant values factories branch on. Fails when
+ * Builds every registered function over every argument type its signature accepts, as columns, an array slice,
+ * constants, typed and untyped NULLs and bind variables, and over the constant values factories branch on. Fails when
  * {@code getResultType} throws, when the {@code -ea} check in {@code FunctionResolver.createFunction} finds a
  * built type other than the declared one, when a call the binder left unconstructed builds into a function
  * with other semantics than the binder recorded, or when compiling a call throws anything other than a
- * SqlException, CairoException or ImplicitCastException. Every call that builds a {@link ComparisonFunction}
+ * SqlException, CairoException or ImplicitCastException, including a throwable of a factory the resolver reports as
+ * a {@link SqlException#factoryFailure(int, Throwable) function factory failure}. Every call that builds a {@link ComparisonFunction}
  * also runs beside its NOT over rows holding NULLs and values, and fails when the folded NOT does not return
  * the negation of the comparison.
  */
@@ -331,7 +332,13 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
             if (base instanceof VirtualRecordCursorFactory virtual && virtual.getFunctions().getQuick(0) instanceof ComparisonFunction function) {
                 comparison = function.getClass().getName();
             }
-        } catch (SqlException | CairoException | ImplicitCastException e) {
+        } catch (SqlException e) {
+            if (e.getCause() != null) {
+                recordCrash(sql, e.getCause());
+            } else {
+                rejected++;
+            }
+        } catch (CairoException | ImplicitCastException e) {
             rejected++;
         } catch (Throwable e) {
             recordCrash(sql, e);
@@ -583,6 +590,8 @@ public class FunctionResultTypeContractTest extends AbstractCairoTest {
         addColumn("d256", ColumnType.getDecimalType(76, 2));
         addColumn("da", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
         addColumn("da2", ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
+        // an access over a slice of index arguments takes over the slice's arguments
+        addColumn("da2[1]", ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
 
         addConstant("true", ColumnType.BOOLEAN);
         addConstant("1::byte", ColumnType.BYTE);

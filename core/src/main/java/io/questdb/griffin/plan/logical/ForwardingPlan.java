@@ -34,6 +34,7 @@ public abstract sealed class ForwardingPlan extends UnaryPlan
         permits DistinctPlan, FillPlan, FilterPlan, LatestByPlan, LimitPlan, SortPlan {
 
     public final void deriveOutput() {
+        checkRewritable("ForwardingPlan.deriveOutput");
         final OutputSchema output = getOutput();
         output.copyFrom(getChild().getOutput());
         output.setTimestampIndex(derivedTimestampIndex());

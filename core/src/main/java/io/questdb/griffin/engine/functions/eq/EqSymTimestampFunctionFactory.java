@@ -51,11 +51,6 @@ public class EqSymTimestampFunctionFactory implements FunctionFactory {
     public static final int BITSET_OPTIMISATION_THRESHOLD = 1048576;
 
     @Override
-    public int getResultType(IntList argTypes) {
-        return ColumnType.BOOLEAN;
-    }
-
-    @Override
     public String getSignature() {
         return "=(KN)";
     }

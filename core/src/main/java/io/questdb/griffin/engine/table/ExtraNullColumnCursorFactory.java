@@ -159,7 +159,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
 
     @Override
     public boolean recordCursorSupportsLongTopK(int columnIndex) {
-        return base.recordCursorSupportsLongTopK(columnIndex);
+        return columnIndex < columnSplit && base.recordCursorSupportsLongTopK(columnIndex);
     }
 
     @Override

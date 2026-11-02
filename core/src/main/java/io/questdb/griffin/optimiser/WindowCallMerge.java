@@ -39,6 +39,7 @@ import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
+import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
@@ -100,6 +101,16 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor, Exp
     @Override
     public String getName() {
         return "window merge";
+    }
+
+    @Override
+    public PlanStage getProducedStage() {
+        return PlanStage.DECORRELATED;
+    }
+
+    @Override
+    public PlanStage getRequiredStage() {
+        return PlanStage.DECORRELATED;
     }
 
     @Override

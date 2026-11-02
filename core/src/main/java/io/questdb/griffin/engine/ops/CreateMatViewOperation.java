@@ -136,20 +136,10 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
             case 'm' -> value * 60L;
             case 'h' -> value * 60L * 60;
             case 'd' -> value * 24L * 60 * 60;
-            default -> throw SqlException.position(pos).put("unsupported ").put(kind).put(" unit: ").put(value).put(unit)
-                    .put(", supported units are 's', 'm', 'h', 'd'");
+            default ->
+                    throw SqlException.position(pos).put("unsupported ").put(kind).put(" unit: ").put(value).put(unit)
+                            .put(", supported units are 's', 'm', 'h', 'd'");
         };
-    }
-
-    /**
-     * The start of a PERIOD refresh timer: the start of the current period of {@code length} {@code lengthUnit}, which
-     * {@link #validateMatViewPeriodLength} validated, in the time zone {@code rules}, or in UTC for null, in
-     * microseconds.
-     */
-    private static long periodTimerStartUs(MicrosecondClock clock, int length, char lengthUnit, @Nullable TimeZoneRules rules, int pos) throws SqlException {
-        final long nowMicros = clock.getTicks();
-        return TimestampSamplerFactory.getInstance(MicrosTimestampDriver.INSTANCE, length, lengthUnit, pos)
-                .round(rules != null ? nowMicros + rules.getOffset(nowMicros) : nowMicros);
     }
 
     /**
@@ -164,6 +154,17 @@ public interface CreateMatViewOperation extends TableStructure, Operation {
         } catch (CairoException e) {
             throw SqlException.position(pos).put(e.getFlyweightMessage());
         }
+    }
+
+    /**
+     * The start of a PERIOD refresh timer: the start of the current period of {@code length} {@code lengthUnit}, which
+     * {@link #validateMatViewPeriodLength} validated, in the time zone {@code rules}, or in UTC for null, in
+     * microseconds.
+     */
+    private static long periodTimerStartUs(MicrosecondClock clock, int length, char lengthUnit, @Nullable TimeZoneRules rules, int pos) throws SqlException {
+        final long nowMicros = clock.getTicks();
+        return TimestampSamplerFactory.getInstance(MicrosTimestampDriver.INSTANCE, length, lengthUnit, pos)
+                .round(rules != null ? nowMicros + rules.getOffset(nowMicros) : nowMicros);
     }
 
     private static void validateMatViewPeriodDelay(int length, char lengthUnit, int delay, char delayUnit, int pos) throws SqlException {

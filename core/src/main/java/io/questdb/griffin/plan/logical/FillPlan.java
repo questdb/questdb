@@ -76,6 +76,7 @@ public final class FillPlan extends ForwardingPlan {
      * The order the fill reads its input buckets in, which operator planning records; null before planning.
      */
     public Algorithm getAlgorithm() {
+        checkPhysicalRead("FillPlan.algorithm");
         return algorithm;
     }
 
@@ -183,6 +184,17 @@ public final class FillPlan extends ForwardingPlan {
 
     public void setTo(BoundExpression to) {
         this.to = to;
+    }
+
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.facts("modes", modes);
+        visitor.facts("tokens", tokens);
+        visitor.fact("algorithm", algorithm);
+        visitor.fact("periodUnit", periodUnit);
+        visitor.fact("periodUnitPosition", periodUnitPosition);
+        visitor.fact("stride", stride);
     }
 
     @Override

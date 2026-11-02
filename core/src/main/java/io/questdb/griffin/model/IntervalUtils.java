@@ -495,10 +495,14 @@ public final class IntervalUtils {
         return MicrosTimestampDriver.INSTANCE;
     }
 
+    /**
+     * The timestamp type of the bounds of an interval of the given type. An untyped NULL reads as an interval of
+     * microsecond bounds.
+     */
     public static int getTimestampTypeByIntervalType(int intervalType) {
-        assert ColumnType.isInterval(intervalType);
+        assert ColumnType.isInterval(intervalType) || ColumnType.isNull(intervalType);
         return switch (intervalType) {
-            case ColumnType.INTERVAL_RAW, ColumnType.INTERVAL_TIMESTAMP_MICRO -> ColumnType.TIMESTAMP_MICRO;
+            case ColumnType.NULL, ColumnType.INTERVAL_RAW, ColumnType.INTERVAL_TIMESTAMP_MICRO -> ColumnType.TIMESTAMP_MICRO;
             case ColumnType.INTERVAL_TIMESTAMP_NANO -> ColumnType.TIMESTAMP_NANO;
             default -> ColumnType.UNDEFINED;
         };

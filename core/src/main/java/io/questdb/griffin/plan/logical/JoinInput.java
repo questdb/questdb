@@ -25,7 +25,6 @@
 package io.questdb.griffin.plan.logical;
 
 import io.questdb.std.LongIntHashMap;
-import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
@@ -34,9 +33,12 @@ import io.questdb.std.ObjectPool;
 import java.util.Objects;
 
 /**
- * One source occurrence and its matching conditions in a join block.
+ * One source occurrence and its matching conditions in a join block. Operator planning records the step's physical
+ * facts: the facts it records with the algorithm, the key check, the NULL key check and match and the time-frame scan,
+ * and the filter algorithm, may be read once it decided the algorithm, see {@link #getAlgorithm}, and the input the
+ * step hashes once it settled it, see {@link #isAlgorithmDecided}; under {@link io.questdb.ParanoiaState#PLAN_PARANOIA_MODE} an earlier read fails.
  */
-public final class JoinInput implements Mutable {
+public final class JoinInput implements PlanFactSource {
     public static final ObjectFactory<JoinInput> FACTORY = JoinInput::new;
     public static final int HINT_ASOF_DENSE = 1;
     public static final int HINT_ASOF_INDEX = 2;
@@ -52,6 +54,7 @@ public final class JoinInput implements Mutable {
     private Algorithm algorithm;
     private CharSequence bindingAlias;
     private BuildSide buildSide;
+    private FilterPlan.Algorithm filterAlgorithm;
     private int hints;
     private LogicalPlan input;
     private boolean isDependent;
@@ -61,7 +64,6 @@ public final class JoinInput implements Mutable {
     private BoundExpression keyFilter;
     private int markoutSequenceColumnId = -1;
     private int markoutTimestampColumnId = -1;
-    private MasterSide masterSide;
     private NullExtension nullExtension = NullExtension.BY_KEYS;
     private BoundExpression nullKeyCheck;
     private NullKeyMatch nullKeyMatch;
@@ -97,6 +99,7 @@ public final class JoinInput implements Mutable {
         algorithm = null;
         bindingAlias = null;
         buildSide = null;
+        filterAlgorithm = null;
         hints = 0;
         input = null;
         isDependent = false;
@@ -106,7 +109,6 @@ public final class JoinInput implements Mutable {
         joinType = null;
         markoutSequenceColumnId = -1;
         markoutTimestampColumnId = -1;
-        masterSide = null;
         nullExtension = NullExtension.BY_KEYS;
         nullKeyCheck = null;
         nullKeyMatch = null;
@@ -130,13 +132,28 @@ public final class JoinInput implements Mutable {
     }
 
     /**
-     * The input a light INNER hash join step hashes, which operator planning records once it settles the step: the
-     * slave of a step whose master side is {@link MasterSide#FIXED}, and for one the smaller input drives, the input
-     * proven never to hold more rows than the other or {@link BuildSide#SMALLER}, which leaves the choice to execution.
-     * Null for a step of another algorithm or kind, and for one operator planning has not settled.
+     * The input a light hash join step hashes, which operator planning records: for an INNER step once it settles the
+     * input that drives it, {@link BuildSide#FIXED_MASTER} when a consumer reads the order of its master, else the input
+     * proven never to hold more rows than the other, or the smaller one at execution when the master supports random
+     * access, {@link BuildSide#SMALLER}, else the slave; for a FULL step NULL-extended by its keys whose master supports
+     * random access, the smaller one at execution, else the slave. Null for a step of another algorithm or kind, and for
+     * an INNER step operator planning has not settled. Read only once operator planning settled it, see
+     * {@link #isAlgorithmDecided}.
      */
     public BuildSide getBuildSide() {
+        PlanFacts.checkDecided(isAlgorithmDecided(), "JoinInput.buildSide");
         return buildSide;
+    }
+
+    /**
+     * How the generator applies the filter over the rows the step joins, which operator planning records: the post-join
+     * filter, the ON residual of a step that filters the rows it joins with it, see
+     * {@link PlanToFactoryRules#isOnResidualFiltered}, or the conjunction of both, which it never folds. Null for a step
+     * with neither.
+     */
+    public FilterPlan.Algorithm getFilterAlgorithm() {
+        PlanFacts.checkDecided(algorithm != null, "JoinInput.filterAlgorithm");
+        return filterAlgorithm;
     }
 
     public int getHints() {
@@ -158,6 +175,7 @@ public final class JoinInput implements Mutable {
      * step looks up every key, and for any other step.
      */
     public BoundExpression getKeyCheck() {
+        PlanFacts.checkDecided(algorithm != null, "JoinInput.keyCheck");
         return keyCheck;
     }
 
@@ -184,13 +202,6 @@ public final class JoinInput implements Mutable {
     }
 
     /**
-     * Which input drives the step, or null before operator planning decided it.
-     */
-    public MasterSide getMasterSide() {
-        return masterSide;
-    }
-
-    /**
      * How the outer step decides which of the rows it preserves it NULL-extends.
      */
     public NullExtension getNullExtension() {
@@ -203,6 +214,7 @@ public final class JoinInput implements Mutable {
      * master rows by its ON residual, see {@link PlanToFactoryRules#isMasterNullKeyChecked}; null for any other step.
      */
     public BoundExpression getNullKeyCheck() {
+        PlanFacts.checkDecided(algorithm != null, "JoinInput.nullKeyCheck");
         return nullKeyCheck;
     }
 
@@ -212,6 +224,7 @@ public final class JoinInput implements Mutable {
      * {@link PlanToFactoryRules#nullKeyMatch}; null for any other step.
      */
     public NullKeyMatch getNullKeyMatch() {
+        PlanFacts.checkDecided(algorithm != null, "JoinInput.nullKeyMatch");
         return nullKeyMatch;
     }
 
@@ -240,6 +253,7 @@ public final class JoinInput implements Mutable {
      * operator planning records; null for any other step.
      */
     public TimeFrameScan getTimeFrameScan() {
+        PlanFacts.checkDecided(algorithm != null, "JoinInput.timeFrameScan");
         return timeFrameScan;
     }
 
@@ -283,7 +297,7 @@ public final class JoinInput implements Mutable {
      * True when operator planning decided the algorithm of the step and the input that drives it.
      */
     public boolean isAlgorithmDecided() {
-        return algorithm != null && masterSide != null;
+        return algorithm != null && (buildSide != null || algorithm != Algorithm.LIGHT_HASH || joinType != JoinKind.INNER);
     }
 
     /**
@@ -292,6 +306,14 @@ public final class JoinInput implements Mutable {
      */
     public boolean isDependent() {
         return isDependent;
+    }
+
+    /**
+     * True when the smaller input drives the light INNER hash join step, see {@link #getBuildSide}, so it emits rows in
+     * either input's order and designates no timestamp.
+     */
+    public boolean isSmallerDriven() {
+        return joinType == JoinKind.INNER && buildSide != null && buildSide != BuildSide.FIXED_MASTER;
     }
 
     public boolean isSubquery() {
@@ -332,12 +354,11 @@ public final class JoinInput implements Mutable {
     }
 
     /**
-     * Records the algorithm; the master side of a light INNER hash join stays undecided until operator planning decides
-     * it.
+     * Records the algorithm; the build side of a light INNER hash join stays undecided until operator planning
+     * settles the input that drives it, see {@link #getBuildSide}.
      */
     public void setAlgorithm(Algorithm algorithm) {
         this.algorithm = algorithm;
-        masterSide = algorithm == Algorithm.LIGHT_HASH && joinType == JoinKind.INNER ? null : MasterSide.FIXED;
         buildSide = null;
     }
 
@@ -347,6 +368,10 @@ public final class JoinInput implements Mutable {
 
     public void setDependent(boolean isDependent) {
         this.isDependent = isDependent;
+    }
+
+    public void setFilterAlgorithm(FilterPlan.Algorithm filterAlgorithm) {
+        this.filterAlgorithm = filterAlgorithm;
     }
 
     public void setHints(int hints) {
@@ -372,10 +397,6 @@ public final class JoinInput implements Mutable {
     public void setMarkout(int timestampColumnId, int sequenceColumnId) {
         markoutTimestampColumnId = timestampColumnId;
         markoutSequenceColumnId = sequenceColumnId;
-    }
-
-    public void setMasterSide(MasterSide masterSide) {
-        this.masterSide = masterSide;
     }
 
     public void setNullExtension(NullExtension nullExtension) {
@@ -410,6 +431,30 @@ public final class JoinInput implements Mutable {
         this.toleranceInterval = toleranceInterval;
     }
 
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        JoinKey.visitFacts(keys, visitor);
+        visitor.output("output", output);
+        visitor.fact("algorithm", algorithm);
+        visitor.fact("bindingAlias", bindingAlias);
+        visitor.fact("buildSide", buildSide);
+        visitor.fact("filterAlgorithm", filterAlgorithm);
+        visitor.fact("hints", hints);
+        visitor.fact("isDependent", isDependent);
+        visitor.fact("isSubquery", isSubquery);
+        visitor.fact("joinType", joinType);
+        visitor.fact("nullExtension", nullExtension);
+        visitor.fact("nullKeyMatch", nullKeyMatch);
+        visitor.fact("position", position);
+        visitor.fact("timeFrameScan", timeFrameScan);
+        visitor.fact("toleranceInterval", toleranceInterval);
+        visitor.fact("unnest", unnest != null);
+        if (unnest != null) {
+            unnest.visitFacts(visitor);
+        }
+    }
+
+    @Override
     public void visitReads(PlanExpressionVisitor visitor) {
         if (unnest != null) {
             unnest.visitReads(visitor);
@@ -481,10 +526,6 @@ public final class JoinInput implements Mutable {
          * A SPLICE join.
          */
         SPLICE,
-        /**
-         * A SPLICE join under full-fat joins, which the generator rejects.
-         */
-        FULL_FAT_SPLICE,
         /**
          * Expands each master row by the UNNEST expressions.
          */
@@ -570,11 +611,17 @@ public final class JoinInput implements Mutable {
      * An outer join hashes the input it NULL-extends.
      */
     public enum BuildSide {
+        /**
+         * The slave, with the master fixed as the input that drives the light INNER hash join, so it emits rows in the
+         * master's order, which a consumer of the join reads.
+         */
+        FIXED_MASTER,
         MASTER,
         SLAVE,
         /**
-         * The input whose cursor reports fewer rows when the light INNER hash join opens, a master only when its
-         * factory supports random access, and the slave when either cursor cannot tell.
+         * The input whose cursor reports fewer rows when the light hash join opens, and the slave when either cursor
+         * cannot tell or both report as many; operator planning records it only over a master that supports random
+         * access.
          */
         SMALLER;
 
@@ -588,20 +635,5 @@ public final class JoinInput implements Mutable {
             }
             return masterRows < slaveRows ? MASTER : masterRows > slaveRows ? SLAVE : tie;
         }
-    }
-
-    /**
-     * The input a join step drives the join with.
-     */
-    public enum MasterSide {
-        /**
-         * Always the master, so the step emits rows in the master's order.
-         */
-        FIXED,
-        /**
-         * The smaller of the two inputs at execution; the step then emits rows in either input's order and declares no
-         * designated timestamp.
-         */
-        SMALLER
     }
 }

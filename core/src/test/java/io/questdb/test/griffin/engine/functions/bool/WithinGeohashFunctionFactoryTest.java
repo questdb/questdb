@@ -184,6 +184,22 @@ public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullLhs() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g (h GEOHASH(2c))");
+            execute("INSERT INTO g VALUES (#dr), (null)");
+            assertQuery("SELECT null WITHIN (#d) a, null WITHIN (h) b, NOT (null WITHIN (#d, #dr)) c FROM g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb\tc
+                            false\tfalse\ttrue
+                            false\tfalse\ttrue
+                            """);
+        });
+    }
+
+    @Test
     public void testNullRhs() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlTrips);

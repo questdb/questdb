@@ -292,8 +292,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new SelectedRecordCursorFactory(metadata, mapping, base);
     }
 
+    /**
+     * Whether the planned property agrees with the factory's: a property operator planning leaves unknown agrees with
+     * none.
+     */
     private static boolean isAgreed(PhysicalProperties.Capability derived, boolean actual) {
-        return derived == PhysicalProperties.Capability.UNKNOWN || (derived == PhysicalProperties.Capability.YES) == actual;
+        return derived != PhysicalProperties.Capability.UNKNOWN && (derived == PhysicalProperties.Capability.YES) == actual;
     }
 
     private static String physicalPropertyMismatch(LogicalPlan plan, RecordCursorFactory factory) {
@@ -312,12 +316,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (!isAgreed(PhysicalProperties.followsOrderAdvice(plan), factory.followedOrderByAdvice())) {
             return "derived order advice differs from the factory's";
         }
-        final PhysicalProperties.ScanDirection direction = PhysicalProperties.scanDirection(plan);
-        if (direction != PhysicalProperties.ScanDirection.UNKNOWN && direction != PhysicalProperties.ScanDirection.of(factory.getScanDirection())) {
+        if (PhysicalProperties.scanDirection(plan) != PhysicalProperties.ScanDirection.of(factory.getScanDirection())) {
             return "derived scan direction differs from the factory's";
         }
-        final int timestampIndex = PhysicalProperties.timestampIndex(plan);
-        if (timestampIndex != PhysicalProperties.UNKNOWN_TIMESTAMP && timestampIndex != factory.getMetadata().getTimestampIndex()) {
+        if (PhysicalProperties.timestampIndex(plan) != factory.getMetadata().getTimestampIndex()) {
             return "derived designated timestamp differs from the factory's";
         }
         for (int i = 0, n = factory.getMetadata().getColumnCount(); i < n; i++) {
@@ -338,15 +340,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Asserts that every physical property the plan derives agrees with the factory codegen built for it. Outside a
-     * table scan, codegen substitutes the empty factory wherever it proves a result empty, from facts the plan does
-     * not carry; a scan builds it exactly where its access path is empty.
+     * Asserts that every physical property the plan derives agrees with the factory codegen built for it, including the
+     * empty factory codegen builds where the plan records an empty result: an empty access path, a filter it folds to
+     * false and an empty window join. A scan builds it exactly where its access path is empty.
      */
     private static RecordCursorFactory verifyPhysicalProperties(LogicalPlan plan, RecordCursorFactory factory) {
         final ScanPlan scan = plan instanceof LatestByPlan latest ? PlanToFactoryRules.latestByScan(latest) : LogicalPlans.scanThroughFilter(plan);
-        if (scan == null && factory instanceof EmptyTableRecordCursorFactory) {
-            return factory;
-        }
         final String mismatch;
         try {
             mismatch = scan != null && scan.getAccessPath() == ScanPlan.AccessPath.EMPTY && !(factory instanceof EmptyTableRecordCursorFactory)
@@ -449,7 +448,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
                 return filterGenerator.generate(frame, residual, input.getOutput(), base, predicate, producerLo,
-                        executionContext, filter.hasUpdateScan(), filter.getAlgorithm() == FilterPlan.Algorithm.PARALLEL, null, false);
+                        executionContext, filter.hasUpdateScan(), filter.getAlgorithm(), null, false);
             }
             case ProjectPlan project -> {
                 return projectionGenerator.generateProjection(frame, project, base, executionContext);

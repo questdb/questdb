@@ -45,6 +45,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.std.IntList;
@@ -97,10 +98,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        if (args.getQuick(0).isNullConstant()) {
-            throw SqlException.$(argPositions.getQuick(0), "table name cannot be NULL");
-        }
-        CharSequence tableName = args.get(0).getStrA(null);
+        final CharSequence tableName = SqlUtil.getTableName(args.getQuick(0), argPositions.getQuick(0));
         final SqlExecutionContext.TableFunctionView view = sqlExecutionContext.getTableFunctionView();
         TableToken tableToken = sqlExecutionContext.getCairoEngine().getTableTokenIfExists(tableName);
         // Outside a view, or when the view's definition does not name the table, a table the principal

@@ -61,6 +61,7 @@ public final class HorizonJoinPlan extends LogicalPlan {
     }
 
     public Algorithm getAlgorithm() {
+        checkPhysicalRead("HorizonJoinPlan.algorithm");
         return algorithm;
     }
 
@@ -118,6 +119,7 @@ public final class HorizonJoinPlan extends LogicalPlan {
 
     @Override
     public void replaceInput(int index, LogicalPlan input) {
+        checkRewritable("HorizonJoinPlan.replaceInput");
         if (index == 0) {
             master = Objects.requireNonNull(input);
         } else {
@@ -131,6 +133,20 @@ public final class HorizonJoinPlan extends LogicalPlan {
 
     public void setConsumer(Consumer consumer) {
         this.consumer = consumer;
+    }
+
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.facts("offsetValues", offsetValues);
+        visitor.facts("offsets", offsets);
+        for (int i = 0, n = slaves.size(); i < n; i++) {
+            slaves.getQuick(i).visitFacts(visitor);
+        }
+        visitor.fact("algorithm", algorithm);
+        visitor.fact("consumer", consumer);
+        visitor.fact("horizonAlias", horizonAlias);
+        visitor.fact("masterAlias", masterAlias);
     }
 
     @Override

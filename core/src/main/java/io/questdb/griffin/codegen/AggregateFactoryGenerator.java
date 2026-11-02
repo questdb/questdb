@@ -557,10 +557,6 @@ public final class AggregateFactoryGenerator {
         }
     }
 
-    static boolean isTimeSeriesDistinct(RecordCursorFactory base) {
-        return base.recordCursorSupportsRandomAccess() && base.getMetadata().getTimestampIndex() >= 0;
-    }
-
     /**
      * Lays out the column keys of the plan, which read {@code input}, in the GROUP BY map after its value columns, and builds the output function
      * of each over its map slot, which {@code keySlots} records by key position: a column repeated consecutively takes
@@ -695,23 +691,28 @@ public final class AggregateFactoryGenerator {
         return selectPaired(base, producer.getOutput(), read.getOutput(), read.getProducerColumnIds());
     }
 
+    /**
+     * Builds the DISTINCT as operator planning records it, see {@link DistinctPlan#getAlgorithm}; the hash one stops at
+     * the LIMIT over it, {@code limitAdvice}, when one is given.
+     */
     RecordCursorFactory generateDistinct(GenerationFrame frame, DistinctPlan distinct, LimitPlan limitAdvice, SqlExecutionContext executionContext) throws SqlException {
-        // DISTINCT keeps its input order. A downstream sort must not turn the
-        // timestamp-specialized factory's forward input into a backward scan.
         final RecordCursorFactory base = codeGenerator.generate(frame, distinct.getChild(), executionContext);
-        if (limitAdvice == null || isTimeSeriesDistinct(base)) {
-            return generateDistinct(base, null);
+        final boolean isTimeSeries = distinct.getAlgorithm() == DistinctPlan.Algorithm.TIME_SERIES;
+        assert isTimeSeries == (base.recordCursorSupportsRandomAccess() && base.getMetadata().getTimestampIndex() >= 0)
+                : "DISTINCT algorithm differs from its input";
+        if (limitAdvice == null || isTimeSeries) {
+            return generateDistinct(base, null, isTimeSeries);
         }
-        return generateDistinct(base, codeGenerator.instantiateLimit(limitAdvice, base, executionContext));
+        return generateDistinct(base, codeGenerator.instantiateLimit(limitAdvice, base, executionContext), false);
     }
 
     /**
      * Consumes the input and optional LIMIT advice on entry, including on failure.
      */
-    RecordCursorFactory generateDistinct(RecordCursorFactory base, @Nullable LimitBounds limitAdvice) {
+    private RecordCursorFactory generateDistinct(RecordCursorFactory base, @Nullable LimitBounds limitAdvice, boolean isTimeSeries) {
         boolean isAdopted = false;
         try {
-            if (isTimeSeriesDistinct(base)) {
+            if (isTimeSeries) {
                 assert limitAdvice == null;
                 isAdopted = true;
                 return new DistinctTimeSeriesRecordCursorFactory(configuration, base, entityColumnFilter, asm);

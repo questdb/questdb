@@ -74,6 +74,7 @@ import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
+import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BindVariableExpression;
@@ -95,6 +96,7 @@ import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -227,6 +229,14 @@ final class ScanFactoryGenerator {
         return scan.getIndexDirection() == SortDirection.DESCENDING ? IndexReader.DIR_BACKWARD : IndexReader.DIR_FORWARD;
     }
 
+    /**
+     * Whether the generator extracts the intervals of the scan from its predicate: when runtime values bound them, as
+     * it instantiates the functions of those values, and to verify the planned ones.
+     */
+    private static boolean isIntervalExtractionRequired(ScanPlan scan) {
+        return scan.getIntervalScan() == ScanPlan.IntervalScan.RUNTIME || ParanoiaState.PLAN_PARANOIA_MODE;
+    }
+
     private static int keyPosition(BoundExpression expression, IntList keyIds) {
         return expression instanceof ColumnExpression column && column.isDirectReference()
                 ? keyIds.indexOf(column.getColumnId(), 0, keyIds.size()) : -1;
@@ -281,8 +291,28 @@ final class ScanFactoryGenerator {
         return counts;
     }
 
-    private RuntimeIntrinsicIntervalModel buildIntervals(IntervalExtractor scanIntervals, PlanTable table) {
-        return scanIntervals == null ? null : scanIntervals.build(table.getPartitionedBy());
+    private static void verifyIntervals(ScanPlan scan, @Nullable IntervalExtractor scanIntervals) {
+        final ScanPlan.IntervalScan extracted = scanIntervals == null ? ScanPlan.IntervalScan.NONE : scanIntervals.getIntervalScan();
+        if (extracted != scan.getIntervalScan()
+                || extracted == ScanPlan.IntervalScan.STATIC && !scanIntervals.getStaticIntervals().equals(scan.getStaticIntervals())) {
+            throw new AssertionError("planned scan intervals differ from the extracted intervals");
+        }
+    }
+
+    /**
+     * The interval model of the scan: none, the static intervals planning recorded, or the runtime intervals the
+     * generator extracted into {@code scanIntervals}, which then own the functions of their bounds.
+     */
+    private RuntimeIntrinsicIntervalModel buildIntervals(ScanPlan scan, @Nullable IntervalExtractor scanIntervals, PlanTable table) {
+        if (ParanoiaState.PLAN_PARANOIA_MODE) {
+            verifyIntervals(scan, scanIntervals);
+        }
+        return switch (scan.getIntervalScan()) {
+            case NONE -> null;
+            case STATIC -> new RuntimeIntervalModel(ColumnType.getTimestampDriver(scan.getNativeTimestampType()), table.getPartitionedBy(),
+                    new LongList(scan.getStaticIntervals()), new ObjList<>());
+            case RUNTIME -> scanIntervals.build(table.getPartitionedBy());
+        };
     }
 
     private void configurePushdown(GenerationFrame frame, PartitionFrameCursorFactory frames, BoundExpression residual, ScanPlan scan,
@@ -317,7 +347,7 @@ final class ScanFactoryGenerator {
             return base;
         }
         return filterGenerator.generate(frame, residual, scan.getOutput(), base, filter, frame.producerMark(), executionContext,
-                scan.isUpdate(), isParallel, scan.getFilterLimit(), scan.isResidualPreTouched());
+                scan.isUpdate(), scan.getResidualAlgorithm(), scan.getFilterLimit(), scan.isResidualPreTouched());
     }
 
     private RecordCursorFactory generateIndexedScan(
@@ -330,7 +360,7 @@ final class ScanFactoryGenerator {
         final ObjList<BoundExpression> values = isExcluded ? scan.getExcludedKeys() : scan.getIndexKeys();
         final int keyCount = values.size();
         final ObjList<Function> keys = new ObjList<>(keyCount);
-        RuntimeIntrinsicIntervalModel intervalModel = buildIntervals(scanIntervals, table);
+        RuntimeIntrinsicIntervalModel intervalModel = buildIntervals(scan, scanIntervals, table);
         Function filter = null;
         PartitionFrameCursorFactory frames = null;
         final int indexDirection = indexDirection(scan);
@@ -412,7 +442,7 @@ final class ScanFactoryGenerator {
             }
             instantiateKeys(scan.getIndexKeys(), keys, scan, metadata, executionContext);
             instantiateKeys(scan.getExcludedKeys(), excludedKeys, scan, metadata, executionContext);
-            frames = newFrames(scan, buildIntervals(scanIntervals, table), table, frameOrder(scan));
+            frames = newFrames(scan, buildIntervals(scan, scanIntervals, table), table, frameOrder(scan));
             if (residual != null && (residual.getFunctionFlags() & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) == 0) {
                 configurePushdown(frame, frames, residual, scan, metadata, table, executionContext);
             }
@@ -445,7 +475,7 @@ final class ScanFactoryGenerator {
                                                       @Nullable PreparedFilter stolenFilter) throws SqlException {
         final BoundExpression residual = scan.getTableToken().isLiveView() ? null : scan.getResidual();
         final int order = frameOrder(scan);
-        final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, table), table, order);
+        final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scan, scanIntervals, table), table, order);
         try {
             configurePushdown(frame, frames, residual, scan, metadata, table, executionContext);
         } catch (Throwable th) {
@@ -453,7 +483,8 @@ final class ScanFactoryGenerator {
             throw th;
         }
         final RecordCursorFactory factory = generateScan(frames, metadata, order, PlanToFactoryRules.isPageFrameAdviceFollowed(scan),
-                indexes, shifts, scan.isRandomAccess());
+                indexes, shifts, scan.isRandomAccess(),
+                PhysicalProperties.supportsPageFrameTimeFrameCursor(scan, scan.isRandomAccess()) == PhysicalProperties.Capability.YES);
         if (residual == null) {
             return factory;
         }
@@ -468,10 +499,10 @@ final class ScanFactoryGenerator {
                 .add(table.newColumnMetadata(index, Chars.toString(aggregate.getOutput().getColumnName(0))));
         final IntList indexes = new IntList();
         indexes.add(index);
-        if (scanIntervals != null && table.getTimestampIndex() != index) {
+        if (scan.isIntervalScan() && table.getTimestampIndex() != index) {
             indexes.add(table.getTimestampIndex());
         }
-        final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, table), table,
+        final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scan, scanIntervals, table), table,
                 PartitionFrameCursorFactory.ORDER_ASC);
         return new PostingIndexDistinctRecordCursorFactory(metadata, frames, index, 0, indexes);
     }
@@ -498,7 +529,7 @@ final class ScanFactoryGenerator {
             case PAGE_FRAMES -> generatePageFrameScan(frame, scan, executionContext, scanIntervals, metadata, table,
                     indexes, shifts, stolenFilter);
             case SORTED_SYMBOL_INDEX -> {
-                final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, table), table, frameOrder(scan));
+                final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scan, scanIntervals, table), table, frameOrder(scan));
                 yield new SortedSymbolIndexRecordCursorFactory(configuration, metadata, frames,
                         scan.getOutput().getColumnIndexById(scan.getIndexColumnId()),
                         scan.getRequestedOrder().getDirections().getQuick(0) == SortDirection.ASCENDING,
@@ -540,7 +571,7 @@ final class ScanFactoryGenerator {
         RecordCursorFactory subquery = null;
         final Record.CharSequenceFunction keyGetter;
         try {
-            frames = newFrames(scan, buildIntervals(scanIntervals, table), table, frameOrder(scan));
+            frames = newFrames(scan, buildIntervals(scan, scanIntervals, table), table, frameOrder(scan));
             configurePushdown(frame, frames, residual, scan, metadata, table, executionContext);
             filter = residual == null ? null : functionInstantiator.instantiate(residual, scan.getOutput(), metadata, executionContext);
             subquery = functionInstantiator.generateSubquery(scan.getKeySubquery(), executionContext);
@@ -592,7 +623,7 @@ final class ScanFactoryGenerator {
                     limit = filterGenerator.instantiateLimit(frame, limitCount, input, executionContext);
                 }
             }
-            final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, table), table, frameOrder(scan));
+            final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scan, scanIntervals, table), table, frameOrder(scan));
             try {
                 configurePushdown(frame, frames, predicate, scan, metadata, table, executionContext);
             } catch (Throwable th) {
@@ -602,7 +633,9 @@ final class ScanFactoryGenerator {
             isTransferred = true;
             return generateSymbolPatternIndex(frames, metadata, table, indexes, shifts, filter, predicate, pattern, residual, input,
                     workerFilters, limit, limitCount == null ? 0 : limitCount.getPosition(), scan.getIndexOrder(), isCovering,
-                    isParallel, scan.isResidualPreTouched(), stolenFilter, executionContext);
+                    isParallel, scan.isResidualPreTouched(),
+                    PhysicalProperties.supportsPageFrameTimeFrameCursor(scan, true) == PhysicalProperties.Capability.YES, stolenFilter,
+                    executionContext);
         } catch (Throwable th) {
             if (!isTransferred) {
                 Misc.free(filter, th);
@@ -620,7 +653,7 @@ final class ScanFactoryGenerator {
         }
         final boolean isOverridden = executionContext.isOverriddenIntrinsics(scan.getTableToken());
         final WindowJoinStep step = scan.getJoinIntervalStep();
-        if (!isOverridden && step == null) {
+        if (!isOverridden && step == null || !isIntervalExtractionRequired(scan)) {
             return generateReaderScan(frame, scan, executionContext, scanIntervals, latest, planTables.of(scan), stolenFilter);
         }
         final int timestampType = scan.getNativeTimestampType();
@@ -718,7 +751,7 @@ final class ScanFactoryGenerator {
         final int timestampIndex = scan.getOutput().getColumnIndexById(scan.getNativeTimestampColumnId());
         final RecordCursorFactory factory;
         try {
-            if (timestampIndex >= 0) {
+            if (timestampIndex >= 0 && isIntervalExtractionRequired(scan)) {
                 frame.intervals.extract(predicate, scan.getOutput().getColumnId(timestampIndex), scan.getOutput(), intervalBounds,
                         expressionRewriter, scan.getDepth(), executionContext);
             }
@@ -772,7 +805,7 @@ final class ScanFactoryGenerator {
         }
         final RecordCursorFactory factory;
         try {
-            if (scan.getOutput().getColumnIndexById(scan.getNativeTimestampColumnId()) >= 0) {
+            if (scan.getOutput().getColumnIndexById(scan.getNativeTimestampColumnId()) >= 0 && isIntervalExtractionRequired(scan)) {
                 frame.intervals.extract(filter.getPredicate(), scan.getNativeTimestampColumnId(), scan.getOutput(), intervalBounds,
                         expressionRewriter, scan.getDepth(), executionContext);
             }
@@ -793,7 +826,7 @@ final class ScanFactoryGenerator {
         final BoundExpression predicate = aggregate.getChild() instanceof FilterPlan filter ? filter.getPredicate() : null;
         final RecordCursorFactory factory;
         try {
-            if (predicate != null) {
+            if (predicate != null && isIntervalExtractionRequired(scan)) {
                 frame.intervals.extract(predicate, scan.getNativeTimestampColumnId(), scan.getOutput(), intervalBounds,
                         expressionRewriter, scan.getDepth(), executionContext);
             }
@@ -810,7 +843,8 @@ final class ScanFactoryGenerator {
     }
 
     /**
-     * Consumes the frames on entry, including on failure.
+     * Consumes the frames on entry, including on failure. The scan serves time frames when
+     * {@code isTimeFrameSupported}, see {@link PhysicalProperties#supportsPageFrameTimeFrameCursor}.
      */
     RecordCursorFactory generateScan(
             PartitionFrameCursorFactory frames,
@@ -819,10 +853,11 @@ final class ScanFactoryGenerator {
             boolean isFollowingOrderByAdvice,
             IntList columnIndexes,
             IntList columnSizeShifts,
-            boolean isRandomAccessSupported
+            boolean isRandomAccessSupported,
+            boolean isTimeFrameSupported
     ) {
         return new PageFrameRecordCursorFactory(configuration, queryMetadata, frames, new PageFrameRowCursorFactory(order),
-                isFollowingOrderByAdvice, null, true, columnIndexes, columnSizeShifts, isRandomAccessSupported, false);
+                isFollowingOrderByAdvice, null, true, columnIndexes, columnSizeShifts, isRandomAccessSupported, isTimeFrameSupported, false);
     }
 
     /**
@@ -857,14 +892,15 @@ final class ScanFactoryGenerator {
         }
         return new PageFrameRecordCursorFactory(configuration, metadata, frames,
                 new DeferredSymbolIndexFilteredRowCursorFactory(keyIndex, key, filter, indexDirection), followsOrderByAdvice,
-                filter, false, columnIndexes, columnSizeShifts, true, false);
+                filter, false, columnIndexes, columnSizeShifts, true, false, false);
     }
 
     /**
      * Consumes the frames, the prepared filter, the worker filters and the limit on entry, including on failure. With
      * a {@code stolenFilter}, builds the factory a parallel consumer reads the frames of, the page-frame scan or the
      * covering adaptive one, and prepares the filter over it there; otherwise filters in parallel when
-     * {@code isParallel}.
+     * {@code isParallel}. Its page-frame scans serve time frames when {@code isTimeFrameSupported}, see
+     * {@link PhysicalProperties#supportsPageFrameTimeFrameCursor}.
      */
     RecordCursorFactory generateSymbolPatternIndex(
             PartitionFrameCursorFactory frames,
@@ -884,6 +920,7 @@ final class ScanFactoryGenerator {
             boolean isCovering,
             boolean isParallel,
             boolean isPreTouchEnabled,
+            boolean isTimeFrameSupported,
             @Nullable PreparedFilter stolenFilter,
             SqlExecutionContext executionContext
     ) {
@@ -894,7 +931,8 @@ final class ScanFactoryGenerator {
             final RecordCursorFactory leaf;
             try {
                 leaf = new PageFrameRecordCursorFactory(configuration, metadata, stolenFrames,
-                        new PageFrameRowCursorFactory(frames.getOrder()), false, null, true, columnIndexes, columnSizeShifts, true, false);
+                        new PageFrameRowCursorFactory(frames.getOrder()), false, null, true, columnIndexes, columnSizeShifts, true,
+                        isTimeFrameSupported, false);
             } catch (Throwable th) {
                 Misc.free(stolenFrames, th);
                 Misc.free(filter, th);
@@ -923,7 +961,8 @@ final class ScanFactoryGenerator {
                         null, columnIndexes, coveringMapping, null, false, null, effectiveKeys, null, false);
             }
             scanDelegate = new PageFrameRecordCursorFactory(configuration, metadata, sharedFrames,
-                    new PageFrameRowCursorFactory(frames.getOrder()), false, null, true, columnIndexes, columnSizeShifts, true, false);
+                    new PageFrameRowCursorFactory(frames.getOrder()), false, null, true, columnIndexes, columnSizeShifts, true,
+                    isTimeFrameSupported, false);
             if (coveringDelegate == null && isParallel) {
                 isSelfFiltering = true;
                 scanDelegate = new AsyncFilteredRecordCursorFactory(executionContext.getCairoEngine(), configuration,

@@ -64,11 +64,15 @@ public class CastStrToRegClassFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final Function arg = args.getQuick(0);
         if (arg.isConstant()) {
-            Function result = funcMap.get(arg.getStrA(null));
+            final CharSequence name = arg.getStrA(null);
+            if (name == null) {
+                return IntConstant.NULL;
+            }
+            final Function result = funcMap.get(name);
             if (result != null) {
                 return result;
             }
-            throw SqlException.$(argPositions.getQuick(0), "unsupported class [name=").put(arg.getStrA(null)).put(']');
+            throw SqlException.$(argPositions.getQuick(0), "unsupported class [name=").put(name).put(']');
         }
         return new CastStrToRegClassFunction(arg);
     }

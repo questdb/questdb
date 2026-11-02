@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.functions.eq;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
@@ -36,11 +35,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 public class EqByteFunctionFactory implements FunctionFactory {
-    @Override
-    public int getResultType(IntList argTypes) {
-        return ColumnType.BOOLEAN;
-    }
-
     @Override
     public String getSignature() {
         return "=(BB)";

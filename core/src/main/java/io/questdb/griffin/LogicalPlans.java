@@ -527,14 +527,6 @@ public final class LogicalPlans {
     }
 
     /**
-     * True when the predicate is a constant, whose value the generator reads once.
-     */
-    public static boolean isConstant(BoundExpression predicate) {
-        return predicate instanceof ConstantExpression
-                || !(predicate instanceof ColumnExpression) && (predicate.getFunctionFlags() & BoundExpression.CONSTANT) != 0;
-    }
-
-    /**
      * True when the aggregate only counts its input rows, which the generator does without reading them.
      */
     public static boolean isCount(AggregatePlan aggregate) {
@@ -816,6 +808,14 @@ public final class LogicalPlans {
      */
     public static boolean isTimestampEndpointBackward(FunctionExpression call) {
         return Chars.equalsIgnoreCase(call.getName(), "max") || Chars.equalsIgnoreCase(call.getName(), "last");
+    }
+
+    /**
+     * Whether an UPDATE casts a value of type {@code type} it assigns to a column of type {@code targetType}: the types
+     * differ and no built-in widening cast stores the value as it is.
+     */
+    public static boolean isUpdateCast(int type, int targetType) {
+        return targetType >= 0 && type != targetType && !ColumnType.isBuiltInWideningCast(type, targetType);
     }
 
     /**

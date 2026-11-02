@@ -53,7 +53,8 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory, Mon
 
     @Override
     public int getTimestampArgumentIndex(FunctionExpression call, ConstantArguments arguments) {
-        return SqlKeywords.isYearKeyword(arguments.constant(call.argumentAt(0)).getStrA(null)) ? 1 : -1;
+        final CharSequence part = arguments.constant(call.argumentAt(0)).getStrA(null);
+        return part != null && SqlKeywords.isYearKeyword(part) ? 1 : -1;
     }
 
     @Override
@@ -75,6 +76,9 @@ public class ExtractFromTimestampFunctionFactory implements FunctionFactory, Mon
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
         final CharSequence part = args.getQuick(0).getStrA(null);
+        if (part == null) {
+            throw SqlException.$(argPositions.getQuick(0), "part cannot be NULL");
+        }
         final Function arg = args.getQuick(1);
         final TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.getTimestampType(arg.getType()));
 

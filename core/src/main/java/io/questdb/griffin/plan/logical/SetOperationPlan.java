@@ -100,6 +100,7 @@ public final class SetOperationPlan extends LogicalPlan {
      * does not sort it.
      */
     public SortPlan.Algorithm getRightBranchSort() {
+        checkPhysicalRead("SetOperationPlan.rightBranchSort");
         return rightBranchSort;
     }
 
@@ -138,6 +139,7 @@ public final class SetOperationPlan extends LogicalPlan {
      * them; operator planning decides it.
      */
     public boolean isMerged() {
+        checkPhysicalRead("SetOperationPlan.isMerged");
         return isMerged;
     }
 
@@ -171,6 +173,7 @@ public final class SetOperationPlan extends LogicalPlan {
 
     @Override
     public void replaceInput(int index, LogicalPlan input) {
+        checkRewritable("SetOperationPlan.replaceInput");
         switch (index) {
             case 0 -> left = Objects.requireNonNull(input);
             case 1 -> right = Objects.requireNonNull(input);
@@ -184,6 +187,7 @@ public final class SetOperationPlan extends LogicalPlan {
      * again, see {@link io.questdb.griffin.SetOperationCasts#recordCasts}.
      */
     public void retainColumns(IntList retainedColumnIndexes, IntList remappedSymbolColumns) {
+        checkRewritable("SetOperationPlan.retainColumns");
         remappedSymbolColumns.clear();
         for (int i = 0, n = retainedColumnIndexes.size(); i < n; i++) {
             if (symbolColumns.binarySearchUniqueList(retainedColumnIndexes.getQuick(i)) >= 0) {
@@ -204,8 +208,24 @@ public final class SetOperationPlan extends LogicalPlan {
     }
 
     public void setRequestedOrder(int columnId, SortDirection direction) {
+        checkRewritable("SetOperationPlan.setRequestedOrder");
         requestedOrderColumnId = columnId;
         requestedOrderDirection = direction;
+    }
+
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.facts("castTypes", castTypes);
+        visitor.facts("symbolColumns", symbolColumns);
+        visitor.fact("isCastRequired", isCastRequired);
+        visitor.fact("isMerged", isMerged);
+        visitor.fact("isSymbolRestorationRequired", isSymbolRestorationRequired);
+        visitor.fact("operation", operation);
+        visitor.columnId("requestedOrderColumnId", requestedOrderColumnId);
+        visitor.fact("requestedOrderDirection", requestedOrderDirection);
+        visitor.fact("rightBranchSort", rightBranchSort);
+        visitor.fact("rightPosition", rightPosition);
     }
 
 }

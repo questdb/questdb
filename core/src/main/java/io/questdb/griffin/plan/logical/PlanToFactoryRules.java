@@ -26,6 +26,7 @@ package io.questdb.griffin.plan.logical;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.LogicalPlans;
@@ -355,7 +356,7 @@ public final class PlanToFactoryRules {
     public static boolean isMasterTimestampKept(JoinPlan join, int position) {
         final JoinInput step = join.getOrderedInputs().getQuick(position);
         return LogicalPlans.isFirstInputLeading(join) && !step.getJoinType().isMasterNulling()
-                && step.getMasterSide() != JoinInput.MasterSide.SMALLER;
+                && !step.isSmallerDriven();
     }
 
     /**
@@ -381,11 +382,29 @@ public final class PlanToFactoryRules {
     }
 
     /**
+     * Whether the join step filters the rows it joins with its ON residual, as an INNER or CROSS step does; a step that
+     * NULL-extends an input applies it while it joins.
+     */
+    public static boolean isOnResidualFiltered(JoinInput step) {
+        return step.getOnResidual() != null && !step.getJoinType().isNulling();
+    }
+
+    /**
      * Whether the generator folds the constant filter the join step applies to its joined rows: any constant after
      * UNNEST, only a literal after another join.
      */
     public static boolean isPostJoinFilterFolded(JoinInput step, BoundExpression filter) {
         return step.getJoinType() == JoinKind.UNNEST || filter instanceof ConstantExpression constant && constant.isLiteral();
+    }
+
+    /**
+     * Whether the factories of the master of the join step at {@code position} of the join's ordered inputs and of its
+     * slave report one table, see {@link PhysicalProperties#tableToken}, so the join compares the keys of a SYMBOL column
+     * the two inputs read at the same position by symbol key.
+     */
+    public static boolean isSelfJoin(JoinPlan join, int position) {
+        final TableToken master = PhysicalProperties.masterTableToken(join, position);
+        return master != null && master.equals(PhysicalProperties.tableToken(join.getOrderedInputs().getQuick(position).getInput()));
     }
 
     /**

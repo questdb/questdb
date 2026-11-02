@@ -29,7 +29,6 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
-import io.questdb.griffin.ResultTypes;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.MonotonicTimestampFunctionFactory;
@@ -49,7 +48,7 @@ public class TimestampFloorFromFunctionFactory implements FunctionFactory, Monot
 
     @Override
     public int getResultType(IntList argTypes) {
-        return ResultTypes.timestampAtLeastMicros(argTypes.getQuick(1));
+        return ColumnType.getImplicitTimestampType(argTypes.getQuick(1));
     }
 
     @Override
@@ -83,7 +82,7 @@ public class TimestampFloorFromFunctionFactory implements FunctionFactory, Monot
         final int stride = CommonUtils.getStrideMultiple(str, argPositions.getQuick(0));
         final char unit = CommonUtils.getStrideUnit(str, argPositions.getQuick(0));
         final Function timestampFunc = args.getQuick(1);
-        int timestampType = ColumnType.getHigherPrecisionTimestampType(ColumnType.getTimestampType(timestampFunc.getType()), ColumnType.TIMESTAMP_MICRO);
+        int timestampType = ColumnType.getImplicitTimestampType(timestampFunc.getType());
         final long from = floorOrigin(ColumnType.getTimestampDriver(timestampType), args.getQuick(2).getTimestamp(null), args.getQuick(2).getType());
         return new TimestampFloorOffsetFunction(TimestampFloorFunctionFactory.NAME, timestampFunc, unit, stride, from, timestampType);
     }

@@ -43,7 +43,7 @@ public class IntervalStartFunctionFactory implements FunctionFactory {
     @Override
     public int getResultType(IntList argTypes) {
         final int intervalType = argTypes.getQuick(0);
-        return ColumnType.isInterval(intervalType) ? IntervalUtils.getTimestampTypeByIntervalType(intervalType) : ColumnType.UNDEFINED;
+        return ColumnType.isInterval(intervalType) || ColumnType.isNull(intervalType) ? IntervalUtils.getTimestampTypeByIntervalType(intervalType) : ColumnType.UNDEFINED;
     }
 
     @Override

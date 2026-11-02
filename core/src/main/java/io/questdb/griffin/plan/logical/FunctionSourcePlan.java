@@ -202,4 +202,21 @@ public final class FunctionSourcePlan extends LogicalPlan {
     public void setRecordName(CharSequence recordName) {
         this.recordName = recordName;
     }
+
+    @Override
+    public void visitFacts(PlanFactVisitor visitor) {
+        super.visitFacts(visitor);
+        visitor.output("recordSchema", recordSchema);
+        visitor.facts("sourceColumnIndexes", sourceColumnIndexes);
+        visitor.fact("hasExternalDataSource", hasExternalDataSource);
+        visitor.fact("isDeterministic", isDeterministic);
+        visitor.fact("isLongSequence", isLongSequence);
+        visitor.fact("isPageFrameSupported", isPageFrameSupported);
+        visitor.fact("isProjectable", isProjectable);
+        visitor.fact("isRandomAccess", isRandomAccess);
+        visitor.fact("nonDeterministicCallName", nonDeterministicCallName);
+        visitor.fact("nonDeterministicCallPosition", nonDeterministicCallPosition);
+        visitor.fact("recordName", recordName);
+        visitor.fact("scanDirection", scanDirection);
+    }
 }

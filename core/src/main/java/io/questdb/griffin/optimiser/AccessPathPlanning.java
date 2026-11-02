@@ -309,12 +309,12 @@ final class AccessPathPlanning {
         final BoundExpression filter = truth == 1 ? null : residual;
         scan.setIndexOrder(indexOrder, indexDirection);
         if (keyCount == 0) {
-            scan.getExcludedKeys().addAll(keys.getExcludedValues());
+            scan.setExcludedKeys(keys.getExcludedValues());
             scan.setIndex(keyId, ScanPlan.IndexRead.INDEX);
             scan.setAccessPath(ScanPlan.AccessPath.EXCLUDED_SYMBOL_INDEX, filter);
             return;
         }
-        scan.getIndexKeys().addAll(keys.getValues());
+        scan.setIndexKeys(keys.getValues());
         final boolean isCovering = context.getExecutionContext().isCoveringIndexEnabled() && !scan.isUpdate()
                 && (keyCount == 1 || indexOrder != ScanPlan.IndexOrder.KEY) && !scan.hasHint(ScanPlan.HINT_NO_COVERING)
                 && table.isCovering(tableKeyIndex, tableColumnIndexes);
@@ -360,8 +360,8 @@ final class AccessPathPlanning {
         if (valueCount > 0 || excludedCount > 0) {
             final boolean isCovered = context.getExecutionContext().isCoveringIndexEnabled() && !scan.hasHint(ScanPlan.HINT_NO_COVERING)
                     && table.isCovering(tableKeyIndex, tableColumnIndexes);
-            scan.getIndexKeys().addAll(latestKeys.getValues());
-            scan.getExcludedKeys().addAll(latestKeys.getExcludedValues());
+            scan.setIndexKeys(latestKeys.getValues());
+            scan.setExcludedKeys(latestKeys.getExcludedValues());
             scan.setIndex(keyId, !isIndexed || excludedCount > 0 ? ScanPlan.IndexRead.NONE
                     : isCovered ? ScanPlan.IndexRead.COVERING : ScanPlan.IndexRead.INDEX);
             scan.setAccessPath(valueCount == 1 && excludedCount == 0 ? ScanPlan.AccessPath.LATEST_BY_VALUE : ScanPlan.AccessPath.LATEST_BY_VALUES,
@@ -466,6 +466,7 @@ final class AccessPathPlanning {
         }
         scan.clearAccessPath();
         scan.setDepth(depth);
+        scan.setIntervalScan(predicate != null ? intervals.getIntervalScan() : ScanPlan.IntervalScan.NONE, intervals.getStaticIntervals());
         scan.setAccessPath(ScanPlan.AccessPath.POSTING_DISTINCT, null);
         scan.setIndex(key.getColumnId(), ScanPlan.IndexRead.INDEX);
         return true;
@@ -578,8 +579,7 @@ final class AccessPathPlanning {
                 final long lo = step.getIntervalLo(timestampType);
                 final LongList masterIntervals = capturedIntervals.getQuick(captureLevel);
                 intervals.merge(masterIntervals, lo, hi);
-                scan.setJoinIntervalStep(step);
-                scan.getJoinIntervals().add(masterIntervals);
+                scan.setJoinIntervals(step, masterIntervals);
             }
         }
         if (isSequencedUpdate) {
@@ -587,7 +587,7 @@ final class AccessPathPlanning {
             return;
         }
         final boolean hasModel = hasExtractor && intervals.hasIntervalFilters();
-        scan.setIntervalScan(hasModel);
+        scan.setIntervalScan(hasExtractor ? intervals.getIntervalScan() : ScanPlan.IntervalScan.NONE, intervals.getStaticIntervals());
         table = context.getTableAccessInfo(scan);
         tableColumnIndexes.clear();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {

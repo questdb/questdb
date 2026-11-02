@@ -831,6 +831,33 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         intervalApplied = true;
     }
 
+    /**
+     * Unions the point interval of each of {@code values}, with the result of {@link #union(long, long)} for each
+     * value in turn; a static builder merges them in one sorted pass instead of one pass per value.
+     */
+    public void unionPoints(LongList values) {
+        if (dynamicRangeList.size() > 0) {
+            for (int i = 0, n = values.size(); i < n; i++) {
+                union(values.getQuick(i), values.getQuick(i));
+            }
+            return;
+        }
+        final int n = values.size();
+        if (n == 0) {
+            return;
+        }
+        final int size = staticIntervals.size();
+        staticIntervals.checkCapacity(size + 2 * n);
+        for (int i = 0; i < n; i++) {
+            staticIntervals.add(values.getQuick(i), values.getQuick(i));
+        }
+        IntervalUtils.sortAndUnionInPlace(staticIntervals, size);
+        if (intervalApplied) {
+            IntervalUtils.unionInPlace(staticIntervals, size);
+        }
+        intervalApplied = true;
+    }
+
     public void unionIntervals(CharSequence seq, int lo, int lim, int position) throws SqlException {
         // Date variable expressions ($now, $today, etc.) must be evaluated dynamically
         // so that cached queries always use the current time.

@@ -45,6 +45,7 @@ import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.PlanStage;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
@@ -108,6 +109,16 @@ final class OrderPlanning implements OptimiserPass {
     @Override
     public String getName() {
         return "order planning";
+    }
+
+    @Override
+    public PlanStage getProducedStage() {
+        return PlanStage.REWRITTEN;
+    }
+
+    @Override
+    public PlanStage getRequiredStage() {
+        return PlanStage.DECORRELATED;
     }
 
     private static void deriveJoinTimestamps(JoinPlan join) {

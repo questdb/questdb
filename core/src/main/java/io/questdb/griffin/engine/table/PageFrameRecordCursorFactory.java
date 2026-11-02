@@ -52,6 +52,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     private final CairoConfiguration configuration;
     private final boolean followsOrderByAdvice;
     private final boolean framingSupported;
+    private final boolean isTimeFrameSupported;
     private final boolean singleRowFactory;
     private final boolean supportsRandomAccess;
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
@@ -77,6 +78,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts,
             boolean supportsRandomAccess,
+            boolean isTimeFrameSupported,
             boolean singleRowFactory
     ) {
         super(metadata, partitionFrameCursorFactory, columnIndexes, columnSizeShifts);
@@ -99,6 +101,7 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         this.followsOrderByAdvice = followsOrderByAdvice;
         this.framingSupported = framingSupported;
         this.supportsRandomAccess = supportsRandomAccess;
+        this.isTimeFrameSupported = isTimeFrameSupported;
         this.singleRowFactory = singleRowFactory;
     }
 
@@ -416,19 +419,15 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         return framingSupported;
     }
 
+    /**
+     * Whether the cursor serves time frames, as the constructor was told: only a full forward table scan with random
+     * access and no filter that designates the table's own timestamp, or any timestamp of a table that has none, does,
+     * as the frames follow the table's partitions, and a table without a designated timestamp has one.
+     */
     @Override
     public boolean supportsTimeFrameCursor() {
-        // Time frames are supported only for full table scan cursors, i.e. "x" queries, that designate
-        // the table's own timestamp, or any timestamp of a table that has none: the frames follow the
-        // table's partitions, and a table without a designated timestamp has only one.
-        final int timestampIndex = getMetadata().getTimestampIndex();
-        final int tableTimestampIndex = partitionFrameCursorFactory.getTableDescriptor().getTimestampIndex();
-        return framingSupported && supportsRandomAccess
-                && rowCursorFactory.isEntity() && !rowCursorFactory.isUsingIndex()
-                && timestampIndex != -1
-                && (tableTimestampIndex == -1 || columnIndexes.getQuick(timestampIndex) == tableTimestampIndex)
-                && partitionFrameCursorFactory.getOrder() == ORDER_ASC
-                && filter == null;
+        assert isTimeFrameSupported == isTimeFrameScan() : "time-frame support differs from the scan";
+        return isTimeFrameSupported;
     }
 
     @Override
@@ -533,5 +532,16 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     protected void toPlanInner(PlanSink sink) {
         sink.child(rowCursorFactory);
         sink.child(partitionFrameCursorFactory);
+    }
+
+    private boolean isTimeFrameScan() {
+        final int timestampIndex = getMetadata().getTimestampIndex();
+        final int tableTimestampIndex = partitionFrameCursorFactory.getTableDescriptor().getTimestampIndex();
+        return framingSupported && supportsRandomAccess
+                && rowCursorFactory.isEntity() && !rowCursorFactory.isUsingIndex()
+                && timestampIndex != -1
+                && (tableTimestampIndex == -1 || columnIndexes.getQuick(timestampIndex) == tableTimestampIndex)
+                && partitionFrameCursorFactory.getOrder() == ORDER_ASC
+                && filter == null;
     }
 }

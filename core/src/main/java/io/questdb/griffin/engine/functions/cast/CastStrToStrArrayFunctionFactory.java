@@ -54,6 +54,11 @@ public class CastStrToStrArrayFunctionFactory implements FunctionFactory {
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        return new StringToStringArrayFunction(argPositions.getQuick(0), args.getQuick(0).getStrA(null));
+        final Function arg = args.getQuick(0);
+        final int argPosition = argPositions.getQuick(0);
+        if (!arg.isConstant()) {
+            throw SqlException.$(argPosition, "constant expected");
+        }
+        return new StringToStringArrayFunction(argPosition, arg.getStrA(null));
     }
 }

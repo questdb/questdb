@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.ParanoiaState;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -369,6 +370,51 @@ public class IntervalExtractionTest extends AbstractCairoTest {
                             """
             );
         });
+    }
+
+    @Test
+    public void testPlannedIntervalsDriveTheScanWithoutVerification() throws Exception {
+        final boolean isParanoia = ParanoiaState.PLAN_PARANOIA_MODE;
+        ParanoiaState.PLAN_PARANOIA_MODE = false;
+        try {
+            for (boolean isNanos : new boolean[]{false, true}) {
+                assertMemoryLeak(() -> {
+                    createRows(isNanos);
+                    final String shape = "PageFrame > Row forward scan > Interval forward scan on: lp_interval";
+                    assertInterval(
+                            "SELECT ts,id FROM lp_interval WHERE ts IN ('2020-01-03T00:00:00.000000Z', '2020-01-02T00:00:00.000000Z',"
+                                    + " '2020-01-03T00:00:00.000000Z', '2020-01-01T23:59:59.999999Z')",
+                            "Interval forward scan", false, shape, rows("ts\tid", isNanos, isNanos ? "3 5" : "2 3 5")
+                    );
+                    assertInterval(
+                            "SELECT ts,id FROM lp_interval WHERE ts IN ('2020-01-01', '2020-01-03T00:00:00.000000Z')",
+                            "Interval forward scan", false, shape, rows("ts\tid", isNanos, "5")
+                    );
+                    assertInterval(
+                            "SELECT ts,id FROM lp_interval WHERE ts >= '2020-01-02' AND ts < '2020-01-03'",
+                            "Interval forward scan", false, shape, rows("ts\tid", isNanos, "3 4")
+                    );
+                    assertInterval(
+                            "SELECT ts,id FROM lp_interval WHERE ts NOT IN ('2020-01-02T00:00:00.000000Z')",
+                            "Interval forward scan", false, shape, rows("ts\tid", isNanos, "1 2 4 5")
+                    );
+                    assertInterval(
+                            "SELECT ts,id FROM lp_interval WHERE ts IN ('2019-06-01T00:00:00.000000Z')",
+                            "Interval forward scan", false, shape, rows("ts\tid", isNanos, "")
+                    );
+                    bindVariableService.clear();
+                    bindVariableService.setStr(0, "2020-01-02T00:00:00.000000Z");
+                    assertInterval(
+                            "SELECT ts,id FROM lp_interval WHERE ts > $1",
+                            "Interval forward scan", false, shape, rows("ts\tid", isNanos, "4 5")
+                    );
+                    bindVariableService.clear();
+                    execute("DROP TABLE lp_interval");
+                });
+            }
+        } finally {
+            ParanoiaState.PLAN_PARANOIA_MODE = isParanoia;
+        }
     }
 
     @Test

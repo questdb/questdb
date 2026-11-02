@@ -45,6 +45,10 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.cairo.ColumnType.*;
 
 public class CaseCommon {
+    /**
+     * The fold of no CASE-like value, see {@link #foldValueType}.
+     */
+    static final long EMPTY_FOLD = Numbers.encodeLowHighInts(-1, -1);
     private static final LongObjHashMap<FunctionFactory> castFactories = new LongObjHashMap<>();
     private static final ObjList<CaseFunctionConstructor> constructors = new ObjList<>(NULL + 1);
     private static final FiberLocal<IntList> tlArgPositions = new FiberLocal<>(IntList::new);
@@ -140,8 +144,38 @@ public class CaseCommon {
     }
 
     /**
-     * The fiber's empty scratch list of the value types a CASE-like fold has seen, see
-     * {@link #getCommonType(int, int, int, IntList, String)}.
+     * The error of the value a failed fold stopped at, see {@link #foldValueType}.
+     *
+     * @param valueType the type of the value at {@link #getFoldFailureIndex}
+     * @param valuePos  the position of that value
+     */
+    static SqlException foldError(long fold, int valueType, int valuePos, String undefinedErrorMsg) {
+        return isUndefined(valueType) ? SqlException.$(valuePos, undefinedErrorMsg) : inconvertibleTypes(valuePos, valueType, getFoldCommonType(fold));
+    }
+
+    /**
+     * Folds one more CASE-like value into the fold of the values before it: their common type, and the argument
+     * index of the first value that does not fold, -1 while every value folds, packed by
+     * {@link Numbers#encodeLowHighInts}. The values fold in their order, and a value that lifts the common type to one
+     * that a value before it does not convert to does not fold: CHAR and SYMBOL fold into STRING and STRING into
+     * IPv4, but neither CHAR nor SYMBOL converts to IPv4. A failed fold keeps the common type of the values before
+     * the failing one, which does not depend on their order, so neither does its {@link #foldError}.
+     *
+     * @param fold        the fold of the values before this one, {@link #EMPTY_FOLD} before the first value
+     * @param valueIndex  the argument index of the value
+     * @param foldedTypes the distinct types of the values before this one; the value's type is added to it
+     */
+    static long foldValueType(long fold, int valueType, int valueIndex, IntList foldedTypes) {
+        if (getFoldFailureIndex(fold) >= 0) {
+            return fold;
+        }
+        final int commonType = getFoldCommonType(fold);
+        final int type = getCommonTypeOrUndefined(commonType, valueType, foldedTypes);
+        return type != UNDEFINED ? Numbers.encodeLowHighInts(type, -1) : Numbers.encodeLowHighInts(commonType, valueIndex);
+    }
+
+    /**
+     * The fiber's empty scratch list of the value types a CASE-like fold has seen, see {@link #foldValueType}.
      */
     static IntList foldedTypes() {
         final IntList foldedTypes = tlFoldedTypes.get();
@@ -173,26 +207,8 @@ public class CaseCommon {
     }
 
     /**
-     * The common type of CASE-like values after folding in one more value. The values fold in their order, and a
-     * value that lifts the common type to one that a value before it does not convert to fails at its own position,
-     * against the common type of the values before it: CHAR and SYMBOL fold into STRING and STRING into IPv4, but
-     * neither CHAR nor SYMBOL converts to IPv4. The common type of the values before the failing one does not
-     * depend on their order, so neither does the error.
-     *
-     * @param commonType  the common type of the values before this one, -1 before the first value
-     * @param foldedTypes the distinct types of the values before this one; the value's type is added to it
-     */
-    static int getCommonType(int commonType, int valueType, int valuePos, IntList foldedTypes, String undefinedErrorMsg) throws SqlException {
-        final int type = getCommonType(commonType, valueType, valuePos, undefinedErrorMsg);
-        if (!foldType(type, commonType, valueType, foldedTypes)) {
-            throw inconvertibleTypes(valuePos, valueType, commonType);
-        }
-        return type;
-    }
-
-    /**
      * The common type of CASE-like value types after folding in one more value type, or {@link ColumnType#UNDEFINED}
-     * where {@link #getCommonType(int, int, int, IntList, String)} fails for the values.
+     * where the value does not fold, see {@link #foldValueType}.
      *
      * @param commonType  the common type of the value types before this one, -1 before the first one
      * @param foldedTypes the distinct value types before this one; the value type is added to it
@@ -237,6 +253,20 @@ public class CaseCommon {
         }
         final int type = typeEscalationMap.get(Numbers.encodeLowHighInts(commonType, valueType));
         return type == LongIntHashMap.NO_ENTRY_VALUE ? UNDEFINED : type;
+    }
+
+    /**
+     * The common type of the values a fold folded, or of the values before the one a failed fold stopped at.
+     */
+    static int getFoldCommonType(long fold) {
+        return Numbers.decodeLowInt(fold);
+    }
+
+    /**
+     * The argument index of the value a failed fold stopped at, -1 when every value folded.
+     */
+    static int getFoldFailureIndex(long fold) {
+        return Numbers.decodeHighInt(fold);
     }
 
     static boolean hasCastFactory(int fromType, int toType) {
