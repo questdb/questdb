@@ -48,6 +48,7 @@ final class PartitionFrameWindowContext implements QuietCloseable {
     private final BaseViewLease baseViewLease;
     private final PartitionFrameDecoder decoder;
     private final ProjectionPlan projectionPlan;
+    private BaseViewLease precedingBase;
     private long preparedPlanRevision = -1;
     private long preparedTrackerAddress;
     private int preparedWindow = -1;
@@ -89,6 +90,7 @@ final class PartitionFrameWindowContext implements QuietCloseable {
     public void close() {
         releaseWindow();
         Misc.free(baseViewLease);
+        precedingBase = Misc.free(precedingBase);
         Misc.free(decoder);
         Misc.free(projectionPlan);
         state = 0;
@@ -133,6 +135,18 @@ final class PartitionFrameWindowContext implements QuietCloseable {
                     baseViewLease.viewCount(),
                     trackerAddress
             );
+            for (int previous; (previous = decoder.requiredBaseWindow()) >= 0; ) {
+                if (precedingBase == null) {
+                    precedingBase = new BaseViewLease(baseViewLease.configuration);
+                }
+                try {
+                    precedingBase.prepare(addressCache, frameIndex,
+                            projectionPlan.requiredColumns(frameState, window), targetBuffers, frameState, previous);
+                    decoder.addBaseWindow(previous, precedingBase.viewAddress(), precedingBase.viewCount());
+                } finally {
+                    precedingBase.clear();
+                }
+            }
             preparedPlanRevision = projectionPlan.revision();
             preparedTrackerAddress = trackerAddress;
             preparedWindow = window;

@@ -2449,6 +2449,17 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         }
 
         @Override
+        public int findNext(long timestamp, long sourceRowRef, int after) {
+            for (int row = after + 1; row < sourceRowRefsRowCount
+                    && Unsafe.getLong(sourceRowTimestampsAddress + (long) row * Long.BYTES) == timestamp; row++) {
+                if (Unsafe.getLong(sourceRowRefsAddress + (long) row * Long.BYTES) == sourceRowRef) {
+                    return row;
+                }
+            }
+            return -1;
+        }
+
+        @Override
         public long getBaseRowHi() {
             prepareSourceBaseRows();
             return sourceBaseRowHi;
