@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionDeltaWriter;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -38,6 +39,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.mp.MPSequence;
@@ -47,6 +49,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -54,6 +57,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
+import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -63,6 +67,7 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -77,6 +82,10 @@ import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 @RunWith(Parameterized.class)
 public class O3PartitionPurgeTest extends AbstractCairoTest {
+    private static final int DELTA_PURGE_DONE = 2;
+    private static final int DELTA_PURGE_PENDING = 0;
+    private static final int DELTA_PURGE_THROWS = 1;
+    private static volatile PartitionDeltaWriter injectedDeltaWriter;
     private final TestTimestampType timestampType;
     private O3PartitionPurgeJob purgeJob;
 
@@ -90,6 +99,18 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 {TestTimestampType.MICRO},
                 {TestTimestampType.NANO},
         });
+    }
+
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        // Only a purge job built while a writer is injected gets it; table writers get none.
+        configurationFactory = (root, telemetry, overrides) -> new CairoTestConfiguration(root, telemetry, overrides) {
+            @Override
+            public PartitionDeltaWriter newPartitionDeltaWriter() {
+                return injectedDeltaWriter;
+            }
+        };
+        AbstractCairoTest.setUpStatic();
     }
 
     @Before
@@ -1372,6 +1393,110 @@ public class O3PartitionPurgeTest extends AbstractCairoTest {
                 currentMicros += 60_000_000L;
                 Assert.assertFalse(purge.run());
                 Assert.assertEquals(attempts, deleteAttempts.get());
+            }
+            assertQuery("SELECT x FROM tbl").noLeakCheck().expectSize().returns("x\n2\n");
+        });
+    }
+
+    @Test
+    public void testPurgeRetryAfterNonCairoFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger mode = new AtomicInteger(DELTA_PURGE_PENDING);
+            final AtomicInteger purges = new AtomicInteger();
+            final AtomicBoolean hasDeleteFailure = new AtomicBoolean(true);
+            // The failed removal on the drop leaves the directory to the purge job.
+            ff = new TestFilesFacadeImpl() {
+                @Override
+                public boolean rmdir(Path name, boolean lazy) {
+                    if (hasDeleteFailure.get() && Utf8s.endsWithAscii(name, "1970-01-10")) {
+                        return false;
+                    }
+                    return super.rmdir(name, lazy);
+                }
+            };
+            setCurrentMicros(0);
+            execute("CREATE TABLE tbl (x LONG, ts " + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tbl VALUES (1, '1970-01-10'), (2, '1970-01-11')");
+            TableToken tableToken = engine.verifyTableName("tbl");
+
+            injectedDeltaWriter = new PartitionDeltaWriter() {
+                @Override
+                public void initialize(TableWriter writer, int partitionIndex) {
+                }
+
+                @Override
+                public boolean purge(Path partitionDir) {
+                    purges.incrementAndGet();
+                    return switch (mode.get()) {
+                        case DELTA_PURGE_PENDING -> false;
+                        case DELTA_PURGE_THROWS -> throw new RuntimeException("test delta purge failure");
+                        default -> true;
+                    };
+                }
+
+                @Override
+                public void readTimestampBounds(TableWriter writer, int partitionIndex, long boundsAddr) {
+                }
+
+                @Override
+                public boolean rollback(TableWriter writer, int partitionIndex, long seqTxn) {
+                    return false;
+                }
+
+                @Override
+                public void writeCommit(
+                        TableWriter writer,
+                        long partitionTimestamp,
+                        long partitionNameTxn,
+                        ReadOnlyObjList<? extends MemoryCR> o3Columns,
+                        long sortedTimestampsAddr,
+                        long srcOooLo,
+                        long srcOooHi,
+                        long seqTxn,
+                        long commitTimestamp
+                ) {
+                }
+            };
+            final O3PartitionPurgeJob purge;
+            try {
+                purge = new O3PartitionPurgeJob(engine);
+            } finally {
+                injectedDeltaWriter = null;
+            }
+            try (purge; Path path = new Path()) {
+                execute("ALTER TABLE tbl DROP PARTITION LIST '1970-01-10'");
+                hasDeleteFailure.set(false);
+                purge.drain(0);
+                path.of(configuration.getDbRoot()).concat(tableToken).concat("1970-01-10").$();
+                Assert.assertEquals(1, purges.get());
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // The retry throws out of the Delta purge: the table must stay queued for another retry.
+                mode.set(DELTA_PURGE_THROWS);
+                currentMicros += 60_000_000L;
+                try {
+                    purge.run();
+                    Assert.fail();
+                } catch (RuntimeException e) {
+                    TestUtils.assertContains(e.getMessage(), "test delta purge failure");
+                }
+                Assert.assertEquals(2, purges.get());
+                Assert.assertTrue(Files.exists(path.$()));
+
+                // Queued with a delay, not hot looping.
+                Assert.assertFalse(purge.run());
+                Assert.assertEquals(2, purges.get());
+
+                mode.set(DELTA_PURGE_DONE);
+                currentMicros += 60_000_000L;
+                Assert.assertTrue(purge.run());
+                Assert.assertEquals(3, purges.get());
+                Assert.assertFalse(Files.exists(path.$()));
+
+                // The entry is gone with the finished retry: nothing is left to run.
+                currentMicros += 60_000_000L;
+                Assert.assertFalse(purge.run());
+                Assert.assertEquals(3, purges.get());
             }
             assertQuery("SELECT x FROM tbl").noLeakCheck().expectSize().returns("x\n2\n");
         });
