@@ -84,12 +84,13 @@ public interface LiveViewCheckpointRingStateSource {
      * the seal captured (the running aggregate for avg/sum, the emitted frame value for
      * first_value/last_value/nth_value). Word 0 is the most significant word of a
      * multi-word scalar, so a 256-bit decimal accumulator arrives as
-     * {@code (hh, hl, lh, ll)}
+     * {@code (hh, hl, lh, ll)}. A five-word scalar is five independent words, each at
+     * the index the seal put it at
      */
     long getScalarWord(int index);
 
     /**
-     * @return the words the stored scalar continuation state occupies: 1, 2 or 4
+     * @return the words the stored scalar continuation state occupies: 1, 2, 4 or 5
      */
     int getScalarWordCount();
 

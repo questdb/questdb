@@ -711,6 +711,18 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                 badVersion[0] = 3;
                 assertInvalid(badVersion, refs(valid), directory, false, "format version mismatch");
 
+                // The header's width byte selects the layout, so a width the format has no
+                // layout for is refused, and a valid width the payload is not sized for is too:
+                // a one-word entry relabelled as five words would read frameSize and
+                // lastTimestamp out of what the seal wrote as other fields.
+                final byte[] badWidth = Arrays.copyOf(valid.copyScalarStateForTest(), valid.getScalarLength());
+                badWidth[3] = 3;
+                assertInvalid(badWidth, refs(valid), directory, false, "value kind or scalar width invalid");
+                badWidth[3] = 6;
+                assertInvalid(badWidth, refs(valid), directory, false, "value kind or scalar width invalid");
+                badWidth[3] = 5;
+                assertInvalid(badWidth, refs(valid), directory, false, "scalar state size mismatch [expected=72, actual=40]");
+
                 final byte[] badHead = Arrays.copyOf(valid.copyScalarStateForTest(), valid.getScalarLength());
                 badHead[4] = 127;
                 assertInvalid(badHead, refs(valid), directory, false, "logical chunk bounds invalid");
@@ -1785,7 +1797,7 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
             builder.of(entries.getQuick(i), LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
             builder.dropHeadRows(4);
             builder.append(writer, TWO_CHUNK_RING_ROWS * 1_000L, Double.doubleToRawLongBits(i));
-            builder.freeze(writer, key.address(), key.length(), Double.doubleToRawLongBits(i), 0, 0, 0, 3, out);
+            builder.freeze(writer, key.address(), key.length(), Double.doubleToRawLongBits(i), 0, 0, 0, 0, 3, out);
         }
     }
 
@@ -1926,14 +1938,14 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                 for (int row = 0; row < chunkRows; row++) {
                     builder.append(writer, row * 1_000L, Double.doubleToRawLongBits(i + row * 0.5));
                 }
-                builder.freeze(writer, key.address(), key.length(), 0, 0, 0, 0, chunkRows, first);
+                builder.freeze(writer, key.address(), key.length(), 0, 0, 0, 0, 0, chunkRows, first);
                 builder.of(first, LiveViewCheckpointRangeRingStateReader.VALUE_KIND_DOUBLE, 1);
                 for (int row = chunkRows; row < TWO_CHUNK_RING_ROWS; row++) {
                     builder.append(writer, row * 1_000L, Double.doubleToRawLongBits(i + row * 0.5));
                 }
                 final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
                 entries.add(entry);
-                builder.freeze(writer, key.address(), key.length(), 0, 0, 0, 0, TWO_CHUNK_RING_ROWS, entry);
+                builder.freeze(writer, key.address(), key.length(), 0, 0, 0, 0, 0, TWO_CHUNK_RING_ROWS, entry);
                 Assert.assertEquals(4, entry.getStatePageCount());
             }
             directory.addSegment(segmentId, writer.commit());

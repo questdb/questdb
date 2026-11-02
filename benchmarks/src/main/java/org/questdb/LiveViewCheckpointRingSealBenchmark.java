@@ -178,7 +178,7 @@ public class LiveViewCheckpointRingSealBenchmark {
         builder.ofEmpty(shape.valueKind, 1);
         dataWriter.of(checkpointsDir, ++lastSealSegmentId);
         appendRows();
-        builder.freeze(dataWriter, keyAddress, KEY_BYTES.length, 0, 0, 0, 0, ROWS, sealEntry);
+        builder.freeze(dataWriter, keyAddress, KEY_BYTES.length, 0, 0, 0, 0, 0, ROWS, sealEntry);
         return dataWriter.commit();
     }
 
@@ -213,7 +213,7 @@ public class LiveViewCheckpointRingSealBenchmark {
         builder.ofEmpty(shape.valueKind, 1);
         dataWriter.of(checkpointsDir, FIXTURE_SEGMENT_ID);
         appendRows();
-        builder.freeze(dataWriter, keyAddress, KEY_BYTES.length, 0, 0, 0, 0, ROWS, fixture);
+        builder.freeze(dataWriter, keyAddress, KEY_BYTES.length, 0, 0, 0, 0, 0, ROWS, fixture);
         final long segmentBytes = dataWriter.commit();
         try (LiveViewCheckpointSegmentDirectoryWriter directoryWriter =
                      new LiveViewCheckpointSegmentDirectoryWriter(configuration)) {

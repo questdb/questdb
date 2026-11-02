@@ -98,9 +98,26 @@ final class LiveViewCheckpointTestKeys implements QuietCloseable {
             long frameSize,
             @NotNull LiveViewCheckpointPartitionMapEntry out
     ) {
+        freeze(builder, writer, key, scalarWord0, scalarWord1, scalarWord2, scalarWord3, 0, frameSize, out);
+    }
+
+    static void freeze(
+            @NotNull LiveViewCheckpointRangeRingStateBuilder builder,
+            @NotNull LiveViewCheckpointDataSegmentWriter writer,
+            byte @NotNull [] key,
+            long scalarWord0,
+            long scalarWord1,
+            long scalarWord2,
+            long scalarWord3,
+            long scalarWord4,
+            long frameSize,
+            @NotNull LiveViewCheckpointPartitionMapEntry out
+    ) {
         final long address = copy(key);
         try {
-            builder.freeze(writer, address, key.length, scalarWord0, scalarWord1, scalarWord2, scalarWord3, frameSize, out);
+            builder.freeze(
+                    writer, address, key.length, scalarWord0, scalarWord1, scalarWord2, scalarWord3, scalarWord4, frameSize, out
+            );
         } finally {
             free(address, key);
         }
