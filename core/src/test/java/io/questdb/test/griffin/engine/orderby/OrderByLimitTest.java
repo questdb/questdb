@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.orderby.EncodedSortLimitedLightRecordCursorFact
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class OrderByLimitTest extends AbstractCairoTest {
@@ -297,6 +298,35 @@ public class OrderByLimitTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .expectSize()
                     .returns("id\tk\n9995\t1\n9997\t1\n9999\t1\n");
+        });
+    }
+
+    @Test
+    public void testCopyingTopKGrowsBatchesOfBestFirstRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE seq AS (SELECT x v FROM long_sequence(60_000))");
+            final String[][] cases = {
+                    {"v", "3_000", "v > 57_000", "4"},
+                    {"CASE WHEN v % 3 = 0 THEN v ELSE -v END", "3_000", "v % 3 = 0 AND v > 51_000", "7"},
+                    {"v", "300", "v > 59_700", "13"},
+                    {"v", "100", "v > 59_900", "14"}
+            };
+            for (String[] c : cases) {
+                final String sql = "SELECT * FROM (SELECT " + c[0] + " id FROM seq WHERE v <= 30_000 UNION ALL SELECT "
+                        + c[0] + " id FROM seq WHERE v > 30_000) ORDER BY id DESC LIMIT " + c[1];
+                assertMatchesReference(sql, "SELECT " + c[0] + " id FROM seq WHERE " + c[2] + " ORDER BY id DESC");
+                try (RecordCursorFactory factory = select(sql)) {
+                    final EncodedSortLimitedLightRecordCursorFactory topK = (EncodedSortLimitedLightRecordCursorFactory) factory.getBaseFactory();
+                    for (int pass = 0; pass < 2; pass++) {
+                        final long compactions = topK.getCompactionCount();
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            while (cursor.hasNext()) {
+                            }
+                        }
+                        Assert.assertEquals(sql, Long.parseLong(c[3]), topK.getCompactionCount() - compactions);
+                    }
+                }
+            }
         });
     }
 

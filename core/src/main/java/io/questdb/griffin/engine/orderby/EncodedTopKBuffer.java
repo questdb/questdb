@@ -278,6 +278,14 @@ public class EncodedTopKBuffer implements QuietCloseable, Reopenable {
         return keyHeap;
     }
 
+    public void growCompactionTrigger() {
+        compactionTrigger = Math.min(compactionTrigger << 1, Math.min(Math.max(limit << 4, MIN_COMPACTION_TRIGGER), maxEntries));
+    }
+
+    public boolean hasThreshold() {
+        return hasThreshold;
+    }
+
     /**
      * Appends the other buffer's entries through the threshold filter; both
      * buffers must share the entry layout and selection.

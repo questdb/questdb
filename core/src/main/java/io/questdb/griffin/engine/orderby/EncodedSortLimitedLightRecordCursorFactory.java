@@ -39,6 +39,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Encoded-key top-K replacement for {@link LimitedSizeSortedLightRecordCursorFactory}.
@@ -92,6 +93,11 @@ public class EncodedSortLimitedLightRecordCursorFactory extends AbstractRecordCu
         final boolean isScanAgainstOrder = timestampIndex != -1
                 && base.getScanDirection() != SortedRecordCursorFactory.getScanDirection(sortColumnFilter);
         this.cursor = new EncodedSortLimitedLightRecordCursor(configuration, metadata, sortColumnFilter, timestampIndex, isScanAgainstOrder, recordSink);
+    }
+
+    @TestOnly
+    public long getCompactionCount() {
+        return cursor.getCompactionCount();
     }
 
     @Override

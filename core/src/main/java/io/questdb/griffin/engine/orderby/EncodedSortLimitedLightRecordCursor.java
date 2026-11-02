@@ -47,6 +47,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Encoded-key top-K cursor. The build phase encodes each scanned row's sort key
@@ -174,6 +175,11 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
                 target.add(rowId);
             }
         }
+    }
+
+    @TestOnly
+    long getCompactionCount() {
+        return entries.getCompactionCount();
     }
 
     @Override
@@ -483,13 +489,27 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
     }
 
     private void runCopyingBuild() {
+        long batchRows = 0;
+        long batchAppends = 0;
+        boolean isFiltered = entries.hasThreshold();
         while (baseCursor.hasNext()) {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final long count = entries.getCount();
             final long compactions = entries.getCompactionCount();
             final long rowId = records.size();
             encoder.encodeTopK(baseRecord, rowId, entries);
+            batchRows++;
             final boolean isCompacted = entries.getCompactionCount() != compactions;
+            if (isCompacted) {
+                if (isFiltered && batchAppends + 1 > batchRows >> 1) {
+                    entries.growCompactionTrigger();
+                }
+                isFiltered = true;
+                batchRows = 0;
+                batchAppends = 0;
+            } else if (entries.getCount() != count) {
+                batchAppends++;
+            }
             if (isCompacted && rowId >> 2 >= limit) {
                 compactRecords(rowId);
             } else if (isCompacted || entries.getCount() != count) {
