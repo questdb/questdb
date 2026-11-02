@@ -151,9 +151,8 @@ public class RecordToRowCopierUtils {
     /**
      * Generates the copier that writes the rows of a view's compiled query into the view's own columns, which it
      * pairs by position. Throws a {@link CairoException#schemaMismatch()} that names the column and both types when
-     * the query no longer produces the view's column count, or produces a column that
-     * {@link ColumnType#isConvertibleFrom} does not let the copier write into the view's column; only recreating the
-     * view resolves either.
+     * the query no longer produces the view's column count, or produces a column that the copier cannot write into
+     * the view's column, see {@link #isCopierConvertible}; only recreating the view resolves either.
      */
     public static RecordToRowCopier generateViewCopier(
             BytecodeAssembler asm,
@@ -174,7 +173,7 @@ public class RecordToRowCopierUtils {
         for (int i = 0; i < columnCount; i++) {
             final int queryType = queryMetadata.getColumnType(i);
             final int viewType = viewMetadata.getColumnType(i);
-            if (!ColumnType.isConvertibleFrom(queryType, viewType)) {
+            if (!isCopierConvertible(queryType, viewType)) {
                 throw CairoException.schemaMismatch()
                         .put("view column type does not match its query, recreate the view [column=")
                         .put(viewMetadata.getColumnName(i))
@@ -187,6 +186,24 @@ public class RecordToRowCopierUtils {
         }
         columnFilter.of(columnCount);
         return generateCopier(asm, queryMetadata, viewMetadata, columnFilter, configuration);
+    }
+
+    /**
+     * Returns true when the record copiers convert a fromType value into a toType column with no cast
+     * function in between. Callers that feed query results straight into a copier (materialized view
+     * refresh) check this before generating the copier. The copiers implement the pairs
+     * {@link ColumnType#isConvertibleFrom(int, int)} admits, except numeric and temporal values into
+     * CHAR, which they do not implement, and additionally DOUBLE into DATE and TIMESTAMP.
+     */
+    public static boolean isCopierConvertible(int fromType, int toType) {
+        final short fromTag = ColumnType.tagOf(fromType);
+        final short toTag = ColumnType.tagOf(toType);
+        if (toTag == ColumnType.CHAR) {
+            return fromTag == ColumnType.CHAR || fromTag == ColumnType.STRING || fromTag == ColumnType.VARCHAR
+                    || fromTag == ColumnType.VARCHAR_SLICE || fromTag == ColumnType.NULL;
+        }
+        return ColumnType.isConvertibleFrom(fromType, toType)
+                || (fromTag == ColumnType.DOUBLE && (toTag == ColumnType.DATE || toTag == ColumnType.TIMESTAMP));
     }
 
     @SuppressWarnings("unused")
@@ -627,6 +644,7 @@ public class RecordToRowCopierUtils {
         int implicitCastStrAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong256", "(Ljava/lang/CharSequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
         int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
         int implicitCastStrAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "implicitCast", "(Ljava/lang/CharSequence;)J");
+        int implicitCastSymbolAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "implicitCast", "(Ljava/lang/CharSequence;I)J");
         int implicitCastShortAsByte = asm.poolMethod(SqlUtil.class, "implicitCastShortAsByte", "(S)B");
         int implicitCastIntAsByte = asm.poolMethod(SqlUtil.class, "implicitCastIntAsByte", "(I)B");
         int implicitCastLongAsByte = asm.poolMethod(SqlUtil.class, "implicitCastLongAsByte", "(J)B");
@@ -1277,10 +1295,6 @@ public class RecordToRowCopierUtils {
                     case ColumnType.SYMBOL:
                         asm.invokeInterface(rGetSym);
                         switch (toColumnTypeTag) {
-                            case ColumnType.TIMESTAMP:
-                                asm.invokeInterface(implicitCastStrAsTimestamp, 1);
-                                asm.invokeInterface(wPutTimestamp, 3);
-                                break;
                             case ColumnType.SYMBOL:
                                 asm.invokeInterface(wPutSym, 2);
                                 break;
@@ -1289,6 +1303,11 @@ public class RecordToRowCopierUtils {
                                 break;
                             case ColumnType.VARCHAR:
                                 asm.invokeStatic(transferStrToVarcharCol);
+                                break;
+                            case ColumnType.TIMESTAMP:
+                                asm.iconst(ColumnType.SYMBOL);
+                                asm.invokeInterface(implicitCastSymbolAsTimestamp, 2);
+                                asm.invokeInterface(wPutTimestamp, 3);
                                 break;
                             default:
                                 throw inconvertibleTypes(fromColumnType, toColumnType);
@@ -1822,6 +1841,7 @@ public class RecordToRowCopierUtils {
         int implicitCastStrAsLong256 = asm.poolMethod(SqlUtil.class, "implicitCastStrAsLong256", "(Ljava/lang/CharSequence;)Lio/questdb/griffin/engine/functions/constants/Long256Constant;");
         int implicitCastStrAsDate = asm.poolMethod(SqlUtil.class, "implicitCastStrAsDate", "(Ljava/lang/CharSequence;)J");
         int implicitCastStrAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "implicitCast", "(Ljava/lang/CharSequence;)J");
+        int implicitCastSymbolAsTimestamp = asm.poolInterfaceMethod(TimestampDriver.class, "implicitCast", "(Ljava/lang/CharSequence;I)J");
         int implicitCastShortAsByte = asm.poolMethod(SqlUtil.class, "implicitCastShortAsByte", "(S)B");
         int implicitCastIntAsByte = asm.poolMethod(SqlUtil.class, "implicitCastIntAsByte", "(I)B");
         int implicitCastLongAsByte = asm.poolMethod(SqlUtil.class, "implicitCastLongAsByte", "(J)B");
@@ -2500,10 +2520,6 @@ public class RecordToRowCopierUtils {
                 case ColumnType.SYMBOL: // from
                     asm.invokeInterface(rGetSym);
                     switch (toColumnTypeTag) {
-                        case ColumnType.TIMESTAMP:
-                            asm.invokeInterface(implicitCastStrAsTimestamp, 1);
-                            asm.invokeInterface(wPutTimestamp, 3);
-                            break;
                         case ColumnType.SYMBOL:
                             asm.invokeInterface(wPutSym, 2);
                             break;
@@ -2512,6 +2528,11 @@ public class RecordToRowCopierUtils {
                             break;
                         case ColumnType.VARCHAR:
                             asm.invokeStatic(transferStrToVarcharCol);
+                            break;
+                        case ColumnType.TIMESTAMP:
+                            asm.iconst(ColumnType.SYMBOL);
+                            asm.invokeInterface(implicitCastSymbolAsTimestamp, 2);
+                            asm.invokeInterface(wPutTimestamp, 3);
                             break;
                         default:
                             throw inconvertibleTypes(fromColumnType, toColumnType);

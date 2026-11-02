@@ -362,7 +362,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 isMapBuilt = true;
                 nullKeys.findNullKeyChain(masterNullRecord);
                 record.hasMaster(true);
-                mapCursor = joinKeyMap.getCursor();
             }
 
             if (useSlaveCursor && slaveChain.hasNext()) {
@@ -413,6 +412,10 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
 
             record.hasMaster(false);
             record.hasSlave(true);
+            // Take the cursor only now: the probe's withKey() can grow the map and move its memory.
+            if (mapCursor == null) {
+                mapCursor = joinKeyMap.getCursor();
+            }
             while (mapCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapValue value = mapCursor.getRecord().getValue();
@@ -434,9 +437,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         @Override
         public void toTop() {
             super.toTop();
-            if (mapCursor != null) {
-                mapCursor.toTop();
-            }
+            mapCursor = null;
             record.hasMaster(true);
             if (!isMapBuilt) {
                 matchIdsMap.clear();
@@ -577,7 +578,6 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                 isMapBuilt = true;
                 nullKeys.findNullKeyChain(masterNullRecord);
                 record.hasMaster(true);
-                mapCursor = joinKeyMap.getCursor();
             }
 
             if (useSlaveCursor) {
@@ -619,6 +619,10 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             }
 
             record.hasMaster(false);
+            // Take the cursor only now: the probe's withKey() can grow the map and move its memory.
+            if (mapCursor == null) {
+                mapCursor = joinKeyMap.getCursor();
+            }
             while (mapCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 MapValue value = mapCursor.getRecord().getValue();
@@ -640,9 +644,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         @Override
         public void toTop() {
             super.toTop();
-            if (mapCursor != null) {
-                mapCursor.toTop();
-            }
+            mapCursor = null;
             record.hasMaster(true);
             if (!isMapBuilt) {
                 matchIdsMap.clear();

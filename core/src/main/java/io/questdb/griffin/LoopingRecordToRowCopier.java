@@ -528,7 +528,7 @@ public class LoopingRecordToRowCopier implements RecordToRowCopier {
     private void copyFromSymbol(Record record, TableWriter.Row row, int fromIndex, int toIndex, int toTypeTag, int toType, TimestampDriver timestampDriver) {
         CharSequence value = record.getSymA(fromIndex);
         switch (toTypeTag) {
-            case ColumnType.TIMESTAMP -> row.putTimestamp(toIndex, timestampDriver.implicitCast(value));
+            case ColumnType.TIMESTAMP -> row.putTimestamp(toIndex, timestampDriver.implicitCast(value, ColumnType.SYMBOL));
             case ColumnType.SYMBOL -> row.putSym(toIndex, value);
             case ColumnType.STRING -> row.putStr(toIndex, value);
             case ColumnType.VARCHAR -> RecordToRowCopierUtils.transferStrToVarcharCol(row, toIndex, value);
