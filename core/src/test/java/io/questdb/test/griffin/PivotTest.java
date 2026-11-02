@@ -1429,6 +1429,15 @@ public class PivotTest extends AbstractSqlParserTest {
                                 );
                     }
                 }
+                // a PIVOT that the statement writes itself names no view, so the error names the view its IN
+                // subquery reads, which code generation enters on the borrowed compiler
+                final String direct = "CREATE VIEW reader AS (SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM names)))";
+                assertQuery(direct)
+                        .noLeakCheck()
+                        .fails(
+                                direct.lastIndexOf("names"),
+                                "administrative function cannot be used in view PIVOT IN subquery: admin_scalar"
+                        );
                 Assert.assertEquals(0, constructionCount.get());
                 Assert.assertNull(engine.getTableTokenIfExists("reader"));
                 assertViewSql("other", "SELECT 1 x FROM long_sequence(1)");
@@ -1571,6 +1580,58 @@ public class PivotTest extends AbstractSqlParserTest {
     @Test
     public void testPivotSubqueryRejectsAdministrativeScalarInViewWhere() throws Exception {
         assertViewPivotRejectsAdministrativeScalar("SELECT 'a' FROM long_sequence(1) WHERE admin_scalar() = 'a'");
+    }
+
+    @Test
+    public void testPivotSubqueryRejectsAdministrativeTableFunctionAtViewName() throws Exception {
+        // The optimiser creates a PIVOT IN subquery's table functions, outside the error-position rewrite of code
+        // generation. A table function written in a view still surfaces at the view's name in the compiled SQL.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE data (cat VARCHAR, val INT)");
+            execute("INSERT INTO data VALUES ('a', 42)");
+            final ObjList<TableFunctionTestUtils.CloseCountingRecordCursorFactory> stored = new ObjList<>();
+            // stored while the function needs no caller, as a definition stored before the restriction
+            TableFunctionTestUtils.register(engine, "admin_cursor", SqlExecutionRequirements.NONE, stored);
+            try {
+                execute("""
+                        CREATE VIEW pv AS (
+                            SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                                SELECT 'a' FROM long_sequence(1) UNION ALL SELECT permission FROM admin_cursor()
+                            ))
+                        )""");
+            } finally {
+                TableFunctionTestUtils.unregister(engine, "admin_cursor");
+            }
+            execute("CREATE VIEW other AS (SELECT 1 x FROM long_sequence(1))");
+            final ObjList<TableFunctionTestUtils.CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            TableFunctionTestUtils.register(
+                    engine,
+                    "admin_cursor",
+                    SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
+                    factories
+            );
+            try {
+                for (String sql : new String[]{
+                        "CREATE VIEW reader AS (SELECT * FROM pv)",
+                        "ALTER VIEW other AS SELECT * FROM pv",
+                        "CREATE OR REPLACE VIEW other AS SELECT * FROM pv"
+                }) {
+                    assertQuery(sql)
+                            .noLeakCheck()
+                            .fails(
+                                    sql.lastIndexOf("pv"),
+                                    "administrative function cannot be used in view PIVOT IN subquery: admin_cursor"
+                            );
+                }
+                Assert.assertEquals(0, factories.size());
+                Assert.assertNull(engine.getTableTokenIfExists("reader"));
+                assertViewSql("other", "SELECT 1 x FROM long_sequence(1)");
+                assertViewCompileFlagsClear();
+                assertNothingBusy();
+            } finally {
+                TableFunctionTestUtils.unregister(engine, "admin_cursor");
+            }
+        });
     }
 
     @Test
@@ -2575,32 +2636,48 @@ public class PivotTest extends AbstractSqlParserTest {
             );
             try {
                 // Only a PIVOT IN subquery runs while the view compiler derives a view's columns. Every other
-                // subquery of a view runs when the view is read, as its reader.
+                // subquery of a view runs when the view is read, as its reader, including the subqueries that the
+                // PIVOT holds next to its IN subquery: those in its aggregate and in its FOR expression.
                 final String count = "(SELECT count() FROM " + functionName + "())";
+                execute("""
+                        CREATE VIEW v_agg AS (
+                            SELECT * FROM data
+                            PIVOT (SUM(CASE WHEN val > %s THEN val ELSE 0 END) FOR cat IN (SELECT cat FROM data))
+                        )""".formatted(count));
+                execute("""
+                        CREATE VIEW v_for AS (
+                            SELECT * FROM data
+                            PIVOT (SUM(val) FOR CASE WHEN val > %s THEN cat ELSE 'z' END IN (SELECT cat FROM data))
+                        )""".formatted(count));
                 execute("""
                         CREATE VIEW v_pivot AS (
                             SELECT * FROM data WHERE val > %s
                             PIVOT (SUM(val) FOR cat IN (SELECT cat FROM data))
                         )""".formatted(count));
                 execute("CREATE VIEW v_where AS (SELECT * FROM data WHERE val > " + count + ")");
-                execute("COMPILE VIEW v_pivot");
-                execute("COMPILE VIEW v_where");
+                for (String view : new String[]{"v_agg", "v_for", "v_pivot", "v_where"}) {
+                    execute("COMPILE VIEW " + view);
+                }
                 drainViewQueue();
                 assertQuery("SELECT view_name, view_status, invalidation_reason FROM views() ORDER BY view_name")
                         .noLeakCheck()
                         .returns("""
                                 view_name\tview_status\tinvalidation_reason
+                                v_agg\tvalid\t
+                                v_for\tvalid\t
                                 v_pivot\tvalid\t
                                 v_where\tvalid\t
                                 """);
-                assertQuery("SELECT * FROM v_pivot")
-                        .noLeakCheck()
-                        .noRandomAccess()
-                        .expectSize()
-                        .returns("""
-                                a
-                                42
-                                """);
+                for (String view : new String[]{"v_agg", "v_for", "v_pivot"}) {
+                    assertQuery("SELECT * FROM " + view)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    a
+                                    42
+                                    """);
+                }
                 assertQuery("SELECT * FROM v_where")
                         .noLeakCheck()
                         .returns("""

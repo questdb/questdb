@@ -162,6 +162,17 @@ public class ShowExecutionRequirementsTest extends AbstractCairoTest {
             drainViewQueue();
             assertViewStatus("pv", "invalid", VIEW_PIVOT_REJECTION);
 
+            // a view over pv reports the statement at pv's name, not at its position in pv's definition
+            execute("CREATE VIEW other AS (SELECT 1 x FROM long_sequence(1))");
+            for (String sql : new String[]{
+                    "CREATE VIEW reader AS (SELECT * FROM pv)",
+                    "ALTER VIEW other AS SELECT * FROM pv",
+                    "CREATE OR REPLACE VIEW other AS SELECT * FROM pv"
+            }) {
+                assertQuery(sql).noLeakCheck().fails(sql.lastIndexOf("pv"), VIEW_PIVOT_REJECTION);
+            }
+            Assert.assertNull(engine.getTableTokenIfExists("reader"));
+
             // a read of the view runs the statement as its reader
             assertQuery("SELECT * FROM pv")
                     .noLeakCheck()
