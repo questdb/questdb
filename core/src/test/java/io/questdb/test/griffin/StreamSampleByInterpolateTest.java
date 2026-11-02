@@ -472,6 +472,42 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLateKeysFillBeforeTheirFirstBucket() throws Exception {
+        run((engine, compiler, context) -> {
+            createPrices(context);
+            engine.execute("""
+                    INSERT INTO prices VALUES
+                        ('2024-01-01T00:00', 'a', 1), ('2024-01-01T01:00', 'b', 10), ('2024-01-01T01:40', 'd', 100),
+                        ('2024-01-01T02:30', 'c', 7), ('2024-01-01T03:00', 'b', 30), ('2024-01-01T04:00', 'a', 5),
+                        ('2024-01-01T04:00', 'b', 50), ('2024-01-01T04:00', 'd', 400)""", context);
+            query(context, "SELECT ts, sym, avg(price) mean FROM prices SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR ORDER BY ts, sym")
+                    .returns(precision("""
+                            ts\tsym\tmean
+                            2024-01-01T00:00:00.000000Z\ta\t1.0
+                            2024-01-01T00:00:00.000000Z\tb\t0.0
+                            2024-01-01T00:00:00.000000Z\tc\tnull
+                            2024-01-01T00:00:00.000000Z\td\t0.0
+                            2024-01-01T01:00:00.000000Z\ta\t2.0
+                            2024-01-01T01:00:00.000000Z\tb\t10.0
+                            2024-01-01T01:00:00.000000Z\tc\tnull
+                            2024-01-01T01:00:00.000000Z\td\t100.0
+                            2024-01-01T02:00:00.000000Z\ta\t3.0
+                            2024-01-01T02:00:00.000000Z\tb\t20.0
+                            2024-01-01T02:00:00.000000Z\tc\t7.0
+                            2024-01-01T02:00:00.000000Z\td\t200.0
+                            2024-01-01T03:00:00.000000Z\ta\t4.0
+                            2024-01-01T03:00:00.000000Z\tb\t30.0
+                            2024-01-01T03:00:00.000000Z\tc\tnull
+                            2024-01-01T03:00:00.000000Z\td\t300.0
+                            2024-01-01T04:00:00.000000Z\ta\t5.0
+                            2024-01-01T04:00:00.000000Z\tb\t50.0
+                            2024-01-01T04:00:00.000000Z\tc\tnull
+                            2024-01-01T04:00:00.000000Z\td\t400.0
+                            """));
+        });
+    }
+
+    @Test
     public void testMixedFillKeepsLegacy() throws Exception {
         run((engine, compiler, context) -> {
             createPrices(context);
@@ -567,6 +603,27 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTwoPointFunctionFillsBeforeLateKey() throws Exception {
+        run((engine, compiler, context) -> {
+            engine.execute("CREATE TABLE pos (ts " + timestampType + ", sym SYMBOL, lat DOUBLE, lon DOUBLE) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY", context);
+            engine.execute("INSERT INTO pos VALUES ('2024-01-01T00:00', 'a', 0, 0), ('2024-01-01T00:00', 'single', 1, 1), "
+                    + "('2024-01-01T02:00', 'late', 0, 0), ('2024-01-01T04:00', 'a', 0, 1), ('2024-01-01T04:00', 'late', 0, 2)", context);
+            final double half;
+            try (
+                    RecordCursorFactory factory = engine.select("SELECT haversine_dist_deg(lat, lon, ts) d FROM pos WHERE sym = 'late'", context);
+                    RecordCursor cursor = factory.getCursor(context)
+            ) {
+                Assert.assertTrue(cursor.hasNext());
+                half = cursor.getRecord().getDouble(0) / 2;
+            }
+            Assert.assertTrue(half > 0);
+            assertDistances(context, "late", half, half, 0, half, 0);
+            assertDistances(context, "single", 0, 0, 0, 0, 0);
+        });
+    }
+
+    @Test
     public void testTwoPointFunctionKeepsLegacy() throws Exception {
         run((engine, compiler, context) -> {
             createPrices(context);
@@ -623,6 +680,24 @@ public class StreamSampleByInterpolateTest extends AbstractCairoTest {
 
     private static double line(long x, long x1, double y1, long x2, double y2) {
         return (y1 * (x2 - x) + y2 * (x - x1)) / (x2 - x1);
+    }
+
+    private void assertDistances(SqlExecutionContext context, String sym, double... expected) throws Exception {
+        final String sql = "SELECT * FROM (SELECT ts, sym, haversine_dist_deg(lat, lon, ts) distance FROM pos "
+                + "SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR) WHERE sym = '" + sym + "'";
+        try (
+                RecordCursorFactory factory = context.getCairoEngine().select(sql, context);
+                RecordCursor cursor = factory.getCursor(context)
+        ) {
+            for (int pass = 0; pass < 2; pass++) {
+                int bucket = 0;
+                while (cursor.hasNext()) {
+                    Assert.assertEquals(sym + " at " + bucket, expected[bucket++], cursor.getRecord().getDouble(2), 1e-9);
+                }
+                Assert.assertEquals(expected.length, bucket);
+                cursor.toTop();
+            }
+        }
     }
 
     private void assertLegacy(SqlExecutionContext context, String sql, String expected) throws Exception {

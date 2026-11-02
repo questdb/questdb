@@ -88,7 +88,7 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFirstBucketKeysTakeExactCapacity() throws Exception {
+    public void testGridCellsFollowKeyArrival() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE wide AS (
@@ -98,10 +98,10 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
             final String sql = "SELECT ts, k, sum(v) s FROM wide SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR";
             try (RecordCursorFactory factory = select(sql)) {
                 assertRowCount(factory, 66 * 65);
-                Assert.assertEquals(65, interpolation(factory).getKeyCapacity());
+                Assert.assertEquals(66 * 65, interpolation(factory).getGridCellCount());
                 execute("INSERT INTO wide VALUES (66 * 3_600_000_000, 'late', 1)");
                 assertRowCount(factory, 67 * 66);
-                Assert.assertEquals(130, interpolation(factory).getKeyCapacity());
+                Assert.assertEquals(66 * 65 + 66, interpolation(factory).getGridCellCount());
             }
         });
     }
@@ -222,7 +222,7 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
                                 final StringSink result = new StringSink();
                                 CursorPrinter.println(cursor, factory.getMetadata(), result);
                                 TestUtils.assertEquals(EXPECTED, result);
-                                Assert.assertEquals(2, interpolation(factory).getKeyCapacity());
+                                Assert.assertEquals(6, interpolation(factory).getGridCellCount());
                                 Assert.assertTrue(interpolation(factory).isBuilt());
                                 cursor.toTop();
                             }
@@ -283,7 +283,7 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
                             Assert.assertEquals(expectedCount, count);
                             Assert.assertEquals(expectedCount, cursor.size());
                             if (max == 2) {
-                                Assert.assertEquals(2, interpolation(factory).getKeyCapacity());
+                                Assert.assertEquals(iteration == 4 ? 38 : 36, interpolation(factory).getGridCellCount());
                             }
                             cursor.toTop();
                         }
@@ -377,7 +377,7 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
                                 Assert.fail("expected grid resize limit");
                             } catch (CairoException e) {
                                 TestUtils.assertContains(e.getFlyweightMessage(), "limit of 0 resizes exceeded in FILL(LINEAR)");
-                                Assert.assertTrue(interpolation(factory).getKeyCapacity() > 1);
+                                Assert.assertTrue(interpolation(factory).getGridCellCount() > 1);
                                 Assert.assertFalse(interpolation(factory).isBuilt());
                             }
                         }
@@ -396,6 +396,128 @@ public class SampleByInterpolateRewindTest extends AbstractCairoTest {
             }
             assertQuery(sql).noLeakCheck().timestamp("ts").expectSize()
                     .returns("ts\tk\tv\n1970-01-01T00:00:00.001000Z\tk1\t1\n");
+        });
+    }
+
+    @Test
+    public void testLateKeyGridFitsMemoryLimit() throws Exception {
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 3 << 20);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE late (ts TIMESTAMP, k SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO late
+                    SELECT CASE WHEN x <= 64 THEN 0 ELSE 1_999_000_000 END::TIMESTAMP, 'k' || ((x - 1) % 64),
+                           (x - 1) % 64 + CASE WHEN x <= 64 THEN 0 ELSE 1_999 END
+                    FROM long_sequence(128)
+                    """);
+            execute("INSERT INTO late VALUES (1_000_000, 'late', 1_001), (1_999_000_000, 'late', 2_999)");
+            final String sql = "SELECT count() n, sum(v) s FROM (SELECT ts, k, avg(v) v FROM late "
+                    + "SAMPLE BY 1s FILL(LINEAR) ALIGN TO CALENDAR)";
+            try (RecordCursorFactory factory = select(sql);
+                 MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(
+                         sqlExecutionContext.getSecurityContext(), 42, MemoryTrackerWorkload.QUERY)) {
+                sqlExecutionContext.setMemoryTracker(tracker);
+                try {
+                    for (int pass = 0; pass < 2; pass++) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            final StringSink result = new StringSink();
+                            CursorPrinter.println(cursor, factory.getMetadata(), result);
+                            TestUtils.assertEquals("n\ts\n130000\t1.35967E8\n", result);
+                        }
+                        Assert.assertEquals(0, tracker.getUsed());
+                    }
+                } finally {
+                    sqlExecutionContext.setMemoryTracker(null);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testWideGapCancellationBeforeMemoryLimit() throws Exception {
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4 << 20);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE wide_gap (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts)");
+            execute("INSERT INTO wide_gap SELECT 0::TIMESTAMP, 'k' || x, x FROM long_sequence(64)");
+            execute("INSERT INTO wide_gap VALUES ('1970-01-02', 'k1', 1)");
+            final String sql = "SELECT ts, k, avg(v) v FROM wide_gap SAMPLE BY 1T FILL(LINEAR) ALIGN TO FIRST OBSERVATION";
+            final StackWalker stackWalker = StackWalker.getInstance();
+            try (
+                    NetworkSqlExecutionCircuitBreaker network = new NetworkSqlExecutionCircuitBreaker(engine,
+                            new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                                @Override
+                                public int getCircuitBreakerThrottle() {
+                                    return 10_000;
+                                }
+                            });
+                    SqlExecutionContextImpl cancellable = new SqlExecutionContextImpl(engine, 1)
+                            .with(sqlExecutionContext.getSecurityContext(), null, null, -1, new CountingSqlExecutionCircuitBreaker(network) {
+                                @Override
+                                public void statefulThrowExceptionIfTripped() {
+                                    super.statefulThrowExceptionIfTripped();
+                                    if (stackWalker.walk(frames -> frames.anyMatch(frame -> frame.getMethodName().equals("aggregate")
+                                            && frame.getClassName().endsWith("SampleByInterpolateRecordCursor")))) {
+                                        network.cancel();
+                                    }
+                                }
+                            });
+                    RecordCursorFactory factory = select(sql);
+                    MemoryTracker tracker = engine.getMemoryTrackerProvider().acquire(
+                            sqlExecutionContext.getSecurityContext(), 42, MemoryTrackerWorkload.QUERY)
+            ) {
+                cancellable.setMemoryTracker(tracker);
+                try (RecordCursor cursor = factory.getCursor(cancellable)) {
+                    cursor.hasNext();
+                    Assert.fail("expected cancellation during the gap expansion");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getFlyweightMessage().toString(), e.isCancellation());
+                    Assert.assertFalse(interpolation(factory).isBuilt());
+                } finally {
+                    network.clear();
+                    cancellable.setMemoryTracker(null);
+                }
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testReuseWithNarrowerRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE prices (ts TIMESTAMP, k SYMBOL, v LONG) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO prices VALUES
+                    ('2024-01-01T00:00', 'a', 10), ('2024-01-01T00:00', 'b', 100),
+                    ('2024-01-01T01:00', 'a', 20), ('2024-01-01T01:00', 'b', 100),
+                    ('2024-01-01T02:00', 'a', 30), ('2024-01-01T02:00', 'b', 100)
+                    """);
+            final String sql = "SELECT ts, k, sum(v) v FROM prices WHERE v <= :max "
+                    + "SAMPLE BY 1h FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'UTC' ORDER BY ts, k";
+            bindVariableService.setLong("max", 100);
+            try (RecordCursorFactory factory = select(sql)) {
+                for (long max : new long[]{50, 100, 50}) {
+                    bindVariableService.setLong("max", max);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final StringSink result = new StringSink();
+                        CursorPrinter.println(cursor, factory.getMetadata(), result);
+                        TestUtils.assertEquals(max == 100 ? """
+                                ts\tk\tv
+                                2024-01-01T00:00:00.000000Z\ta\t10
+                                2024-01-01T00:00:00.000000Z\tb\t100
+                                2024-01-01T01:00:00.000000Z\ta\t20
+                                2024-01-01T01:00:00.000000Z\tb\t100
+                                2024-01-01T02:00:00.000000Z\ta\t30
+                                2024-01-01T02:00:00.000000Z\tb\t100
+                                """ : """
+                                ts\tk\tv
+                                2024-01-01T00:00:00.000000Z\ta\t10
+                                2024-01-01T01:00:00.000000Z\ta\t20
+                                2024-01-01T02:00:00.000000Z\ta\t30
+                                """, result);
+                        Assert.assertEquals(max == 100 ? 6 : 3, interpolation(factory).getGridCellCount());
+                    }
+                }
+            }
         });
     }
 

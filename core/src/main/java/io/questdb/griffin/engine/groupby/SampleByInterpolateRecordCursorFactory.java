@@ -71,7 +71,6 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
@@ -290,8 +289,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     }
 
     @TestOnly
-    public int getKeyCapacity() {
-        return cursor.keyCapacity;
+    public long getGridCellCount() {
+        return cursor.gridSize / cursor.cellSize - 2;
     }
 
     @TestOnly
@@ -396,13 +395,15 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     private static class GridRecord extends JoinRecord {
         private final BucketRecord bucket = new BucketRecord();
         private final MapRecord key;
+        private final int scratchIndex;
         private final FlyweightPackedMapValue value;
         private long rowId;
 
-        private GridRecord(int valueColumnCount, int keyColumnCount, FlyweightPackedMapValue value, MapRecord key) {
+        private GridRecord(int valueColumnCount, int keyColumnCount, FlyweightPackedMapValue value, MapRecord key, int scratchIndex) {
             super(valueColumnCount);
             this.value = value;
             this.key = key;
+            this.scratchIndex = scratchIndex;
             // The key map record holds the key index ahead of the keys.
             final IntList keyColumns = new IntList(keyColumnCount);
             for (int i = 0; i < keyColumnCount; i++) {
@@ -421,8 +422,10 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         }
     }
 
-    // Holds one cell per (bucket, key) in bucket-major order. Each cell has the value layout of
-    // the aggregation, whose first byte flags a gap.
+    // Holds one row of cells per bucket, in bucket order. A row has a cell for each key seen by
+    // the end of its bucket, so a key's cells start at its first data bucket and GridCursor
+    // computes the earlier ones on read. Each cell has the value layout of the aggregation,
+    // whose first byte flags a gap.
     private class SampleByInterpolateRecordCursor extends VirtualFunctionSkewedSymbolRecordCursor {
         private final GroupByAllocator allocator;
         private final DirectLongList bucketTimestamps;
@@ -434,6 +437,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private final MapRecordCursor keyMapCursor;
         private final DirectLongList keyRowIds;
         private final int maxResizes;
+        private final DirectLongList rowOffsets;
         private final Function offsetFunc;
         private final int offsetFuncPos;
         private final Function sampleFromFunc;
@@ -449,15 +453,14 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long fixedOffset;
         private long gridAddress;
+        private long gridSize;
         private boolean isBuilt;
         private boolean isOpen;
-        private int keyCapacity;
         private int keyCount;
         private long lastBucket;
         private Record managedRecord;
         private int resizes;
         private long rowId;
-        private long rowSize;
         private TimeZoneRules rules;
         private long tzOffset;
 
@@ -488,13 +491,14 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 bucketTimestamps = new DirectLongList(configuration.getSqlSmallMapKeyCapacity(), MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST, true);
                 keyBuckets = new DirectLongList(configuration.getSqlSmallMapKeyCapacity(), MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST, true);
                 keyRowIds = new DirectLongList(configuration.getSqlSmallMapKeyCapacity(), MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST, true);
+                rowOffsets = new DirectLongList(configuration.getSqlSmallMapKeyCapacity(), MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST, true);
                 value = new FlyweightPackedMapValue(valueTypes);
                 x1Value = new FlyweightPackedMapValue(valueTypes);
                 x2Value = new FlyweightPackedMapValue(valueTypes);
                 cellSize = value.getSizeInBytes();
                 gridCursor = new GridCursor(
-                        new GridRecord(valueTypes.getColumnCount(), keyTypes.getColumnCount(), new FlyweightPackedMapValue(valueTypes), keyMapCursor.getRecord()),
-                        new GridRecord(valueTypes.getColumnCount(), keyTypes.getColumnCount(), new FlyweightPackedMapValue(valueTypes), keyMapCursor.getRecordB())
+                        new GridRecord(valueTypes.getColumnCount(), keyTypes.getColumnCount(), new FlyweightPackedMapValue(valueTypes), keyMapCursor.getRecord(), 0),
+                        new GridRecord(valueTypes.getColumnCount(), keyTypes.getColumnCount(), new FlyweightPackedMapValue(valueTypes), keyMapCursor.getRecordB(), 1)
                 );
                 allocator = GroupByAllocatorFactory.createAllocator(configuration, false);
                 GroupByUtils.setAllocator(groupByFunctions, allocator);
@@ -532,6 +536,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 failure = Misc.freeBestEffort(failure, bucketTimestamps);
                 failure = Misc.freeBestEffort(failure, keyBuckets);
                 failure = Misc.freeBestEffort(failure, keyRowIds);
+                failure = Misc.freeBestEffort(failure, rowOffsets);
                 failure = Misc.freeBestEffort(failure, allocator);
                 failure = Misc.clearObjListBestEffort(failure, groupByFunctions);
             }
@@ -564,6 +569,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 keyBuckets.reopen();
                 keyRowIds.setMemoryTracker(memoryTracker);
                 keyRowIds.reopen();
+                rowOffsets.setMemoryTracker(memoryTracker);
+                rowOffsets.reopen();
                 allocator.setMemoryTracker(memoryTracker);
                 allocator.reopen();
             }
@@ -606,7 +613,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                         throw CairoException.nonCritical().put("SAMPLE BY FILL(LINEAR) requires ascending designated timestamp order");
                     }
                     do {
-                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         lastBucket = sampler.nextTimestamp(lastBucket);
                         appendBucket(lastBucket);
                     } while (lastBucket < sample);
@@ -617,9 +623,12 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 mapSink.copy(managedRecord, key);
                 final MapValue keyValue = key.createValue();
                 if (keyValue.isNew()) {
-                    if (keyCount == keyCapacity) {
-                        growKeys();
-                    }
+                    extendGrid(gridSize + cellSize);
+                    Unsafe.putByte(gridAddress + gridSize, (byte) 1);
+                    gridSize += cellSize;
+                    keyBuckets.add(bucketCount - 1);
+                    keyBuckets.add(-1);
+                    keyBuckets.add(-1);
                     keyValue.putInt(0, keyCount++);
                 }
 
@@ -641,12 +650,14 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         }
 
         private void appendBucket(long timestamp) {
-            final long offset = bucketCount * rowSize;
-            extendGrid(offset + rowSize);
-            final long row = gridAddress + offset;
-            for (long p = row, hi = row + rowSize; p < hi; p += cellSize) {
+            final long rowSize = keyCount * cellSize;
+            extendGrid(gridSize + rowSize);
+            for (long p = gridAddress + gridSize, hi = p + rowSize; p < hi; p += cellSize) {
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 Unsafe.putByte(p, (byte) 1);
             }
+            rowOffsets.add(gridSize);
+            gridSize += rowSize;
             bucketTimestamps.add(timestamp);
             bucketCount++;
         }
@@ -671,7 +682,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         }
 
         private long cell(long bucket, int key) {
-            return gridAddress + bucket * rowSize + key * cellSize;
+            return gridAddress + rowOffsets.get(bucket) + key * cellSize;
         }
 
         private void computeYPoints(MapValue x1Value, MapValue x2value) {
@@ -692,24 +703,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             }
             grid.extend(size);
             gridAddress = grid.getPageAddress(0);
-        }
-
-        private void growKeys() {
-            final int capacity = bucketCount == 1 ? keyCapacity + 1 : keyCapacity * 2;
-            final long size = capacity * cellSize;
-            extendGrid(bucketCount * size);
-            for (long bucket = bucketCount - 1; bucket >= 0; bucket--) {
-                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-                final long row = gridAddress + bucket * size;
-                if (bucket > 0) {
-                    Vect.memmove(row, gridAddress + bucket * rowSize, rowSize);
-                }
-                for (long p = row + rowSize, hi = row + size; p < hi; p += cellSize) {
-                    Unsafe.putByte(p, (byte) 1);
-                }
-            }
-            keyCapacity = capacity;
-            rowSize = size;
         }
 
         private void initTimestamps() {
@@ -745,84 +738,81 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         }
 
         private void interpolate(int key, long lo, long hi, long x1, long x2) {
-            x1Value.of(cell(x1, key));
-            x2Value.of(cell(x2, key));
-            computeYPoints(x1Value, x2Value);
+            prepareInterpolation(key, x1, x2);
             final long x1Timestamp = bucketTimestamps.get(x1);
             final long x2Timestamp = bucketTimestamps.get(x2);
             for (long bucket = lo; bucket < hi; bucket++) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 value.of(cell(bucket, key));
-                for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
-                    InterpolationUtil.interpolateGap(groupByTwoPointFunctions.getQuick(i), value, sampler.getBucketSize(), x1Value, x2Value);
-                }
-                final long timestamp = bucketTimestamps.get(bucket);
-                for (int i = 0; i < groupByScalarFunctionCount; i++) {
-                    interpolatorFunctions.getQuick(i).interpolateAndStore(groupByScalarFunctions.getQuick(i), value, timestamp, x1Timestamp, x2Timestamp, yData + i * 16L, yData + i * 16L + 8);
-                }
-                value.putByte(0, (byte) 0);
+                interpolate(value, bucketTimestamps.get(bucket), x1Timestamp, x2Timestamp);
             }
+        }
+
+        private void interpolate(MapValue target, long timestamp, long x1Timestamp, long x2Timestamp) {
+            for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
+                InterpolationUtil.interpolateGap(groupByTwoPointFunctions.getQuick(i), target, sampler.getBucketSize(), x1Value, x2Value);
+            }
+            for (int i = 0; i < groupByScalarFunctionCount; i++) {
+                interpolatorFunctions.getQuick(i).interpolateAndStore(groupByScalarFunctions.getQuick(i), target, timestamp, x1Timestamp, x2Timestamp, yData + i * 16L, yData + i * 16L + 8);
+            }
+            target.putByte(0, (byte) 0);
         }
 
         // Two-point functions interpolate the boundaries between consecutive data buckets of the
         // keys that have data in the first bucket.
         private void interpolateBoundaries() {
-            for (int key = 0; key < keyCount; key++) {
-                keyBuckets.add(Unsafe.getByte(cell(0, key)) == 0 ? 0 : -1);
+            final int keys = rowKeyCount(0);
+            for (int key = 0; key < keys; key++) {
+                keyBuckets.set(3L * key + 1, 0);
             }
             for (long bucket = 1; bucket < bucketCount; bucket++) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-                for (int key = 0; key < keyCount; key++) {
-                    final long last = keyBuckets.get(key);
-                    if (last >= 0 && Unsafe.getByte(cell(bucket, key)) == 0) {
+                final long row = cell(bucket, 0);
+                for (int key = 0; key < keys; key++) {
+                    if (Unsafe.getByte(row + key * cellSize) == 0) {
+                        final long last = keyBuckets.get(3L * key + 1);
                         x1Value.of(cell(last, key));
-                        x2Value.of(cell(bucket, key));
+                        x2Value.of(row + key * cellSize);
                         for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
                             final GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
                             InterpolationUtil.interpolateBoundary(function, bucketTimestamps.get(last + 1), x1Value, x2Value, true);
                             InterpolationUtil.interpolateBoundary(function, bucketTimestamps.get(bucket), x1Value, x2Value, false);
                         }
-                        keyBuckets.set(key, bucket);
+                        keyBuckets.set(3L * key + 1, bucket);
                     }
                 }
             }
-            keyBuckets.clear();
+            for (int key = 0; key < keys; key++) {
+                keyBuckets.set(3L * key + 1, -1);
+            }
         }
 
-        // Fills the gaps in bucket order. A gap between two data buckets takes the line through them.
-        // The gaps before the first data bucket take the line through the first two, and the gaps
-        // after the last take the line through the last bucket and the one before it.
+        // Fills the gaps in bucket order. A gap between two data buckets takes the line through them,
+        // and the gaps after the last take the line through the last bucket and the one before it.
+        // The gaps before the first data bucket have no cells; GridCursor computes them on read.
         private void interpolateGaps() {
-            for (int key = 0; key < keyCount; key++) {
-                keyBuckets.add(-1);
-                keyBuckets.add(-1);
-            }
             for (long bucket = 0; bucket < bucketCount; bucket++) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-                for (int key = 0; key < keyCount; key++) {
-                    if (Unsafe.getByte(cell(bucket, key)) == 0) {
-                        final long first = keyBuckets.get(2L * key);
-                        final long last = keyBuckets.get(2L * key + 1);
-                        if (last < 0) {
-                            keyBuckets.set(2L * key, bucket);
-                        } else {
+                final long row = cell(bucket, 0);
+                for (int key = 0, n = rowKeyCount(bucket); key < n; key++) {
+                    if (Unsafe.getByte(row + key * cellSize) == 0) {
+                        final long last = keyBuckets.get(3L * key + 1);
+                        if (last >= 0) {
                             if (last < bucket - 1) {
                                 interpolate(key, last + 1, bucket, last, bucket);
                             }
-                            if (last == first && first > 0) {
-                                interpolate(key, 0, first, first, bucket);
+                            if (keyBuckets.get(3L * key + 2) < 0) {
+                                keyBuckets.set(3L * key + 2, bucket);
                             }
                         }
-                        keyBuckets.set(2L * key + 1, bucket);
+                        keyBuckets.set(3L * key + 1, bucket);
                     }
                 }
             }
             for (int key = 0; key < keyCount; key++) {
-                final long first = keyBuckets.get(2L * key);
-                final long last = keyBuckets.get(2L * key + 1);
-                if (first == last) {
-                    nullify(key, 0, first);
-                    nullify(key, first + 1, bucketCount);
+                final long last = keyBuckets.get(3L * key + 1);
+                if (keyBuckets.get(3L * key + 2) < 0) {
+                    nullify(key, last + 1, bucketCount);
                 } else if (last < bucketCount - 1) {
                     interpolate(key, last + 1, bucketCount, last - 1, last);
                 }
@@ -833,11 +823,21 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             for (long bucket = lo; bucket < hi; bucket++) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 value.of(cell(bucket, key));
-                value.putByte(0, (byte) 0);
-                for (int i = 0; i < groupByFunctionCount; i++) {
-                    groupByFunctions.getQuick(i).setNull(value);
-                }
+                nullify(value);
             }
+        }
+
+        private void nullify(MapValue target) {
+            target.putByte(0, (byte) 0);
+            for (int i = 0; i < groupByFunctionCount; i++) {
+                groupByFunctions.getQuick(i).setNull(target);
+            }
+        }
+
+        private void prepareInterpolation(int key, long x1, long x2) {
+            x1Value.of(cell(x1, key));
+            x2Value.of(cell(x2, key));
+            computeYPoints(x1Value, x2Value);
         }
 
         private void reset() {
@@ -845,13 +845,19 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             bucketTimestamps.clear();
             keyBuckets.clear();
             keyRowIds.clear();
+            rowOffsets.clear();
             bucketCount = 0;
+            // The first two cells hold the values GridCursor computes for its two records.
+            gridSize = 2 * cellSize;
             keyCount = 0;
-            keyCapacity = 1;
-            rowSize = cellSize;
             rowId = 0;
             resizes = 0;
             isBuilt = false;
+        }
+
+        private int rowKeyCount(long bucket) {
+            final long hi = bucket + 1 < bucketCount ? rowOffsets.get(bucket + 1) : gridSize;
+            return (int) ((hi - rowOffsets.get(bucket)) / cellSize);
         }
 
         protected void parseParams(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
@@ -900,6 +906,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             private final GridRecord recordB;
             private long bucket;
             private int key;
+            private long row;
+            private int rowKeys;
 
             private GridCursor(GridRecord recordA, GridRecord recordB) {
                 this.recordA = recordA;
@@ -927,7 +935,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                     bucket++;
                 }
                 if (bucket < bucketCount) {
-                    position(recordA, bucket, key);
+                    if (key == 0) {
+                        row = cell(bucket, 0);
+                        rowKeys = rowKeyCount(bucket);
+                    }
+                    position(recordA, bucket, key, row, rowKeys);
                     return true;
                 }
                 return false;
@@ -940,7 +952,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
             @Override
             public void recordAt(Record record, long atRowId) {
-                position((GridRecord) record, atRowId / keyCount, (int) (atRowId % keyCount));
+                final long bucket = atRowId / keyCount;
+                position((GridRecord) record, bucket, (int) (atRowId % keyCount), cell(bucket, 0), rowKeyCount(bucket));
             }
 
             @Override
@@ -954,11 +967,27 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 key = -1;
             }
 
-            private void position(GridRecord record, long bucket, int key) {
-                record.value.of(cell(bucket, key));
+            private void position(GridRecord record, long bucket, int key, long row, int rowKeys) {
+                if (key < rowKeys) {
+                    record.value.of(row + key * cellSize);
+                } else {
+                    positionBeforeFirstBucket(record, bucket, key);
+                }
                 keyMapCursor.recordAt(record.key, keyRowIds.get(key));
                 record.bucket.timestamp = bucketTimestamps.get(bucket);
                 record.rowId = bucket * keyCount + key;
+            }
+
+            private void positionBeforeFirstBucket(GridRecord record, long bucket, int key) {
+                record.value.of(gridAddress + record.scratchIndex * cellSize);
+                final long second = keyBuckets.get(3L * key + 2);
+                if (second < 0) {
+                    nullify(record.value);
+                } else {
+                    final long first = keyBuckets.get(3L * key);
+                    prepareInterpolation(key, first, second);
+                    interpolate(record.value, bucketTimestamps.get(bucket), bucketTimestamps.get(first), bucketTimestamps.get(second));
+                }
             }
         }
     }
