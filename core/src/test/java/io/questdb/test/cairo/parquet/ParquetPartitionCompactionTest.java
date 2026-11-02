@@ -69,7 +69,7 @@ public class ParquetPartitionCompactionTest extends AbstractCairoTest {
     private static final String ADD_COLUMN = "ALTER TABLE %s ADD COLUMN x SYMBOL";
     private static final String ADD_COVERING_POSTING_INDEX = "ALTER TABLE %s ALTER COLUMN x ADD INDEX TYPE POSTING INCLUDE (a)";
     private static final String ADD_POSTING_INDEXED_COLUMN = "ALTER TABLE %s ADD COLUMN x SYMBOL INDEX TYPE POSTING";
-    private static final long DAY_2020_01_01 = 1577836800000000L;
+    private static final long DAY_2020_01_01 = 1_577_836_800_000_000L;
 
     /**
      * A writer held by another thread cannot apply the swap directly: the job builds the compacted

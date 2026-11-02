@@ -68,7 +68,7 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
     private static final String[] KEY_FILTERS = {"s = 'a'", "s = 'b'", "s = 'c'", "s IS NULL"};
     private static final String[] ORDERS = {"", " ORDER BY ts DESC"};
     private static final String PARTITION = "2024-01-01";
-    private static final long PARTITION_TIMESTAMP = 1704067200000000L;
+    private static final long PARTITION_TIMESTAMP = 1_704_067_200_000_000L;
     private static final String[] TRUTH_FILTERS = {"s::STRING = 'a'", "s::STRING = 'b'", "s::STRING = 'c'", "s::STRING IS NULL"};
     private final String indexClause;
     private final boolean isCovering;
@@ -108,6 +108,7 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
             execute("ALTER TABLE pt ALTER COLUMN s ADD " + indexClause);
             drainWalQueue();
             assertIndexQueriesMatchTruth();
+            assertMultiKeyQueriesMatchTruth();
             assertIsolatedAcrossCommit("INSERT INTO pt VALUES ('c', 102, '2024-01-01T10:30:00.000000Z')", true);
         });
     }
@@ -173,6 +174,7 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
             createParquetPartition("", true);
             assertIsolatedAcrossCommit("INSERT INTO pt VALUES ('b', 100, '2024-01-01T00:30:00.000000Z'), ('a', 101, '2024-01-01T06:30:00.000000Z')", true);
             Assert.assertTrue(hasIndexRowMap());
+            assertMultiKeyQueriesMatchTruth();
             final long nameTxn = getPartitionNameTxn();
             final ObjList<PinnedQuery> pinned = openPinnedQueries();
             try {
@@ -669,6 +671,11 @@ public class O3ParquetIndexIsolationTest extends AbstractCairoTest {
 
     private void assertMultiKeyQueriesMatchTruth() throws Exception {
         final String partitionFilter = " FROM pt WHERE ts IN '" + PARTITION + "' AND ";
+        assertQuery("SELECT s, v, ts" + partitionFilter + "s IN ('a', 'c')").noLeakCheck().assertsPlanContaining("on: s");
+        assertQuery("SELECT s, v, ts" + partitionFilter + "s IN ('b', NULL)").noLeakCheck().assertsPlanContaining("on: s");
+        if (!indexClause.contains("BITMAP")) {
+            assertQuery("SELECT DISTINCT s FROM pt").noLeakCheck().assertsPlanContaining("PostingIndex op: distinct");
+        }
         TestUtils.assertEquals(
                 sortedLines(queryToString("SELECT s, v, ts" + partitionFilter + "s::STRING IN ('a', 'c')")),
                 sortedLines(queryToString("SELECT s, v, ts" + partitionFilter + "s IN ('a', 'c')"))

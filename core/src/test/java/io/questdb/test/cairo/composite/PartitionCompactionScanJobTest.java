@@ -431,9 +431,9 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                     O3PartitionPurgeJob purgeJob = new O3PartitionPurgeJob(engine, 1);
                     Path path = new Path()
             ) {
-                appendRow(ownerWriter, "2020-01-03T01:00:00.000000Z", 80001);
-                appendRow(ownerWriter, "2020-01-04T00:00:00.000000Z", 80002);
-                appendRow(ownerWriter, "2020-01-04T01:00:00.000000Z", 80003);
+                appendRow(ownerWriter, "2020-01-03T01:00:00.000000Z", 80_001);
+                appendRow(ownerWriter, "2020-01-04T00:00:00.000000Z", 80_002);
+                appendRow(ownerWriter, "2020-01-04T01:00:00.000000Z", 80_003);
                 Assert.assertTrue(ownerWriter.inTransaction());
                 Assert.assertFalse(ownerWriter.hasO3());
 
@@ -629,9 +629,6 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
-     * A column added after the copy's build moves only the metadata version, which the install must check.
-     */
-    /**
      * The open transaction opened a new day and holds an O3 row for an earlier one, so the install commits it first
      * and must look the day up again: the commit moves it from index 0 to 1.
      */
@@ -642,8 +639,8 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
             try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
                 final String stagedBuild = stageParquetCopy(ownerWriter, token, day);
-                appendRow(ownerWriter, "2020-01-04T00:00:00.000000Z", 70001);
-                appendRow(ownerWriter, "2019-12-31T00:00:00.000000Z", 70002);
+                appendRow(ownerWriter, "2020-01-04T00:00:00.000000Z", 70_001);
+                appendRow(ownerWriter, "2019-12-31T00:00:00.000000Z", 70_002);
                 Assert.assertTrue("the fixture must hold an O3 row", ownerWriter.hasO3());
                 Assert.assertEquals("the in-order row must have opened a partition", 3, ownerWriter.getPartitionCount());
 
@@ -711,6 +708,9 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A column added after the copy's build moves only the metadata version, which the install must check.
+     */
     @Test
     public void testParquetCopyInstallRefusesAColumnAddedAfterItsBuild() throws Exception {
         assertMemoryLeak(() -> {
@@ -745,7 +745,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
             try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
                 final String stagedBuild = stageParquetCopy(ownerWriter, token, day);
-                appendRow(ownerWriter, "2020-01-01T12:00:00.000000Z", 70001);
+                appendRow(ownerWriter, "2020-01-01T12:00:00.000000Z", 70_001);
                 ownerWriter.commit();
                 Assert.assertEquals(
                         "only the row count must have moved",
@@ -811,7 +811,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                     // The build already holds its reader snapshot; the UPSERT lands before its install.
                     try {
                         execute("INSERT INTO gp SELECT x::INT + 5000 i," +
-                                " timestamp_sequence('2020-01-01T00:10:00', 60*1000000L) ts FROM long_sequence(10)");
+                                " timestamp_sequence('2020-01-01T00:10:00', 60*1_000_000L) ts FROM long_sequence(10)");
                         drainWalQueue();
                         try (TableWriter writer = engine.getWriter(engine.verifyTableName("gp"), "inputs")) {
                             inputsAfterUpsert.set(parquetCopyInputs(writer, MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z")));
@@ -828,10 +828,10 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
             execute("CREATE TABLE gp AS (SELECT x::INT i," +
-                    " timestamp_sequence('2020-01-01', 60*1000000L) ts FROM long_sequence(100))" +
+                    " timestamp_sequence('2020-01-01', 60*1_000_000L) ts FROM long_sequence(100))" +
                     " TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
-            execute("INSERT INTO gp SELECT x::INT + 90000 i," +
-                    " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(10)");
+            execute("INSERT INTO gp SELECT x::INT + 90_000 i," +
+                    " timestamp_sequence('2020-01-03', 60*1_000_000L) ts FROM long_sequence(10)");
             drainWalQueue();
             final TableToken token = engine.verifyTableName("gp");
             final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
@@ -915,10 +915,10 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
             execute("CREATE TABLE gn AS (SELECT x::INT i," +
-                    " timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760))" +
+                    " timestamp_sequence('2020-01-01', 15*1_000_000L) ts FROM long_sequence(5760))" +
                     " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO gn SELECT x::INT + 90000 i," +
-                    " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)");
+            execute("INSERT INTO gn SELECT x::INT + 90_000 i," +
+                    " timestamp_sequence('2020-01-03', 60*1_000_000L) ts FROM long_sequence(50)");
             final TableToken token = engine.verifyTableName("gn");
             final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
             final String stagedBuild;
@@ -1091,7 +1091,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
             try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
                 final String stagedBuild = stageParquetCopy(ownerWriter, token, day);
-                appendRow(ownerWriter, "2020-01-01T00:30:30.000000Z", 70001);
+                appendRow(ownerWriter, "2020-01-01T00:30:30.000000Z", 70_001);
                 Assert.assertTrue(ownerWriter.hasO3());
                 Assert.assertEquals(
                         "the open transaction must leave the committed day as the copy saw it",
@@ -2162,10 +2162,10 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
 
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
             try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
-                appendRow(ownerWriter, "2020-01-03T01:00:00.000000Z", 80001);
-                appendRow(ownerWriter, "2020-01-03T00:00:30.000000Z", 80003);
+                appendRow(ownerWriter, "2020-01-03T01:00:00.000000Z", 80_001);
+                appendRow(ownerWriter, "2020-01-03T00:00:30.000000Z", 80_003);
                 if (isDayWritten) {
-                    appendRow(ownerWriter, "2020-01-01T12:00:01.000000Z", 80004);
+                    appendRow(ownerWriter, "2020-01-01T12:00:01.000000Z", 80_004);
                 }
                 Assert.assertTrue(ownerWriter.inTransaction());
                 Assert.assertTrue("the fixture must hold O3 rows", ownerWriter.hasO3());
@@ -2189,12 +2189,12 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             }
 
             execute("CREATE TABLE nx_oracle AS (SELECT i, ts FROM (" +
-                    "SELECT x::INT i, timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760)" +
-                    " UNION ALL SELECT x::INT + 90000 i, timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)" +
-                    " UNION ALL SELECT x::INT + 70000 i, timestamp_sequence('2020-01-01T22:00:07', 5*1000000L) ts FROM long_sequence(200)" +
+                    "SELECT x::INT i, timestamp_sequence('2020-01-01', 15*1_000_000L) ts FROM long_sequence(5760)" +
+                    " UNION ALL SELECT x::INT + 90_000 i, timestamp_sequence('2020-01-03', 60*1_000_000L) ts FROM long_sequence(50)" +
+                    " UNION ALL SELECT x::INT + 70_000 i, timestamp_sequence('2020-01-01T22:00:07', 5*1_000_000L) ts FROM long_sequence(200)" +
                     ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO nx_oracle VALUES (80001, '2020-01-03T01:00:00.000000Z'), " +
-                    "(80003, '2020-01-03T00:00:30.000000Z')" + (isDayWritten ? ", (80004, '2020-01-01T12:00:01.000000Z')" : ""));
+            execute("INSERT INTO nx_oracle VALUES (80_001, '2020-01-03T01:00:00.000000Z'), " +
+                    "(80_003, '2020-01-03T00:00:30.000000Z')" + (isDayWritten ? ", (80_004, '2020-01-01T12:00:01.000000Z')" : ""));
             TestUtils.assertSqlCursors(
                     engine, sqlExecutionContext, "SELECT * FROM nx_oracle ORDER BY ts, i", "SELECT * FROM nx ORDER BY ts, i", LOG
             );
@@ -2996,13 +2996,13 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
             execute("CREATE TABLE cc AS (SELECT x::INT i," +
-                    " timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760))" +
+                    " timestamp_sequence('2020-01-01', 15*1_000_000L) ts FROM long_sequence(5760))" +
                     " TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO cc SELECT x::INT + 90000 i," +
-                    " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)");
+            execute("INSERT INTO cc SELECT x::INT + 90_000 i," +
+                    " timestamp_sequence('2020-01-03', 60*1_000_000L) ts FROM long_sequence(50)");
             drainWalQueue();
-            execute("INSERT INTO cc SELECT x::INT + 70000 i," +
-                    " timestamp_sequence('2020-01-01T04:00:07', 5*1000000L) ts FROM long_sequence(200)");
+            execute("INSERT INTO cc SELECT x::INT + 70_000 i," +
+                    " timestamp_sequence('2020-01-01T04:00:07', 5*1_000_000L) ts FROM long_sequence(200)");
             drainWalQueue();
             execute("ALTER TABLE cc SET TYPE BYPASS WAL");
             engine.releaseInactive();
@@ -3022,8 +3022,8 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
 
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
             try (TableWriter ownerWriter = engine.getWriter(token, "owner")) {
-                appendRow(ownerWriter, "2020-01-04T00:00:00.000000Z", 80001);
-                appendRow(ownerWriter, "2019-12-31T00:00:00.000000Z", 80002);
+                appendRow(ownerWriter, "2020-01-04T00:00:00.000000Z", 80_001);
+                appendRow(ownerWriter, "2019-12-31T00:00:00.000000Z", 80_002);
                 Assert.assertTrue("the fixture must hold an O3 row", ownerWriter.hasO3());
                 Assert.assertEquals("the in-order row must have opened a partition", 3, ownerWriter.getPartitionCount());
 
@@ -3294,10 +3294,10 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
         setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
         execute("CREATE TABLE " + tableName + " AS (SELECT x::INT i," +
-                " timestamp_sequence('2020-01-01', 60*1000000L) ts FROM long_sequence(100))" +
+                " timestamp_sequence('2020-01-01', 60*1_000_000L) ts FROM long_sequence(100))" +
                 " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-        execute("INSERT INTO " + tableName + " SELECT x::INT + 90000 i," +
-                " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(10)");
+        execute("INSERT INTO " + tableName + " SELECT x::INT + 90_000 i," +
+                " timestamp_sequence('2020-01-03', 60*1_000_000L) ts FROM long_sequence(10)");
         return engine.verifyTableName(tableName);
     }
 

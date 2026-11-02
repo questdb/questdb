@@ -66,6 +66,7 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
     private final LongList rowGroupIndexRowLos = new LongList();
     private final IntList rowGroupOrder = new IntList();
     private final PostingSupersededFileRemover supersededFileRemover;
+    private int commitMode = CommitMode.NOSYNC;
     private DirectIntList decodeColumns;
     private SymbolColumnIndexer indexer;
     private byte indexerType = -1;
@@ -88,6 +89,8 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
      * @param columnVersions    column versions of the same snapshot, for the column name txns
      * @param partitionRowCount the partition's row count
      * @param tableTxn          the table txn the caller built off; tags the posting chain entries
+     * @param commitMode        the commit mode the caller writes the partition's data under; the index files are
+     *                          flushed as the writer flushes its column files under it
      */
     void buildIndexes(
             Path partitionDir,
@@ -96,8 +99,10 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
             ColumnVersionReader columnVersions,
             long partitionTimestamp,
             long partitionRowCount,
-            long tableTxn
+            long tableTxn,
+            int commitMode
     ) {
+        this.commitMode = commitMode;
         final int dirLen = partitionDir.size();
         long parquetAddr = 0;
         long parquetSize = 0;
@@ -298,6 +303,11 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
             }
             indexWriter.setMaxValue(indexRowCount - 1);
             indexer.seal();
+            // Flushed as the writer flushes its column files at commit: under SYNC and ASYNC. Under ADAPTIVE the save
+            // point flushes them, under NOSYNC nothing does. The swap that names the directory follows.
+            if (CommitMode.appliesColumnSync(commitMode)) {
+                indexer.sync(commitMode == CommitMode.ASYNC);
+            }
         } finally {
             if (hasCovering) {
                 coveredColumnAccumulator.releaseScratchFiles(indexer, ff, partitionDir, dirLen);
@@ -323,6 +333,10 @@ final class ParquetPartitionIndexBuilder implements QuietCloseable {
             try {
                 ddlMem.smallFile(ff, partitionDir.$(), MemoryTag.MMAP_TABLE_WRITER);
                 IndexFactory.initKeyMemory(indexType, ddlMem, indexValueBlockCapacity);
+                // An empty index is published as written here.
+                if (CommitMode.appliesColumnSync(commitMode)) {
+                    ddlMem.sync(commitMode == CommitMode.ASYNC);
+                }
             } finally {
                 ddlMem.close();
             }

@@ -86,7 +86,8 @@ import java.util.zip.ZipInputStream;
  * covered column marked absent ({@code covered_absent}) still returned the right values, so it has no fixture.
  * <p>
  * {@code stale_top~10} is {@code bitmap_absent} plus {@code dedup enable upsert keys(ts, s)}, for the dedup and
- * CONVERT TO NATIVE tests.
+ * CONVERT TO NATIVE tests, except that {@code v} was added after day 1 had its rows, like {@code s}, rather than created
+ * with the table: {@code v} reads NULL on day 1's original rows.
  * <p>
  * {@code compacted_absent~9} is {@code bitmap_absent} written by 10.0.1 and then compacted by QuestDB Enterprise
  * 4.1.0 (docker image {@code questdb-enterprise:4.1.0-trial}, started on the 10.0.1 data directory with

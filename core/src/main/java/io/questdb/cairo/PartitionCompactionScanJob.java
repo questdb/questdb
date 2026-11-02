@@ -574,7 +574,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             targetFrame.sync();
             // Closed first: the index build reads back the column files the copy wrote.
             targetFrame = Misc.free(targetFrame);
-            getNativeIndexBuilder().buildIndexes(other, reader.getMetadata(), cvr, columnTops, partitionTimestamp, liveRows, reader.getTxn());
+            getNativeIndexBuilder().buildIndexes(other, reader.getMetadata(), cvr, columnTops, partitionTimestamp, liveRows, reader.getTxn(), engine.getResolvedCommitMode());
             built = true;
         } finally {
             Misc.free(targetFrame);
@@ -646,7 +646,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         reader.getColumnVersionReader(),
                         partitionTimestamp,
                         txFile.getPartitionSize(partitionIndex),
-                        reader.getTxn()
+                        reader.getTxn(),
+                        engine.getResolvedCommitMode()
                 );
             } else {
                 copyParquetPartitionSidecars(path, other);
@@ -796,7 +797,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             targetFrame.sync();
             // Closed first: the index build reads back the column files the copy wrote.
             targetFrame = Misc.free(targetFrame);
-            getNativeIndexBuilder().buildIndexes(other, reader.getMetadata(), cvr, columnTops, logicalPartitionTimestamp, liveRows, reader.getTxn());
+            getNativeIndexBuilder().buildIndexes(other, reader.getMetadata(), cvr, columnTops, logicalPartitionTimestamp, liveRows, reader.getTxn(), engine.getResolvedCommitMode());
             built = true;
         } finally {
             Misc.free(targetFrame);
@@ -887,7 +888,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         cvr,
                         logicalPartitionTimestamp,
                         liveRows,
-                        reader.getTxn()
+                        reader.getTxn(),
+                        engine.getResolvedCommitMode()
                 );
             }
             built = true;
@@ -1944,10 +1946,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Binds {@link #geometry} to the table being scanned, once per table: {@code of()} drops the resolution cache,
-     * so a second call inside one table's scan would pay for every {@code _geometry} read twice.
-     */
-    /**
      * Reads the table's {@code _cv} standalone, once per table visit, for {@link #isParquetPartitionCompact} to judge
      * the column tops by.
      *
@@ -1964,6 +1962,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         return columnVersionReader.getVersion() == txReader.getColumnVersion();
     }
 
+    /**
+     * Binds {@link #geometry} to the table being scanned, once per table: {@code of()} drops the resolution cache,
+     * so a second call inside one table's scan would pay for every {@code _geometry} read twice.
+     */
     private void openGeometry(TableToken tableToken, int timestampType, int partitionBy) {
         if (!isGeometryOpen) {
             geometry.of(ff, txReader, buildTableRoot(tableToken), timestampType, partitionBy, MemoryTag.NATIVE_TABLE_READER);

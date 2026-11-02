@@ -8064,7 +8064,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             reader.getColumnVersionReader(),
                             logicalPartitionTimestamp,
                             liveRows,
-                            reader.getTxn()
+                            reader.getTxn(),
+                            getFlushCommitMode()
                     );
                 }
             }
@@ -11370,18 +11371,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Checks whether a partition already has a sealed posting index for the
-     * given column. The v2 .pk chain has at least one published entry
-     * (sealTxn >= 0) iff at least one seal landed for this partition; the
-     * fd-based chain walker enforces seqlock consistency internally.
-     *
-     * @param plen          path length. This is used to trim the shared path object to.
-     * @param columnName    column name
-     * @param columnNameTxn column name txn
-     * @return true if the posting index key file exists with a non-empty
-     * v2 chain (at least one published seal entry).
-     */
-    /**
      * True when the footer's index row map is identity, so index files hold partition rows; false if unreadable.
      */
     private boolean isParquetIndexRowMapIdentity(long partitionTimestamp, int partitionIndex, long partitionNameTxn) {
@@ -11432,6 +11421,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return !hasO3RowInLogicalPartition(logicalPartitionTimestamp);
     }
 
+    /**
+     * Checks whether a partition already has a sealed posting index for the
+     * given column. The v2 .pk chain has at least one published entry
+     * (sealTxn >= 0) iff at least one seal landed for this partition; the
+     * fd-based chain walker enforces seqlock consistency internally.
+     *
+     * @param plen          path length. This is used to trim the shared path object to.
+     * @param columnName    column name
+     * @param columnNameTxn column name txn
+     * @return true if the posting index key file exists with a non-empty
+     * v2 chain (at least one published seal entry).
+     */
     private boolean isPostingIndexSealed(int plen, CharSequence columnName, long columnNameTxn) {
         LPSZ keyFile = io.questdb.cairo.idx.PostingIndexUtils.keyFileName(
                 path.trimTo(plen), columnName, columnNameTxn);
@@ -16978,6 +16979,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             iw.setMaxValue(partitionRowCount - 1);
             iw.seal();
+            // Flushed as the column files are at commit: under SYNC and ASYNC. Under ADAPTIVE the save point flushes
+            // them, under NOSYNC nothing does. The commit that names the directory follows.
+            final int flushCommitMode = getFlushCommitMode();
+            if (CommitMode.appliesColumnSync(flushCommitMode)) {
+                iw.sync(flushCommitMode == CommitMode.ASYNC);
+            }
         } finally {
             // munmap first: Misc.free(iw) can throw out of close().
             if (dataAddr != 0) {

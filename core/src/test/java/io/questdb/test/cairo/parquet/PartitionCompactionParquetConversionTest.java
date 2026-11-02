@@ -35,7 +35,10 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.wal.TableWriterPressureControl;
 import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalUtils;
@@ -43,6 +46,7 @@ import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
+import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.DirectUtf8StringZ;
 import io.questdb.std.str.LPSZ;
@@ -52,6 +56,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -592,6 +597,76 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
         });
     }
 
+    /**
+     * A swap that fails after its rename leaves the staged directory behind, holding index files hard-linked to the
+     * live day's. The next O3 merge writes the day into that same directory name and must not rewrite the linked
+     * files, which a reader of the live day still uses.
+     */
+    @Test
+    public void testO3MergeAfterAFailedSwapKeepsTheLiveIndex() throws Exception {
+        Assume.assumeFalse("a directory takes no fsync on Windows", Os.isWindows());
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        final AtomicBoolean isDirOpenFailing = new AtomicBoolean();
+        final FilesFacade dirOpenFailingFf = new TestFilesFacadeImpl() {
+            @Override
+            public long openRONoCache(LPSZ name) {
+                if (isDirOpenFailing.get() && isCalledFrom("fsyncConvertedPartitionDir")) {
+                    isDirOpenFailing.set(false);
+                    return -1;
+                }
+                return super.openRONoCache(name);
+            }
+        };
+        assertMemoryLeak(dirOpenFailingFf, () -> {
+            for (int t = 0; t < INDEX_CLAUSES.length; t++) {
+                final String tableName = "fo" + t;
+                createTableWithIndexedColumn(tableName, false, INDEX_CLAUSES[t]);
+                final TableToken token = engine.verifyTableName(tableName);
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                isDirOpenFailing.set(true);
+                try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                    Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetConversion(token, DAY));
+                    job.run();
+                }
+                Assert.assertFalse("the swap's directory flush must have failed", isDirOpenFailing.get());
+                // The writer stays open: a reopen would purge the left-behind directory.
+                engine.releaseAllReaders();
+
+                try (TableReader reader = engine.getReader(token)) {
+                    final int partitionIndex = reader.getTxFile().getPartitionIndex(DAY);
+                    Assert.assertFalse("a failed swap must leave the day native", reader.getTxFile().isPartitionParquet(partitionIndex));
+                    final long rowCount = reader.openPartition(partitionIndex);
+                    final int columnIndex = reader.getMetadata().getColumnIndex("s");
+                    final int symbolKey = reader.getSymbolMapReader(columnIndex).keyOf("k1");
+                    final MemoryCR symbolColumn = reader.getColumn(TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionIndex), columnIndex));
+                    long expectedRows = 0;
+                    for (long row = 0; row < rowCount; row++) {
+                        if (symbolColumn.getInt(row * Integer.BYTES) == symbolKey) {
+                            expectedRows++;
+                        }
+                    }
+
+                    // An O3 row early in the day shifts every later row of the merged copy by one.
+                    execute("INSERT INTO " + tableName + " (i, s, ts) VALUES (-1, 'k2', '2020-01-01T00:00:05.000000Z')");
+
+                    long indexedRows = 0;
+                    try (RowCursor rows = reader.getIndexReader(partitionIndex, columnIndex, IndexReader.DIR_FORWARD)
+                            .getCursor(TableUtils.toIndexKey(symbolKey), 0, rowCount - 1)) {
+                        while (rows.hasNext()) {
+                            final long row = rows.next();
+                            Assert.assertEquals("index row " + row + " of the live day [" + INDEX_CLAUSES[t] + ']', symbolKey, symbolColumn.getInt(row * Integer.BYTES));
+                            indexedRows++;
+                        }
+                    }
+                    Assert.assertEquals(INDEX_CLAUSES[t], expectedRows, indexedRows);
+                }
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+            }
+        });
+    }
+
     @Test
     public void testRequestRebuildsAfterANonWalSwapRefusedForAnAddColumn() throws Exception {
         assertMemoryLeak(() -> {
@@ -738,6 +813,15 @@ public class PartitionCompactionParquetConversionTest extends AbstractCairoTest 
             final TxReader tx = reader.getTxFile();
             return tx.getPartitionNameTxn(tx.getPartitionIndex(DAY));
         }
+    }
+
+    private static boolean isCalledFrom(String methodName) {
+        for (StackTraceElement frame : Thread.currentThread().getStackTrace()) {
+            if (methodName.equals(frame.getMethodName())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isDayIndexFile(LPSZ file, String columnName) {

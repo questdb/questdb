@@ -2734,6 +2734,70 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCheckpointRestoreRebuildsIndexesOfParquetPartitionWithIndexRowMap() throws Exception {
+        // An in-place O3 update moves the row groups it rewrites to fresh index rows, so the footer carries an
+        // index row map. The restore must build the indexes in index rows, not in partition rows.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (
+                        val LONG,
+                        s1 SYMBOL INDEX,
+                        s2 SYMBOL INDEX TYPE POSTING,
+                        ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t
+                    SELECT
+                        x,
+                        CASE x % 3 WHEN 0 THEN 'a' WHEN 1 THEN 'b' ELSE 'c' END,
+                        CASE x % 4 WHEN 0 THEN 'a' WHEN 1 THEN 'b' ELSE 'c' END,
+                        dateadd('h', x::INT, '2024-01-01')
+                    FROM long_sequence(12)
+                    """);
+            execute("INSERT INTO t VALUES (100, 'a', 'a', '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            // Rewrites the first and the second row group in place.
+            execute("INSERT INTO t VALUES (-1, 'b', 'c', '2024-01-01T00:30:00.000000Z'), (-2, 'a', 'b', '2024-01-01T06:30:00.000000Z')");
+
+            TableToken tableToken = engine.verifyTableName("t");
+            try (TableReader reader = engine.getReader(tableToken)) {
+                reader.openPartition(0);
+                Assert.assertTrue("the footer must carry an index row map", reader.getAndInitParquetPartitionDecoder(0).metadata().hasIndexRowMap());
+            }
+
+            String dbRoot = engine.getConfiguration().getDbRoot();
+            File partDir = findParquetPartitionDir(new File(dbRoot, tableToken.getDirName()), "2024-01-01");
+            engine.clear();
+            // Delete the index files so the restore has to build them.
+            deleteFilesWithPrefix(partDir, "s1.k");
+            deleteFilesWithPrefix(partDir, "s1.v");
+            deleteFilesWithPrefix(partDir, "s2.p");
+            try (
+                    Path tablePath = new Path().of(dbRoot).concat(tableToken).slash();
+                    TableSnapshotRestore restoreAgent = new TableSnapshotRestore(configuration)
+            ) {
+                restoreAgent.rebuildTableFiles(tablePath, new AtomicInteger(), true);
+            }
+
+            for (String column : new String[]{"s1", "s2"}) {
+                for (String key : new String[]{"a", "b", "c"}) {
+                    final String select = "SELECT val, ts FROM t WHERE ts IN '2024-01-01' AND " + column;
+                    printSql(select + "::STRING = '" + key + "'");
+                    assertQuery(select + " = '" + key + "'")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .withPlanContaining("on: " + column)
+                            .returns(sink.toString());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCheckpointRestoreRebuildsPostingIndex() throws Exception {
         // Regression: TableSnapshotRestore must produce sealed posting index
         // generations and covering sidecars after rebuild, parallel to how it

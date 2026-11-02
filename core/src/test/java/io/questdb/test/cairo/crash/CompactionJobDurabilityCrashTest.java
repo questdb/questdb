@@ -47,6 +47,7 @@ import org.junit.Test;
  */
 public class CompactionJobDurabilityCrashTest extends AbstractAdaptiveCrashTest {
     private static final long DAY = parse("2024-01-01T00:00:00.000000Z");
+    private static final String[] INDEX_CLAUSES = {"INDEX", "INDEX TYPE POSTING", "INDEX TYPE POSTING INCLUDE (v)"};
     private static final String ROWS = """
             ts\ts\tv
             2024-01-01T00:00:00.000000Z\ta\t1.0
@@ -58,6 +59,8 @@ public class CompactionJobDurabilityCrashTest extends AbstractAdaptiveCrashTest 
     public void testAdaptiveJobParquetConversionSurvivesCrashBeforeSavePoint() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
+        // A writer closing gracefully takes a save point, which would cover the conversion.
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
         runWithCrashFacade(() -> {
             createTable(true);
             final TableToken token = engine.verifyTableName("x");
@@ -66,9 +69,18 @@ public class CompactionJobDurabilityCrashTest extends AbstractAdaptiveCrashTest 
             assertFirstDayParquet(true);
             recoverAfterCrash(new TableToken[]{token});
             Assert.assertFalse("the table must not be suspended", anyTableSuspended(token));
+            // Recovery rewinds to the save point taken before the conversion, which names the native day.
+            assertFirstDayParquet(false);
             assertRowsAndIndex();
             releaseEngineHandles();
         });
+    }
+
+    @Test
+    public void testSyncAlterParquetConversionRebuildingIndexesSurvivesCrash() throws Exception {
+        for (String indexClause : INDEX_CLAUSES) {
+            assertSyncConversionRebuildingIndexesSurvivesCrash(indexClause, false);
+        }
     }
 
     @Test
@@ -84,6 +96,13 @@ public class CompactionJobDurabilityCrashTest extends AbstractAdaptiveCrashTest 
     @Test
     public void testSyncJobParquetConversionNonWalSurvivesCrash() throws Exception {
         assertSyncJobParquetConversionSurvivesCrash(false);
+    }
+
+    @Test
+    public void testSyncJobParquetConversionRebuildingIndexesSurvivesCrash() throws Exception {
+        for (String indexClause : INDEX_CLAUSES) {
+            assertSyncConversionRebuildingIndexesSurvivesCrash(indexClause, true);
+        }
     }
 
     @Test
@@ -167,6 +186,59 @@ public class CompactionJobDurabilityCrashTest extends AbstractAdaptiveCrashTest 
     private void assertRowsAndIndex() throws Exception {
         assertQuery("SELECT ts, s, v FROM x").timestamp("ts").expectSize().returns(ROWS);
         assertQuery("SELECT count() c FROM x WHERE s = 'a'").expectSize().noRandomAccess().returns("c\n2\n");
+    }
+
+    /**
+     * Under SYNC, the first day is converted to parquet with its indexes built off the parquet file rather than
+     * linked, since the indexed column has a top there, and the power fails. The conversion committed a durable
+     * {@code _txn} naming the new partition directory, so the index files in it must survive along with the data.
+     */
+    private void assertSyncConversionRebuildingIndexesSurvivesCrash(String indexClause, boolean isJob) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        runWithCrashFacade(() -> {
+            execute("CREATE TABLE y (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO y VALUES ('2024-01-01T00:00:00.000000Z', 1.0), ('2024-01-01T01:00:00.000000Z', 2.0)");
+            execute("ALTER TABLE y ADD COLUMN s SYMBOL");
+            execute("ALTER TABLE y ALTER COLUMN s ADD " + indexClause);
+            execute("""
+                    INSERT INTO y (ts, v, s) VALUES
+                        ('2024-01-01T02:00:00.000000Z', 3.0, 'a'),
+                        ('2024-01-01T03:00:00.000000Z', 4.0, 'b'),
+                        ('2024-01-01T04:00:00.000000Z', 5.0, 'a'),
+                        ('2024-01-02T00:00:00.000000Z', 6.0, 'a')
+                    """);
+            final TableToken token = engine.verifyTableName("y");
+            markDurableBaseline();
+            if (isJob) {
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                    Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequestParquetConversion(token, DAY));
+                    Assert.assertTrue("the request must dispatch the conversion", job.run());
+                }
+            } else {
+                execute("ALTER TABLE y CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            crashAndReopen();
+            try (TableReader reader = engine.getReader("y")) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertTrue("parquet [" + indexClause + ']', tx.isPartitionParquet(tx.getPartitionIndex(DAY)));
+            }
+            final boolean isCovering = indexClause.contains("INCLUDE");
+            for (String key : new String[]{"a", "b"}) {
+                printSql("SELECT ts, v FROM y WHERE s::STRING = '" + key + "'");
+                assertQuery("SELECT ts, v FROM y WHERE s = '" + key + "'")
+                        .timestamp("ts")
+                        .supportsRandomAccess(!isCovering)
+                        .expectSize(isCovering)
+                        .withPlanContaining("on: s")
+                        .returns(sink.toString());
+            }
+            execute("DROP TABLE y");
+            releaseEngineHandles();
+        });
     }
 
     /**
