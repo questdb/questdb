@@ -2563,6 +2563,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // in-WAL-order draft and hands off to o3Replay, which writes
                 // its own fresh head on completion (follow-up commit).
                 maybeWriteHeadCheckpoint(instance, windowFactory, advanceTo, batchMaxTs, appendedRows, false);
+            } else if (lvConsumedPersisted) {
+                // The consumed watermark alone releases no base WAL: the head checkpoint
+                // and the timeline hold it too, and only a seal moves them.
+                maybeWriteHeadCheckpointWithoutRows(instance, windowFactory, advanceTo);
             }
         }
     }
@@ -2931,6 +2935,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             if (lvConsumedPersisted && appendedRows > 0) {
                 maybeWriteHeadCheckpoint(instance, windowFactory, effectiveSeqTxn, batchMaxTs, appendedRows, false);
+            } else if (lvConsumedPersisted) {
+                maybeWriteHeadCheckpointWithoutRows(instance, windowFactory, effectiveSeqTxn);
             }
         } finally {
             if (reader != null) {
@@ -3814,8 +3820,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // releases the consumed segments.
             instance.setLastProcessedSeqTxn(advanceTo);
             instance.setAppliedWatermark(advanceTo);
+            boolean lvConsumedPersisted = false;
             try {
                 engine.advanceLiveViewConsumedSeqTxn(token, advanceTo, blockFileWriter, path);
+                lvConsumedPersisted = true;
             } catch (CairoException e) {
                 LOG.critical().$("could not advance live view consumed seqTxn on no-row flush [view=")
                         .$(instance.getDefinition().getViewName())
@@ -3824,6 +3832,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 persistState(instance);
             }
             instance.setLeadRowCount(0);
+            if (lvConsumedPersisted) {
+                // The consumed watermark alone releases no base WAL: the head checkpoint
+                // and the timeline hold it too, and only a seal moves them. No rows reach
+                // here even without a tier: a lead and staging rows exist only with one.
+                maybeWriteHeadCheckpointWithoutRows(instance, windowFactory, advanceTo);
+            }
             return;
         }
 
@@ -11667,10 +11681,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         instance.addRowsSinceLastCheckpointWritten(appendedRows);
 
         final long rowsCadence = engine.getConfiguration().getLiveViewCheckpointRows();
-        final long configuredDurationCadence = engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros();
-        final long durationCadence = engine.getConfiguration().isLiveViewCheckpointAdaptiveCadenceEnabled()
-                ? instance.getEffectiveCheckpointDurationMicros(configuredDurationCadence)
-                : configuredDurationCadence;
+        final long durationCadence = getCheckpointDurationCadenceMicros(instance);
         final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
         // A cooldown is armed only after MAX_CONSECUTIVE_SEAL_FAILURES proved the fault
         // deterministic, so suppress the seal here whatever triggered it - force
@@ -11812,6 +11823,173 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             maybeSweepCheckpointSegments(instance);
         }
         return sealed;
+    }
+
+    /**
+     * Head-checkpoint hook for a cycle that consumed base commits and put no row through
+     * the window, typically because the view's filter rejected every row they hold. The
+     * cycle advances the consumed watermark, but {@code WalPurgeJob} also holds the base
+     * WAL back to the head checkpoint's base coordinate and to the timeline's, and only a
+     * seal moves those. The seal's cadence triggers are evaluated only when it runs, so
+     * without this hook a view whose filter rejects a stretch of ingest would keep all of
+     * that stretch's base WAL, for as long as it lasts.
+     * <p>
+     * Two shapes, told apart by whether anything reached the window since the head was
+     * set:
+     * <ul>
+     *     <li>Nothing did, and the head sits at the runtime frontier. The head's root is the
+     *     generation's newest, every head names the base coordinate its generation is valid
+     *     at, and the commits consumed since put nothing through the window, so the same
+     *     root is also valid at the consumed commit. {@link #advanceHeadCheckpointBase}
+     *     publishes it there once the duration cadence elapses.</li>
+     *     <li>Rows did, and no cadence has sealed them yet. The ordinary seal runs over them
+     *     at the runtime frontier with this cycle's zero rows, so its duration trigger fires
+     *     as it would have, had a row arrived.</li>
+     * </ul>
+     * The batch minimum is what tells the two apart: setting the head resets it, and every
+     * row the window takes lowers it, including one on the head's own timestamp, which
+     * leaves the frontier where it was. A runtime whose rows since the head all tie the
+     * head's timestamp seals nothing: no boundary above the head holds them until a row
+     * above it arrives.
+     * <p>
+     * The caller has persisted the consumed watermark, so the coordinate published here
+     * never runs ahead of the applied watermark a restore checks it against.
+     */
+    private void maybeWriteHeadCheckpointWithoutRows(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            long consumedSeqTxn
+    ) {
+        hooks.beforeNoRowHeadCheckpoint();
+        if (instance.isWindowStateDirty()) {
+            // The runtime disagrees with the durable output, and a recovery owes it. The
+            // turn's own flag is no guide here: the caller's cycle committed nothing, so
+            // nothing cleared it, and a restart restore that replayed rows earlier in the
+            // turn leaves it raised over a runtime the restore matched to that output.
+            return;
+        }
+        final long frontierTs = instance.getLatestSeenTs();
+        if (frontierTs == Numbers.LONG_NULL) {
+            // Nothing ever reached the window, so no timeline holds the base WAL back.
+            return;
+        }
+        final long headMaxTs = instance.getHeadCheckpointMaxTs();
+        if (instance.getMinSeenTsSinceCheckpoint() == Long.MAX_VALUE && frontierTs == headMaxTs) {
+            advanceHeadCheckpointBase(instance, windowFactory, consumedSeqTxn);
+            return;
+        }
+        if (headMaxTs == Numbers.LONG_NULL || frontierTs > headMaxTs) {
+            maybeWriteHeadCheckpoint(instance, windowFactory, consumedSeqTxn, frontierTs, 0, false);
+        }
+    }
+
+    /**
+     * Moves the head checkpoint to the consumed base commit without a new root, for a head
+     * at the runtime frontier that nothing reached the window after: the filter rejected
+     * every row since, so the head root's state is the state at the later commit too. The
+     * publication keeps the timeline and moves the generation's base coordinate, which is
+     * where a restore starts its base WAL replay and what {@code WalPurgeJob} holds the
+     * base WAL back to.
+     * <p>
+     * The head's root identity stays what it was. A repair's splice that re-stamped the
+     * head leaves it cleared, and the publication then names the newest root by its
+     * timestamp alone, which no other root in a timeline shares.
+     * <p>
+     * Runs on the duration cadence, as a seal does: once the cadence has elapsed since the
+     * last head write, or at once for a head this process restored rather than wrote,
+     * which a restart leaves with no write time. It shares the seal's failure accounting:
+     * a failure leaves the head and the cadence where they were, so the next cycle retries,
+     * and a streak of failures retires the timeline as a streak of failed seals does.
+     * <p>
+     * The seal's capability and cooldown gates have nothing to decide here. The publication
+     * freezes no function state, so capability does not enter into it. And a head root
+     * exists only once a seal or a restore succeeded: a seal ends any cooldown, and the
+     * cooldown retires the timeline it is armed over, so a restore can only read one sealed
+     * after the cooldown ended.
+     */
+    private void advanceHeadCheckpointBase(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            long consumedSeqTxn
+    ) {
+        // Above the head's: the cycle consumed at least one commit past the last one.
+        final long baseSeqTxn = instance.getLastProcessedSeqTxn();
+        final long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        final long lastWrittenUs = instance.getLastCheckpointWrittenUs();
+        if (lastWrittenUs != Numbers.LONG_NULL && nowUs - lastWrittenUs < getCheckpointDurationCadenceMicros(instance)) {
+            return;
+        }
+        final long headMaxTs = instance.getHeadCheckpointMaxTs();
+        final long headRootId = instance.getHeadCheckpointRootId();
+        final RecordCursorFactory headRootWindowFactory = instance.getHeadCheckpointRootWindowFactory();
+        final long headStateBytes = instance.getHeadCheckpointStateBytes();
+        try {
+            if (checkpointTimelineStoreWriter == null) {
+                checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
+                        engine.getConfiguration(),
+                        engine.getLiveViewCheckpointPurgeState()
+                );
+                checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
+            }
+            path.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            final LiveViewCheckpointTimelineStoreWriter.WatermarkResult result;
+            // Serialised against a role switch, as the seal's append is.
+            final Lock roleLock = engine.getRoleSwitchReadLock();
+            roleLock.lock();
+            try {
+                result = checkpointTimelineStoreWriter.publishWatermark(
+                        path,
+                        instance.getLiveViewToken().getTableId(),
+                        0,
+                        instance.getLifecycleIdentity(),
+                        baseSeqTxn,
+                        headMaxTs,
+                        headRootId,
+                        windowFactory.getWindowFunctions(),
+                        instance.getAnchorWindow(),
+                        true
+                );
+            } finally {
+                roleLock.unlock();
+            }
+            instance.recordCheckpointTimelineWalPurgeFloor(result.getWalPurgeFloor());
+            instance.recordCheckpointTimelineStats(result.getStats());
+            // The same root at a later base coordinate. setHeadCheckpoint clears the root
+            // identity, and nothing this publication did changes it, so it goes back as it was.
+            instance.setHeadCheckpoint(consumedSeqTxn, baseSeqTxn, headMaxTs, headStateBytes, nowUs);
+            if (headRootId != Numbers.LONG_NULL) {
+                instance.setHeadCheckpointRoot(headRootId, headRootWindowFactory);
+            }
+            instance.recordCheckpointWriteMicros(engine.getConfiguration().getMicrosecondClock().getTicks() - nowUs);
+            instance.recordSealSuccess();
+        } catch (Throwable t) {
+            final int streak = instance.recordSealFailure();
+            LOG.critical().$("could not advance live view head checkpoint base [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", baseSeqTxn=").$(baseSeqTxn)
+                    .$(", consecutiveFailures=").$(streak)
+                    .$(", error=").$(t).I$();
+            if (streak >= MAX_CONSECUTIVE_SEAL_FAILURES) {
+                retireCheckpointStateAfterRepeatedSealFailure(instance, nowUs, streak);
+            }
+            return;
+        }
+        // Each publication supersedes a catalogue segment, so it sweeps on the seal's cadence.
+        maybeSweepCheckpointSegments(instance);
+    }
+
+    /**
+     * The wall-clock cadence between head checkpoint writes: the configured
+     * {@code cairo.live.view.checkpoint.max.duration.micros}, or the shorter one the view
+     * learned from its correction depth when the adaptive cadence is on.
+     */
+    private long getCheckpointDurationCadenceMicros(LiveViewInstance instance) {
+        final long configuredDurationCadence = engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros();
+        return engine.getConfiguration().isLiveViewCheckpointAdaptiveCadenceEnabled()
+                ? instance.getEffectiveCheckpointDurationMicros(configuredDurationCadence)
+                : configuredDurationCadence;
     }
 
     /**

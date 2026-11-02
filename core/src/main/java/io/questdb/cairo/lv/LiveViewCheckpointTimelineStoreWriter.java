@@ -1629,6 +1629,152 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     /**
+     * Publishes a generation that keeps every logical root where it is and moves only
+     * the base coordinate the generation is valid at, {@code normalizedBaseSeqTxn}.
+     * <p>
+     * It serves a live view whose refresh consumed base commits that put no row through
+     * its window, typically because its filter rejected every row: the window state is
+     * still exactly what the newest root holds, now valid at a later base commit. A
+     * restore replays the base WAL above the generation's coordinate, and the purge job
+     * holds the base WAL back to the coordinate of both superblock slots, so this
+     * publication is what lets that WAL go without a new root. Appending one would
+     * instead duplicate the head's key, which the timeline refuses.
+     * <p>
+     * The caller names the newest root its head stands on, and the publication refuses
+     * when the generation's newest root is a different one: a repair, a truncate or a
+     * newer seal in between would make the claim wrong. The covered live-view seqTxn,
+     * the row-position delta index, the checkpoint-id counter and the logical state
+     * total carry forward unchanged, because no live-view row moved. The mid-sweep seed
+     * cursor clears, as a steady seal clears it.
+     * <p>
+     * The publication also carries out the catalogue entries a purge sweep left pending,
+     * as a seal does, so a view that publishes only these keeps its catalogue bounded.
+     * Every runtime target whose incremental baseline names the generation this one
+     * replaces moves onto the new one with its dirty set intact, so the next seal still
+     * freezes only the keys touched since the newest root.
+     *
+     * @param normalizedBaseSeqTxn the base seqTxn the generation's roots are valid at
+     *                             from now on, not below the current one
+     * @param headMaxTimestamp     the {@code maxTimestamp} of the newest root, which no
+     *                             other root of a timeline shares
+     * @param headCheckpointId     the {@code checkpointId} of that root, or
+     *                             {@link Numbers#LONG_NULL} when the caller does not know
+     *                             it, and the timestamp alone names the root
+     * @param functions            the runtime's window functions, whose baselines move
+     * @param anchorWindow         the runtime's anchored window, or null when it has none
+     */
+    public WatermarkResult publishWatermark(
+            @Transient @NotNull Path checkpointsDir,
+            long definitionTxn,
+            long historyEpoch,
+            long lifecycleIdentity,
+            long normalizedBaseSeqTxn,
+            long headMaxTimestamp,
+            long headCheckpointId,
+            @NotNull ObjList<WindowFunction> functions,
+            @Nullable LiveViewWindow anchorWindow,
+            boolean primaryOwner
+    ) {
+        if (!primaryOwner) {
+            throw CairoException.critical(0).put("replica must not publish a live view checkpoint timeline");
+        }
+        final PublicationScratch shells = acquirePublicationShells(null);
+        try {
+            final LiveViewCheckpointMetaStore metaStore = shells.metaStore;
+            final LiveViewCheckpointTimelineReader timelineReader = shells.timelineReader;
+            final LiveViewCheckpointSegmentDirectoryWriter directoryWriter = shells.directoryWriter;
+            metaStore.of(checkpointsDir);
+            timelineReader.of(checkpointsDir);
+            directoryWriter.of(checkpointsDir);
+
+            if (!metaStore.isValid()) {
+                throw CairoException.critical(0)
+                        .put("cannot advance the base watermark of a live view checkpoint timeline with no valid generation");
+            }
+            final LiveViewCheckpointSuperblock superblock = metaStore.getSuperblock();
+            if (superblock.definitionTxn != definitionTxn || superblock.historyEpoch != historyEpoch) {
+                throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
+                        .put("live view checkpoint watermark definition identity mismatch");
+            }
+            // A published generation always holds a root. Were it ever empty, the entry
+            // would keep the null identity, which names no root a caller can hold.
+            final LiveViewCheckpointTimelineEntry head = shells.headEntry.of(Numbers.LONG_NULL, Numbers.LONG_NULL, 0, 0, 0);
+            timelineReader.last(superblock.timelineRootRef, head);
+            if (head.maxTimestamp != headMaxTimestamp
+                    || (headCheckpointId != Numbers.LONG_NULL && head.checkpointId != headCheckpointId)) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint watermark names a root that is not the newest")
+                        .put(" [maxTimestamp=").put(headMaxTimestamp)
+                        .put(", checkpointId=").put(headCheckpointId).put(']');
+            }
+            if (normalizedBaseSeqTxn < superblock.normalizedBaseSeqTxn) {
+                throw CairoException.critical(0)
+                        .put("live view checkpoint generation watermarks must not move backwards")
+                        .put(" [storedBase=").put(superblock.normalizedBaseSeqTxn)
+                        .put(", nextBase=").put(normalizedBaseSeqTxn).put(']');
+            }
+            boolean hasPriorOrphanRisk = purgeState.beginPublication(lifecycleIdentity);
+
+            final long previousGeneration = superblock.generation;
+            final long generation = checkedIncrement(previousGeneration, "generation");
+            final LiveViewCheckpointPageRef oldDirectoryRoot =
+                    copyInto(superblock.segmentDirectoryRootRef, shells.oldDirectoryRoot);
+            directoryWriter.begin(oldDirectoryRoot);
+            registerPendingDirectorySegment(directoryWriter, superblock);
+            retireCatalogueEntries(directoryWriter, purgeState.getPendingRetirements(lifecycleIdentity));
+
+            long nextSegmentId = skipPublishedSegmentIds(checkpointsDir, superblock.nextSegmentId);
+            final long directorySegmentId = nextSegmentId++;
+            final LiveViewCheckpointPageRef newDirectoryRoot = shells.newDirectoryRoot;
+            directoryWriter.publish(directorySegmentId, generation, newDirectoryRoot);
+            hasPriorOrphanRisk |= persistRetirementQueue(
+                    shells,
+                    checkpointsDir,
+                    definitionTxn,
+                    historyEpoch,
+                    lifecycleIdentity,
+                    directoryWriter,
+                    newDirectoryRoot,
+                    generation
+            );
+            final long metadataBytesAdded = directoryWriter.getLastSegmentBytes();
+            if (testFailureStage == TEST_FAIL_AFTER_METADATA_PUBLISH) {
+                throw CairoException.critical(0).put("test failure after live view checkpoint metadata publication");
+            }
+
+            superblock.generation = generation;
+            superblock.normalizedBaseSeqTxn = normalizedBaseSeqTxn;
+            superblock.nextSegmentId = nextSegmentId;
+            superblock.metadataBytes = checkedAdd(superblock.metadataBytes, metadataBytesAdded);
+            superblock.seedCursorOffset = Numbers.LONG_NULL;
+            carryPendingDirectorySegment(directoryWriter, superblock, directorySegmentId);
+            // The timeline and the row-position delta index carry forward by reference.
+            copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
+            metaStore.publish();
+            purgeState.finishPublication(lifecycleIdentity, hasPriorOrphanRisk);
+            purgeState.clearPendingRetirements(lifecycleIdentity);
+
+            if (anchorWindow != null) {
+                anchorWindow.onCheckpointBaselineCarried(previousGeneration, generation);
+            }
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                functions.getQuick(i).onCheckpointBaselineCarried(previousGeneration, generation);
+            }
+            return shells.watermarkResult.of(
+                    generation,
+                    metaStore.getWalPurgeFloor(),
+                    shells.watermarkStats.of(superblock, metadataBytesAdded)
+            );
+        } catch (Throwable th) {
+            // The next sweep proposes the entries again, as it does after a failed seal.
+            purgeState.clearPendingRetirements(lifecycleIdentity);
+            throw th;
+        } finally {
+            releasePublicationShells();
+        }
+    }
+
+    /**
      * Runs {@code hook} on whichever thread releases a repair capture's scratch, once the
      * scratch has let go of what the capture froze and before the lease clears. A capture
      * parked by this writer's worker can be closed by DROP or invalidation on another
@@ -4652,6 +4798,44 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     /**
+     * One watermark publication's outcome, in a flyweight the writer owns and refills. It
+     * stays valid until the same writer's next {@link #publishWatermark}, which is enough
+     * for every caller: a refresh turn reads what it needs before it publishes again. Do
+     * not retain it across publications or hand it to another thread.
+     */
+    public static final class WatermarkResult {
+        private long generation;
+        private LiveViewCheckpointTimelineStats stats;
+        private long walPurgeFloor;
+
+        public long getGeneration() {
+            return generation;
+        }
+
+        /**
+         * @return the shape of the generation this publication committed
+         */
+        public LiveViewCheckpointTimelineStats getStats() {
+            return stats;
+        }
+
+        public long getWalPurgeFloor() {
+            return walPurgeFloor;
+        }
+
+        private WatermarkResult of(
+                long generation,
+                long walPurgeFloor,
+                LiveViewCheckpointTimelineStats stats
+        ) {
+            this.generation = generation;
+            this.walPurgeFloor = walPurgeFloor;
+            this.stats = stats;
+            return this;
+        }
+    }
+
+    /**
      * One seal's outcome, in a flyweight the writer owns and refills. It stays
      * valid until the same writer's next {@link #append}, which is enough for
      * every caller: a refresh turn reads what it needs before it publishes
@@ -6310,6 +6494,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 new LiveViewCheckpointTimelineWriter(configuration);
         private final TruncateResult truncateResult = new TruncateResult();
         private final LiveViewCheckpointTimelineStats truncateStats = new LiveViewCheckpointTimelineStats();
+        private final WatermarkResult watermarkResult = new WatermarkResult();
+        private final LiveViewCheckpointTimelineStats watermarkStats = new LiveViewCheckpointTimelineStats();
 
         private PublicationScratch() {
             dataStore = new LiveViewCheckpointDataStore(configuration, metaStore);

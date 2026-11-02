@@ -278,10 +278,14 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             failFirstSealAfterTheRetire();
 
             // The upgrade is over, so the view keeps the rows of a day its base loses from here on,
-            // as any view does, and a commit with no rows of its own seals nothing over them.
+            // as any view does. The commit that drops the day has no rows of its own, and with no
+            // head to build on, the view seals over it at once. That seal fails as the first one
+            // did, so the view still holds no timeline when it restarts.
             execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-01'");
             drainWalQueue();
+            fault.armTimelineCreate();
             drive();
+            Assert.assertTrue("the commit with no rows must have tried to seal", fault.hasTimelineCreateFired());
             assertViewRows(ALL_ROWS);
             Assert.assertFalse(new File(checkpointsRootByDirName(), LiveViewCheckpointLayout.TIMELINE_FILE_NAME).exists());
 

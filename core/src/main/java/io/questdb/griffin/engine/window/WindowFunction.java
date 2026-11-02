@@ -870,6 +870,16 @@ public interface WindowFunction extends Function {
     }
 
     /**
+     * Moves this function's incremental baseline from {@code fromGeneration} onto
+     * {@code toGeneration}, a publication that kept every root and only advanced the base
+     * coordinate the generation is valid at. The newest root is the same one, so the dirty
+     * set stays, and so do the logical bytes. A function whose baseline names another
+     * generation keeps it: the publication cannot vouch for a root it never stood on.
+     */
+    default void onCheckpointBaselineCarried(long fromGeneration, long toGeneration) {
+    }
+
+    /**
      * Adopts a durable root's state as this function's incremental baseline. Two
      * callers reach it:
      * <ul>

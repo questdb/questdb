@@ -343,6 +343,13 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
     }
 
     @Override
+    public void onCheckpointBaselineCarried(long fromGeneration, long toGeneration) {
+        if (checkpointBaselineGeneration == fromGeneration) {
+            checkpointBaselineGeneration = toGeneration;
+        }
+    }
+
+    @Override
     public void onCheckpointPersisted(long logicalStateBytes, long generation) {
         checkpointBaselineGeneration = generation;
         checkpointLogicalStateBytes = logicalStateBytes;

@@ -1547,6 +1547,20 @@ public class LiveViewWindow implements QuietCloseable {
     }
 
     /**
+     * Moves this window's incremental baseline from {@code fromGeneration} onto
+     * {@code toGeneration}, a publication that kept every root and only advanced the base
+     * coordinate the generation is valid at
+     * ({@link LiveViewCheckpointTimelineStoreWriter#publishWatermark}). The newest root
+     * is the same one, so the dirty map, the logical bytes and the full-scan latch all
+     * stay. A window whose baseline names another generation keeps it.
+     */
+    public void onCheckpointBaselineCarried(long fromGeneration, long toGeneration) {
+        if (checkpointBaselineGeneration == fromGeneration) {
+            checkpointBaselineGeneration = toGeneration;
+        }
+    }
+
+    /**
      * Adopts a durable root's state as this window's incremental baseline. Two
      * callers reach it:
      * <ul>

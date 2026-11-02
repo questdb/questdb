@@ -58,6 +58,7 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
     // The hand-back position whose restore throws; -1 is disarmed.
     private int keyedTransplantEntryFaultIndex = -1;
     private Runnable keyedTransplantStartObserver;
+    private Runnable noRowHeadCheckpointStart;
     private Runnable peerTurnBeforeRefreshLatch;
     private Consumer<Throwable> refreshFaultObserver;
     // Repair cleanup chains to let through before the next one throws; -1 is disarmed.
@@ -125,6 +126,15 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
             // refresh memory limit: a breach invalidates the view, and
             // setSimulateKeyedTransplantEntryFault arms that one.
             throw CairoException.critical(0).put("simulated live view keyed repair transplant fault");
+        }
+    }
+
+    @Override
+    public void beforeNoRowHeadCheckpoint() {
+        final Runnable action = noRowHeadCheckpointStart;
+        if (action != null) {
+            noRowHeadCheckpointStart = null;
+            action.run();
         }
     }
 
@@ -365,6 +375,15 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
 
     public void setSimulateKeyedTransplantFault(boolean simulate) {
         isKeyedTransplantFaultArmed = simulate;
+    }
+
+    /**
+     * One-shot. The action runs on the refresh worker with the refresh latch held, before a
+     * cycle that emitted no row decides whether the head checkpoint moves, with no enclosing
+     * catch. It must not reach DROP LIVE VIEW or a checkpoint freeze, which wait for that latch.
+     */
+    public void setSimulateNoRowHeadCheckpointStart(Runnable action) {
+        noRowHeadCheckpointStart = action;
     }
 
     /**

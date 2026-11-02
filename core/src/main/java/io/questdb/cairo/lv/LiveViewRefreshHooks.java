@@ -67,6 +67,14 @@ public interface LiveViewRefreshHooks {
     }
 
     /**
+     * Called by a refresh cycle that consumed base commits and emitted no row, once it has
+     * persisted the consumed watermark and before it decides whether the head checkpoint
+     * moves for those commits, with the refresh latch held.
+     */
+    default void beforeNoRowHeadCheckpoint() {
+    }
+
+    /**
      * Called by the WAL-loss re-derive after its entry broken-dependency check and before
      * its replay, with the refresh latch held, inside the try whose catch logs and refuses.
      */
