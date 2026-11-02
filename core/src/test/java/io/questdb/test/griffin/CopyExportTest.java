@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.MicrosTimestampDriver;
@@ -4601,7 +4602,9 @@ public class CopyExportTest extends AbstractCairoTest {
         // type so the parquet partition carries a lazily-converted column. COPY (SELECT *)
         // detects the pending conversion and materializes it before export. Read the exported
         // file back via read_parquet (which reads the file as-is, with no lazy conversion) and
-        // compare to the converted values the normal query path produces.
+        // check that s holds the post-ALTER type and the converted values. Most values print
+        // the same in either type (3 as INT or STRING), so the type check is what catches a
+        // file that kept the pre-ALTER type.
         execute("CREATE TABLE pt (s " + srcType + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("INSERT INTO pt SELECT " + srcValueExpr + " AS s, " +
                 "timestamp_sequence('2024-01-01T00:00:00.000000Z', 600_000_000) AS ts FROM long_sequence(6)");
@@ -4643,6 +4646,7 @@ public class CopyExportTest extends AbstractCairoTest {
                             .noLeakCheck()
                             .expectSize()
                             .timestamp("ts")
+                            .columnType(0, ColumnType.typeOf(dstType))
                             .returns(expectedReadback);
                 });
 
