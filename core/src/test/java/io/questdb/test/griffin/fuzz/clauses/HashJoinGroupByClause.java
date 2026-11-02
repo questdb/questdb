@@ -86,7 +86,7 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * rule, and QueryRunner compares the results either way.
  * The rest of the queries reach the features the fused planner has to turn down, each of which keeps the ordinary plan
  * in both arms of the fused axis: a constant WHERE conjunct, SAMPLE BY with FILL, a
- * {@code LIMIT} sub-query, {@code LATEST ON} on a table input, a cross-input WHERE predicate, an ON predicate over the preserved side
+ * {@code LIMIT} sub-query, a {@code LATEST ON} sub-query, a cross-input WHERE predicate, an ON predicate over the preserved side
  * of an outer join, columns of other types where the joined record reads them, and aggregates
  * outside the fused allowlist. A planner that accepts one of them by mistake returns different
  * rows than the ordinary plan, and the fused axis reports it.
@@ -485,7 +485,8 @@ public final class HashJoinGroupByClause {
      * probability 1/4 and filters on half the draws, so the fused planner has to resolve the outer
      * names through it. The {@code LATEST ON} sub-query keeps the latest row per join key. Written
      * on the table, it is a feature the fused planner refuses; written around a projection of the
-     * table, child compilation applies it to the input, and the input may fuse as a build. The
+     * table, child compilation applies it to the input, which then exposes no page frames, so the
+     * planner falls back to the ordinary plan mid-way. The
      * {@code LIMIT} sub-query takes the first rows in timestamp order, which is the same set in
      * every storage layout, and is a barrier that keeps the ordinary plan.
      */
