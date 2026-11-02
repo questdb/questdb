@@ -35,6 +35,7 @@ public class WalTxnType {
     public static final byte MAT_VIEW_DATA = 3;
     public static final byte MAT_VIEW_INVALIDATE = 4;
     public static final byte NONE = -1;
+    public static final byte SCHEMA = 8;
     public static final byte SQL = 1;
     public static final byte TRUNCATE = 2;
     public static final byte VIEW_DEFINITION = 5;
