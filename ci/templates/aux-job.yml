@@ -40,7 +40,12 @@ jobs:
         parameters:
           shouldRun: eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
 
-      # Compat tests
+      # Compat tests run `clean test` on the whole reactor, which now builds
+      # the Rust crate from source, so the pinned toolchain must be present
+      # even when the Rust lint above was skipped for a Java-only change.
+      - script: python3 .github/prepare_rust_env.py --export-cargo-install-env --match core/rust/qdbr/rust-toolchain.toml
+        displayName: "Ensure Rust is installed (compat tests)"
+        condition: eq(variables['SOURCE_CODE_CHANGED'], 'true')
       - template: compat-steps.yml
 
       # Javadoc
@@ -52,7 +57,7 @@ jobs:
           mavenPomFile: "pom.xml"
           mavenOptions: "$(MAVEN_OPTS)"
           options:
-            "-s $(MAVEN_SETTINGS_FILE) compile javadoc:javadoc -DskipTests -P javadoc -P qdbr-release $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
+            "-s $(MAVEN_SETTINGS_FILE) compile javadoc:javadoc -DskipTests -DskipNative -P javadoc $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
           jdkVersionOption: $(jdk)
 
       # Check bytecode size

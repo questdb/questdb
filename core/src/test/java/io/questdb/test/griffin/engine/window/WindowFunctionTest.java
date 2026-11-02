@@ -20549,6 +20549,70 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionArgumentColumnSelectedTwice() throws Exception {
+        // The window function argument names a column that the projection also selects under a second name
+        assertMemoryLeak(() -> {
+            createColumnSelectedTwiceTable();
+
+            assertQuery("SELECT qty, qty AS q2, sum(qty) OVER (ORDER BY qty) AS s FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            %s
+                              orderedFunctions: [[qty] => [sum(qty) over (rows between unbounded preceding and current row)]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            qty\tq2\ts
+                            15.0\t15.0\t20.0
+                            25.0\t25.0\t45.0
+                            5.0\t5.0\t5.0
+                            35.0\t35.0\t80.0
+                            """);
+            assertQuery("SELECT qty, qty AS q2, sum(qty) OVER (ORDER BY ts) AS s FROM trades")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Window
+                              functions: [sum(qty) over (rows between unbounded preceding and current row)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            qty\tq2\ts
+                            15.0\t15.0\t15.0
+                            25.0\t25.0\t40.0
+                            5.0\t5.0\t45.0
+                            35.0\t35.0\t80.0
+                            """);
+            // the window function is an argument of an outer expression
+            assertQuery("SELECT qty, qty AS q2, sum(qty) OVER (ORDER BY qty) + 1 AS s FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [qty,qty,sum+1]
+                                %s
+                                  orderedFunctions: [[qty] => [sum(qty) over (rows between unbounded preceding and current row)]]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            qty\tq2\ts
+                            15.0\t15.0\t21.0
+                            25.0\t25.0\t46.0
+                            5.0\t5.0\t6.0
+                            35.0\t35.0\t81.0
+                            """);
+        });
+    }
+
+    @Test
     public void testWindowFunctionArithmeticAsArgumentToAggregate() throws Exception {
         // Test arithmetic of window functions as argument to regular aggregate
         // sum(sum(id) OVER () + sum(id) OVER ()) should:
@@ -21311,6 +21375,68 @@ public class WindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowFunctionNestedArgumentColumnSelectedTwice() throws Exception {
+        // The nested window function goes to an inner window model, and its argument or ORDER BY names
+        // a column that the projection also selects under a second name
+        assertMemoryLeak(() -> {
+            createColumnSelectedTwiceTable();
+
+            assertQuery("SELECT ts, qty, qty AS q2, sum(sum(qty) OVER (ORDER BY ts)) OVER (ORDER BY ts) AS s FROM trades")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Window
+                              functions: [sum(sum) over (rows between unbounded preceding and current row)]
+                                Window
+                                  functions: [sum(qty) over (rows between unbounded preceding and current row)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            ts\tqty\tq2\ts
+                            2024-01-01T00:00:00.000000Z\t15.0\t15.0\t15.0
+                            2024-01-01T00:01:00.000000Z\t25.0\t25.0\t55.0
+                            2024-01-01T00:02:00.000000Z\t5.0\t5.0\t100.0
+                            2024-01-01T00:03:00.000000Z\t35.0\t35.0\t180.0
+                            """);
+            assertQuery("SELECT ts, qty, qty AS q2, sum(sum(qty) OVER (ORDER BY qty)) OVER (ORDER BY ts) AS s FROM trades")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tqty\tq2\ts
+                            2024-01-01T00:00:00.000000Z\t15.0\t15.0\t20.0
+                            2024-01-01T00:01:00.000000Z\t25.0\t25.0\t65.0
+                            2024-01-01T00:02:00.000000Z\t5.0\t5.0\t70.0
+                            2024-01-01T00:03:00.000000Z\t35.0\t35.0\t150.0
+                            """);
+            assertQuery("SELECT qty, qty AS q2, sum(row_number() OVER (ORDER BY qty)) OVER () AS s FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            %1$s
+                              unorderedFunctions: [sum(row_number) over ()]
+                                %1$s
+                                  orderedFunctions: [[qty] => [row_number()]]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            qty\tq2\ts
+                            15.0\t15.0\t10.0
+                            25.0\t25.0\t10.0
+                            5.0\t5.0\t10.0
+                            35.0\t35.0\t10.0
+                            """);
+        });
+    }
+
+    @Test
     public void testWindowFunctionNestedParenthesesWithCast() throws Exception {
         // Deeply nested parentheses with cast
         assertQuery("SELECT (((row_number() OVER (ORDER BY ts))))::int AS rn FROM x")
@@ -21325,6 +21451,332 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         2
                         3
                         """);
+    }
+
+    @Test
+    public void testWindowFunctionOrderByColumnAliasedAsOtherColumn() throws Exception {
+        // The projection selects column a a second time under the name of the base column b, and b orders
+        // differently from a. The window ORDER BY a must sort by a, not by the base column b.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                        (3, 10, '2024-01-01T00:00:00.000000Z'),
+                        (1, 40, '2024-01-01T00:01:00.000000Z'),
+                        (4, 20, '2024-01-01T00:02:00.000000Z'),
+                        (2, 30, '2024-01-01T00:03:00.000000Z')
+                    """);
+
+            assertQuery("SELECT a, a AS b, row_number() OVER (ORDER BY a) AS rn FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            %s
+                              orderedFunctions: [[a] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            a\tb\trn
+                            3\t3\t3
+                            1\t1\t1
+                            4\t4\t4
+                            2\t2\t2
+                            """);
+            assertQuery("SELECT a, a AS b, row_number() OVER (ORDER BY a DESC) AS rn FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            %s
+                              orderedFunctions: [[a desc] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            a\tb\trn
+                            3\t3\t2
+                            1\t1\t4
+                            4\t4\t1
+                            2\t2\t3
+                            """);
+            // The window clauses read the input columns, so ORDER BY b sorts by the base column b, which the
+            // projection selects as x, even though the projection also names the copy of column a as b.
+            assertQuery("SELECT sum(b) OVER () AS s, b AS x, a, a AS b, row_number() OVER (ORDER BY b) AS rn FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            %s
+                              orderedFunctions: [[b] => [row_number()]]
+                              unorderedFunctions: [sum(b) over ()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            s\tx\ta\tb\trn
+                            100.0\t10\t3\t3\t1
+                            100.0\t40\t1\t1\t4
+                            100.0\t20\t4\t4\t2
+                            100.0\t30\t2\t2\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowFunctionOrderByColumnSelectedTwice() throws Exception {
+        // The window ORDER BY names a column that the projection also selects under a second name. The
+        // optimiser removes the trivial inner virtual model, so the window must read the column under a
+        // name that the remaining input model exposes.
+        assertMemoryLeak(() -> {
+            createColumnSelectedTwiceTable();
+
+            assertQuery("SELECT ts, ts AS ts2, row_number() OVER (ORDER BY ts) AS rn FROM trades")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts2")
+                    .expectSize()
+                    .withPlan("""
+                            Window
+                              functions: [row_number()]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            ts\tts2\trn
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1
+                            2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:00.000000Z\t2
+                            2024-01-01T00:02:00.000000Z\t2024-01-01T00:02:00.000000Z\t3
+                            2024-01-01T00:03:00.000000Z\t2024-01-01T00:03:00.000000Z\t4
+                            """);
+            assertQuery("SELECT ts, ts AS ts2, row_number() OVER (ORDER BY ts DESC) AS rn FROM trades")
+                    .noLeakCheck()
+                    .timestamp("ts2")
+                    .expectSize()
+                    .withPlan("""
+                            %s
+                              orderedFunctions: [[ts desc] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            ts\tts2\trn
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t4
+                            2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:00.000000Z\t3
+                            2024-01-01T00:02:00.000000Z\t2024-01-01T00:02:00.000000Z\t2
+                            2024-01-01T00:03:00.000000Z\t2024-01-01T00:03:00.000000Z\t1
+                            """);
+            // the expression keeps the inner virtual model, which exposes the column under both names
+            assertQuery("SELECT ts, ts AS ts2, qty + 1 AS q, row_number() OVER (ORDER BY ts DESC) AS rn FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            %s
+                              orderedFunctions: [[ts2 desc] => [row_number()]]
+                                VirtualRecord
+                                  functions: [ts,qty+1,ts]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            ts\tts2\tq\trn
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t16.0\t4
+                            2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:00.000000Z\t26.0\t3
+                            2024-01-01T00:02:00.000000Z\t2024-01-01T00:02:00.000000Z\t6.0\t2
+                            2024-01-01T00:03:00.000000Z\t2024-01-01T00:03:00.000000Z\t36.0\t1
+                            """);
+            assertQuery("SELECT id, id AS id2, row_number() OVER (ORDER BY id) AS rn FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            %s
+                              orderedFunctions: [[id] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            id\tid2\trn
+                            3\t3\t3
+                            1\t1\t1
+                            4\t4\t4
+                            2\t2\t2
+                            """);
+            assertQuery("SELECT id, id AS id2, row_number() OVER (ORDER BY id DESC) AS rn FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            %s
+                              orderedFunctions: [[id desc] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            id\tid2\trn
+                            3\t3\t2
+                            1\t1\t4
+                            4\t4\t1
+                            2\t2\t3
+                            """);
+            // the column is selected only under the two aliases
+            final String aliasesOnlyPlan = """
+                    %s
+                      orderedFunctions: [[x] => [row_number()]]
+                        SelectedRecord
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: trades
+                    """.formatted(cachedWindowFactoryName());
+            final String aliasesOnlyExpected = """
+                    x\ty\trn
+                    3\t3\t3
+                    1\t1\t1
+                    4\t4\t4
+                    2\t2\t2
+                    """;
+            assertQuery("SELECT id AS x, id AS y, row_number() OVER (ORDER BY id) AS rn FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan(aliasesOnlyPlan)
+                    .returns(aliasesOnlyExpected);
+            assertQuery("SELECT id AS x, id AS y, row_number() OVER (ORDER BY x) AS rn FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan(aliasesOnlyPlan)
+                    .returns(aliasesOnlyExpected);
+            // subquery source
+            assertQuery("SELECT qty, qty AS q2, row_number() OVER (ORDER BY qty DESC) AS rn FROM (SELECT qty FROM trades)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            %s
+                              orderedFunctions: [[qty desc] => [row_number()]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            qty\tq2\trn
+                            15.0\t15.0\t3
+                            25.0\t25.0\t2
+                            5.0\t5.0\t4
+                            35.0\t35.0\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowFunctionOrderByColumnShadowedByExpressionAlias() throws Exception {
+        // The expression alias id shadows the base column id, and the projection also selects the base column
+        // as id2. The window ORDER BY id sorts by the base column, so it must not bind to the expression.
+        // The outer query projects only id and rn: the window projection of id2 reads the shadowing
+        // expression, a separate issue, #8122, that this test does not cover.
+        assertMemoryLeak(() -> {
+            createColumnSelectedTwiceTable();
+
+            assertQuery("SELECT id, rn FROM (SELECT id + 1 AS id, id AS id2, row_number() OVER (ORDER BY id) AS rn FROM trades)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            %s
+                              orderedFunctions: [[id2] => [row_number()]]
+                                VirtualRecord
+                                  functions: [id+1,id]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            id\trn
+                            4\t3
+                            2\t1
+                            5\t4
+                            3\t2
+                            """);
+            // the expression reverses the order of the base column
+            assertQuery("SELECT id, rn FROM (SELECT 10 - id AS id, id AS id2, row_number() OVER (ORDER BY id) AS rn FROM trades)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            %s
+                              orderedFunctions: [[id2] => [row_number()]]
+                                VirtualRecord
+                                  functions: [10-id,id]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            id\trn
+                            7\t3
+                            9\t1
+                            6\t4
+                            8\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowFunctionOrderByColumnShadowedByFunctionAlias() throws Exception {
+        // The function alias abs shadows the base column abs, and the projection also selects the base column
+        // as a2. The function call abs(abs) carries the same token as the column and keeps the inner virtual
+        // model. The window ORDER BY abs and the window argument abs read the base column, not the function
+        // result. The outer query does not project a2: the window projection of a2 reads the shadowing
+        // function, a separate issue, #8122, that this test does not cover.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g (abs DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO g VALUES
+                        (-1, '2024-01-01T00:00:00.000000Z'),
+                        (-4, '2024-01-01T00:01:00.000000Z'),
+                        (-2, '2024-01-01T00:02:00.000000Z'),
+                        (-3, '2024-01-01T00:03:00.000000Z')
+                    """);
+
+            assertQuery("SELECT abs, rn FROM (SELECT abs(abs) AS abs, abs AS a2, row_number() OVER (ORDER BY abs) AS rn FROM g)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            %s
+                              orderedFunctions: [[a2] => [row_number()]]
+                                VirtualRecord
+                                  functions: [abs(abs),abs]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: g
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            abs\trn
+                            1.0\t4
+                            4.0\t1
+                            2.0\t3
+                            3.0\t2
+                            """);
+            assertQuery("SELECT abs, s FROM (SELECT abs(abs) AS abs, abs AS a2, sum(abs) OVER () AS s FROM g)")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            %s
+                              unorderedFunctions: [sum(a2) over ()]
+                                VirtualRecord
+                                  functions: [abs(abs),abs]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: g
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            abs\ts
+                            1.0\t-10.0
+                            4.0\t-10.0
+                            2.0\t-10.0
+                            3.0\t-10.0
+                            """);
+        });
     }
 
     @Test
@@ -21366,6 +21818,116 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             7\t1
                             8\t2
                             9\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowFunctionOrderByJoinColumnSelectedTwice() throws Exception {
+        // Both join sides have an id column, and the projection selects the right-hand id twice
+        assertMemoryLeak(() -> {
+            createJoinColumnSelectedTwiceTables();
+
+            assertQuery("""
+                    SELECT a.id, b.id, b.id AS bid2, row_number() OVER (ORDER BY b.id) AS rn
+                    FROM ta a JOIN tb b ON a.k = b.k
+                    ORDER BY a.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [id]
+                                CachedWindow
+                                  orderedFunctions: [[id1] => [row_number()]]
+                                    SelectedRecord
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: ta
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tb
+                            """)
+                    .returns("""
+                            id\tid1\tbid2\trn
+                            10\t3\t3\t3
+                            20\t1\t1\t1
+                            30\t2\t2\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowFunctionOrderByJoinColumnSelectedTwiceWithExpression() throws Exception {
+        // Both join sides have an id column, and the projection selects the right-hand id twice.
+        assertMemoryLeak(() -> {
+            createJoinColumnSelectedTwiceTables();
+
+            // the expression keeps the inner virtual model, and the window ORDER BY over the
+            // right-hand id reads the right-hand column (rows ordered by b.id)
+            assertQuery("""
+                    SELECT a.id, b.id, b.id AS bid2, a.id + 1 AS p, row_number() OVER (ORDER BY b.id) AS rn
+                    FROM ta a JOIN tb b ON a.k = b.k
+                    ORDER BY a.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [id]
+                                CachedWindow
+                                  orderedFunctions: [[bid2] => [row_number()]]
+                                    VirtualRecord
+                                      functions: [id,id1,id+1,id1]
+                                        SelectedRecord
+                                            Hash Join Light
+                                              condition: b.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: ta
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: tb
+                            """)
+                    .returns("""
+                            id\tid1\tbid2\tp\trn
+                            10\t3\t3\t11\t3
+                            20\t1\t1\t21\t1
+                            30\t2\t2\t31\t2
+                            """);
+            // the window ORDER BY over the left-hand id must not bind to the right-hand one
+            assertQuery("""
+                    SELECT a.id, b.id, b.id AS bid2, row_number() OVER (ORDER BY a.id DESC) AS rn
+                    FROM ta a JOIN tb b ON a.k = b.k
+                    ORDER BY a.id
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [id]
+                                CachedWindow
+                                  orderedFunctions: [[id desc] => [row_number()]]
+                                    SelectedRecord
+                                        Hash Join Light
+                                          condition: b.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: ta
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: tb
+                            """)
+                    .returns("""
+                            id\tid1\tbid2\trn
+                            10\t3\t3\t3
+                            20\t1\t1\t2
+                            30\t2\t2\t1
                             """);
         });
     }
@@ -21434,6 +21996,153 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             10\t10\t1
                             20\t20\t2
                             30\t30\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowFunctionOrderByTimestampCopyReferencedByExpression() throws Exception {
+        // The projection selects the designated timestamp twice, and an expression reads the copy, so the
+        // inner virtual model stays. Its last copy of the timestamp is the designated timestamp, and the
+        // window must order by that copy to skip the sort and to accept a RANGE frame.
+        assertMemoryLeak(() -> {
+            createColumnSelectedTwiceTable();
+
+            assertQuery("""
+                    SELECT ts, ts AS ts2, dateadd('s', 1, ts2) AS t3,
+                        sum(qty) OVER (ORDER BY ts RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) AS s
+                    FROM trades
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Window
+                              functions: [sum(qty) over (range between 60000000 preceding and current row)]
+                                VirtualRecord
+                                  functions: [ts,ts,dateadd('s',1,ts2),qty]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            ts\tts2\tt3\ts
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:01.000000Z\t15.0
+                            2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:01.000000Z\t40.0
+                            2024-01-01T00:02:00.000000Z\t2024-01-01T00:02:00.000000Z\t2024-01-01T00:02:01.000000Z\t30.0
+                            2024-01-01T00:03:00.000000Z\t2024-01-01T00:03:00.000000Z\t2024-01-01T00:03:01.000000Z\t40.0
+                            """);
+            assertQuery("""
+                    SELECT ts, ts AS ts2, dateadd('s', 1, ts2) AS t3,
+                        sum(qty) OVER (PARTITION BY grp ORDER BY ts RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) AS s
+                    FROM trades
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Window
+                              functions: [sum(qty) over (partition by [grp] range between 60000000 preceding and current row)]
+                                VirtualRecord
+                                  functions: [ts,ts,dateadd('s',1,ts2),qty,grp]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            ts\tts2\tt3\ts
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:01.000000Z\t15.0
+                            2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:01.000000Z\t25.0
+                            2024-01-01T00:02:00.000000Z\t2024-01-01T00:02:00.000000Z\t2024-01-01T00:02:01.000000Z\t5.0
+                            2024-01-01T00:03:00.000000Z\t2024-01-01T00:03:00.000000Z\t2024-01-01T00:03:01.000000Z\t35.0
+                            """);
+            assertQuery("""
+                    SELECT ts, ts AS ts2, dateadd('s', 1, ts2) AS t3,
+                        sum(qty) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS s
+                    FROM trades
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Window
+                              functions: [sum(qty) over ( rows between 1 preceding and current row)]
+                                VirtualRecord
+                                  functions: [ts,ts,dateadd('s',1,ts2),qty]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            ts\tts2\tt3\ts
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:01.000000Z\t15.0
+                            2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:01.000000Z\t40.0
+                            2024-01-01T00:02:00.000000Z\t2024-01-01T00:02:00.000000Z\t2024-01-01T00:02:01.000000Z\t30.0
+                            2024-01-01T00:03:00.000000Z\t2024-01-01T00:03:00.000000Z\t2024-01-01T00:03:01.000000Z\t40.0
+                            """);
+            assertQuery("SELECT ts, ts AS ts2, dateadd('s', 1, ts2) AS t3, sum(qty) OVER (ORDER BY ts) AS s FROM trades")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Window
+                              functions: [sum(qty) over (rows between unbounded preceding and current row)]
+                                VirtualRecord
+                                  functions: [ts,ts,dateadd('s',1,ts2),qty]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            ts\tts2\tt3\ts
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:01.000000Z\t15.0
+                            2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:00.000000Z\t2024-01-01T00:01:01.000000Z\t40.0
+                            2024-01-01T00:02:00.000000Z\t2024-01-01T00:02:00.000000Z\t2024-01-01T00:02:01.000000Z\t45.0
+                            2024-01-01T00:03:00.000000Z\t2024-01-01T00:03:00.000000Z\t2024-01-01T00:03:01.000000Z\t80.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowFunctionPartitionByColumnSelectedTwice() throws Exception {
+        // The window PARTITION BY names a column that the projection also selects under a second name
+        assertMemoryLeak(() -> {
+            createColumnSelectedTwiceTable();
+
+            assertQuery("SELECT grp, grp AS grp2, id, row_number() OVER (PARTITION BY grp ORDER BY ts) AS rn FROM trades")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Window
+                              functions: [row_number() over (partition by [grp])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
+                            """)
+                    .returns("""
+                            grp\tgrp2\tid\trn
+                            a\ta\t3\t1
+                            b\tb\t1\t1
+                            a\ta\t4\t2
+                            b\tb\t2\t2
+                            """);
+            assertQuery("SELECT grp, grp AS grp2, id, row_number() OVER (PARTITION BY grp ORDER BY qty) AS rn FROM trades")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            %s
+                              orderedFunctions: [[qty] => [row_number() over (partition by [grp])]]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: trades
+                            """.formatted(cachedWindowFactoryName()))
+                    .returns("""
+                            grp\tgrp2\tid\trn
+                            a\ta\t3\t2
+                            b\tb\t1\t1
+                            a\ta\t4\t1
+                            b\tb\t2\t2
                             """);
         });
     }
@@ -22315,6 +23024,40 @@ public class WindowFunctionTest extends AbstractCairoTest {
         for (String frameType : FRAME_TYPES) {
             assertExceptionNoLeakCheck(query.replace("#FRAME", frameType), position, errorMessage);
         }
+    }
+
+    private String cachedWindowFactoryName() {
+        return isCacheLightWindowEnabled ? "CachedWindowLight" : "CachedWindow";
+    }
+
+    // the scan order differs from the order of id and from the order of qty
+    private void createColumnSelectedTwiceTable() throws Exception {
+        execute("CREATE TABLE trades (id INT, grp SYMBOL, qty DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO trades VALUES
+                    (3, 'a', 15.0, '2024-01-01T00:00:00.000000Z'),
+                    (1, 'b', 25.0, '2024-01-01T00:01:00.000000Z'),
+                    (4, 'a', 5.0, '2024-01-01T00:02:00.000000Z'),
+                    (2, 'b', 35.0, '2024-01-01T00:03:00.000000Z')
+                """);
+    }
+
+    // the left-hand id order differs from the right-hand id order
+    private void createJoinColumnSelectedTwiceTables() throws Exception {
+        execute("CREATE TABLE ta (k INT, id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+        execute("CREATE TABLE tb (k INT, id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+        execute("""
+                INSERT INTO ta VALUES
+                    (1, 10, '2024-01-01T00:00:00.000000Z'),
+                    (2, 20, '2024-01-01T00:01:00.000000Z'),
+                    (3, 30, '2024-01-01T00:02:00.000000Z')
+                """);
+        execute("""
+                INSERT INTO tb VALUES
+                    (1, 3, '2024-01-01T00:00:00.000000Z'),
+                    (2, 1, '2024-01-01T00:01:00.000000Z'),
+                    (3, 2, '2024-01-01T00:02:00.000000Z')
+                """);
     }
 
     private String replacePlanTimestamp(String expected) {
