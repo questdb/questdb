@@ -138,9 +138,9 @@ import java.nio.file.Paths;
  *         master-side only, so the FUNCTION fault is woven there like the
  *         other shapes.</li>
  *     <li>{@code -Dquestdb.fuzz.hashjoin=true|false} &mdash; generate
- *         equi-join GROUP BY shapes (an INNER, LEFT or RIGHT join on the INT
- *         or SYMBOL key under a keyed or scalar aggregate), the shape the fused
- *         hash join GROUP BY replaces (default true). Their band is carved from
+ *         equi-join GROUP BY shapes (an INNER, LEFT, RIGHT or FULL join on one
+ *         or two of the shared key columns under a keyed or scalar aggregate),
+ *         the shape the fused hash join GROUP BY replaces (default true). Their band is carved from
  *         the GROUP BY range, so the other shapes' frequencies are unchanged;
  *         pass {@code false} to give the band back to GROUP BY.</li>
  *     <li>{@code -Dquestdb.fuzz.diff.fused=true|false} &mdash; run every
@@ -157,6 +157,13 @@ import java.nio.file.Paths;
  *         SAMPLE BY subqueries put the stream plan under LATEST ON, joins and
  *         LIMIT. The run asserts that the axis compared at least one query
  *         once SAMPLE BY reaches the sample floor.</li>
+ *     <li>{@code -Dquestdb.fuzz.diff.mappage=true|false} &mdash; run every
+ *         query once more, and an equi-join GROUP BY query several more times,
+ *         with {@code cairo.sql.small.map.page.size} cut to between 8 and 512
+ *         bytes, and compare each run with the default-page one (default
+ *         true). The tables are too small to grow a map with the
+ *         default page, so only this axis runs operators over maps that grow
+ *         while they hold cursors and flyweights into them.</li>
  *     <li>{@code -Dquestdb.fuzz.hashjoin.payload=row_ids|copied} &mdash; force
  *         every fused hash join GROUP BY to read its build's payload columns
  *         where they live, or from the copy its build makes (default: neither,
@@ -294,7 +301,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     "('2024-01-01T00:00:00', 'a', " + nearMax + "), " +
                     "('2024-01-01T00:01:00', 'a', " + nearMax + ")");
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, true, new ObjList<>(), null);
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, null, true, new ObjList<>(), null);
 
             QueryRunner.Result avgResult = runner.run(
                     new GeneratedQuery("SELECT avg(d) OVER (PARTITION BY g ORDER BY ts) c FROM t", true));
@@ -569,7 +576,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 // surfaces a failed axis, so the regression assertion is that the
                 // run is not failed; without isPlannerSensitivityAsymmetry the
                 // storage axis would report a divergence and the run would fail.
-                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, true, false, false, false, tables, null);
+                final QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, true, false, false, null, false, tables, null);
                 final QueryRunner.Result result = runner.run(new GeneratedQuery(String.format(horizonJoin, "p", "p"), true));
                 Assert.assertFalse(
                         "storage divergence must be tolerated, not failed: "
@@ -598,7 +605,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
             final String nines = "9".repeat(76);
             execute("INSERT INTO cmp VALUES (" + nines + "m, 1.0m), (-" + nines + "m, 1.0m)");
 
-            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, true, new ObjList<>(), null);
+            QueryRunner runner = new QueryRunner(engine, sqlExecutionContext, false, false, false, false, null, true, new ObjList<>(), null);
             QueryRunner.Result result = runner.run(
                     new GeneratedQuery("SELECT count() c FROM cmp WHERE a > b", true));
             Assert.assertFalse("comparison must not be skipped: " + result.getSkipReason(), result.isSkipped());
@@ -921,6 +928,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(", hashJoin=").$(config.isHashJoinEnabled())
                 .$(", diffFused=").$(config.isDiffFusedEnabled())
                 .$(", diffStream=").$(config.isDiffStreamEnabled())
+                .$(", diffMapPage=").$(config.isDiffMapPageEnabled())
                 .$(", hashJoinPayload=").$(config.getHashJoinPayloadLayout() != null ? config.getHashJoinPayloadLayout().name() : "rule")
                 .$(", hashJoinBuild=").$(config.getHashJoinBuildMode().name())
                 .$();
@@ -959,6 +967,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 config.isDiffShadowEnabled(),
                 config.isDiffFusedEnabled(),
                 config.isDiffStreamEnabled(),
+                config.isDiffMapPageEnabled() ? node1.getConfigurationOverrides() : null,
                 config.isVerifyCursorEnabled(),
                 tables,
                 queryWorkerNamePrefix
@@ -1143,6 +1152,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 .$(runner.getBuildChoiceRuns()).$(" runs picked the build per execution")
                 .$();
         LOG.info().$("fuzz stream axis: ").$(runner.getStreamAxisRuns()).$(" comparisons against the hash GROUP BY").$();
+        LOG.info().$("fuzz map page axis: ").$(runner.getMapPageAxisRuns()).$(" comparisons").$();
 
         if (failures.size() > 0) {
             throw buildFailure(failures);

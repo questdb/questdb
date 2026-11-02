@@ -36,6 +36,7 @@ import io.questdb.test.griffin.HashJoinPayloadLayout;
 public final class FuzzConfig {
     public static final String DIFF_FUSED_PROP = "questdb.fuzz.diff.fused";
     public static final String DIFF_JIT_PROP = "questdb.fuzz.diff.jit";
+    public static final String DIFF_MAP_PAGE_PROP = "questdb.fuzz.diff.mappage";
     public static final String DIFF_SHADOW_PROP = "questdb.fuzz.diff.shadow";
     public static final String DIFF_STREAM_PROP = "questdb.fuzz.diff.stream";
     public static final String DUMP_PROP = "questdb.fuzz.dump";
@@ -76,6 +77,7 @@ public final class FuzzConfig {
 
     private final boolean isDiffFusedEnabled;
     private final boolean isDiffJitEnabled;
+    private final boolean isDiffMapPageEnabled;
     private final boolean isDiffShadowEnabled;
     private final boolean isDiffStreamEnabled;
     private final boolean isFaultInjectionEnabled;
@@ -125,6 +127,10 @@ public final class FuzzConfig {
         this.isDiffFusedEnabled = Boolean.parseBoolean(System.getProperty(DIFF_FUSED_PROP, "true"));
         // Runs every query whose plan uses the stream GROUP BY again with it off and compares the results.
         this.isDiffStreamEnabled = Boolean.parseBoolean(System.getProperty(DIFF_STREAM_PROP, "true"));
+        // Reruns every differential query with a map page of a few hundred bytes at most and
+        // compares the results (see QueryRunner). Pass -Dquestdb.fuzz.diff.mappage=false
+        // to drop the comparison.
+        this.isDiffMapPageEnabled = Boolean.parseBoolean(System.getProperty(DIFF_MAP_PAGE_PROP, "true"));
         this.isVerifyCursorEnabled = Boolean.parseBoolean(System.getProperty(VERIFY_CURSOR_PROP, "true"));
         this.isFaultInjectionEnabled = Boolean.parseBoolean(System.getProperty(FAULTS_PROP, "true"));
         this.faultProbabilityPct = Integer.getInteger(FAULT_PCT_PROP, 15);
@@ -225,6 +231,10 @@ public final class FuzzConfig {
 
     public boolean isDiffJitEnabled() {
         return isDiffJitEnabled;
+    }
+
+    public boolean isDiffMapPageEnabled() {
+        return isDiffMapPageEnabled;
     }
 
     public boolean isDiffShadowEnabled() {
