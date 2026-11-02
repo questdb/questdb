@@ -3035,6 +3035,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * node-local transaction per partition, so it runs on a replica as well.
      * <p>
      * Cold partitions have no local data and are skipped; the command fails when every selected partition is cold.
+     * Partitions attached from a soft link are skipped too: a new directory version would move them off their volume.
      * As INSERT AS SELECT, it has no timeout: a cancel or a dropped connection stops it once the partition at hand
      * is committed.
      * No WAL replay redoes it, so on an adaptive table it ends with a best-effort save point: without one, a recovery
@@ -3123,6 +3124,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 throwIfReindexInterrupted(circuitBreaker);
                 if (txWriter.isPartitionRemotelyServed(i)) {
                     LOG.info().$("skipping cold partition in reindex [table=").$(tableToken)
+                            .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(i))
+                            .I$();
+                    continue;
+                }
+                if (isPartitionSoftLinked(i)) {
+                    // A new directory version would move the partition off its attached volume
+                    LOG.info().$("skipping soft-linked partition in reindex [table=").$(tableToken)
                             .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(i))
                             .I$();
                     continue;
@@ -10372,12 +10380,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
         final int srcDirLen = path.size();
         boolean topsChanged = false;
-        if (isParquet) {
-            try {
+        try {
+            if (isParquet) {
                 topsChanged = normalizeParquetColumnTops(partitionTimestamp, partitionSize, srcDirLen, parquetFileSize, false);
-            } finally {
-                path.trimTo(pathSize);
             }
+        } finally {
+            // back at the table root before the early return below: the writer reuses path
+            path.trimTo(pathSize);
         }
 
         // Changed parquet column tops invalidate every index of the partition
@@ -11632,6 +11641,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean isPartitionComposite(long partitionTimestamp) {
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
         return partitionIndex > -1 && txWriter.isPartitionComposite(partitionIndex);
+    }
+
+    // A partition attached from a soft link: read-only, its directory a link to another volume
+    private boolean isPartitionSoftLinked(int partitionIndex) {
+        if (!txWriter.isPartitionReadOnly(partitionIndex)) {
+            return false;
+        }
+        try {
+            setPathForNativePartition(
+                    path.trimTo(pathSize),
+                    timestampType,
+                    partitionBy,
+                    txWriter.getPartitionTimestampByIndex(partitionIndex),
+                    txWriter.getPartitionNameTxn(partitionIndex)
+            );
+            return ff.isSoftLink(path.$());
+        } finally {
+            path.trimTo(pathSize);
+        }
     }
 
     /**

@@ -127,7 +127,27 @@ public class AlterTableForceReindexTest extends AbstractCairoTest {
             drainWalQueue();
             // no index to rebuild
             execute("alter table n force reindex");
-            assertQuery("select ts, s from n").timestamp("ts").expectSize().returns("ts\ts\n2024-01-01T00:00:00.000000Z\ta\n");
+            // the writer is left fit for the next commit: a new partition and an O3 row
+            execute("insert into n values ('2024-01-03', 'c'), ('2024-01-01T05', 'b')");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("n")));
+            assertQuery("select ts, s from n").timestamp("ts").expectSize().returns("""
+                    ts\ts
+                    2024-01-01T00:00:00.000000Z\ta
+                    2024-01-01T05:00:00.000000Z\tb
+                    2024-01-03T00:00:00.000000Z\tc
+                    """);
+
+            execute("create table nn (ts timestamp, s symbol) timestamp(ts) partition by day");
+            execute("insert into nn values ('2024-01-01', 'a')");
+            execute("alter table nn force reindex");
+            execute("insert into nn values ('2024-01-03', 'c'), ('2024-01-01T05', 'b')");
+            assertQuery("select ts, s from nn").timestamp("ts").expectSize().returns("""
+                    ts\ts
+                    2024-01-01T00:00:00.000000Z\ta
+                    2024-01-01T05:00:00.000000Z\tb
+                    2024-01-03T00:00:00.000000Z\tc
+                    """);
         });
     }
 

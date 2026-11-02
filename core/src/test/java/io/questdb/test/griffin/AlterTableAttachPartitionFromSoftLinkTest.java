@@ -385,6 +385,40 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
     }
 
     @Test
+    public void testForceReindexSkipsSoftLinkedPartition() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
+            final String tableName = testName.getMethodName();
+            attachPartitionFromSoftLink(tableName, "SNOW", tableToken -> {
+                        try {
+                            final long[] before = partitionNameTxns(tableToken);
+                            execute("ALTER TABLE " + tableName + " FORCE REINDEX PARTITION LIST '" + readOnlyPartitionName + "'");
+                            Assert.assertArrayEquals(before, partitionNameTxns(tableToken));
+
+                            execute("ALTER TABLE " + tableName + " FORCE REINDEX");
+                            final long[] after = partitionNameTxns(tableToken);
+                            // the soft-linked partition keeps its directory, the other one gets a new version
+                            Assert.assertEquals(before[0], after[0]);
+                            Assert.assertNotEquals(before[1], after[1]);
+                            path.of(configuration.getDbRoot()).concat(tableToken).concat(readOnlyPartitionName);
+                            TestUtils.txnPartitionConditionally(path, (int) before[0]);
+                            Assert.assertTrue(ff.isSoftLink(path.$()));
+
+                            assertQuery("SELECT count() FROM " + tableName + " WHERE s = 'CPSW'")
+                                    .noLeakCheck()
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns("count\n1640\n");
+                        } catch (Exception ex) {
+                            throw new RuntimeException(ex);
+                        }
+                        return null;
+                    }
+            );
+        });
+    }
+
+    @Test
     public void testInsertInTransaction() throws Exception {
         assertMemoryLeak(FilesFacadeImpl.INSTANCE, () -> {
             final String tableName = testName.getMethodName();
@@ -1320,6 +1354,17 @@ public class AlterTableAttachPartitionFromSoftLinkTest extends AbstractAlterTabl
             for (int i = 0; i < partitionCount; i++) {
                 Assert.assertTrue(txFile.isPartitionReadOnly(i));
             }
+        }
+    }
+
+    private static long[] partitionNameTxns(TableToken tableToken) {
+        engine.releaseAllReaders();
+        try (TableReader reader = engine.getReader(tableToken)) {
+            final long[] nameTxns = new long[reader.getPartitionCount()];
+            for (int i = 0; i < nameTxns.length; i++) {
+                nameTxns[i] = reader.getPartitionNameTxnByIndex(i);
+            }
+            return nameTxns;
         }
     }
 

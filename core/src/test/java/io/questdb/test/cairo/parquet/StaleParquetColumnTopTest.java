@@ -26,6 +26,7 @@ package io.questdb.test.cairo.parquet;
 
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
@@ -165,6 +166,26 @@ public class StaleParquetColumnTopTest extends AbstractCairoTest {
     @Test
     public void testBitmapIndexColumnTop() throws Exception {
         assertIndexQueryFails("bitmap_top~10", "bitmap_top", "select ts, x, v, s from bitmap_top where s = 'a'", "s", "a", "ts\tx\tv\ts\n2024-01-01T05:05:00.000000Z\t-1\t42\ta\n", "ts\tx\tv\ts\n");
+    }
+
+    @Test
+    public void testColdPartitionIndexErrorNamesNoRemedy() throws Exception {
+        assertMemoryLeak(() -> {
+            loadFixture("bitmap_top~10");
+            // Cold: parquet served from the object store, FORCE REINDEX cannot rebuild its index
+            try (TableWriter writer = getWriter("bitmap_top")) {
+                writer.getTxWriter().setPartitionParquetGenerated(0, false);
+                writer.getTxWriter().setPartitionRemote(0, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+            }
+            assertExceptionNoLeakCheck(
+                    "select ts, x, v, s from bitmap_top where s = 'a'",
+                    -1,
+                    "index does not cover parquet partition data [table=bitmap_top, partition=2024-01-01, index=s, column=s]",
+                    sqlExecutionContext
+            );
+        });
     }
 
     @Test
