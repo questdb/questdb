@@ -43,8 +43,12 @@ public class CastIntToStrFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function intFunc = args.getQuick(0);
         if (intFunc.isConstant()) {
+            final int value = intFunc.getInt(null);
+            if (value == Numbers.INT_NULL) {
+                return StrConstant.NULL;
+            }
             StringSink sink = Misc.getThreadLocalSink();
-            sink.put(intFunc.getInt(null));
+            sink.put(value);
             return new StrConstant(Chars.toString(sink));
         }
         return new Func(args.getQuick(0));

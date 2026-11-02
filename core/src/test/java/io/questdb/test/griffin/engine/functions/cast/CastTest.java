@@ -3618,6 +3618,16 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullIntegerConstantsToString() throws Exception {
+        assertQuery("SELECT NULL::INT::STRING IS NULL i, NULL::LONG::STRING IS NULL l")
+                .expectSize()
+                .returns("""
+                        i\tl
+                        true\ttrue
+                        """);
+    }
+
+    @Test
     public void testIntToStrSort() throws Exception {
         assertQuery("select cast(a as string) x from tt order by x")
                 .ddl("create table tt as (select rnd_int(1,200,1) a from long_sequence(20))")
