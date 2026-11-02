@@ -49,6 +49,24 @@ public final class QueryFuzzDriver {
     // Per-constant chance, in percent, of substituting a bindable literal
     // with a bind variable inside the bind variant.
     private static final int CONSTANT_BIND_PROBABILITY_PCT = 50;
+    // Share of the fused on/off axis's completed comparisons (the pivot compiled and ran) that a
+    // working planner runs on the fused hash join GROUP BY, as runFuzz's guard models it. The share
+    // is well below 100% because the generator sends a minority of its queries through features the
+    // fused planner refuses, and a RIGHT join takes the fused plan only under the conditions that
+    // HashJoinGroupByClause describes. Sixty default runs, each on its own random schema, measured
+    // 44% over 1_872 completed comparisons, with per-run shares from 21% to 62% over 16 to 46
+    // comparisons that scatter around the mean as binomial draws do; eight 5_000-query runs measured
+    // 42% to 52%. The baseline sits below the measured share, so that a small drift in the
+    // generator's mix does not raise the guard's false-alarm rate.
+    private static final double FUSED_SHARE_BASELINE = 0.4;
+    // Chance, at FUSED_SHARE_BASELINE, that a run's fused count falls low enough for runFuzz's guard
+    // to fail it. No fixed percentage floor stays both safe and useful over the default budget's 20
+    // to 45 comparisons: the old 15% floor failed about one run in 3_000 at the measured share, and
+    // CI ran into it with 2 fused of 26. The exact binomial tail fails a run at the measured share
+    // less than once in a million, still fails every guarded run of a planner that stops fusing
+    // (0.6^25 = 2.8e-6 at the smallest guarded sample), and on a 5_000-query soak of about 170
+    // comparisons fails a share of 24% or less.
+    private static final double FUSED_SHARE_FALSE_ALARM = 1e-5;
     private static final Log LOG = LogFactory.getLog(QueryFuzzDriver.class);
     // Lowest share, in percent, of a shape's differential queries that must actually run rather
     // than be skipped on an expected error. Skips are normal - a fuzzed expression can overflow, a
@@ -78,8 +96,6 @@ public final class QueryFuzzDriver {
     // injection takes its cut, so CI always guards. This floor is about the budget only: a shape
     // whose per-run precondition the run never met is exempt whatever the budget, which
     // describeUngeneratableShape decides.
-    // Minimum share of completed fused-plan comparisons that must select the fused plan.
-    private static final int MIN_FUSED_SELECTED_PCT = 15;
     private static final int MIN_QUERIES_FOR_ZERO_GUARD = 500;
     // Differential queries a shape needs before runFuzz holds it to MIN_ACCEPTED_PCT_PER_SHAPE.
     // Below this count the accepted rate is too noisy to assert on. FuzzConfig's default budget is
@@ -91,7 +107,7 @@ public final class QueryFuzzDriver {
     // A shape that generated nothing at all is a different case and MIN_QUERIES_FOR_ZERO_GUARD
     // guards it: no budget lifts POSTING off zero, because it needs the run's random schema to
     // carry a posting-indexed SYMBOL.
-    private static final int MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR = 25;
+    static final int MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR = 25;
     // Per-query chance, in percent, of generating a bind-variable variant.
     private static final int QUERY_BIND_PROBABILITY_PCT = 20;
     private static final int SERIAL_PROBABILITY_PCT = 5;
@@ -347,8 +363,9 @@ public final class QueryFuzzDriver {
         // when the pivot selected the fused hash join GROUP BY, and a planner change that stops
         // selecting it leaves every comparison ordinary against ordinary. The share counts only
         // completed comparisons: the serial arm and the fault branch never run the axis, and a
-        // query that fails to compile fails in both plans. It is held to the same sample floor as
-        // the accepted rate above, and logged below it.
+        // query that fails to compile fails in both plans. The guard fails a run only when a working
+        // planner would select the fused plan this rarely with a chance below FUSED_SHARE_FALSE_ALARM.
+        // It holds the run to the same sample floor as the accepted rate above, and logs below it.
         final int fusedCompleted = runner.getFusedAxisCompletedRuns();
         if (config.isDiffFusedEnabled() && generatedByShape[QueryShape.HASH_JOIN_GROUP_BY.ordinal()] > 0) {
             if (fusedCompleted < MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR) {
@@ -357,10 +374,14 @@ public final class QueryFuzzDriver {
                         .$(" completed comparisons; raise -D").$(FuzzConfig.QUERIES_PROP).$(" to guard it")
                         .$();
             } else {
-                Assert.assertTrue(
-                        "the fused hash join GROUP BY ran on only " + runner.getFusedAxisSelected() + " of "
-                                + fusedCompleted + " completed comparisons; the fused on/off axis looks vacuous",
-                        100L * runner.getFusedAxisSelected() >= (long) MIN_FUSED_SELECTED_PCT * fusedCompleted
+                final int fusedSelected = runner.getFusedAxisSelected();
+                Assert.assertFalse(
+                        "the fused hash join GROUP BY ran on only " + fusedSelected + " of " + fusedCompleted
+                                + " completed comparisons, which a planner that fuses " + Math.round(100 * FUSED_SHARE_BASELINE)
+                                + "% of them does with probability "
+                                + binomialLowerTail(fusedSelected, fusedCompleted, FUSED_SHARE_BASELINE)
+                                + "; the fused on/off axis looks vacuous",
+                        isFusedShareImplausible(fusedSelected, fusedCompleted)
                 );
             }
         }
@@ -406,6 +427,32 @@ public final class QueryFuzzDriver {
                 );
             }
         }
+    }
+
+    /**
+     * Returns the exact binomial lower tail: the chance that {@code n} independent draws, each a
+     * success with probability {@code p}, yield at most {@code k} successes. The loop builds each
+     * term from the one before in log space, because the first term, (1 - p)^n, underflows a double
+     * at a few thousand draws, while the terms near {@code k} still carry the sum.
+     */
+    static double binomialLowerTail(int k, int n, double p) {
+        final double logOdds = Math.log(p) - Math.log1p(-p);
+        double logTerm = n * Math.log1p(-p);
+        double tail = Math.exp(logTerm);
+        for (int i = 1; i <= k; i++) {
+            logTerm += Math.log((double) (n - i + 1) / i) + logOdds;
+            tail += Math.exp(logTerm);
+        }
+        return tail;
+    }
+
+    /**
+     * Says whether a working planner, one that runs FUSED_SHARE_BASELINE of the completed
+     * comparisons on the fused plan, would run {@code selected} or fewer of {@code completed} on it
+     * with a chance below FUSED_SHARE_FALSE_ALARM.
+     */
+    static boolean isFusedShareImplausible(int selected, int completed) {
+        return binomialLowerTail(selected, completed, FUSED_SHARE_BASELINE) < FUSED_SHARE_FALSE_ALARM;
     }
 
     private static AssertionError buildFailure(ObjList<QueryRunner.Result> failures) {

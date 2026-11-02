@@ -141,8 +141,9 @@ import org.junit.Test;
  *         GROUP BY disabled and compare the two materializations (default
  *         true). The JIT, storage and bind axes run the fused plan on both of
  *         their sides, so only this axis sees a fused plan that returns wrong
- *         rows. The run asserts that the fused plan actually ran on a minimum
- *         share of the comparisons whose query compiled.</li>
+ *         rows. The run asserts that the fused plan ran on enough of the
+ *         comparisons whose query compiled to rule out a planner that has
+ *         stopped selecting it.</li>
  *     <li>{@code -Dquestdb.fuzz.hashjoin.payload=row_ids|copied} &mdash; force
  *         every fused hash join GROUP BY to read its build's payload columns
  *         where they live, or from the copy its build makes (default: neither,
@@ -175,6 +176,22 @@ import org.junit.Test;
  */
 public class QueryFuzzTest extends AbstractCairoTest {
     private static final String QUERY_POOL_NAME = "fuzzQuery";
+
+    @Test
+    public void testBinomialLowerTail() {
+        // Exact rational arithmetic computed the expected values, outside the code under test.
+        assertBinomialLowerTail(2.84302880299297e-06, 0, 25);
+        assertBinomialLowerTail(5.022684218620914e-05, 1, 25);
+        assertBinomialLowerTail(2.7766914642564675e-04, 2, 26);
+        assertBinomialLowerTail(1.5917802375868418e-03, 3, 26);
+        assertBinomialLowerTail(9.416824245541328e-06, 41, 170);
+        assertBinomialLowerTail(1.9811797371565857e-05, 42, 170);
+        // The first term, 0.6^2000, underflows a double, and the terms near k carry the tail.
+        assertBinomialLowerTail(2.371628584995946e-06, 700, 2_000);
+        assertBinomialLowerTail(0.5097100085964106, 800, 2_000);
+        Assert.assertEquals(0.0, QueryFuzzDriver.binomialLowerTail(0, 2_000, 0.4), 0.0);
+        Assert.assertEquals(1.0, QueryFuzzDriver.binomialLowerTail(26, 26, 0.4), 1e-12);
+    }
 
     @Test
     public void testDecimalAggregationOverflowToleratedByOracle() throws Exception {
@@ -220,6 +237,22 @@ public class QueryFuzzTest extends AbstractCairoTest {
             Assert.assertFalse(okResult.isSkipped());
             Assert.assertFalse(okResult.isFailed());
         });
+    }
+
+    @Test
+    public void testFusedShareGuard() {
+        // A working planner drew 2 fused of 26 completed comparisons on CI, which the old 15% floor
+        // failed. Every share at or above the baseline passes.
+        Assert.assertFalse(QueryFuzzDriver.isFusedShareImplausible(2, 26));
+        Assert.assertFalse(QueryFuzzDriver.isFusedShareImplausible(1, 26));
+        Assert.assertFalse(QueryFuzzDriver.isFusedShareImplausible(11, 26));
+        Assert.assertFalse(QueryFuzzDriver.isFusedShareImplausible(26, 26));
+        // A planner that stops fusing fails at the smallest guarded sample.
+        Assert.assertTrue(QueryFuzzDriver.isFusedShareImplausible(0, QueryFuzzDriver.MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR));
+        Assert.assertFalse(QueryFuzzDriver.isFusedShareImplausible(1, QueryFuzzDriver.MIN_SHAPE_QUERIES_FOR_ACCEPT_FLOOR));
+        // A soak's larger sample holds the share to more: 41 of 170 (24%) fails and 42 passes.
+        Assert.assertTrue(QueryFuzzDriver.isFusedShareImplausible(41, 170));
+        Assert.assertFalse(QueryFuzzDriver.isFusedShareImplausible(42, 170));
     }
 
     @Test
@@ -626,6 +659,11 @@ public class QueryFuzzTest extends AbstractCairoTest {
             Assert.assertTrue("rejected storage comparisons must not count as coverage", result.isSkipped());
         });
     }
+
+    private static void assertBinomialLowerTail(double expected, int k, int n) {
+        Assert.assertEquals(expected, QueryFuzzDriver.binomialLowerTail(k, n, 0.4), expected * 1e-9);
+    }
+
 
     private static String planOf(String sql) throws SqlException {
         try (RecordCursorFactory factory = engine.select(sql, sqlExecutionContext)) {
