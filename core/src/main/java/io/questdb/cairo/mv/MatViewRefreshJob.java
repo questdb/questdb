@@ -3602,7 +3602,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     if (viewState.getLastRefreshBaseTxn() != -1) {
                         final long prevRefreshStartTimestampUs = viewState.getLastRefreshStartTimestampUs();
                         final long invalidationTimestamp = microsecondClock.getTicks();
-                        LOG.info().$("marking materialized view as invalid [view=").$(viewToken)
+                        // ERROR, like the identical mint in invalidateView: this is a real invalidation,
+                        // so an operator watching for ERROR must not have to notice this one via
+                        // view_status alone.
+                        LOG.error().$("marking materialized view as invalid [view=").$(viewToken)
                                 .$(", reason=truncate operation, ts=").$ts(invalidationTimestamp)
                                 .I$();
                         try {
