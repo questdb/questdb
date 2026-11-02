@@ -1476,12 +1476,25 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         return true;
     }
 
-    private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) throws SqlException {
-        columnFilter.of(factory.getMetadata().getColumnCount());
+    private RecordToRowCopier getRecordToRowCopier(TableWriterAPI tableWriter, RecordCursorFactory factory, SqlCompiler compiler) {
+        final RecordMetadata fromMetadata = factory.getMetadata();
+        final RecordMetadata toMetadata = tableWriter.getMetadata();
+        for (int i = 0, n = fromMetadata.getColumnCount(); i < n; i++) {
+            final int fromType = fromMetadata.getColumnType(i);
+            final int toType = toMetadata.getColumnType(i);
+            if (!RecordToRowCopierUtils.isCopierConvertible(fromType, toType)) {
+                // The error describes a view/query schema mismatch, not a SQL token, so it carries no position.
+                throw CairoException.nonCritical().put("inconvertible types: ").put(ColumnType.nameOf(fromType))
+                        .put(" -> ").put(ColumnType.nameOf(toType))
+                        .put(" [from=").put(fromMetadata.getColumnName(i))
+                        .put(", to=").put(toMetadata.getColumnName(i)).put(']');
+            }
+        }
+        columnFilter.of(fromMetadata.getColumnCount());
         return RecordToRowCopierUtils.generateCopier(
                 compiler.getAsm(),
-                factory.getMetadata(),
-                tableWriter.getMetadata(),
+                fromMetadata,
+                toMetadata,
                 columnFilter,
                 configuration
         );
@@ -1531,9 +1544,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 walWriter.getMetadata(),
                                 refreshSqlExecutionContext.hasTopLevelProjectionWildcard()
                         );
-                        if (copier == null || walWriter.getMetadata().getMetadataVersion() != viewState.getRecordRowCopierMetadataVersion()) {
-                            copier = getRecordToRowCopier(walWriter, factory, compiler);
-                        }
+                        // A new factory can expose different result types even when the view schema is unchanged.
+                        copier = getRecordToRowCopier(walWriter, factory, compiler);
                     }
                 } finally {
                     refreshSqlExecutionContext.setMemoryTracker(null);
@@ -1828,6 +1840,9 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             expiryPolicyVersion = viewState.getRecordFactoryExpiryPolicyVersion();
             factory = viewState.acquireRecordFactory();
             copier = viewState.getRecordToRowCopier();
+            if (walWriter.getMetadata().getMetadataVersion() != viewState.getRecordRowCopierMetadataVersion()) {
+                factory = Misc.free(factory);
+            }
 
             OUTER:
             for (int i = 0; i <= maxRetries; i++) {
@@ -1853,17 +1868,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             // onto view columns by position, so a query whose columns moved would copy
                             // values into the wrong columns and leave the view full of garbage while
                             // reporting itself valid. validateViewSchema() refuses a changed column count,
-                            // and under a top-level wildcard a moved column. The check sits above the copier
-                            // cache so it also covers the run that reuses a copier built by an earlier refresh.
+                            // and under a top-level wildcard a moved column.
                             validateViewSchema(
                                     viewTableToken,
                                     factory.getMetadata(),
                                     walWriter.getMetadata(),
                                     refreshSqlExecutionContext.hasTopLevelProjectionWildcard()
                             );
-                            if (copier == null || walWriter.getMetadata().getMetadataVersion() != viewState.getRecordRowCopierMetadataVersion()) {
-                                copier = getRecordToRowCopier(walWriter, factory, compiler);
-                            }
+                            // A new factory can expose different result types even when the view schema is unchanged.
+                            copier = getRecordToRowCopier(walWriter, factory, compiler);
                         } catch (SqlException e) {
                             factory = Misc.free(factory);
                             if (e.isTableBusy()) {
