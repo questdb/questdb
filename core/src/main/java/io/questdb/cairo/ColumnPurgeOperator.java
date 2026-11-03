@@ -788,7 +788,7 @@ public class ColumnPurgeOperator implements Closeable {
 
         @Override
         public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-            if (postingColumnNameTxn == columnVersion) {
+            if (postingColumnNameTxn == PostingIndexUtils.coverFilePostingColumnNameTxn(columnVersion)) {
                 hasMatch = true;
             }
         }
