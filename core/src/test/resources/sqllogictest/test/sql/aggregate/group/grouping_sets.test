@@ -6,7 +6,7 @@
 # group: [group]
 
 statement ok
-CREATE TABLE gs_sales (region VARCHAR, product SYMBOL, yr INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY
+CREATE TABLE gs_sales (region VARCHAR, product SYMBOL, yr INT, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
 
 statement ok
 INSERT INTO gs_sales VALUES
@@ -27,7 +27,7 @@ statement ok
 INSERT INTO gs_stock VALUES ('apple', 'fruit'), ('pear', 'fruit'), ('plum', 'stone')
 
 statement ok
-CREATE TABLE gs_empty (region VARCHAR, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY
+CREATE TABLE gs_empty (region VARCHAR, qty INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
 
 # ROLLUP over two keys: detail rows, one subtotal per region and a grand total
 query TTII rowsort
