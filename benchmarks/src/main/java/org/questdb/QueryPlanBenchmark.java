@@ -95,7 +95,9 @@ public class QueryPlanBenchmark {
             "unread_column_window_join",
             "unread_column_hash_join",
             "endpoint_over_sub_query",
-            "negative_limit_no_match"
+            "negative_limit_no_match",
+            "negative_limit_few_right",
+            "negative_limit_empty_right"
     })
     public String query;
     private SqlExecutionContextImpl ctx;
@@ -144,6 +146,8 @@ public class QueryPlanBenchmark {
                 CREATE TABLE p AS (
                     SELECT x::DOUBLE x, x a, -x b, rnd_symbol(100, 4, 4, 0) s, timestamp_sequence(0, 20_000) ts FROM long_sequence(1_000_000)
                 ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL""", ctx);
+        engine.execute("CREATE TABLE e (b LONG, x DOUBLE)", ctx);
+        engine.execute("CREATE TABLE f AS (SELECT -x b, x::DOUBLE x FROM long_sequence(3))", ctx);
         engine.execute("""
                 CREATE TABLE k AS (
                     SELECT x id, ('k' || (x % 10))::SYMBOL s, rpad('w', 64, 'w')::VARCHAR v, timestamp_sequence(0, 100) ts FROM long_sequence(500_000)
@@ -170,6 +174,8 @@ public class QueryPlanBenchmark {
                     "SELECT count(*) n, sum(j.x) d FROM (SELECT a, s, dateadd('d', -1, ts) ts FROM t) r JOIN p j ON r.a = j.a WHERE r.ts IN '1969-12-31'";
             case "endpoint_over_sub_query" -> "SELECT max(ts) FROM (SELECT * FROM t WHERE a > 5)";
             case "negative_limit_no_match" -> "SELECT m.a, n.x FROM p m JOIN p n ON m.a = n.b WHERE m.a > 5 LIMIT -10";
+            case "negative_limit_few_right" -> "SELECT m.a, n.x FROM t m JOIN f n ON m.a = n.b WHERE m.a > 5 LIMIT -10";
+            case "negative_limit_empty_right" -> "SELECT m.a, n.x FROM t m JOIN e n ON m.a = n.b WHERE m.a > 5 LIMIT -10";
             default -> throw new IllegalArgumentException("unknown query: " + query);
         };
         factory = engine.select(sql, ctx);

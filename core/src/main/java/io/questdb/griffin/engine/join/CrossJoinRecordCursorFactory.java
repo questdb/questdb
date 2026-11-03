@@ -139,6 +139,9 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
                 isSlavePartialSizeCalculated = true;
                 tmpCounter.clear();
             }
+            if (isMasterHasNextPending && slavePartialSize == 0) {
+                return;
+            }
             if (!isMasterSizeCalculated) {
                 masterCursor.calculateSize(circuitBreaker, tmpCounter);
                 masterSize = tmpCounter.get();

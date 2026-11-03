@@ -2070,6 +2070,65 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegativeLimitOverJoinOfEmptyTableReadsNoMasterRows() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 16);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m AS (SELECT x::INT i, (x * 3_600_000_000)::TIMESTAMP ts FROM long_sequence(500)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s (k INT)");
+            execute("CREATE TABLE c AS (SELECT x::INT c FROM long_sequence(500))");
+            // the master filter counts the master rows it reads: no master row joins an empty table, so nothing reads
+            // one; once the table holds a row, the same queries read back to the master row that joins it
+            final String m = "(SELECT * FROM m WHERE i > 0 AND test_latched_counter()) m";
+            final String[] joins = {
+                    "SELECT m.i, s.k FROM " + m + " JOIN s ON m.i = s.k",
+                    "SELECT m.i, s.k FROM " + m + " JOIN s ON m.i = s.k JOIN c ON m.i = c.c",
+                    "SELECT m.i, s.k FROM " + m + " JOIN c ON m.i = c.c JOIN s ON m.i = s.k",
+            };
+            final String crossJoin = "SELECT m.i, s.k FROM " + m + " CROSS JOIN s LIMIT -1";
+            final String noRows = "i\tk\n";
+            final String joinedRow = """
+                    i\tk
+                    10\t10
+                    """;
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (String join : joins) {
+                    final String lastRow = join + " LIMIT -1";
+                    assertQuery(lastRow).noLeakCheck().noRandomAccess().expectSize().fullFatJoins(isFullFat).returns(noRows);
+                    assertReadsNoMasterRows(lastRow, isFullFat);
+                    assertReadsNoMasterRows(join, isFullFat);
+                    assertReadsNoMasterRows(join + " LIMIT 1, 3", isFullFat);
+                }
+                assertQuery(crossJoin).noLeakCheck().noRandomAccess().expectSize().returns(noRows);
+                assertReadsNoMasterRows(crossJoin, isFullFat);
+
+                try (
+                        SqlCompiler compiler = engine.getSqlCompiler();
+                        RecordCursorFactory factory = compileWithFullFatJoins(compiler, joins[0] + " LIMIT -1", isFullFat)
+                ) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertFalse(cursor.hasNext());
+                    }
+                    execute("INSERT INTO s VALUES (10)");
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertEquals(10, cursor.getRecord().getInt(0));
+                        Assert.assertEquals(10, cursor.getRecord().getInt(1));
+                        Assert.assertFalse(cursor.hasNext());
+                    }
+                }
+                for (String join : joins) {
+                    assertQuery(join + " LIMIT -1").noLeakCheck().noRandomAccess().expectSize().fullFatJoins(isFullFat).returns(joinedRow);
+                }
+                assertQuery(crossJoin).noLeakCheck().noRandomAccess().expectSize().returns("""
+                        i\tk
+                        500\t10
+                        """);
+                execute("TRUNCATE TABLE s");
+            }
+        });
+    }
+
+    @Test
     public void testNegativeLimitOverJoinPastMaxNegativeLimitBuildsSlaveOnce() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_MAX_NEGATIVE_LIMIT, 100);
         assertMemoryLeak(() -> {
@@ -3563,6 +3622,29 @@ public class LimitTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertReadsNoMasterRows(String query, boolean isFullFat) throws SqlException {
+        TestLatchedCounterFunctionFactory.reset(null);
+        final RecordCursor.Counter counter = new RecordCursor.Counter();
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compileWithFullFatJoins(compiler, query, isFullFat);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertFalse(query, cursor.hasNext());
+            cursor.toTop();
+            cursor.calculateSize(sqlExecutionContext.getCircuitBreaker(), counter);
+            Assert.assertEquals(query, 0, counter.get());
+            cursor.toTop();
+            counter.set(3);
+            cursor.skipRows(counter, RecordCursor.UNBOUNDED_ROW_COUNT);
+            Assert.assertEquals(query, 3, counter.get());
+            cursor.toTop();
+            final long size = cursor.size();
+            Assert.assertTrue(query, size == 0 || size == -1);
+        }
+        Assert.assertEquals(query, 0, TestLatchedCounterFunctionFactory.getCount());
+    }
+
     private static void assertSlaveRowReads(String query, int expectedReads) throws SqlException {
         TestLatchedCounterFunctionFactory.reset(null);
         try (
@@ -3574,6 +3656,11 @@ public class LimitTest extends AbstractCairoTest {
             }
         }
         Assert.assertEquals(expectedReads, TestLatchedCounterFunctionFactory.getCount());
+    }
+
+    private static RecordCursorFactory compileWithFullFatJoins(SqlCompiler compiler, String query, boolean isFullFat) throws SqlException {
+        compiler.setFullFatJoins(isFullFat);
+        return select(compiler, query, sqlExecutionContext);
     }
 
     private static String lastRows(String rows, int count) {

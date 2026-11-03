@@ -66,11 +66,12 @@ public final class MasterSuffixLimitFunction extends LongFunction implements Una
     }
 
     /**
-     * True when the filter's cursor returns the last {@code -lo} master rows in this execution, so the LIMIT can read
-     * older ones and keep up to {@code -lo} of them.
+     * True when the filter's cursor returns the last {@code -lo} master rows in this execution and the join read them,
+     * so the LIMIT can read older ones and keep up to {@code -lo} of them. A join that read none, over an empty slave,
+     * emits no rows whichever rows its master holds.
      */
     public boolean isReadingLastRows(long lo) {
-        return lo < 0 && lo >= -maxRowCount && lastRows != null && lastRows.isOpen();
+        return lo < 0 && lo >= -maxRowCount && lastRows != null && lastRows.isOpen() && lastRows.isRead();
     }
 
     /**

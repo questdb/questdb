@@ -473,6 +473,10 @@ class AsyncFilteredNegativeLimitRecordCursor implements AbstractAsyncFilteredRec
         return isOpen;
     }
 
+    boolean isRead() {
+        return frameIndex != -1;
+    }
+
     void of(PageFrameSequence<?> frameSequence, long rowLimit, DirectLongList negativeLimitRows) {
         this.isOpen = true;
         this.frameSequence = frameSequence;
@@ -502,11 +506,7 @@ class AsyncFilteredNegativeLimitRecordCursor implements AbstractAsyncFilteredRec
      * may pass the filter.
      */
     boolean readOlderRows() {
-        if (frameIndex == -1) {
-            // nothing read the last rows yet, so they are the rows to return
-            fetchAllFrames();
-            return rowLo < rowHi;
-        }
+        assert isRead() : "the LIMIT reads older rows after the join read the last ones";
         if (!hasOlderRows) {
             return false;
         }

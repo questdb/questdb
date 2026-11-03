@@ -185,6 +185,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         private final RecordChain slaveChain;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isMapBuilt;
+        private boolean isMapEmpty;
         private boolean isOpen;
         private Record masterRecord;
         private long size = -1;
@@ -218,6 +219,9 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         @Override
         public boolean hasNext() {
             buildMapOfSlaveRecords();
+            if (isMapEmpty) {
+                return false;
+            }
 
             if (useSlaveCursor && slaveChain.hasNext()) {
                 return true;
@@ -251,7 +255,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                 return size;
             }
             buildMapOfSlaveRecords();
-            return size = computeCursorSizeFromMap(masterCursor, joinKeyMap, masterKeySink);
+            return size = isMapEmpty ? 0 : computeCursorSizeFromMap(masterCursor, joinKeyMap, masterKeySink);
         }
 
         @Override
@@ -270,6 +274,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                 final Record keyRecord = symbolTranslatingRecord != null ? symbolTranslatingRecord : slaveCursor.getRecord();
                 populateRecordHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveKeySink, slaveChain, keyRecord);
                 isMapBuilt = true;
+                isMapEmpty = joinKeyMap.size() == 0;
             }
         }
 

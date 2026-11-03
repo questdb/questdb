@@ -202,6 +202,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         private final LongChain slaveChain;
         private SqlExecutionCircuitBreaker circuitBreaker;
         private boolean isMapBuilt;
+        private boolean isMapEmpty;
         private boolean isOpen;
         private RecordSink masterCursorSink;
         private Record masterRecord;
@@ -228,6 +229,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
             buildMapOfSlaveRecords();
+            if (isMapEmpty) {
+                return;
+            }
             while (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveChainCursor.next();
                 counter.inc();
@@ -275,6 +279,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         @Override
         public boolean hasNext() {
             buildMapOfSlaveRecords();
+            if (isMapEmpty) {
+                return false;
+            }
             if (slaveChainCursor != null && slaveChainCursor.hasNext()) {
                 slaveCursor.recordAt(slaveRecord, slaveChainCursor.next());
                 return true;
@@ -333,6 +340,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
         @Override
         public void skipRows(Counter rowCount, long maxRowsAfterSkip) {
             buildMapOfSlaveRecords();
+            if (isMapEmpty) {
+                return;
+            }
             if (slaveChainCursor != null) {
                 rowCount.dec(slaveChainCursor.skip(rowCount.get()));
             }
@@ -371,6 +381,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 Record keyRecord = symbolTranslatingRecord != null ? symbolTranslatingRecord : slaveCursor.getRecord();
                 populateRowIDHashMap(circuitBreaker, slaveCursor, joinKeyMap, slaveCursorSink, slaveChain, keyRecord);
                 isMapBuilt = true;
+                isMapEmpty = joinKeyMap.size() == 0;
             }
         }
 
