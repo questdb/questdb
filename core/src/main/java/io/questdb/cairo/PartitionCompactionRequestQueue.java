@@ -38,7 +38,7 @@ import io.questdb.std.Os;
  * in flight.
  * <p>
  * A request's slot stays unconsumed until the job is done serving it, so a requester that keeps the sequence of its
- * request ({@link #tryRequestParquetConversionSeq}) can tell, with {@link #isConsumed}, when to hand over more work.
+ * request ({@link #tryRequestSeq}) can tell, with {@link #isConsumed}, when to hand over more work.
  */
 public class PartitionCompactionRequestQueue {
     public static final int KIND_FOLD = 0;
@@ -67,7 +67,7 @@ public class PartitionCompactionRequestQueue {
 
     /**
      * Whether the job is done serving the request published at {@code seq}, as returned by
-     * {@link #tryRequestParquetConversionSeq}. Any thread.
+     * {@link #tryRequestSeq}. Any thread.
      */
     public boolean isConsumed(long seq) {
         return seq <= subSeq.current();
@@ -121,33 +121,30 @@ public class PartitionCompactionRequestQueue {
      * @return false when the queue is full and the request was not taken
      */
     public boolean tryRequest(TableToken tableToken, long logicalPartitionTimestamp) {
-        return tryRequest(tableToken, logicalPartitionTimestamp, KIND_FOLD) >= 0;
+        return tryRequestSeq(tableToken, logicalPartitionTimestamp, KIND_FOLD) >= 0;
     }
 
     /**
      * Asks for the logical partition to be converted into one parquet folder; false when the queue is full.
      */
     public boolean tryRequestParquetConversion(TableToken tableToken, long logicalPartitionTimestamp) {
-        return tryRequestParquetConversionSeq(tableToken, logicalPartitionTimestamp) >= 0;
-    }
-
-    /**
-     * Asks for the logical partition to be converted into one parquet folder.
-     *
-     * @return the request's sequence, for {@link #isConsumed}, or -1 when the queue is full
-     */
-    public long tryRequestParquetConversionSeq(TableToken tableToken, long logicalPartitionTimestamp) {
-        return tryRequest(tableToken, logicalPartitionTimestamp, KIND_PARQUET_CONVERSION);
+        return tryRequestSeq(tableToken, logicalPartitionTimestamp, KIND_PARQUET_CONVERSION) >= 0;
     }
 
     /**
      * Asks for a parquet copy installed beside the native files; false when the queue is full.
      */
     public boolean tryRequestParquetGeneration(TableToken tableToken, long logicalPartitionTimestamp) {
-        return tryRequest(tableToken, logicalPartitionTimestamp, KIND_PARQUET_GENERATION) >= 0;
+        return tryRequestSeq(tableToken, logicalPartitionTimestamp, KIND_PARQUET_GENERATION) >= 0;
     }
 
-    private long tryRequest(TableToken tableToken, long logicalPartitionTimestamp, int kind) {
+    /**
+     * Asks for a request of {@code kind}: one of {@link #KIND_FOLD}, {@link #KIND_PARQUET_CONVERSION} or
+     * {@link #KIND_PARQUET_GENERATION}.
+     *
+     * @return the request's sequence, for {@link #isConsumed}, or -1 when the queue is full
+     */
+    public long tryRequestSeq(TableToken tableToken, long logicalPartitionTimestamp, int kind) {
         long seq;
         while ((seq = pubSeq.next()) == -2) {
             Os.pause();

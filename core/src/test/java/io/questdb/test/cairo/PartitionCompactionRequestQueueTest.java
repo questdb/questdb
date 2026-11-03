@@ -104,7 +104,7 @@ public class PartitionCompactionRequestQueueTest {
         final PartitionCompactionRequestQueue queue = new PartitionCompactionRequestQueue(2);
         Assert.assertTrue(queue.tryRequest(TOKEN_A, 1));
         Assert.assertTrue(queue.tryRequest(TOKEN_B, 2));
-        Assert.assertEquals("a full queue must refuse", -1, queue.tryRequestParquetConversionSeq(TOKEN_A, 3));
+        Assert.assertEquals("a full queue must refuse", -1, queue.tryRequestSeq(TOKEN_A, 3, PartitionCompactionRequestQueue.KIND_PARQUET_CONVERSION));
     }
 
     @Test
@@ -143,8 +143,8 @@ public class PartitionCompactionRequestQueueTest {
     @Test
     public void testTakenRequestStaysUnconsumedUntilReleased() {
         final PartitionCompactionRequestQueue queue = new PartitionCompactionRequestQueue(4);
-        final long seqA = queue.tryRequestParquetConversionSeq(TOKEN_A, 10);
-        final long seqB = queue.tryRequestParquetConversionSeq(TOKEN_B, 20);
+        final long seqA = queue.tryRequestSeq(TOKEN_A, 10, PartitionCompactionRequestQueue.KIND_PARQUET_CONVERSION);
+        final long seqB = queue.tryRequestSeq(TOKEN_B, 20, PartitionCompactionRequestQueue.KIND_PARQUET_CONVERSION);
         Assert.assertTrue(seqA > -1);
         Assert.assertTrue(seqB > seqA);
         Assert.assertFalse("a queued request is not consumed", queue.isConsumed(seqA));
