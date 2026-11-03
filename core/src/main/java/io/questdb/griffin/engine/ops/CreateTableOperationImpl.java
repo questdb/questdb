@@ -771,6 +771,12 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 throw SqlException.$(0, "indexes are supported only for SYMBOL columns: ").put(columnName);
             }
             if (isDedupKey) {
+                if (ColumnType.isArray(columnType)) {
+                    throw SqlException.position(this.colNameToDedupClausePos.get(columnName))
+                            .put("dedup key columns cannot include ARRAY [column=")
+                            .put(columnName).put(", type=")
+                            .put(ColumnType.nameOf(columnType)).put(']');
+                }
                 hasDedup = true;
                 if (i == this.timestampIndex) {
                     isTimestampDeduped = true;

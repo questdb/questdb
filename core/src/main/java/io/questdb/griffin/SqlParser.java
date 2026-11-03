@@ -3832,7 +3832,7 @@ public class SqlParser {
                                 .put(columnName).put(", type=")
                                 .put(ColumnType.nameOf(model.getColumnType())).put(']');
                     }
-                    model.setIsDedupKey();
+                    model.setIsDedupKey(lexer.lastTokenPosition());
                     int colIndex = builder.getColumnIndex(columnName);
                     if (colIndex == builder.getTimestampIndex()) {
                         timestampColumnFound = true;

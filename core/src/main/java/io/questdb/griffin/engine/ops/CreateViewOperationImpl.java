@@ -265,7 +265,7 @@ public class CreateViewOperationImpl implements CreateViewOperation {
                         .put("TIMESTAMP column expected [actual=")
                         .put(ColumnType.nameOf(timestampType)).put(']');
             }
-            timestampModel.setIsDedupKey(); // set dedup for timestamp column
+            timestampModel.setIsDedupKey(-1); // set dedup for timestamp column
         }
 
         // Don't forget to reset augmented columns in create table op with what we have scraped.

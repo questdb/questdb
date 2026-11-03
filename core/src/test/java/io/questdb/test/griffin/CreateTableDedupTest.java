@@ -121,6 +121,38 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTableArrayDedupKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, arr double[]) timestamp(ts) partition by day wal");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0]),
+                    ('2024-01-01T00:00:01.000000Z', ARRAY[3.0])
+                    """);
+            drainWalQueue();
+
+            assertQuery("alter table x dedup enable upsert keys(ts, arr)")
+                    .fails(43, "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]");
+
+            // dedup stays off, so a commit with duplicate timestamps keeps every row
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-01-01T00:00:00.000000Z', ARRAY[1.0, 2.0]),
+                    ('2024-01-01T00:00:01.000000Z', ARRAY[3.0])
+                    """);
+            drainWalQueue();
+            assertQuery("select count() from x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            4
+                            """);
+        });
+    }
+
+    @Test
     public void testAlterTableSetTypeSqlSyntaxErrors() throws Exception {
         assertMemoryLeak(ff, () -> {
             execute("create table a (ts timestamp, i int, s symbol, l long, str string) timestamp(ts) partition by day wal");
@@ -141,6 +173,42 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             assertQuery(alterPrefix + "deduplicate UPSERT KEYS")
                     .fails(37, "column list expected");
         });
+    }
+
+    @Test
+    public void testArrayDedupKeyFromBeforeAlterCheckSuspendsTable() throws Exception {
+        // A table can still have an array dedup key from before ALTER TABLE refused one. The WAL apply must
+        // suspend it on the next commit instead of treating the native -1 as a row count and emptying the partition.
+        assertArrayDedupKeyFromBeforeAlterCheckSuspendsTable(
+                """
+                        INSERT INTO x VALUES
+                        ('2024-01-01T00:00:00.000000Z', 11, ARRAY[1.0]),
+                        ('2024-01-01T01:00:00.000000Z', 12, NULL),
+                        ('2024-01-01T01:00:00.000000Z', 13, ARRAY[2.0])
+                        """
+        );
+    }
+
+    @Test
+    public void testArrayDedupKeyFromBeforeAlterCheckSuspendsTableBlockApply() throws Exception {
+        // several pending transactions go through the block apply path first
+        assertArrayDedupKeyFromBeforeAlterCheckSuspendsTable(
+                "INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 11, ARRAY[1.0])",
+                "INSERT INTO x VALUES ('2024-01-01T01:00:00.000000Z', 12, NULL)",
+                "INSERT INTO x VALUES ('2024-01-01T01:00:00.000000Z', 13, ARRAY[2.0])",
+                "INSERT INTO x VALUES ('2024-01-01T02:00:00.000000Z', 14, ARRAY[2.0])"
+        );
+    }
+
+    @Test
+    public void testCreateTableAsSelectWithArrayDedupKey() throws Exception {
+        assertMemoryLeak(() -> assertQuery("""
+                    CREATE TABLE x AS (
+                        SELECT timestamp_sequence(0, 1_000_000) ts, ARRAY[1.0, 2.0] arr
+                        FROM long_sequence(3)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, arr)
+                    """)
+                .fails(173, "dedup key columns cannot include ARRAY [column=arr, type=DOUBLE[]]"));
     }
 
     @Test
@@ -786,6 +854,54 @@ public class CreateTableDedupTest extends AbstractCairoTest {
                     TestUtils.assertContains(e.getFlyweightMessage(), "Invalid column index to make a dedup key");
                 }
             }
+        });
+    }
+
+    private void assertArrayDedupKeyFromBeforeAlterCheckSuspendsTable(String... inserts) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, v int, arr double[]) timestamp(ts) partition by day wal");
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1, ARRAY[1.0]),
+                    ('2024-01-01T01:00:00.000000Z', 2, NULL)
+                    """);
+            drainWalQueue();
+
+            // bypass the SQL check to recreate a table that was altered before the fix
+            TableToken tableToken = engine.verifyTableName("x");
+            try (TableWriterAPI writer = engine.getTableWriterAPI(tableToken, "test")) {
+                AlterOperationBuilder builder = new AlterOperationBuilder().ofDedupEnable(1, tableToken);
+                builder.setDedupKeyFlag(0);
+                builder.setDedupKeyFlag(2);
+                AlterOperation alterOp = builder.build();
+                alterOp.withContext(new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE));
+                writer.apply(alterOp, true);
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            for (String insert : inserts) {
+                execute(insert);
+            }
+            drainWalQueue();
+
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("select name, suspended, errorMessage from wal_tables()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tsuspended\terrorMessage
+                            x\ttrue\tdedup failed, unsorted data or unsupported key column type
+                            """);
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv\tarr
+                            2024-01-01T00:00:00.000000Z\t1\t[1.0]
+                            2024-01-01T01:00:00.000000Z\t2\tnull
+                            """);
         });
     }
 }
