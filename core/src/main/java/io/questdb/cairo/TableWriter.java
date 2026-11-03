@@ -11604,6 +11604,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             hasInitialized = true;
         }
         if (hasInitialized) {
+            // Before the commit: a reader below its txn reads the native base with no catalog pin.
+            engine.getTableSequencerAPI().getTxnTracker(tableToken).setDeltaCatalogInitTxn(txWriter.getTxn() + 1);
             // Publish complete, empty catalogs before applying any rows; keep the WAL seqTxn.
             commitTxWriter();
         }
