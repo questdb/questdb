@@ -33,7 +33,6 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
-import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -834,17 +833,32 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         // trigger end to end, under optional restart / SEED / IN MEMORY:
         // any ghost row a converging replay failed to erase diverges from the
         // recompute oracle at quiescence.
-        final Rnd rnd = TestUtils.generateRandom(LOG);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
-        assertMemoryLeak(() -> {
-            for (int i = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
-                runReplaceRangeFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
-                        rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
-            }
-        });
-        coverage.log(LOG, "replace range");
+        runReplaceRangeFuzzVariants(TestUtils.generateRandom(LOG));
         // Each run ends moving its newest rows out of the view: see departNewestRows.
         coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
+    }
+
+    @Test
+    public void testFuzzReplaceRangeAfterAZeroRowHeadMissSplice() throws Exception {
+        // A run whose variant 9, a RANGE '17' MINUTE IN MEMORY view, deletes rows at the end of
+        // the base table through a head-miss rebuild that emits no row, with no root a restart
+        // could restore at the view's new frontier. The splice that rebuild published once kept a
+        // generation no restart could restore, and the restart after the run's departure episode
+        // failed its row count and stopped the view over the day the run dropped. The rebuild
+        // retires the timeline instead, and the restart after the departure restores.
+        runReplaceRangeFuzzVariants(TestUtils.generateRandom(LOG, 437310277036417L, 1793666395061L));
+        coverage.assertReachedStat(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT);
+    }
+
+    @Test
+    public void testFuzzReplaceRangeTruncatingAHeadMissSpliceAtItsFrontier() throws Exception {
+        // A run whose replace bands reach the head-miss rebuild's end-of-table splice with output
+        // ending below a root the splice kept, which the rebuild truncates at the view's new
+        // frontier, and with no row emitted and no root at the frontier, which retires the
+        // timeline. A random run reaches either only now and then.
+        runReplaceRangeFuzzVariants(TestUtils.generateRandom(LOG, 449697238060352L, 1793678782022L));
+        coverage.assertReachedStat(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT);
+        coverage.assertReachedStat(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT);
     }
 
     @Test
@@ -1170,19 +1184,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return b;
     }
 
-    // Repairs the job published on a route other than the anchor resume's two.
-    private static long countRepairsOffTheResume(LiveViewRefreshJob job) {
-        final LiveViewRefreshStats stats = job.getStatsForTest();
-        long repairs = 0;
-        for (int route = 0; route < LiveViewCheckpointRepairRoute.ROUTE_COUNT; route++) {
-            if (route != LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR
-                    && route != LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR) {
-                repairs += stats.getRouteCount(route);
-            }
-        }
-        return repairs;
-    }
-
     // Renders one INSERT literal for a DECIMAL(precision, scale) value: an
     // occasional NULL, else a signed value with exactly `scale` fractional digits
     // and the mandatory 'm' suffix. The unscaled magnitude is capped at 10^15 - 1
@@ -1256,14 +1257,6 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             sb.put(lines[i]).put('\n');
         }
         return sb.toString();
-    }
-
-    // Whether the anchor resume repaired every change of a departNewestRows episode, given the
-    // count of repairs off the resume from before it. The restore after a departure is what this
-    // fuzz checks of the resume's splice: a departure the head-miss replay or a rebuild repaired
-    // is left to the checks of that route.
-    private static boolean isRepairedByTheResume(LiveViewRefreshJob job, long repairsOffTheResumeBefore) {
-        return countRepairsOffTheResume(job) == repairsOffTheResumeBefore;
     }
 
     // Opens the inner LiveViewRecordCursor for the SELECT (unwrapping any
@@ -3533,13 +3526,11 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // view from the base, which erases a ghost row or restores a missing row the main loop
             // left, so the check after that restart does not stand in for this one.
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
-            final long repairsOffTheResume = countRepairsOffTheResume(job);
             if (departNewestRows(rnd, job, engine.verifyTableName("base"), null, symCount, withWhere)) {
                 // An anchored run draws repair knobs that can take the departure off the chained
                 // resume, and one route there does not keep the timeline: a declined chain whose
-                // replay emits no row retires it. The default knobs keep the chain. See
-                // isRepairedByTheResume for a departure another route repaired.
-                final boolean isTimelineKept = anchor == null && isRepairedByTheResume(job, repairsOffTheResume);
+                // replay emits no row retires it. The default knobs keep the chain.
+                final boolean isTimelineKept = anchor == null;
                 if (isTimelineKept) {
                     rowsBeforeTheDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
                 }
@@ -5242,6 +5233,19 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return job;
     }
 
+    // Every fixed-width variant through runReplaceRangeFuzz, each with its own random knobs, under
+    // a row cadence drawn once for the batch.
+    private void runReplaceRangeFuzzVariants(Rnd rnd) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < FIXED_WIDTH_VARIANTS.length; i++) {
+                runReplaceRangeFuzz(rnd, FIXED_WIDTH_VARIANTS[i], 120 + rnd.nextInt(160),
+                        rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
+            }
+        });
+        coverage.log(LOG, "replace range");
+    }
+
     // Differential fuzz where the base receives REPLACE_RANGE data commits
     // (WalWriter.commitWithParams) interleaved with plain insert commits. A
     // replace commit atomically deletes every base row in [lo, hi) and inserts
@@ -5390,12 +5394,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // view from the base, which erases a ghost row or restores a missing row the main loop
             // left, so the check after that restart does not stand in for this one.
             TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
-            final long repairsOffTheResume = countRepairsOffTheResume(job);
             if (departNewestRows(rnd, job, baseToken, usedTs, symCount, withWhere)) {
-                final boolean isTimelineKept = isRepairedByTheResume(job, repairsOffTheResume);
-                if (isTimelineKept) {
-                    rowsBeforeTheDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
-                }
+                rowsBeforeTheDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
                 coverage.absorb(job);
                 // The restart below registers a fresh instance whose fault count starts at zero,
                 // so only this check sees the faults this instance healed, the departure
@@ -5406,10 +5406,8 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 engine.buildViewGraphs();
                 job = new LiveViewRefreshJob(0, engine, 1);
                 driveRefreshToQuiescence(job);
-                if (isTimelineKept) {
-                    // No fault struck the run, so the departure left a root at the view's frontier.
-                    assertRestoredFromTimeline("lv");
-                }
+                // No fault struck the run, so the departure left a root at the view's frontier.
+                assertRestoredFromTimeline("lv");
             }
         } finally {
             coverage.absorb(job);

@@ -37,6 +37,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
@@ -93,6 +94,15 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     // Longer than the 100ms FLUSH EVERY the tests declare, so one pass always crosses a flush
     // deadline rather than leaving the view waiting on the clock.
     protected static final long CLOCK_ADVANCE_MICROS = 250_000;
+    // Past the default five-minute checkpoint duration cadence, so the next commit after the
+    // clock moves this far seals a root at its newest row.
+    protected static final long DURATION_CADENCE_ELAPSED_MICROS = 6 * 60 * 1_000_000L;
+    // A filtered view whose one-minute RANGE frame lets a localized rebuild warm its state from
+    // one minute below a correction. Under the default checkpoint cadence its roots are sparse,
+    // so a correction of its newest rows prices that rebuild below a resume from the root under
+    // them, and the rebuild runs to the end of the base table: a head-miss end-of-table splice.
+    protected static final String HEAD_MISS_DEPARTURE_VIEW_SQL = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts "
+            + "RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) s FROM base WHERE x > 0";
     protected static final int REFRESH_QUIESCENCE_PASSES = 512;
     // The refresh-retry backoff LiveViewRefreshJob documents: after a faulting turn no worker
     // re-drives the view for the first wait, each consecutive faulting turn doubles it, and no wait
@@ -586,6 +596,89 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      */
     protected static LiveViewTestRefreshHooks hooks(LiveViewRefreshJob job) {
         return LiveViewTestRefreshHooks.install(job);
+    }
+
+    /**
+     * The view rows the head-miss departure fixture leaves: when {@code isDayRowKept}, the row
+     * {@code 2025-12-31T23:55 a 0.5} that the base may since have lost, then a row of {@code a}
+     * a minute from {@code 2026-01-01T00:00} to {@code 00:lastMinute}, each of {@code x = 1.0}.
+     * The one-minute frame of each holds itself and the row a minute below it, and the 23:55 row
+     * sits five minutes under the first: {@code s} is 1.0 at 00:00 and 2.0 above it.
+     */
+    protected static String headMissDepartureRows(boolean isDayRowKept, int lastMinute) {
+        final StringSink sink = new StringSink();
+        sink.put("ts\tsym\tx\ts\n");
+        if (isDayRowKept) {
+            sink.put("2025-12-31T23:55:00.000000Z\ta\t0.5\t0.5\n");
+        }
+        for (int minute = 0; minute <= lastMinute; minute++) {
+            sink.put("2026-01-01T00:").put(minute < 10 ? "0" : "").put(minute).put(":00.000000Z\ta\t1.0\t")
+                    .put(minute == 0 ? "1.0" : "2.0").put('\n');
+        }
+        return sink.toString();
+    }
+
+    /**
+     * Repairs the head-miss executor published on {@code job}: every route but the two resumes
+     * from a sealed anchor.
+     */
+    protected static long countHeadMissRepairs(LiveViewRefreshJob job) {
+        long repairs = 0;
+        for (int route = 0; route < LiveViewCheckpointRepairRoute.ROUTE_COUNT; route++) {
+            if (route != LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR
+                    && route != LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR) {
+                repairs += job.getStatsForTest().getRouteCount(route);
+            }
+        }
+        return repairs;
+    }
+
+    /**
+     * Rows of {@code a}, one a minute from {@code 2026-01-01T00:fromMinute} to
+     * {@code 00:toMinute}, each holding {@code x}, as the VALUES list of one INSERT.
+     */
+    protected static String minuteRowsOfA(int fromMinute, int toMinute, String x) {
+        final StringSink sink = new StringSink();
+        for (int minute = fromMinute; minute <= toMinute; minute++) {
+            if (minute > fromMinute) {
+                sink.put(", ");
+            }
+            sink.put("('2026-01-01T00:").put(minute < 10 ? "0" : "").put(minute).put(":00.000000Z', 'a', ").put(x).put(')');
+        }
+        return sink.toString();
+    }
+
+    /**
+     * The generation the superblock of {@code instance}'s checkpoint timeline names.
+     */
+    protected static long publishedCheckpointGeneration(LiveViewInstance instance) {
+        try (
+                Path checkpointsDir = new Path().of(configuration.getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(configuration)
+        ) {
+            store.of(checkpointsDir);
+            return store.getSuperblock().generation;
+        }
+    }
+
+    /**
+     * Commits a REPLACE_RANGE over {@code [lo, hi)} on the base table {@code (ts, sym, x)},
+     * holding one row {@code (lo, 'a', keptX)}, or none for a NaN {@code keptX}: what a
+     * materialized view's incremental refresh writes over a bucket range. The commit is left to
+     * the WAL apply job.
+     */
+    protected static void replaceBaseRange(long lo, long hi, double keptX) {
+        try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("base"))) {
+            if (!Double.isNaN(keptX)) {
+                final TableWriter.Row row = walWriter.newRow(lo);
+                row.putSym(1, "a");
+                row.putDouble(2, keptX);
+                row.append();
+            }
+            walWriter.commitWithParams(lo, hi, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
+        }
     }
 
     /**

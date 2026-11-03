@@ -10527,6 +10527,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // bounded fault that costs no invalidation.
                     retireCheckpointTimeline(instance);
                 }
+                // The view table's newest timestamp once the replacement applied, read the way a
+                // restart reads the frontier it floors its restore on, off the reader that
+                // measures the row count. Every repair holding a splice capture commits a
+                // replacement, so a published splice always has it read; LONG_NULL is a view the
+                // repair left empty.
+                long durableMaxTsAfterRepair = Numbers.LONG_NULL;
                 if (repairPublication.hasCommittedReplacement()) {
                     // Post-commit reconciliation. The replacement is durable in the live
                     // view's own WAL, but every coordinate the rest of this method derives -
@@ -10546,7 +10552,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // keeps the head checkpoint's lvRowPosition (written below)
                     // consistent in both the intact-base and base-data-removed cases.
                     try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
-                        instance.setLvRowsTotal(lvReader.size());
+                        final long rows = lvReader.size();
+                        durableMaxTsAfterRepair = rows > 0 ? lvReader.getMaxTimestamp() : Numbers.LONG_NULL;
+                        instance.setLvRowsTotal(rows);
                     }
                 }
                 final boolean replacementReconciled = repairPublication.isReplacementReconciled();
@@ -10679,7 +10687,67 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         persistState(instance);
                     }
                     repairPublication.watermarkAdvanced();
-                    if (appendedRows > 0 || repairPublication.isKeepPrimaryRuntime()) {
+                    // Whether the head seal below runs: the replay emitted rows, or the repair kept
+                    // the primary runtime, which stands at its own frontier.
+                    final boolean isSealable = appendedRows > 0 || repairPublication.isKeepPrimaryRuntime();
+                    // Whether a root sits exactly at the view's new frontier and counts every row
+                    // the view holds. Read only for a published splice whose repair cannot seal.
+                    boolean isFrontierRootRestorable = false;
+                    // Whether the splice kept roots above that frontier, which the truncate below
+                    // drops ahead of the seal.
+                    boolean isFrontierTruncated = false;
+                    // Whether that truncate kept a prefix whose newest root sits at the frontier.
+                    boolean isFrontierRootKept = false;
+                    if (timelineSplice != null) {
+                        // The splice moved the generation's normalizedBaseSeqTxn up to E, so a
+                        // restart restores it only from a root at the view's frontier F: it floors
+                        // its restore at F, takes the newest root at or below it and replays the
+                        // base transactions above E alone. A root above F is no better: a restart
+                        // puts the head and the runtime frontier back at F, and every seal between
+                        // F and that root then fails against it. When the view's newest rows leave
+                        // it - an upsert moved them out of the filter, or a REPLACE_RANGE deleted
+                        // them - two kinds of replay leave such a generation behind:
+                        //  - one that emitted rows, or kept the primary runtime, and ended below a
+                        //    root the splice kept. The splice froze every root above the replay's
+                        //    last row with the state that row left, where the departed rows were.
+                        //    The truncate below drops those roots, and the seal puts the frontier's
+                        //    own root on what survived;
+                        //  - one that emitted nothing, which no seal can follow: the runtime holds
+                        //    only the state the replay warmed from L, the full-history state at
+                        //    R - 1 and above, while F sits below R, where a frame reaches rows the
+                        //    warm-up never read. The splice stands only over a root already at F
+                        //    that counts every row the view holds, once the truncate drops any
+                        //    root above F as above; otherwise the timeline retires, as such a
+                        //    repair did before the splice existed.
+                        final long headRootMaxTs = timelineSplice.getHeadRootMaxTimestamp();
+                        if (isSealable) {
+                            isFrontierTruncated = durableMaxTsAfterRepair < headRootMaxTs;
+                        } else {
+                            isFrontierRootRestorable = isRestorableRootAtFrontier(instance, durableMaxTsAfterRepair);
+                            isFrontierTruncated = isFrontierRootRestorable && durableMaxTsAfterRepair < headRootMaxTs;
+                        }
+                        if (isFrontierTruncated) {
+                            // As a localized repair holding no capture truncates at R: every root
+                            // above the frontier goes, the ones at or below it stay, and the
+                            // generation keeps the splice's base coordinate. The truncate writes a
+                            // repair marker of its own over the splice's generation, in place of
+                            // the splice's, and the resolution below applies the truncate's rule
+                            // to it. It runs past the consumed seqTxn advance, with the seal, so a
+                            // state write that fails there skips the two together. It also moves
+                            // the generation past any the runtime's seal baseline names, so the
+                            // seal images every key.
+                            stats.inc(HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT);
+                            LOG.info().$("live view O3 head miss output ended below its spliced roots, truncating at the frontier [view=")
+                                    .$(viewName)
+                                    .$(", frontier=").$ts(durableMaxTsAfterRepair)
+                                    .$(", spliceHeadRootMaxTs=").$ts(headRootMaxTs)
+                                    .$(", rowsEmitted=").$(appendedRows).I$();
+                            prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, durableMaxTsAfterRepair + 1, truncatedHead);
+                            isFrontierRootKept = prefixMarkerLive && truncatedHead.maxTs == durableMaxTsAfterRepair;
+                        }
+                    }
+                    hooks.beforeHeadMissHeadSeal();
+                    if (isSealable) {
                         // Post-replay head: retireCheckpointStateOnO3 cleared the head metadata
                         // above, so force seals a fresh boundary reflecting the post-replay state
                         // (firstCp is already true here; force keeps the intent explicit). A
@@ -10721,9 +10789,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // splice's newest root below the frontier under a generation already
                         // standing at this commit, so a restart would fail its own row count and
                         // rebuild from the applied base.
+                        //
+                        // A splice truncated at the frontier owes the frontier its root, which the
+                        // seal appends unless the truncate kept one there: then it only re-stamps
+                        // the head. That frontier is this seal's own timestamp. A replay that
+                        // replaced the primary runtime ran to the end of the base table, so the
+                        // view's newest row is the last one it emitted; a repair that kept the
+                        // primary stood on a durable frontier at its runtime frontier.
                         final long headMaxTs = repairPublication.isKeepPrimaryRuntime()
                                 ? instance.getLatestSeenTs()
                                 : replayMaxTs;
+                        assert !isFrontierTruncated || headMaxTs == durableMaxTsAfterRepair;
                         // Take the seal's own answer: it swallows every Throwable and also declines a
                         // boundary that does not clear the head, so assuming success would clear the
                         // durable repair marker over a head that was never written.
@@ -10734,9 +10810,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 headMaxTs,
                                 0L,
                                 true,
-                                timelineSplice == null || headMaxTs > timelineSplice.getHeadRootMaxTimestamp()
+                                isFrontierTruncated
+                                        ? !isFrontierRootKept
+                                        : timelineSplice == null || headMaxTs > timelineSplice.getHeadRootMaxTimestamp()
                         );
                     }
+                    // A published splice wrote its marker at the replacement commit, so only a
+                    // frontier truncate that retired the timeline can have taken it since.
+                    assert timelineSplice == null || isFrontierTruncated || prefixMarkerLive;
                     if (prefixMarkerLive) {
                         // Resolve the repair's live marker, which the two timeline-keeping
                         // routes reach from opposite sides.
@@ -10755,7 +10836,32 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // A splice that never published falls to neither. The exit path below
                         // retires the timeline for it, and that takes the marker with it, so
                         // this must not clear one on the strength of a seal alone.
-                        if (timelineSplice != null || (timelineCapture == null && headSealed)) {
+                        //
+                        // A splice truncated at its frontier is a truncate, except that the prefix
+                        // is restorable without a seal when its newest root already sits there. A
+                        // splice whose replay emitted nothing is consistent only over a restorable
+                        // root at the frontier, and is retired otherwise.
+                        if (isFrontierTruncated) {
+                            if (headSealed || isFrontierRootKept) {
+                                clearCheckpointRepairMarker(instance);
+                            } else {
+                                retireCheckpointTimeline(instance);
+                            }
+                        } else if (timelineSplice != null) {
+                            if (isSealable) {
+                                clearCheckpointRepairMarker(instance);
+                            } else if (isFrontierRootRestorable) {
+                                stats.inc(HEAD_MISS_SPLICE_ZERO_ROW_KEEP_COUNT);
+                                clearCheckpointRepairMarker(instance);
+                            } else {
+                                stats.inc(HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT);
+                                LOG.info().$("live view O3 head miss emitted no row and no root sits at the frontier, retiring the timeline [view=")
+                                        .$(viewName)
+                                        .$(", frontier=").$ts(durableMaxTsAfterRepair)
+                                        .$(", spliceHeadRootMaxTs=").$ts(timelineSplice.getHeadRootMaxTimestamp()).I$();
+                                retireCheckpointTimeline(instance);
+                            }
+                        } else if (timelineCapture == null && headSealed) {
                             clearCheckpointRepairMarker(instance);
                         } else if (timelineCapture == null) {
                             retireCheckpointTimeline(instance);
@@ -11706,7 +11812,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * Only a repair that published a timeline range splice passes
      * {@code false}, and only when the splice's newest root already sits at the
-     * frontier the seal is about to stamp, or when the resume truncated the splice at
+     * frontier the seal is about to stamp, or when the repair truncated the splice at
      * its frontier and the truncate left its newest root there: that generation is
      * published, the runtime stands exactly where the repair found it, and appending
      * would claim a boundary duplicating the head root. A splice whose frontier ran
@@ -12833,6 +12939,48 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", anchorCheckpointId=").$(anchorCheckpointId)
                     .$(", error=").$(t).I$();
             return Numbers.LONG_NULL;
+        }
+    }
+
+    /**
+     * Whether the view's published timeline can be restored from a root at {@code frontierTs}
+     * once the base transactions above its normalizedBaseSeqTxn alone are replayed: its newest
+     * root at or below the frontier sits exactly there, and its effective row position counts
+     * every row the view's table holds, which {@link LiveViewInstance#getLvRowsTotal()} has just
+     * been read from. A root whose timestamp group grew after its seal counts fewer, and a
+     * restore from it fails its row count as surely as one from an older root.
+     * <p>
+     * One predecessor lookup under one generation pin, through the worker's timeline store
+     * reader, which is detached again before this returns.
+     *
+     * @param frontierTs the view's newest timestamp, or {@link Numbers#LONG_NULL} for a view
+     *                   with no row, which no root can stand for
+     * @return false as well when the timeline cannot be read: a root this cannot vet is no root
+     * to keep a generation over
+     */
+    private boolean isRestorableRootAtFrontier(LiveViewInstance instance, long frontierTs) {
+        if (frontierTs == Numbers.LONG_NULL) {
+            return false;
+        }
+        try (Path checkpointsDir = new Path()) {
+            checkpointsDir.of(engine.getConfiguration().getDbRoot())
+                    .concat(instance.getLiveViewToken())
+                    .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+            final LiveViewCheckpointTimelineStoreReader reader = borrowCheckpointTimelineStoreReader(checkpointsDir);
+            try {
+                final long lvRowPosition = reader.predecessorLvRowPosition(frontierTs + 1, timelineFrontierRoot);
+                return lvRowPosition != Numbers.LONG_NULL
+                        && timelineFrontierRoot.maxTimestamp == frontierTs
+                        && lvRowPosition == instance.getLvRowsTotal();
+            } finally {
+                reader.detach();
+            }
+        } catch (Throwable t) {
+            LOG.error().$("could not read the live view checkpoint root at the frontier [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", frontier=").$ts(frontierTs)
+                    .$(", error=").$(t).I$();
+            return false;
         }
     }
 

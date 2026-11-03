@@ -86,6 +86,9 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
                 ('2026-01-02T00:10:00.000000Z', 'a', 16.0),
                 ('2026-01-02T01:10:00.000000Z', 'b', 32.0)
             """;
+    // A one-minute RANGE frame over the mat view's one-minute buckets.
+    private static final String MINUTE_RANGE_VIEW_SQL = "SELECT ts, k, sum(sv) OVER (PARTITION BY k ORDER BY ts "
+            + "RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) AS s FROM mvbase";
     private static final String VIEW_ROWS_QUERY = "SELECT ts, k, s, c FROM lv_on_mv ORDER BY k, ts";
 
     @Test
@@ -362,6 +365,57 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testNewestBucketsLeavingTheMatViewThroughAHeadMissRebuildRestoreFromTheTimeline() throws Exception {
+        // A base correction rewrites the newest three one-minute buckets of the mat view: one keeps
+        // a new sum, and the two above it lose every row the mat view's filter keeps, so its
+        // incremental refresh replaces their range with one bucket row. The live view seals a root
+        // every 29 rows, so the root below the correction sits half an hour under it, and a rebuild
+        // warming its one-minute frame from a minute below the correction is the cheaper repair. Its
+        // output ends below the root at the newest bucket it spliced: the repair truncates at the
+        // new frontier and seals a root there. Each restart restores from it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 29);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, k)");
+            execute("CREATE MATERIALIZED VIEW mvbase AS (SELECT ts, k, sum(v) AS sv FROM base WHERE v > 0 SAMPLE BY 1m) PARTITION BY DAY");
+            drainWalAndMatViewQueues(engine);
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms START FROM NOW AS " + MINUTE_RANGE_VIEW_SQL);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2025-12-31T23:55:10.000000Z', 'a', 0.5)");
+                refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES " + minuteRowsOfA(0, 30, "1.0"));
+                refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES " + minuteRowsOfA(31, 59, "1.0"));
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv_on_mv");
+                Assert.assertNotNull(instance);
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:30:00.000000Z -> 32
+                        2026-01-01T00:59:00.000000Z -> 61
+                        """);
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                refreshMatViewAndView(
+                        job,
+                        "INSERT INTO base (ts, k, v) VALUES ('2026-01-01T00:57:00.000000Z', 'a', 5.0), "
+                                + "('2026-01-01T00:58:00.000000Z', 'a', -1.0), ('2026-01-01T00:59:00.000000Z', 'a', -1.0)"
+                );
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:30:00.000000Z -> 32
+                        2026-01-01T00:57:00.000000Z -> 59
+                        """);
+            }
+            assertMinuteRangeViewMatchesRecompute();
+            for (int restart = 0; restart < 2; restart++) {
+                restartCycle();
+                assertRestoredFromTimeline("lv_on_mv");
+                assertMinuteRangeViewMatchesRecompute();
+                assertViewActive();
+            }
+        });
+    }
+
+    @Test
     public void testMatViewFullRefreshInvalidatesDependentLiveView() throws Exception {
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         assertMemoryLeak(() -> {
@@ -574,6 +628,18 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
                         view_name\tview_status
                         lv_on_mv\tactive
                         """);
+    }
+
+    private void assertMinuteRangeViewMatchesRecompute() throws Exception {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + MINUTE_RANGE_VIEW_SQL + ") ORDER BY k, ts",
+                "SELECT ts, k, s FROM lv_on_mv ORDER BY k, ts",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv_on_mv");
     }
 
     private void assertViewMatchesRecompute() throws Exception {

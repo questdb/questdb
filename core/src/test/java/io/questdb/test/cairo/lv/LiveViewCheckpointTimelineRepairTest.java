@@ -48,6 +48,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -900,6 +901,11 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         "a published splice owes no repair marker",
                         hasRepairMarker()
                 );
+                // The replay emitted rows up to the newest root it re-versioned, so its output
+                // reaches the spliced ladder's top: no root sits above the frontier to truncate.
+                Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_KEEP_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT));
             }
 
             assertQuery("select ts, sym, s from lv order by ts")

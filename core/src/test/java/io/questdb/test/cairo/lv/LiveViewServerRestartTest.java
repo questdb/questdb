@@ -229,6 +229,69 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testDepartedNewestRowsOfAHeadMissRebuildSurviveAServerRestart() throws Exception {
+        // The three newest rows of a filtered view with a one-minute RANGE frame go in one upsert,
+        // the oldest of them to a new value and the two others out of the filter. A root every 29
+        // rows leaves the root below them half an hour under them, so a rebuild warming its frame
+        // from a minute below them repairs the view, and its output ends below the root it spliced
+        // at the newest row: the repair truncates at the new frontier and seals a root there. The
+        // base lost the day of the view's oldest row, which only the timeline keeps: each cold
+        // boot must restore from it rather than rebuild from the base.
+        assertMemoryLeak(() -> {
+            final String rowsSql = "SELECT ts::varchar, sym, x, s FROM " + DEPARTED_VIEW + " ORDER BY 1";
+            final StringBuilder expected = new StringBuilder("2025-12-31T23:55:00.000000Z\ta\t0.5\t0.5\n");
+            final StringBuilder firstBatch = new StringBuilder();
+            final StringBuilder secondBatch = new StringBuilder();
+            for (int minute = 0; minute <= 59; minute++) {
+                final String ts = "2026-01-01T00:" + (minute < 10 ? "0" : "") + minute + ":00.000000Z";
+                final StringBuilder batch = minute <= 30 ? firstBatch : secondBatch;
+                batch.append(batch.length() > 0 ? ", " : "").append("('").append(ts).append("', 'a', 1.0)");
+                if (minute <= 56) {
+                    expected.append(ts).append("\ta\t1.0\t").append(minute == 0 ? "1.0" : "2.0").append('\n');
+                }
+            }
+            expected.append("2026-01-01T00:57:00.000000Z\ta\t5.0\t6.0\n");
+            try (TestServerMain serverMain = startServer(29); Connection conn = connect()) {
+                execute(conn, "CREATE TABLE " + DEPARTED_BASE + " (ts TIMESTAMP, sym SYMBOL, x DOUBLE)"
+                        + " TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+                execute(conn, "CREATE LIVE VIEW " + DEPARTED_VIEW + " FLUSH EVERY 100ms START FROM BEGINNING AS"
+                        + " SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) s"
+                        + " FROM " + DEPARTED_BASE + " WHERE x > 0");
+                final String[] statements = {
+                        "INSERT INTO " + DEPARTED_BASE + " VALUES ('2025-12-31T23:55:00.000000Z', 'a', 0.5)",
+                        "ALTER TABLE " + DEPARTED_BASE + " DROP PARTITION LIST '2025-12-31'",
+                        "INSERT INTO " + DEPARTED_BASE + " VALUES " + firstBatch,
+                        "INSERT INTO " + DEPARTED_BASE + " VALUES " + secondBatch,
+                        // The newest rows leave the view, but for the oldest of them.
+                        "INSERT INTO " + DEPARTED_BASE + " VALUES ('2026-01-01T00:57:00.000000Z', 'a', 5.0),"
+                                + " ('2026-01-01T00:58:00.000000Z', 'a', -1.0), ('2026-01-01T00:59:00.000000Z', 'a', -1.0)"
+                };
+                for (String statement : statements) {
+                    execute(conn, statement);
+                    awaitCaughtUp(serverMain, conn, DEPARTED_BASE, DEPARTED_VIEW);
+                }
+                TestUtils.assertEquals(expected, readRows(conn, rowsSql));
+                assertNoRefreshFaults(serverMain, DEPARTED_VIEW);
+            }
+            for (int restart = 0; restart < 2; restart++) {
+                try (TestServerMain serverMain = startServer(29); Connection conn = connect()) {
+                    assertRestartRestoredFromTimeline(serverMain, conn, DEPARTED_VIEW);
+                    TestUtils.assertEquals(DEPARTED_VIEW + " must come back with the rows it had", expected, readRows(conn, rowsSql));
+                    assertNoRefreshFaults(serverMain, DEPARTED_VIEW);
+                }
+            }
+            capture.drain();
+            capture.assertLogged("live view O3 head miss output ended below its spliced roots, truncating at the frontier [view=" + DEPARTED_VIEW + ",");
+            Assert.assertEquals(
+                    "both restarts must restore from the timeline",
+                    2,
+                    capture.countOccurrences("restored live view from checkpoint timeline [view=" + DEPARTED_VIEW + ",")
+            );
+            capture.assertNotLogged("live view checkpoint timeline rebuild does not match durable materialization");
+        });
+    }
+
+    @Test
     public void testDepartedNewestRowSurvivesAServerRestart() throws Exception {
         // The newest row of a filtered view over a deduplicating base leaves it through an
         // upsert to a value the filter rejects, and a late row lands between the root below it

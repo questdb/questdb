@@ -32,6 +32,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -47,6 +48,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -81,6 +83,13 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
             2026-01-01T00:01:30.000000Z\ta\t3.0\t5.0
             """;
     private static final String DEPARTURE_SUM = "sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)";
+    // One upsert over the head-miss departure fixture: 00:57 to a new value, 00:58 and 00:59 out
+    // of the filter.
+    private static final String HEAD_MISS_KEPT_ROW_DEPARTURE = "('2026-01-01T00:57:00.000000Z', 'a', 5.0), "
+            + "('2026-01-01T00:58:00.000000Z', 'a', -1.0), ('2026-01-01T00:59:00.000000Z', 'a', -1.0)";
+    // What HEAD_MISS_KEPT_ROW_DEPARTURE leaves: the kept row's one-minute frame holds 00:56 too.
+    private static final String HEAD_MISS_KEPT_ROW_DEPARTURE_ROWS = headMissDepartureRows(true, 56)
+            + "2026-01-01T00:57:00.000000Z\ta\t5.0\t6.0\n";
     private static final String SINGLE_DEPARTURE_FORWARD_ROW = "('2026-01-01T00:05:00.000000Z', 'a', 4.5)";
     // What the single-departure shape leaves: a root at the row that became the frontier.
     private static final String SINGLE_DEPARTURE_LADDER = """
@@ -272,6 +281,365 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                             "a\t40.0\t2026-01-01T01:30:00.000000Z\t70.0\n");
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    @Test
+    public void testAnUpsertMovingEveryNewestRowOutOfTheFilterOverALostDayBlocksTheRestart() throws Exception {
+        // The three newest rows move out of the filter and nothing is emitted in their place, from
+        // a rebuild whose runtime holds only the state it warmed from one minute below them. No
+        // root sits at the new frontier 00:56, so the repair retires the timeline rather than keep
+        // one a restart could not restore. That restart then rebuilds with the restatement guard
+        // armed, which refuses the rebuild over the day the base lost: the view stops and keeps
+        // its 2025-12-31 row, where a rebuild would drop it. Known limitation: a zero-row
+        // end-of-table repair with no restorable root at its frontier retires the timeline.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView("TIMESTAMP");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitMinuteBatchesOverTheLostDay(job);
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                final long resetsBefore = departureView().getCheckpointTimelineResets();
+                commitDeparture(
+                        job,
+                        "('2026-01-01T00:57:00.000000Z', 'a', -1.0), ('2026-01-01T00:58:00.000000Z', 'a', -1.0), ('2026-01-01T00:59:00.000000Z', 'a', -1.0)"
+                );
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT));
+                Assert.assertEquals("the repair retires the timeline", resetsBefore + 1, departureView().getCheckpointTimelineResets());
+                try (Path dir = departureCheckpointsDir(); Path timelinePath = new Path()) {
+                    LiveViewCheckpointLayout.timelinePath(timelinePath, dir);
+                    Assert.assertFalse(configuration.getFilesFacade().exists(timelinePath.$()));
+                    Assert.assertFalse(LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+                }
+            }
+            final String rows = headMissDepartureRows(true, 56);
+            assertDepartureRows(rows);
+            for (int restart = 0; restart < 2; restart++) {
+                final LogCapture capture = new LogCapture();
+                capture.start();
+                try {
+                    restartLiveViewsAndRecover();
+                    capture.drain();
+                    capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=timeline is absent");
+                    capture.assertNotLogged("runs without the restatement guard");
+                } finally {
+                    capture.stop();
+                }
+                Assert.assertEquals(
+                        "rebuild_blocked",
+                        LiveViewCheckpointRecoveryPhase.routeName(departureView().getCheckpointRestoreRoute())
+                );
+                Assert.assertTrue(departureView().isCheckpointRecoveryBlocked());
+                assertDepartureRows(rows);
+            }
+        });
+    }
+
+    @Test
+    public void testAnUpsertMovingTheNewestRowOfOneKeyTiedAtTheFrontierKeepsTheSplice() throws Exception {
+        // Two keys share the newest timestamp and one of them leaves the filter. The other keeps
+        // the frontier where the spliced root sits, so the rebuild's output reaches that root and
+        // nothing is truncated: the seal only re-stamps it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView("TIMESTAMP");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitDeparture(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+                execute("ALTER TABLE base DROP PARTITION LIST '2025-12-31'");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                commitDeparture(job, minuteRowsOfA(0, 30, "1.0"));
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitDeparture(job, minuteRowsOfA(31, 59, "1.0") + ", ('2026-01-01T00:59:00.000000Z', 'b', 1.0)");
+                assertDepartureLadder("""
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:59:00.000000Z -> 62
+                        """);
+                final long generationBefore = departureGeneration();
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                commitDeparture(job, "('2026-01-01T00:59:00.000000Z', 'a', -1.0)");
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                Assert.assertEquals("the splice alone, the seal re-stamps", generationBefore + 1, departureGeneration());
+                assertDepartureLadder("""
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:59:00.000000Z -> 61
+                        """);
+            }
+            final String rows = headMissDepartureRows(true, 58) + "2026-01-01T00:59:00.000000Z\tb\t1.0\t1.0\n";
+            assertDepartureRows(rows);
+            assertNoRefreshFaults("lv");
+            for (int restart = 0; restart < 2; restart++) {
+                restartLiveViewsAndRecover();
+                assertDepartureRestored(rows);
+            }
+        });
+    }
+
+    @Test
+    public void testAnUpsertMovingTheNewestRowsOfOneDayOutOfTheFilterRestoresRetainedRows() throws Exception {
+        // The departed rows are all the next day holds, so the kept row, the new frontier, sits on
+        // the day below them: the truncate at the frontier drops the root of the emptied day.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView("TIMESTAMP");
+            final StringSink firstBatch = new StringSink();
+            final StringSink secondBatch = new StringSink();
+            final StringSink rows = new StringSink();
+            rows.put("ts\tsym\tx\ts\n2025-12-31T23:55:00.000000Z\ta\t0.5\t0.5\n");
+            for (int minute = 0; minute <= 59; minute++) {
+                final String ts = "2026-01-01T23:" + (minute < 10 ? "0" : "") + minute + ":00.000000Z";
+                final StringSink batch = minute <= 30 ? firstBatch : secondBatch;
+                batch.put(batch.length() > 0 ? ", " : "").put("('").put(ts).put("', 'a', 1.0)");
+                if (minute < 59) {
+                    rows.put(ts).put("\ta\t1.0\t").put(minute == 0 ? "1.0" : "2.0").put('\n');
+                }
+            }
+            rows.put("2026-01-01T23:59:00.000000Z\ta\t5.0\t6.0\n");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitDeparture(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+                execute("ALTER TABLE base DROP PARTITION LIST '2025-12-31'");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                commitDeparture(job, firstBatch.toString());
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitDeparture(job, secondBatch + ", ('2026-01-02T00:00:00.000000Z', 'a', 1.0), ('2026-01-02T00:01:00.000000Z', 'a', 1.0)");
+                assertDepartureLadder("""
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-02T00:01:00.000000Z -> 63
+                        """);
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                commitDeparture(
+                        job,
+                        "('2026-01-01T23:59:00.000000Z', 'a', 5.0), ('2026-01-02T00:00:00.000000Z', 'a', -1.0), ('2026-01-02T00:01:00.000000Z', 'a', -1.0)"
+                );
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                assertDepartureLadder("""
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T23:59:00.000000Z -> 61
+                        """);
+            }
+            assertDepartureRows(rows.toString());
+            assertNoRefreshFaults("lv");
+            for (int restart = 0; restart < 2; restart++) {
+                restartLiveViewsAndRecover();
+                assertDepartureRestored(rows.toString());
+            }
+        });
+    }
+
+    @Test
+    public void testAnUpsertMovingTheNewestRowsOutOfTheFilterAtNullRestoresRetainedRows() throws Exception {
+        assertNewestRowsLeavingTheFilterRestore("NULL");
+    }
+
+    @Test
+    public void testAnUpsertMovingTheNewestRowsOutOfTheFilterAtTheEpochRestoresRetainedRows() throws Exception {
+        // The minute shape in the first hour of the epoch, so the truncate at the new frontier
+        // floors a few minutes above the smallest designated timestamp.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView("TIMESTAMP");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitDeparture(job, minuteRowsOfA(0, 30, "1.0").replace("2026-01-01", "1970-01-01"));
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitDeparture(job, minuteRowsOfA(31, 59, "1.0").replace("2026-01-01", "1970-01-01"));
+                assertDepartureLadder("""
+                        1970-01-01T00:30:00.000000Z -> 31
+                        1970-01-01T00:59:00.000000Z -> 60
+                        """);
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                commitDeparture(
+                        job,
+                        "('1970-01-01T00:57:00.000000Z', 'a', 5.0), ('1970-01-01T00:58:00.000000Z', 'a', -1.0), ('1970-01-01T00:59:00.000000Z', 'a', -1.0)"
+                );
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                assertDepartureLadder("""
+                        1970-01-01T00:30:00.000000Z -> 31
+                        1970-01-01T00:57:00.000000Z -> 58
+                        """);
+            }
+            final String rows = (headMissDepartureRows(false, 56) + "2026-01-01T00:57:00.000000Z\ta\t5.0\t6.0\n")
+                    .replace("2026-01-01", "1970-01-01");
+            assertDepartureRows(rows);
+            assertNoRefreshFaults("lv");
+            for (int restart = 0; restart < 2; restart++) {
+                restartLiveViewsAndRecover();
+                assertDepartureRestored(rows);
+            }
+        });
+    }
+
+    @Test
+    public void testAnUpsertMovingTheNewestRowsOutOfTheFilterAtZeroRestoresRetainedRows() throws Exception {
+        assertNewestRowsLeavingTheFilterRestore("0.0");
+    }
+
+    @Test
+    public void testAnUpsertMovingTheNewestRowsOutOfTheFilterOverTenThousandKeysRestores() throws Exception {
+        // Ten thousand keys hold a row each an hour below the departure, so the seal at the new
+        // frontier freezes a runtime over that many keys' expired frames. The base lost nothing,
+        // so the view gives what a recompute gives.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView("TIMESTAMP");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitDeparture(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+                execute("INSERT INTO base SELECT '2025-12-31T23:56:00.000000Z'::timestamp + x, 'k' || x, 1.0 FROM long_sequence(10_000)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                commitDeparture(job, minuteRowsOfA(0, 30, "1.0"));
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitDeparture(job, minuteRowsOfA(31, 59, "1.0"));
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                commitDeparture(
+                        job,
+                        "('2026-01-01T00:57:00.000000Z', 'a', 5.0), ('2026-01-01T00:58:00.000000Z', 'a', -1.0), ('2026-01-01T00:59:00.000000Z', 'a', -1.0)"
+                );
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                final LongList ladder = snapshotCheckpointLadder(departureView());
+                Assert.assertEquals(ts("2026-01-01T00:57:00.000000Z"), ladder.getQuick(ladder.size() - 2));
+                Assert.assertEquals(10_059, ladder.getQuick(ladder.size() - 1));
+            }
+            assertHeadMissDepartureMatchesRecompute();
+            for (int restart = 0; restart < 2; restart++) {
+                restartLiveViewsAndRecover();
+                assertRestoredFromTimeline("lv");
+                assertHeadMissDepartureMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAnUpsertMovingTheNewestRowsOutOfTheFilterRestoresRetainedRows() throws Exception {
+        assertNewestRowsLeavingTheFilterRestore("-1.0");
+    }
+
+    @Test
+    public void testAnUpsertMovingTheNewestRowsOutOfTheFilterThenABaseColumnAddedRestoresTheRuntimeInPlace() throws Exception {
+        // An unreferenced ADD COLUMN between the departure and the next late row drifts the
+        // compiled plan, and the drift recovery restores the runtime from the root the departure
+        // sealed at the new frontier. A root above the frontier would fail that restore's row
+        // count and rebuild the view from a base that lost a day of its rows.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(() -> {
+                createHeadMissDepartureView("TIMESTAMP");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveSeedToCompletion(job, "lv");
+                    commitMinuteBatchesOverTheLostDay(job);
+                    commitDeparture(job, HEAD_MISS_KEPT_ROW_DEPARTURE);
+                    execute("ALTER TABLE base ADD COLUMN extra INT");
+                    drainWalQueue();
+                    commitDeparture(job, "('2026-01-01T00:56:30.000000Z', 'a', 3.0, NULL)");
+                }
+                final LiveViewInstance instance = departureView();
+                capture.drain();
+                capture.assertLogged("live view restored its runtime from the checkpoint timeline [view=lv, cause=base table metadata change");
+                Assert.assertEquals(1, instance.getCheckpointRuntimeRestores());
+                Assert.assertEquals("the restore must not fall back to a rebuild", 0, instance.getCheckpointRebuildAttempts());
+                Assert.assertEquals("the drift is the one fault", 1, instance.getRefreshFaultCount());
+                Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+                // The late row's frame holds 00:56, and the kept row's holds the late row too.
+                final String rows = headMissDepartureRows(true, 56) + """
+                        2026-01-01T00:56:30.000000Z\ta\t3.0\t4.0
+                        2026-01-01T00:57:00.000000Z\ta\t5.0\t9.0
+                        """;
+                assertDepartureRows(rows);
+                for (int restart = 0; restart < 2; restart++) {
+                    restartLiveViewsAndRecover();
+                    assertDepartureRestored(rows);
+                }
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testAnUpsertMovingTheNewestRowsOutOfTheFilterThenABaseTruncateRestores() throws Exception {
+        // TRUNCATE removes the base rows, which the view walks past keeping its own: a restart
+        // after it restores them from the root the departure sealed at the new frontier.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView("TIMESTAMP");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitMinuteBatchesOverTheLostDay(job);
+                commitDeparture(job, HEAD_MISS_KEPT_ROW_DEPARTURE);
+                execute("TRUNCATE TABLE base");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+            assertDepartureRows(HEAD_MISS_KEPT_ROW_DEPARTURE_ROWS);
+            assertNoRefreshFaults("lv");
+            for (int restart = 0; restart < 2; restart++) {
+                restartLiveViewsAndRecover();
+                assertDepartureRestored(HEAD_MISS_KEPT_ROW_DEPARTURE_ROWS);
+            }
+        });
+    }
+
+    @Test
+    public void testAnUpsertMovingTheNewestRowsOutOfTheFilterThenDropLiveViewReleasesEverything() throws Exception {
+        // The view goes right after the departure that truncated its timeline and sealed the new
+        // frontier: the drop leaves nothing open, and the base stays usable, holding the minute
+        // rows the upsert rewrote rather than removed.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView("TIMESTAMP");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitMinuteBatchesOverTheLostDay(job);
+                commitDeparture(job, HEAD_MISS_KEPT_ROW_DEPARTURE);
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                execute("DROP LIVE VIEW lv");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+            Assert.assertNull(engine.getLiveViewRegistry().getViewInstance("lv"));
+            assertQuery("SELECT count() FROM base")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n60\n");
+        });
+    }
+
+    @Test
+    public void testAnUpsertMovingTheRowAtTheLargestMicrosecondTimestampOutOfTheFilterRestores() throws Exception {
+        // The departed row sits at the largest designated timestamp a microsecond table takes,
+        // so the truncate at the new frontier floors at that timestamp exactly.
+        assertRowAtTheLargestTimestampLeavingTheFilterRestores(
+                "TIMESTAMP",
+                "9999-12-30T23:55:00.000000Z",
+                "9999-12-31T23:",
+                ":00.000000Z",
+                "9999-12-31T23:59:59.999998Z",
+                "9999-12-31T23:59:59.999999Z"
+        );
+    }
+
+    @Test
+    public void testAnUpsertMovingTheRowAtTheLargestNanosecondTimestampOutOfTheFilterRestores() throws Exception {
+        assertRowAtTheLargestTimestampLeavingTheFilterRestores(
+                "TIMESTAMP_NS",
+                "2261-12-30T23:55:00.000000000Z",
+                "2261-12-31T23:",
+                ":00.000000000Z",
+                "2261-12-31T23:59:59.999999998Z",
+                "2261-12-31T23:59:59.999999999Z"
+        );
     }
 
     @Test(timeout = 120_000)
@@ -2141,8 +2509,121 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
                 + "2026-01-01T00:02:00.000000Z\ta\t2.5\t" + s3 + "\n";
     }
 
+    private void assertHeadMissDepartureMatchesRecompute() throws Exception {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + HEAD_MISS_DEPARTURE_VIEW_SQL + ") ORDER BY ts, sym",
+                "(lv) ORDER BY ts, sym",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv");
+    }
+
     private void assertDepartureLadder(String expected) {
         assertCheckpointLadder(departureView(), false, expected);
+    }
+
+    /**
+     * The minute shape over the lost day: the three newest rows go in one upsert, the oldest of
+     * them to a new value and the two others to {@code departedValue}, which the filter rejects.
+     * The rebuild splices [00:57, +inf) and emits the kept row, below the root the cadence sealed
+     * at 00:59: the repair truncates at the new frontier 00:57 and seals a root there, and each
+     * restart restores from it, over the day a rebuild would drop.
+     */
+    private void assertNewestRowsLeavingTheFilterRestore(String departedValue) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView("TIMESTAMP");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitMinuteBatchesOverTheLostDay(job);
+                final long generationBefore = departureGeneration();
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                commitDeparture(
+                        job,
+                        "('2026-01-01T00:57:00.000000Z', 'a', 5.0), ('2026-01-01T00:58:00.000000Z', 'a', " + departedValue
+                                + "), ('2026-01-01T00:59:00.000000Z', 'a', " + departedValue + ")"
+                );
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                Assert.assertEquals("the splice, the truncate and the seal", generationBefore + 3, departureGeneration());
+                assertDepartureLadder("""
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:57:00.000000Z -> 59
+                        """);
+            }
+            final String rows = headMissDepartureRows(true, 56) + "2026-01-01T00:57:00.000000Z\ta\t5.0\t6.0\n";
+            assertDepartureRows(rows);
+            assertNoRefreshFaults("lv");
+            for (int restart = 0; restart < 2; restart++) {
+                restartLiveViewsAndRecover();
+                assertDepartureRestored(rows);
+            }
+        });
+    }
+
+    /**
+     * The newest two rows sit one step apart at the top of the designated timestamp range, the
+     * newer of them at its largest value, above a row a minute from 23:00 to 23:58 and a root a
+     * day below. One upsert gives the older of the two a new value and moves the newer out of
+     * the filter. The rebuild's output ends one step below the root the cadence sealed at the
+     * largest timestamp, so the repair truncates the timeline at that timestamp and seals a root
+     * one step below it, which each restart restores from.
+     *
+     * @param hourPrefix   the last hour of the range, up to its minute
+     * @param minuteSuffix what follows the minute of a row at a whole minute
+     */
+    private void assertRowAtTheLargestTimestampLeavingTheFilterRestores(
+            String timestampType,
+            String dayBelowTs,
+            String hourPrefix,
+            String minuteSuffix,
+            String frontierTs,
+            String largestTs
+    ) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView(timestampType);
+            final boolean isNanos = "TIMESTAMP_NS".equals(timestampType);
+            final StringBuilder firstBatch = new StringBuilder();
+            final StringBuilder secondBatch = new StringBuilder();
+            final StringBuilder minuteRows = new StringBuilder();
+            for (int minute = 0; minute <= 58; minute++) {
+                final String ts = hourPrefix + (minute < 10 ? "0" : "") + minute + minuteSuffix;
+                final StringBuilder batch = minute <= 30 ? firstBatch : secondBatch;
+                batch.append(batch.length() > 0 ? ", " : "").append("('").append(ts).append("', 'a', 1.0)");
+                minuteRows.append(ts).append("\ta\t1.0\t").append(minute == 0 ? "1.0" : "2.0").append('\n');
+            }
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitDeparture(job, "('" + dayBelowTs + "', 'a', 0.5)");
+                commitDeparture(job, firstBatch.toString());
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitDeparture(job, secondBatch + ", ('" + frontierTs + "', 'a', 1.0), ('" + largestTs + "', 'a', 1.0)");
+                assertCheckpointLadder(departureView(), isNanos, dayBelowTs + " -> 1\n" + largestTs + " -> 62\n");
+                final long generationBefore = departureGeneration();
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                commitDeparture(job, "('" + frontierTs + "', 'a', 5.0), ('" + largestTs + "', 'a', -1.0)");
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                Assert.assertEquals("the splice, the truncate and the seal", generationBefore + 3, departureGeneration());
+                assertCheckpointLadder(departureView(), isNanos, dayBelowTs + " -> 1\n" + frontierTs + " -> 61\n");
+            }
+            // The row a day below sits outside every one-minute frame above it, and the kept row's
+            // frame holds itself alone: 23:58 sits more than a minute below it.
+            final String rows = "ts\tsym\tx\ts\n"
+                    + dayBelowTs + "\ta\t0.5\t0.5\n"
+                    + minuteRows
+                    + frontierTs + "\ta\t5.0\t5.0\n";
+            assertDepartureRows(rows);
+            assertNoRefreshFaults("lv");
+            for (int restart = 0; restart < 2; restart++) {
+                restartLiveViewsAndRecover();
+                assertDepartureRestored(rows);
+            }
+        });
     }
 
     private void assertDepartureLadderNanos(String expected) {
@@ -2312,6 +2793,25 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
     }
 
     /**
+     * The head-miss departure fixture: the row 2025-12-31T23:55 of a day the base then drops, a
+     * row a minute from 00:00 to 00:30 the cadence leaves unsealed, then one from 00:31 to 00:59,
+     * which seals a root at 00:59.
+     */
+    private void commitMinuteBatchesOverTheLostDay(LiveViewRefreshJob job) throws Exception {
+        commitDeparture(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+        execute("ALTER TABLE base DROP PARTITION LIST '2025-12-31'");
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        commitDeparture(job, minuteRowsOfA(0, 30, "1.0"));
+        setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+        commitDeparture(job, minuteRowsOfA(31, 59, "1.0"));
+        assertDepartureLadder("""
+                2025-12-31T23:55:00.000000Z -> 1
+                2026-01-01T00:59:00.000000Z -> 61
+                """);
+    }
+
+    /**
      * Commits the one row of a day the base then drops, which the view walks past and keeps:
      * from here on a rebuild from the applied base would lose it.
      */
@@ -2326,6 +2826,11 @@ public class LiveViewDedupBaseTest extends AbstractLiveViewTest {
      * A view over a deduplicating base that keeps the rows {@code WHERE x > 0}, so an upsert of a
      * value the filter rejects moves a row out of it.
      */
+    private void createHeadMissDepartureView(String timestampType) throws Exception {
+        execute("CREATE TABLE base (ts " + timestampType + ", sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + HEAD_MISS_DEPARTURE_VIEW_SQL);
+    }
+
     private void createDepartureView(String timestampType, String selectTail, String inMemoryClause) throws Exception {
         execute("CREATE TABLE base (ts " + timestampType + ", sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms " + inMemoryClause + "START FROM BEGINNING AS SELECT ts, sym, x, " + selectTail);

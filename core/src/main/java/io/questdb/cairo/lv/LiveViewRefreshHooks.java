@@ -51,6 +51,16 @@ public interface LiveViewRefreshHooks {
     }
 
     /**
+     * Called by a head-miss rebuild on the turn that finishes it, once its replacement is
+     * applied and the consumed seqTxn advanced, immediately before its head seal and the
+     * resolution of its repair marker. When the rebuild's end-of-table splice kept roots
+     * above the view's new frontier, the truncate that drops them has run by then, whether
+     * it kept a prefix or retired the timeline.
+     */
+    default void beforeHeadMissHeadSeal() {
+    }
+
+    /**
      * Called by a keyed repair's hand-back right before it restores each frozen key into the
      * primary runtime, with that key's position in the hand-back. Position 0 follows
      * {@link #beforeKeyedTransplantRestore()}; at a higher position every key below it is

@@ -25,14 +25,21 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Numbers;
+import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -67,6 +74,672 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
     @Before
     public void pinClockBelowTestData() {
         setCurrentMicros(0L);
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatAddsALateRowBelowTheNewestRootAppendsARootAtTheFrontier() throws Exception {
+        // A replace commit that only adds a row half a minute below the newest root, with a row the
+        // cadence left unsealed above that root: the rebuild splices [00:58:30, +inf), and its
+        // output runs past the root at 00:59 it re-versions, to the frontier 01:05. Nothing above
+        // the frontier is left to truncate, so the seal appends a root there, which takes the
+        // place of the head root at 00:59: the late row is the newest batch's lowest.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitTwoBatchesOverTheLostDay(job, 59);
+                commitAndRefresh(job, "('2026-01-01T01:05:00.000000Z', 'a', 1.0)");
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                replaceBaseRange(ts("2026-01-01T00:58:30.000000Z"), ts("2026-01-01T00:58:30.000001Z"), 3.0);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the head-miss rebuild repairs the late row", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                assertNoHeadMissSpliceFrontierStat(job);
+                Assert.assertEquals("the splice and the seal", generationBefore + 2, publishedCheckpointGeneration(instance));
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T01:05:00.000000Z -> 63
+                        """);
+                assertNoRepairMarker(instance);
+            }
+            // The late row's frame holds 00:58 too, and 00:59's holds the late row.
+            final String rows = headMissDepartureRows(true, 58) + """
+                    2026-01-01T00:58:30.000000Z\ta\t3.0\t4.0
+                    2026-01-01T00:59:00.000000Z\ta\t1.0\t5.0
+                    2026-01-01T01:05:00.000000Z\ta\t1.0\t1.0
+                    """;
+            assertDepartedViewRows(rows);
+            assertNoRefreshFaults("lv");
+            for (int restart = 0; restart < 2; restart++) {
+                restartLiveViewsAndRecover();
+                assertDepartedViewRestored(rows);
+            }
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatDeletesEveryRowOfTheViewRetiresItsTimeline() throws Exception {
+        // Every row the view holds sits in the deleted range, so the view's table ends empty and
+        // has no frontier: no root can sit there, and the repair retires the timeline. A restart
+        // finds none and rebuilds the empty view, which still refreshes.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitAndRefresh(job, minuteRowsOfA(57, 59, "1.0"));
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                assertCheckpointLadder(instance, false, "2026-01-01T00:59:00.000000Z -> 3\n");
+                departAndAssertTheTimelineRetired(job, instance, "2026-01-01T00:57:00.000000Z");
+            }
+            final String noRows = "ts\tsym\tx\ts\n";
+            assertDepartedViewRows(noRows);
+            restartLiveViewsAndRecover();
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(instance.isInvalid());
+            assertDepartedViewRows(noRows);
+            assertNoRefreshFaults("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commitAndRefresh(job, "('2026-01-01T01:05:00.000000Z', 'a', 4.0)");
+            }
+            assertDepartedViewRows(noRows + "2026-01-01T01:05:00.000000Z\ta\t4.0\t4.0\n");
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatDeletesRowsAboveAnUnsealedFrontierRootKeepsItsTimeline() throws Exception {
+        // The newest root sits at the row that becomes the frontier, and nothing above it was
+        // sealed: two filtered-out rows and a row of the view follow it unsealed. Deleting that row
+        // emits nothing, from a rebuild that warms its state from one minute below it and so reads
+        // none of the filtered-out rows a resume from the root would read. The splice kept no root
+        // above the frontier and the root there counts every row of the view, so the repair keeps
+        // the timeline as the splice left it, and each restart restores from that root over the
+        // day the base lost.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitRootAtTheFrontierThenRowsAboveIt(job, false);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final String ladder = """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:56:00.000000Z -> 58
+                        """;
+                assertCheckpointLadder(instance, false, ladder);
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                replaceBaseRange(ts("2026-01-01T00:59:00.000000Z"), ts("2026-01-01T01:00:00.000000Z"), Double.NaN);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_KEEP_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT));
+                Assert.assertEquals("the splice alone", generationBefore + 1, publishedCheckpointGeneration(instance));
+                Assert.assertEquals(resetsBefore, instance.getCheckpointTimelineResets());
+                assertCheckpointLadder(instance, false, ladder);
+                assertNoRepairMarker(instance);
+            }
+            final String rows = headMissDepartureRows(true, 56);
+            assertDepartedViewRows(rows);
+            assertNoRefreshFaults("lv");
+            for (int restart = 0; restart < 2; restart++) {
+                restartLiveViewsAndRecover();
+                assertDepartedViewRestored(rows);
+            }
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatDeletesTheNewestRangeOverALostDayBlocksTheRestart() throws Exception {
+        // The pure delete of the newest three minutes emits nothing, and its rebuild's runtime
+        // holds only the state it warmed from one minute below them, which is not the state at
+        // the new frontier 00:56. No root sits there, so no restart could restore the timeline the
+        // splice published: the repair retires it, as a zero-row end-of-table repair did before the
+        // splice existed. The restart then rebuilds, and the restatement guard refuses the rebuild
+        // over the day the base lost: the view stops and keeps every row it holds, the
+        // 2025-12-31 row among them. Known limitation: a zero-row end-of-table repair with no
+        // restorable root at its frontier retires the timeline.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitTwoBatchesOverTheLostDay(job, 59);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                departAndAssertTheTimelineRetired(job, instance, "2026-01-01T00:57:00.000000Z");
+            }
+            final String rows = headMissDepartureRows(true, 56);
+            assertDepartedViewRows(rows);
+            for (int restart = 0; restart < 2; restart++) {
+                final LogCapture capture = new LogCapture();
+                capture.start();
+                try {
+                    restartLiveViewsAndRecover();
+                    capture.drain();
+                    capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=timeline is absent");
+                    capture.assertNotLogged("does not match durable materialization");
+                } finally {
+                    capture.stop();
+                }
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals(
+                        "rebuild_blocked",
+                        LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute())
+                );
+                Assert.assertTrue(instance.isCheckpointRecoveryBlocked());
+                assertDepartedViewRows(rows);
+            }
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatDeletesTheNewestRangeWithNoRootAboveTheFrontierRetiresItsTimeline() throws Exception {
+        // One batch carries every row from 00:00 to 00:59 and the cadence seals no root over it,
+        // so the newest root, 23:55, sits below the new frontier 00:56 and the splice captured
+        // none. The splice still moved the generation's base coordinate to the repair commit, and
+        // the rebuild's runtime cannot seal 00:56, so the repair retires the timeline. Over a base
+        // that lost nothing the restart rebuilds the rows a recompute gives, and the next seal
+        // opens a timeline a restart restores from.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitAndRefresh(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+                commitAndRefresh(job, minuteRowsOfA(0, 59, "1.0"));
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                assertCheckpointLadder(instance, false, "2025-12-31T23:55:00.000000Z -> 1\n");
+                departAndAssertTheTimelineRetired(job, instance, "2026-01-01T00:57:00.000000Z");
+            }
+            assertRebuiltOnRestartThenRestoredAfterTheNextRow(headMissDepartureRows(true, 56));
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatDeletesTheNewestRangeWithNoRootAtTheFrontierRetiresItsTimeline() throws Exception {
+        // The item's pure delete over a base that lost nothing: the splice kept the root at 00:59
+        // above the new frontier 00:56, and the newest root at or below the frontier is 23:55.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitAndRefresh(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+                commitAndRefresh(job, minuteRowsOfA(0, 30, "1.0"));
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitAndRefresh(job, minuteRowsOfA(31, 59, "1.0"));
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:59:00.000000Z -> 61
+                        """);
+                departAndAssertTheTimelineRetired(job, instance, "2026-01-01T00:57:00.000000Z");
+            }
+            assertRebuiltOnRestartThenRestoredAfterTheNextRow(headMissDepartureRows(true, 56));
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatDeletesTheNewestRangeWithNoRootBelowItRetiresItsTimeline() throws Exception {
+        // The first seal took every row at once, so the only root sits at 00:59, above the new
+        // frontier, and none sits at or below it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitAndRefresh(job, minuteRowsOfA(0, 59, "1.0"));
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                assertCheckpointLadder(instance, false, "2026-01-01T00:59:00.000000Z -> 60\n");
+                departAndAssertTheTimelineRetired(job, instance, "2026-01-01T00:57:00.000000Z");
+            }
+            assertRebuiltOnRestartThenRestoredAfterTheNextRow(headMissDepartureRows(false, 56));
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatDeletesTheNewestRowKeepsTheRootAtTheNewFrontier() throws Exception {
+        // The departed row's own root sits above the root at the row that becomes the frontier.
+        // The repair emits nothing, and the root at the frontier counts every row of the view, so
+        // it truncates the spliced timeline there: the root above goes, the one at the frontier
+        // stays. Each restart restores from it, and rows committed in order after a restart, below
+        // where the departed row was, seal without the root above the frontier in their way.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitRootAtTheFrontierThenRowsAboveIt(job, true);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:56:00.000000Z -> 58
+                        2026-01-01T00:59:00.000000Z -> 59
+                        """);
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                replaceBaseRange(ts("2026-01-01T00:59:00.000000Z"), ts("2026-01-01T01:00:00.000000Z"), Double.NaN);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_KEEP_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT));
+                Assert.assertEquals("the splice and the truncate", generationBefore + 2, publishedCheckpointGeneration(instance));
+                Assert.assertEquals(resetsBefore, instance.getCheckpointTimelineResets());
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:56:00.000000Z -> 58
+                        """);
+                assertNoRepairMarker(instance);
+            }
+            final String rows = headMissDepartureRows(true, 56);
+            assertDepartedViewRows(rows);
+            assertNoRefreshFaults("lv");
+            restartLiveViewsAndRecover();
+            assertDepartedViewRestored(rows);
+            final String grownRows = rows + """
+                    2026-01-01T00:58:10.000000Z\ta\t1.0\t1.0
+                    2026-01-01T00:58:20.000000Z\ta\t1.0\t2.0
+                    2026-01-01T00:58:30.000000Z\ta\t1.0\t3.0
+                    """;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                for (int second = 10; second <= 30; second += 10) {
+                    setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                    commitAndRefresh(job, "('2026-01-01T00:58:" + second + ".000000Z', 'a', 1.0)");
+                }
+                Assert.assertEquals(0, instance.getCheckpointSealFailures());
+                Assert.assertEquals(0, instance.getCheckpointTimelineResets());
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:56:00.000000Z -> 58
+                        2026-01-01T00:58:10.000000Z -> 59
+                        2026-01-01T00:58:20.000000Z -> 60
+                        2026-01-01T00:58:30.000000Z -> 61
+                        """);
+            }
+            assertDepartedViewRows(grownRows);
+            restartLiveViewsAndRecover();
+            assertDepartedViewRestored(grownRows);
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatDeletesTheRowsAboveAGrownRootRetiresItsTimeline() throws Exception {
+        // The root at the row that becomes the frontier was sealed before a row of another key
+        // tied it, so it counts one row fewer than the view holds there. A resume refuses it as an
+        // anchor, and so does the rebuild that emits nothing above it: it is no root a restart
+        // could restore the view's rows from, so the repair retires the timeline.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitAndRefresh(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitAndRefresh(job, minuteRowsOfA(0, 56, "1.0"));
+                commitAndRefresh(job, "('2026-01-01T00:56:00.000000Z', 'b', 1.0)");
+                commitAndRefresh(job, minuteRowsOfA(57, 59, "1.0"));
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:56:00.000000Z -> 58
+                        """);
+                departAndAssertTheTimelineRetired(job, instance, "2026-01-01T00:57:00.000000Z");
+            }
+            final String rows = headMissDepartureRows(true, 56) + "2026-01-01T00:56:00.000000Z\tb\t1.0\t1.0\n";
+            assertRebuiltOnRestartThenRestoredAfterTheNextRow(rows);
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatKeepsOneRowOfTheNewestRangeRestoresAnAnchoredWindow() throws Exception {
+        // A daily anchored sum, whose rebuild reads the kept row's day from its start. The root
+        // below the correction sits on the previous day under rows the filter drops, which a
+        // resume from it would read, so the rebuild from the day's start is the cheaper repair.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, x, sum(x) OVER w s FROM base "
+                    + "WHERE x > 0 WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitAndRefresh(job, "('2025-12-31T20:00:00.000000Z', 'a', 0.5)");
+                final StringSink droppedRows = new StringSink();
+                for (int minute = 0; minute < 60; minute++) {
+                    droppedRows.put(minute > 0 ? ", " : "").put("('2025-12-31T23:").put(minute < 10 ? "0" : "").put(minute).put(":30.000000Z', 'a', -1.0)");
+                }
+                commitAndRefresh(job, droppedRows.toString());
+                commitAndRefresh(job, minuteRowsOfA(0, 30, "1.0"));
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitAndRefresh(job, minuteRowsOfA(31, 59, "1.0"));
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T20:00:00.000000Z -> 1
+                        2026-01-01T00:59:00.000000Z -> 61
+                        """);
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                replaceBaseRange(ts("2026-01-01T00:57:00.000000Z"), ts("2026-01-01T01:00:00.000000Z"), 5.0);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T20:00:00.000000Z -> 1
+                        2026-01-01T00:57:00.000000Z -> 59
+                        """);
+            }
+            // The day's sum restarts at 00:00 and adds 1.0 a minute up to 00:56, 57.0, and the
+            // kept row adds 5.0.
+            final StringSink rows = new StringSink();
+            rows.put("ts\tsym\tx\ts\n2025-12-31T20:00:00.000000Z\ta\t0.5\t0.5\n");
+            for (int minute = 0; minute <= 56; minute++) {
+                rows.put("2026-01-01T00:").put(minute < 10 ? "0" : "").put(minute).put(":00.000000Z\ta\t1.0\t").put(minute + 1).put(".0\n");
+            }
+            rows.put("2026-01-01T00:57:00.000000Z\ta\t5.0\t62.0\n");
+            assertDepartedViewRows(rows.toString());
+            assertNoRefreshFaults("lv");
+            for (int restart = 0; restart < 2; restart++) {
+                restartLiveViewsAndRecover();
+                assertDepartedViewRestored(rows.toString());
+            }
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatKeepsOneRowOfTheNewestRangeRestoresAnInMemoryView() throws Exception {
+        assertNewestRangeKeepingOneRowMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL, "IN MEMORY 1h ");
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatKeepsOneRowOfTheNewestRangeRestoresAProjectedWindow() throws Exception {
+        assertNewestRangeKeepingOneRowMatchesRecompute(
+                "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) * 2 s "
+                        + "FROM base WHERE x > 0",
+                ""
+        );
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatKeepsOneRowOfTheNewestRangeRestoresARangeAverage() throws Exception {
+        // A ten-minute frame: the rebuild warms its state from ten minutes below the kept row.
+        assertNewestRangeKeepingOneRowMatchesRecompute(
+                "SELECT ts, sym, x, avg(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' MINUTE PRECEDING AND CURRENT ROW) s "
+                        + "FROM base WHERE x > 0",
+                ""
+        );
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatKeepsOneRowOfTheNewestRangeRestoresARangeCount() throws Exception {
+        assertNewestRangeKeepingOneRowMatchesRecompute(
+                "SELECT ts, sym, x, count(*) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) s "
+                        + "FROM base WHERE x > 0",
+                ""
+        );
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatKeepsOneRowOfTheNewestRangeRestoresARangeMaximum() throws Exception {
+        assertNewestRangeKeepingOneRowMatchesRecompute(
+                "SELECT ts, sym, x, max(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '1' MINUTE PRECEDING AND CURRENT ROW) s "
+                        + "FROM base WHERE x > 0",
+                ""
+        );
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatKeepsOneRowOfTheNewestRangeRestoresRetainedRows() throws Exception {
+        // A mat-view style REPLACE_RANGE over the newest three minutes keeps one row with a new
+        // value, below the root the cadence sealed at the newest row, over a base that lost the
+        // 2025-12-31 day the view keeps. The rebuild splices [00:57, +inf) and emits the kept row,
+        // so its output ends below the spliced root at 00:59: the repair truncates the timeline
+        // at the new frontier 00:57 and seals a root there. Each restart restores from that root;
+        // the rebuild it would fall back to is the one the restatement guard refuses.
+        assertNewestRangeKeepingOneRowRestores(5.0, "6.0");
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatKeepsOneRowOfTheNewestRangeRestoresWithJitDisabled() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_JIT_MODE, SqlJitMode.toString(SqlJitMode.JIT_MODE_DISABLED));
+        assertNewestRangeKeepingOneRowMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL, "");
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatKeepsOneRowOfTheNewestRangeUnchangedRestoresRetainedRows() throws Exception {
+        // The kept row holds the value it had, so only the rows above it change.
+        assertNewestRangeKeepingOneRowRestores(1.0, "2.0");
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatParksAndKeepsOneRowOfTheNewestRangeRestores() throws Exception {
+        // A replay budget of one row parks the rebuild on its first turn: the turn that finishes
+        // it truncates the spliced timeline at the new frontier and seals a root there.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertNewestRangeKeepingOneRowMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL, "");
+            capture.drain();
+            capture.assertLogged("live view O3 repair yielded on its turn budget [view=lv");
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testAnEndOfTableRepairThatRewritesRowsBelowARootAndDeletesTheOnesAboveRestampsThatRoot() throws Exception {
+        // One REPLACE_RANGE rewrites the rows from 00:50 to 00:56, the first of them with a new
+        // value, and deletes the three above them. The replay crosses the root at 00:56 and
+        // re-versions it there, which is where its output ends: the truncate at the new frontier
+        // drops the root at 00:59 and keeps the one at 00:56, and the seal only re-stamps it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitTheDayTheBaseLoses(job);
+                commitAndRefresh(job, minuteRowsOfA(0, 30, "1.0"));
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitAndRefresh(job, minuteRowsOfA(31, 56, "1.0"));
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitAndRefresh(job, minuteRowsOfA(57, 59, "1.0"));
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:56:00.000000Z -> 58
+                        2026-01-01T00:59:00.000000Z -> 61
+                        """);
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("base"))) {
+                    for (int minute = 50; minute <= 56; minute++) {
+                        final TableWriter.Row row = walWriter.newRow(ts("2026-01-01T00:" + minute + ":00.000000Z"));
+                        row.putSym(1, "a");
+                        row.putDouble(2, minute == 50 ? 3.0 : 1.0);
+                        row.append();
+                    }
+                    walWriter.commitWithParams(
+                            ts("2026-01-01T00:50:00.000000Z"),
+                            ts("2026-01-01T01:00:00.000000Z"),
+                            WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                    );
+                }
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                Assert.assertEquals("the splice and the truncate, the seal re-stamps", generationBefore + 2, publishedCheckpointGeneration(instance));
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:56:00.000000Z -> 58
+                        """);
+                Assert.assertEquals(ts("2026-01-01T00:56:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                assertNoRepairMarker(instance);
+            }
+            final String rows = headMissDepartureRows(true, 56)
+                    .replace("2026-01-01T00:50:00.000000Z\ta\t1.0\t2.0", "2026-01-01T00:50:00.000000Z\ta\t3.0\t4.0")
+                    .replace("2026-01-01T00:51:00.000000Z\ta\t1.0\t2.0", "2026-01-01T00:51:00.000000Z\ta\t1.0\t4.0");
+            assertDepartedViewRows(rows);
+            assertNoRefreshFaults("lv");
+            for (int restart = 0; restart < 2; restart++) {
+                restartLiveViewsAndRecover();
+                assertDepartedViewRestored(rows);
+            }
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairWithoutASpliceThatDeletesTheNewestRangeRetiresItsTimeline() throws Exception {
+        // No chained boundary is allowed, so the rebuild declines its splice and truncates the
+        // timeline at R before it commits, as every end-of-table repair did before the splice
+        // existed. It emits nothing to seal at the new frontier, so the truncated timeline
+        // retires, and over a base that lost nothing the restart rebuilds what a recompute gives.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitAndRefresh(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+                commitAndRefresh(job, minuteRowsOfA(0, 30, "1.0"));
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitAndRefresh(job, minuteRowsOfA(31, 59, "1.0"));
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                replaceBaseRange(ts("2026-01-01T00:57:00.000000Z"), ts("2026-01-01T01:00:00.000000Z"), Double.NaN);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                assertNoHeadMissSpliceFrontierStat(job);
+                Assert.assertEquals("the truncate keeps a prefix, which retires with no seal", resetsBefore + 1, instance.getCheckpointTimelineResets());
+                assertNoRepairMarker(instance);
+            }
+            assertRebuiltOnRestartThenRestoredAfterTheNextRow(headMissDepartureRows(true, 56));
+        });
+    }
+
+    @Test
+    public void testAnEndOfTableRepairWithoutASpliceThatKeepsOneRowOfTheNewestRangeRestoresRetainedRows() throws Exception {
+        // No chained boundary is allowed, so the rebuild declines its splice and truncates the
+        // timeline at R, which drops the root at 00:59 and keeps the one at 23:55, and seals the
+        // kept row's root on top: every restart restores from it over the day the base lost.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitTwoBatchesOverTheLostDay(job, 59);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                replaceBaseRange(ts("2026-01-01T00:57:00.000000Z"), ts("2026-01-01T01:00:00.000000Z"), 5.0);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                assertNoHeadMissSpliceFrontierStat(job);
+                Assert.assertEquals("the truncate and the seal", generationBefore + 2, publishedCheckpointGeneration(instance));
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:57:00.000000Z -> 59
+                        """);
+                assertNoRepairMarker(instance);
+            }
+            final String rows = headMissDepartureRows(true, 56) + "2026-01-01T00:57:00.000000Z\ta\t5.0\t6.0\n";
+            assertDepartedViewRows(rows);
+            assertNoRefreshFaults("lv");
+            for (int restart = 0; restart < 2; restart++) {
+                restartLiveViewsAndRecover();
+                assertDepartedViewRestored(rows);
+            }
+        });
+    }
+
+    @Test
+    public void testARepairConvergingBelowTheFrontierThatEmitsNoRowKeepsItsTimeline() throws Exception {
+        // A row with no other row within a minute above it leaves, so the rebuild's influence
+        // converges a minute above it, far below the frontier: it keeps the primary runtime, which
+        // stands at the frontier, splices the empty interval, and emits nothing. The newest root
+        // sits at the frontier, so the seal only re-stamps it, and nothing is truncated or retired.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitTheDayTheBaseLoses(job);
+                commitAndRefresh(job, minuteRowsOfA(0, 30, "1.0") + ", ('2026-01-01T00:40:00.000000Z', 'a', 1.0)");
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitAndRefresh(job, minuteRowsOfA(50, 59, "1.0"));
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final String ladder = """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:59:00.000000Z -> 43
+                        """;
+                assertCheckpointLadder(instance, false, ladder);
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                final LogCapture capture = new LogCapture();
+                capture.start();
+                try {
+                    replaceBaseRange(ts("2026-01-01T00:40:00.000000Z"), ts("2026-01-01T00:40:00.000001Z"), Double.NaN);
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+                    capture.drain();
+                    capture.assertLogged("runtimeStatePreserved=true");
+                    capture.assertLogged("rowsEmitted=0]");
+                } finally {
+                    capture.stop();
+                }
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                assertNoHeadMissSpliceFrontierStat(job);
+                Assert.assertEquals(resetsBefore, instance.getCheckpointTimelineResets());
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:59:00.000000Z -> 42
+                        """);
+                Assert.assertEquals(ts("2026-01-01T00:59:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                assertNoRepairMarker(instance);
+            }
+            final StringSink rows = new StringSink();
+            rows.put(headMissDepartureRows(true, 30));
+            for (int minute = 50; minute <= 59; minute++) {
+                rows.put("2026-01-01T00:").put(minute).put(":00.000000Z\ta\t1.0\t").put(minute == 50 ? "1.0" : "2.0").put('\n');
+            }
+            assertDepartedViewRows(rows.toString());
+            assertNoRefreshFaults("lv");
+            for (int restart = 0; restart < 2; restart++) {
+                restartLiveViewsAndRecover();
+                assertDepartedViewRestored(rows.toString());
+            }
+        });
     }
 
     @Test
@@ -495,10 +1168,218 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
         });
     }
 
+    private void assertNewestRangeKeepingOneRowRestores(double keptX, String keptS) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitTwoBatchesOverTheLostDay(job, 59);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:59:00.000000Z -> 61
+                        """);
+                final long generationBefore = publishedCheckpointGeneration(instance);
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                replaceBaseRange(ts("2026-01-01T00:57:00.000000Z"), ts("2026-01-01T01:00:00.000000Z"), keptX);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                Assert.assertEquals("the splice, the truncate and the seal", generationBefore + 3, publishedCheckpointGeneration(instance));
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:57:00.000000Z -> 59
+                        """);
+                assertNoRepairMarker(instance);
+            }
+            final String rows = headMissDepartureRows(true, 56) + "2026-01-01T00:57:00.000000Z\ta\t" + keptX + "\t" + keptS + "\n";
+            assertDepartedViewRows(rows);
+            assertNoRefreshFaults("lv");
+            for (int restart = 0; restart < 2; restart++) {
+                restartLiveViewsAndRecover();
+                assertDepartedViewRestored(rows);
+            }
+        });
+    }
+
+    /**
+     * The minute fixture over a base that lost nothing, under a view running {@code viewSql},
+     * whose newest three minutes a REPLACE_RANGE reduces to one row with a new value. The
+     * rebuild's output ends below the root at 00:59 it spliced, so the repair truncates at the new
+     * frontier 00:57 and seals a root there. The view gives what a recompute gives, and each
+     * restart restores from that root.
+     */
+    private void assertNewestRangeKeepingOneRowMatchesRecompute(String viewSql, String createOptions) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms " + createOptions + "START FROM BEGINNING AS " + viewSql);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitAndRefresh(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+                commitAndRefresh(job, minuteRowsOfA(0, 30, "1.0"));
+                setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+                commitAndRefresh(job, minuteRowsOfA(31, 59, "1.0"));
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final long headMissRepairsBefore = countHeadMissRepairs(job);
+                replaceBaseRange(ts("2026-01-01T00:57:00.000000Z"), ts("2026-01-01T01:00:00.000000Z"), 5.0);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:57:00.000000Z -> 59
+                        """);
+                assertNoRepairMarker(instance);
+            }
+            assertMatchesRecompute(viewSql);
+            assertNoRefreshFaults("lv");
+            for (int restart = 0; restart < 2; restart++) {
+                restartLiveViewsAndRecover();
+                assertRestoredFromTimeline("lv");
+                assertMatchesRecompute(viewSql);
+                assertNoRefreshFaults("lv");
+            }
+        });
+    }
+
+    private void assertMatchesRecompute(String viewSql) throws Exception {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + viewSql + ") ORDER BY ts, sym",
+                "(lv) ORDER BY ts, sym",
+                LOG,
+                true
+        );
+    }
+
+    private static void assertNoHeadMissSpliceFrontierStat(LiveViewRefreshJob job) {
+        Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+        Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_KEEP_COUNT));
+        Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT));
+    }
+
+    private void assertNoRepairMarker(LiveViewInstance instance) {
+        try (Path dir = new Path().of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)) {
+            Assert.assertFalse("the repair must resolve its marker", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+        }
+    }
+
+    /**
+     * The restart after a repair that retired the timeline over a base that lost nothing
+     * rebuilds from the applied base, which gives what a recompute gives, and the next row seals
+     * a root the restart after it restores from.
+     */
+    private void assertRebuiltOnRestartThenRestoredAfterTheNextRow(String rows) throws Exception {
+        assertDepartedViewRows(rows);
+        assertNoRefreshFaults("lv");
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            restartLiveViewsAndRecover();
+            capture.drain();
+            capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=timeline is absent");
+        } finally {
+            capture.stop();
+        }
+        assertRebuiltFromAppliedBase("lv");
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+        assertDepartedViewRows(rows);
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + HEAD_MISS_DEPARTURE_VIEW_SQL + ") ORDER BY ts, sym",
+                "(lv) ORDER BY ts, sym",
+                LOG,
+                true
+        );
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            commitAndRefresh(job, "('2026-01-01T01:05:00.000000Z', 'a', 4.0)");
+        }
+        final String grownRows = rows + "2026-01-01T01:05:00.000000Z\ta\t4.0\t4.0\n";
+        restartLiveViewsAndRecover();
+        assertDepartedViewRestored(grownRows);
+    }
+
     private void commitAndRefresh(LiveViewRefreshJob job, String values) throws Exception {
         execute("INSERT INTO base VALUES " + values);
         drainWalQueue();
         driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * Over the day the base loses, a root at the row 00:56 that becomes the frontier, then two
+     * rows the view's filter drops and the row 00:59 of the view, which a root of its own seals
+     * when {@code isAboveSealed}.
+     */
+    private void commitRootAtTheFrontierThenRowsAboveIt(LiveViewRefreshJob job, boolean isAboveSealed) throws Exception {
+        commitTwoBatchesOverTheLostDay(job, 56);
+        if (isAboveSealed) {
+            setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+        }
+        commitAndRefresh(
+                job,
+                "('2026-01-01T00:57:00.000000Z', 'a', -1.0), ('2026-01-01T00:57:30.000000Z', 'a', -1.0), ('2026-01-01T00:59:00.000000Z', 'a', 1.0)"
+        );
+    }
+
+    // The one row of a day the base then drops, which the view walks past and keeps: a rebuild
+    // from the applied base would lose it.
+    private void commitTheDayTheBaseLoses(LiveViewRefreshJob job) throws Exception {
+        commitAndRefresh(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+        execute("ALTER TABLE base DROP PARTITION LIST '2025-12-31'");
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * The day the base loses, then a row a minute from 00:00 to 00:30 that the cadence leaves
+     * unsealed, and from 00:31 to 00:lastMinute, which seals a root at its newest row.
+     */
+    private void commitTwoBatchesOverTheLostDay(LiveViewRefreshJob job, int lastMinute) throws Exception {
+        commitTheDayTheBaseLoses(job);
+        commitAndRefresh(job, minuteRowsOfA(0, 30, "1.0"));
+        setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+        commitAndRefresh(job, minuteRowsOfA(31, lastMinute, "1.0"));
+    }
+
+    private void createHeadMissDepartureView() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + HEAD_MISS_DEPARTURE_VIEW_SQL);
+    }
+
+    /**
+     * Deletes the view's rows from {@code fromTs} to the end of the base table and asserts the
+     * head-miss rebuild repaired it and, having emitted nothing with no root a restart could
+     * restore at the new frontier, retired the timeline.
+     */
+    private void departAndAssertTheTimelineRetired(LiveViewRefreshJob job, LiveViewInstance instance, String fromTs) {
+        final long headMissRepairsBefore = countHeadMissRepairs(job);
+        final long resetsBefore = instance.getCheckpointTimelineResets();
+        replaceBaseRange(ts(fromTs), ts("2026-01-01T01:00:00.000000Z"), Double.NaN);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        Assert.assertEquals("the head-miss rebuild repairs the departure", headMissRepairsBefore + 1, countHeadMissRepairs(job));
+        Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT));
+        Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+        Assert.assertEquals("the repair retires the timeline", resetsBefore + 1, instance.getCheckpointTimelineResets());
+        try (
+                Path dir = new Path().of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                Path timelinePath = new Path()
+        ) {
+            LiveViewCheckpointLayout.timelinePath(timelinePath, dir);
+            Assert.assertFalse("the retired timeline is gone", configuration.getFilesFacade().exists(timelinePath.$()));
+            Assert.assertFalse("the retire takes the marker with it", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+        }
+        assertNoRefreshFaults("lv");
     }
 
     /**

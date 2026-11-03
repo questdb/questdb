@@ -42,6 +42,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRefreshStats;
+import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlException;
@@ -112,6 +113,13 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             2026-01-01T00:01:00.000000Z\ta\t1.5\t2.0
             """;
     private static final String DEPARTURE_ROWS_QUERY = "SELECT ts, sym, x, s FROM lv";
+    // One upsert over the head-miss departure fixture: 00:57 to a new value, 00:58 and 00:59 out
+    // of the filter.
+    private static final String HEAD_MISS_KEPT_ROW_DEPARTURE = "('2026-01-01T00:57:00.000000Z', 'a', 5.0), "
+            + "('2026-01-01T00:58:00.000000Z', 'a', -1.0), ('2026-01-01T00:59:00.000000Z', 'a', -1.0)";
+    // What HEAD_MISS_KEPT_ROW_DEPARTURE leaves: the kept row's one-minute frame holds 00:56 too.
+    private static final String HEAD_MISS_KEPT_ROW_DEPARTURE_ROWS = headMissDepartureRows(true, 56)
+            + "2026-01-01T00:57:00.000000Z\ta\t5.0\t6.0\n";
     // A filtered view over a deduplicating base: an upsert of a value the filter rejects moves
     // a row out of it.
     private static final String DEPARTURE_VIEW_SQL = "SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts "
@@ -1529,6 +1537,450 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     @Test
+    public void testHeadMissDepartureCrashAheadOfTheFrontierTruncateRebuildsWhenTheSpliceKeptARootAboveTheRow() throws Exception {
+        // A crash between the marker the head-miss rebuild's frontier truncate writes and the
+        // truncate's publication leaves the splice's generation under a marker recording that
+        // generation and the view's seqTxn, neither of which moved: the marker reads as stale and
+        // the restart restores from the splice. The splice kept the departed rows' root above the
+        // kept row, so the restore fails its row count and rebuilds. The base lost nothing here,
+        // and the rebuild gives what a recompute gives.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final DepartureMarkerCrash crash = new DepartureMarkerCrash();
+        assertMemoryLeak(crash, () -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitHeadMissDepartureFixture(job, false, 59);
+                crashAtTheHeadMissFrontierTruncateMarker(crash, job, HEAD_MISS_KEPT_ROW_DEPARTURE);
+            }
+            restoreTheCrashImageAndRestart(crash);
+            assertRebuiltFromAppliedBase("lv");
+            Assert.assertFalse(viewInstance().isCheckpointRecoveryBlocked());
+            assertViewRows(HEAD_MISS_KEPT_ROW_DEPARTURE_ROWS, DEPARTURE_ROWS_QUERY);
+            assertViewMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL);
+            restartAndRefresh();
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL);
+        });
+    }
+
+    @Test
+    public void testHeadMissDepartureCrashAheadOfTheFrontierTruncateRestoresWhenTheRootAtTheFrontierCountsEveryRow() throws Exception {
+        // The same crash after a departure that emitted nothing above a root at the row that
+        // became the frontier, which counts every row the view holds: the stale marker's restart
+        // restores from the splice's generation, floored at that root, over the day the base lost.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final DepartureMarkerCrash crash = new DepartureMarkerCrash();
+        assertMemoryLeak(crash, () -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitHeadMissRootAtTheFrontierThenRowsAboveIt(job, true, true);
+                crashAtTheHeadMissFrontierTruncateMarker(crash, job, "('2026-01-01T00:59:00.000000Z', 'a', -1.0)");
+            }
+            restoreTheCrashImageAndRestart(crash);
+            final String rows = headMissDepartureRows(true, 56);
+            assertRestoredFromTimeline("lv");
+            assertViewRows(rows, DEPARTURE_ROWS_QUERY);
+            assertNoRefreshFaults("lv");
+            restartAndRefresh();
+            assertRestoredFromTimeline("lv");
+            assertViewRows(rows, DEPARTURE_ROWS_QUERY);
+        });
+    }
+
+    @Test
+    public void testHeadMissDepartureCrashBetweenTheFrontierTruncateAndItsSealRebuildsOnRestart() throws Exception {
+        // A crash after the truncate that drops the roots above the new frontier and before the
+        // seal there leaves a generation whose newest root sits below the frontier, under the
+        // marker the truncate wrote. The marker reads as live, so the restart rebuilds from the
+        // applied base rather than restore from that generation.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(() -> {
+                createHeadMissDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveSeedToCompletion(job, "lv");
+                    commitHeadMissDepartureFixture(job, false, 59);
+                    final LiveViewInstance instance = viewInstance();
+                    final long generationBefore = generation(instance);
+                    final AtomicBoolean hasCrashed = new AtomicBoolean();
+                    hooks(job).setSimulateHeadMissHeadSealStart(() -> {
+                        hasCrashed.set(true);
+                        throw CairoException.critical(0).put("simulated crash ahead of the frontier seal");
+                    });
+                    execute("INSERT INTO base VALUES " + HEAD_MISS_KEPT_ROW_DEPARTURE);
+                    drainWalQueue();
+                    for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && !hasCrashed.get(); pass++) {
+                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                        drainWalQueue();
+                        job.processNotificationsForTest();
+                    }
+                    Assert.assertTrue("the head-miss rebuild must reach its head seal", hasCrashed.get());
+                    Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                    Assert.assertEquals("the splice and the truncate", generationBefore + 2, generation(instance));
+                    assertCheckpointLadder(instance, false, "2025-12-31T23:55:00.000000Z -> 1\n");
+                    assertMarkerNames(generationBefore + 1);
+                }
+                restartAndRefresh();
+                capture.drain();
+                capture.assertLogged("live view restart rebuilding from applied base [view=lv, cause=prefix preservation repair marker present");
+                assertRebuiltFromAppliedBase("lv");
+                assertViewMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL);
+                restartAndRefresh();
+                assertRestoredFromTimeline("lv");
+                assertViewMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testHeadMissDepartureFrontierLookupThatFailsRetiresTheTimeline() throws Exception {
+        // The departure emits nothing above a root at the row that becomes the frontier, which
+        // would keep the timeline, but the read of that root fails: a root the repair cannot vet
+        // is no root to keep a generation over, so it retires the timeline. Over a base that lost
+        // nothing the restart rebuilds what a recompute gives.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicBoolean isConsumedSeqTxnAdvanced = new AtomicBoolean();
+        final AtomicInteger refusedReads = new AtomicInteger();
+        // Once armed, refuses the first open of the timeline's superblock after the repair writes
+        // the view's state file to advance its consumed seqTxn past the splice it published: the
+        // lookup of the root at the frontier, which runs next.
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isArmed.get() && Utf8s.endsWithAscii(name, LiveViewState.LIVE_VIEW_STATE_FILE_NAME)) {
+                    isArmed.set(false);
+                    isConsumedSeqTxnAdvanced.set(true);
+                } else if (isConsumedSeqTxnAdvanced.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
+                    isConsumedSeqTxnAdvanced.set(false);
+                    refusedReads.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(ff, () -> {
+                createHeadMissDepartureView();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveSeedToCompletion(job, "lv");
+                    commitHeadMissRootAtTheFrontierThenRowsAboveIt(job, false, false);
+                    final LiveViewInstance instance = viewInstance();
+                    final long resetsBefore = instance.getCheckpointTimelineResets();
+                    isArmed.set(true);
+                    commitDeparture(job, "('2026-01-01T00:59:00.000000Z', 'a', -1.0)");
+                    Assert.assertEquals(1, refusedReads.get());
+                    capture.drain();
+                    capture.assertLogged("could not read the live view checkpoint root at the frontier [view=lv");
+                    Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_RETIRE_COUNT));
+                    Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_ZERO_ROW_KEEP_COUNT));
+                    Assert.assertEquals("the repair retires the timeline", resetsBefore + 1, instance.getCheckpointTimelineResets());
+                    try (Path dir = checkpointsDir(instance); Path timelinePath = new Path()) {
+                        LiveViewCheckpointLayout.timelinePath(timelinePath, dir);
+                        Assert.assertFalse(configuration.getFilesFacade().exists(timelinePath.$()));
+                        Assert.assertFalse(LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+                    }
+                }
+                restartAndRefresh();
+                assertRebuiltFromAppliedBase("lv");
+                assertViewRows(headMissDepartureRows(true, 56), DEPARTURE_ROWS_QUERY);
+                assertViewMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL);
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testHeadMissDepartureFrontierSealThatFailsRetiresTheTimeline() throws Exception {
+        // The truncate kept only the root below the kept row, so the frontier is owed a root of
+        // its own, and the seal that would put it there fails on its data segment: the truncate's
+        // rule retires the timeline. Over a base that lost nothing the restart rebuilds what a
+        // recompute gives, and the next row's seal opens a timeline the restart after it restores.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
+        assertMemoryLeak(fault, () -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitHeadMissDepartureFixture(job, false, 59);
+                final LiveViewInstance instance = viewInstance();
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                final long sealFailuresBefore = instance.getCheckpointSealFailures();
+                hooks(job).setSimulateHeadMissHeadSealStart(
+                        () -> fault.arm(LiveViewCheckpointDiskFullFault.OP_TRUNCATE, LiveViewCheckpointLayout.DATA_DIR_NAME, 1)
+                );
+                commitDeparture(job, HEAD_MISS_KEPT_ROW_DEPARTURE);
+                fault.disarm();
+                Assert.assertNotNull("the seal at the new frontier must reach its data segment", fault.getFailedFile());
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                Assert.assertEquals(sealFailuresBefore + 1, instance.getCheckpointSealFailures());
+                Assert.assertEquals(
+                        "the truncated timeline goes with the seal that did not land",
+                        resetsBefore + 1,
+                        instance.getCheckpointTimelineResets()
+                );
+                try (Path dir = checkpointsDir(instance); Path timelinePath = new Path()) {
+                    LiveViewCheckpointLayout.timelinePath(timelinePath, dir);
+                    Assert.assertFalse(configuration.getFilesFacade().exists(timelinePath.$()));
+                    Assert.assertFalse(LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+                }
+            }
+            assertViewRows(HEAD_MISS_KEPT_ROW_DEPARTURE_ROWS, DEPARTURE_ROWS_QUERY);
+            assertNoRefreshFaults("lv");
+            restartAndRefresh();
+            assertRebuiltFromAppliedBase("lv");
+            Assert.assertFalse(viewInstance().isCheckpointRecoveryBlocked());
+            assertViewMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commitDeparture(job, "('2026-01-01T01:05:00.000000Z', 'a', 4.0)");
+            }
+            restartAndRefresh();
+            assertRestoredFromTimeline("lv");
+            assertViewRows(HEAD_MISS_KEPT_ROW_DEPARTURE_ROWS + "2026-01-01T01:05:00.000000Z\ta\t4.0\t4.0\n", DEPARTURE_ROWS_QUERY);
+            assertViewMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL);
+        });
+    }
+
+    @Test
+    public void testHeadMissDepartureFrontierSealsOverAPurgeAndAReadBetweenTheTruncateAndTheSeal() throws Exception {
+        // Between the frontier truncate and the seal at the new frontier the view's head is
+        // cleared, and the generation on disk holds no root at the frontier. A reader there sees
+        // the repaired rows and a WAL purge there runs, and the seal lands after both, standing on
+        // the departure's commit. A restart restores from it over the day the base lost.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_WAL_PURGE_INTERVAL, 0);
+        assertMemoryLeak(() -> {
+            createHeadMissDepartureView();
+            final StringSink rowsAtTheSeal = new StringSink();
+            final AtomicBoolean hasPurged = new AtomicBoolean();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitHeadMissDepartureFixture(job, true, 59);
+                final LiveViewInstance instance = viewInstance();
+                hooks(job).setSimulateHeadMissHeadSealStart(() -> {
+                    Assert.assertEquals("the truncate clears the head", Numbers.LONG_NULL, instance.getHeadCheckpointMaxTs());
+                    try {
+                        printSql(DEPARTURE_ROWS_QUERY, rowsAtTheSeal);
+                    } catch (SqlException e) {
+                        throw new AssertionError(e);
+                    }
+                    try (WalPurgeJob purgeJob = new WalPurgeJob(engine)) {
+                        purgeJob.drain(0);
+                    }
+                    hasPurged.set(true);
+                });
+                commitDeparture(job, HEAD_MISS_KEPT_ROW_DEPARTURE);
+                Assert.assertTrue("the purge must run between the truncate and the seal", hasPurged.get());
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:57:00.000000Z -> 59
+                        """);
+                Assert.assertEquals(ts("2026-01-01T00:57:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                // The base's seqTxns: the 23:55 row, the DROP PARTITION, the two batches and the
+                // departure.
+                Assert.assertEquals(5, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(5, instance.getCheckpointTimelineWalPurgeFloor());
+            }
+            TestUtils.assertEquals(HEAD_MISS_KEPT_ROW_DEPARTURE_ROWS, rowsAtTheSeal);
+            restartAndRefresh();
+            assertRestoredFromTimeline("lv");
+            assertViewRows(HEAD_MISS_KEPT_ROW_DEPARTURE_ROWS, DEPARTURE_ROWS_QUERY);
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testHeadMissDepartureSpliceThatFailsToPublishRetiresTheTimeline() throws Exception {
+        // The splice of the kept-row departure fails after writing its metadata and before the
+        // superblock names it: the output moved under every root it re-versioned, so the timeline
+        // retires on the way out, with the seal the repair put on it. Over a base that lost nothing
+        // the restart rebuilds what a recompute gives.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final AtomicReference<LiveViewRefreshJob> faultedJob = new AtomicReference<>();
+        final AtomicInteger markerRenames = new AtomicInteger();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                final int result = super.rename(from, to);
+                final LiveViewRefreshJob job = faultedJob.get();
+                if (job != null
+                        && Utf8s.endsWithAscii(to, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)
+                        && markerRenames.incrementAndGet() == 1) {
+                    job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
+                }
+                return result;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitHeadMissDepartureFixture(job, false, 59);
+                final LiveViewInstance instance = viewInstance();
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+                final long repairFailuresBefore = instance.getCheckpointRepairFailures();
+                faultedJob.set(job);
+                hooks(job).setSimulateHeadMissHeadSealStart(() -> job.setCheckpointTimelineTestFailureStage(0));
+                commitDeparture(job, HEAD_MISS_KEPT_ROW_DEPARTURE);
+                faultedJob.set(null);
+                Assert.assertEquals("the splice's marker alone", 1, markerRenames.get());
+                Assert.assertEquals(repairFailuresBefore + 1, instance.getCheckpointRepairFailures());
+                Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                Assert.assertEquals("the unpublished splice retires the timeline", resetsBefore + 1, instance.getCheckpointTimelineResets());
+                try (Path dir = checkpointsDir(instance); Path timelinePath = new Path()) {
+                    LiveViewCheckpointLayout.timelinePath(timelinePath, dir);
+                    Assert.assertFalse(configuration.getFilesFacade().exists(timelinePath.$()));
+                    Assert.assertFalse(LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+                }
+            }
+            assertViewRows(HEAD_MISS_KEPT_ROW_DEPARTURE_ROWS, DEPARTURE_ROWS_QUERY);
+            assertNoRefreshFaults("lv");
+            restartAndRefresh();
+            assertRebuiltFromAppliedBase("lv");
+            assertViewMatchesRecompute(HEAD_MISS_DEPARTURE_VIEW_SQL);
+        });
+    }
+
+    @Test
+    public void testHeadMissDepartureFrontierTruncateThatFailsToPublishOpensAFreshHistory() throws Exception {
+        // The head-miss rebuild's frontier truncate fails after writing its metadata and before
+        // the superblock names it, so the timeline retires and the seal at the new frontier opens
+        // a fresh history. The fault is armed at the truncate's own marker, the turn's second, and
+        // disarmed ahead of the seal, which would otherwise fail on it as well.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final AtomicReference<LiveViewRefreshJob> faultedJob = new AtomicReference<>();
+        final AtomicInteger markerRenames = new AtomicInteger();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                final int result = super.rename(from, to);
+                final LiveViewRefreshJob job = faultedJob.get();
+                if (job != null
+                        && Utf8s.endsWithAscii(to, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)
+                        && markerRenames.incrementAndGet() == 2) {
+                    job.setCheckpointTimelineTestFailureStage(LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH);
+                }
+                return result;
+            }
+        };
+        assertMemoryLeak(ff, () -> assertHeadMissDepartureTruncateFaultOpensAFreshHistory(
+                job -> {
+                    faultedJob.set(job);
+                    hooks(job).setSimulateHeadMissHeadSealStart(() -> job.setCheckpointTimelineTestFailureStage(0));
+                },
+                () -> {
+                    faultedJob.set(null);
+                    Assert.assertEquals("the splice's marker and the truncate's", 2, markerRenames.get());
+                }
+        ));
+    }
+
+    @Test
+    public void testHeadMissDepartureFrontierTruncateWithoutItsMarkerOpensAFreshHistory() throws Exception {
+        // The head-miss rebuild's frontier truncate writes its marker before it publishes, the
+        // turn's second marker after the splice's. One it cannot write retires the timeline, and
+        // the seal at the new frontier opens a fresh history there.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicInteger markerRenames = new AtomicInteger();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (isArmed.get()
+                        && Utf8s.endsWithAscii(to, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)
+                        && markerRenames.incrementAndGet() == 2) {
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                return super.rename(from, to);
+            }
+        };
+        assertMemoryLeak(ff, () -> assertHeadMissDepartureTruncateFaultOpensAFreshHistory(
+                job -> isArmed.set(true),
+                () -> {
+                    isArmed.set(false);
+                    Assert.assertEquals("the splice's marker and the truncate's", 2, markerRenames.get());
+                }
+        ));
+    }
+
+    @Test
+    public void testHeadMissDepartureMarkerThatCannotBeClearedAfterAFrontierSealIsStale() throws Exception {
+        // The frontier seal publishes two generations past the splice its truncate's marker
+        // names, so a marker whose clear failed reads as stale and the restart restores.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final LiveViewMarkerClearFault fault = new LiveViewMarkerClearFault();
+        assertMemoryLeak(fault, () -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitHeadMissDepartureFixture(job, true, 59);
+                final long generationBefore = generation(viewInstance());
+                fault.arm();
+                commitDeparture(job, HEAD_MISS_KEPT_ROW_DEPARTURE);
+                fault.disarm();
+                Assert.assertEquals(1, fault.getRefusedClears());
+                Assert.assertEquals("the splice, the truncate and the seal", generationBefore + 3, generation(viewInstance()));
+                assertMarkerNames(generationBefore + 1);
+            }
+            for (int restart = 0; restart < 2; restart++) {
+                restartAndRefresh();
+                assertRestoredFromTimeline("lv");
+                assertViewRows(HEAD_MISS_KEPT_ROW_DEPARTURE_ROWS, DEPARTURE_ROWS_QUERY);
+                try (Path dir = checkpointsDir(viewInstance())) {
+                    Assert.assertFalse(
+                            "the restart must clear the stale marker",
+                            LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir)
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHeadMissDepartureMarkerThatCannotBeClearedOverAKeptFrontierRootIsLive() throws Exception {
+        // A departure that emitted nothing above a root at the row that became the frontier
+        // truncates the root above it away and keeps the timeline with no seal: one generation
+        // past the splice the truncate's marker names. A marker whose clear failed reads as live
+        // there, so the restart rebuilds, which the restatement guard refuses over the day the
+        // base lost.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        final LiveViewMarkerClearFault fault = new LiveViewMarkerClearFault();
+        assertMemoryLeak(fault, () -> {
+            createHeadMissDepartureView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitHeadMissRootAtTheFrontierThenRowsAboveIt(job, true, true);
+                final long generationBefore = generation(viewInstance());
+                fault.arm();
+                commitDeparture(job, "('2026-01-01T00:59:00.000000Z', 'a', -1.0)");
+                fault.disarm();
+                Assert.assertEquals(1, fault.getRefusedClears());
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+                Assert.assertEquals("the splice and the truncate", generationBefore + 2, generation(viewInstance()));
+                assertMarkerNames(generationBefore + 1);
+            }
+            restartAndRefresh();
+            final LiveViewInstance instance = viewInstance();
+            Assert.assertEquals(
+                    "rebuild_blocked",
+                    LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute())
+            );
+            Assert.assertTrue(instance.isCheckpointRecoveryBlocked());
+            assertViewRows(headMissDepartureRows(true, 56), DEPARTURE_ROWS_QUERY);
+        });
+    }
+
+    @Test
     public void testEofRepairKeepsTheWholeLadderInsteadOfTruncatingIt() throws Exception {
         assertMemoryLeak(() -> {
             createView();
@@ -1953,6 +2405,39 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         }
     }
 
+    /**
+     * The head-miss departure fixture over the day the base loses, whose kept-row departure
+     * runs with {@code arm} making the frontier truncate fail: the timeline retires, and the
+     * seal at the new frontier opens a fresh history there that each restart restores from.
+     */
+    private void assertHeadMissDepartureTruncateFaultOpensAFreshHistory(Consumer<LiveViewRefreshJob> arm, Runnable disarm) throws Exception {
+        createHeadMissDepartureView();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveSeedToCompletion(job, "lv");
+            commitHeadMissDepartureFixture(job, true, 59);
+            final LiveViewInstance instance = viewInstance();
+            final long resetsBefore = instance.getCheckpointTimelineResets();
+            arm.accept(job);
+            commitDeparture(job, HEAD_MISS_KEPT_ROW_DEPARTURE);
+            disarm.run();
+            Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+            Assert.assertEquals("the failed truncate retires the timeline", resetsBefore + 1, instance.getCheckpointTimelineResets());
+            Assert.assertEquals("the seal at the new frontier opens a fresh history", 1, generation(instance));
+            assertCheckpointLadder(instance, false, "2026-01-01T00:57:00.000000Z -> 59\n");
+            try (Path dir = checkpointsDir(instance)) {
+                Assert.assertFalse("a retired timeline owes no marker", LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir));
+            }
+        }
+        assertViewRows(HEAD_MISS_KEPT_ROW_DEPARTURE_ROWS, DEPARTURE_ROWS_QUERY);
+        assertNoRefreshFaults("lv");
+        for (int restart = 0; restart < 2; restart++) {
+            restartAndRefresh();
+            assertRestoredFromTimeline("lv");
+            assertViewRows(HEAD_MISS_KEPT_ROW_DEPARTURE_ROWS, DEPARTURE_ROWS_QUERY);
+            assertNoRefreshFaults("lv");
+        }
+    }
+
     // The marker on disk is the one the frontier truncate wrote over the splice's generation.
     private void assertMarkerNames(long baseGeneration) {
         try (Path dir = checkpointsDir(viewInstance())) {
@@ -2236,6 +2721,47 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     }
 
     /**
+     * The head-miss departure fixture: the row 2025-12-31T23:55, whose day the base then drops
+     * when {@code isDayLost}, a row a minute from 00:00 to 00:30 the cadence leaves unsealed, then
+     * one from 00:31 to {@code lastMinute}, which seals a root at its newest row.
+     */
+    private void commitHeadMissDepartureFixture(LiveViewRefreshJob job, boolean isDayLost, int lastMinute) throws Exception {
+        commitDeparture(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+        if (isDayLost) {
+            execute("ALTER TABLE base DROP PARTITION LIST '2025-12-31'");
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        }
+        commitDeparture(job, minuteRowsOfA(0, 30, "1.0"));
+        setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+        commitDeparture(job, minuteRowsOfA(31, lastMinute, "1.0"));
+    }
+
+    /**
+     * Over the day the base loses when {@code isDayLost}, a root at the row 00:56 that the
+     * departure of 00:59 makes the frontier, then two rows the view's filter drops and the row
+     * 00:59, which a root of its own seals when {@code isAboveSealed}. A rebuild from a minute
+     * below 00:59 reads none of the dropped rows a resume from the root at 00:56 would read, so it
+     * is the cheaper repair.
+     */
+    private void commitHeadMissRootAtTheFrontierThenRowsAboveIt(LiveViewRefreshJob job, boolean isDayLost, boolean isAboveSealed) throws Exception {
+        commitHeadMissDepartureFixture(job, isDayLost, 56);
+        if (isAboveSealed) {
+            setCurrentMicros(currentMicros + DURATION_CADENCE_ELAPSED_MICROS);
+        }
+        commitDeparture(
+                job,
+                "('2026-01-01T00:57:00.000000Z', 'a', -1.0), ('2026-01-01T00:57:30.000000Z', 'a', -1.0), ('2026-01-01T00:59:00.000000Z', 'a', 1.0)"
+        );
+        assertCheckpointLadder(
+                viewInstance(),
+                false,
+                "2025-12-31T23:55:00.000000Z -> 1\n2026-01-01T00:56:00.000000Z -> 58\n"
+                        + (isAboveSealed ? "2026-01-01T00:59:00.000000Z -> 59\n" : "")
+        );
+    }
+
+    /**
      * Builds a departure, the newest of two roots ({@code isZeroRowDeparture}) or a root over two
      * rows, optionally above the day the base loses, crashes at the frontier truncate's marker,
      * and restarts from what the crash left.
@@ -2279,9 +2805,33 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT));
     }
 
+    /**
+     * Commits {@code departure} and copies the view's checkpoint directory to a crash image the
+     * moment the head-miss rebuild's frontier truncate writes its marker: the marker records the
+     * splice's generation and the view's seqTxn, and the truncate has not published yet. The turn
+     * then runs on to its end.
+     */
+    private void crashAtTheHeadMissFrontierTruncateMarker(DepartureMarkerCrash crash, LiveViewRefreshJob job, String departure) throws Exception {
+        final LiveViewInstance instance = viewInstance();
+        try (Path checkpoints = checkpointsDir(instance).slash(); Path crashImage = crashImageDir()) {
+            crash.arm(() -> TestUtils.copyDirectory(checkpoints, crashImage, configuration.getMkDirMode()));
+            commitDeparture(job, departure);
+            crash.disarm();
+        }
+        Assert.assertTrue("the frontier truncate must write its marker", crash.hasCrashed());
+        Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.HEAD_MISS_SPLICE_FRONTIER_TRUNCATE_COUNT));
+    }
+
     private void createDepartureView() throws Exception {
         execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + DEPARTURE_VIEW_SQL);
+    }
+
+    // A filtered view with a one-minute RANGE frame over a deduplicating base: under the default
+    // cadence a correction of its newest rows reaches the head-miss end-of-table splice.
+    private void createHeadMissDepartureView() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS " + HEAD_MISS_DEPARTURE_VIEW_SQL);
     }
 
     /**
