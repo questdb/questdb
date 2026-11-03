@@ -689,7 +689,17 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             // surfaced as the unrelated "partitioning is possible only on tables with designated
             // timestamps" error below, e.g. for
             // "CREATE TABLE t AS (SELECT * FROM a ORDER BY ts DESC) PARTITION BY DAY".
-            if (timestampIndex > -1) {
+            //
+            // The parquet export temp table is the exception. It only buffers the SELECT's rows for
+            // the encoder, which must see them in the SELECT's order. Partitioned, it needs the
+            // timestamp to split the rows and accepts any order through O3. Non-partitioned, the
+            // timestamp buys nothing and makes the writer refuse every row below the previous one,
+            // so it inherits the timestamp only from a forward SELECT; a descending or interleaved
+            // one leaves the export with no designated timestamp and its rows in the SELECT's order.
+            final boolean isOrderPreservingBuffer = tableKind == TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT
+                    && partitionBy == PartitionBy.NONE;
+            if (timestampIndex > -1
+                    && (scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD || !isOrderPreservingBuffer)) {
                 this.timestampIndex = timestampIndex;
                 timestampType = metadata.getTimestampType();
                 if (scanDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
@@ -707,11 +717,18 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                     // read it as evidence that a descending re-read is reachable, and do not widen
                     // this assignment to make it so without first working out what a descending
                     // re-read would mean: the temp table is written through TableWriter, so a
-                    // partitioned one has been O3-sorted into ascending order before it is read back
-                    // and a non-partitioned one refuses out-of-order rows outright. In neither case
-                    // does the SELECT's own scan order survive into the stored rows.
+                    // partitioned one has been O3-sorted into ascending order before it is read back,
+                    // and a non-partitioned one either holds ascending rows (forward SELECT) or, with no
+                    // designated timestamp, already holds the SELECT's rows in the SELECT's order, which
+                    // an ascending re-read returns unchanged and a descending one would reverse.
                     this.selectSqlScanDirection = scanDirection;
                 }
+            } else {
+                // execute() validates again against a freshly compiled SELECT, whose plan may differ
+                // from the one the first call saw. Drop a timestamp that an earlier call inherited,
+                // or the writer would keep it.
+                this.timestampIndex = -1;
+                timestampType = ColumnType.UNDEFINED;
             }
         } else {
             this.timestampIndex = metadata.getColumnIndexQuiet(this.timestampColumnName);
