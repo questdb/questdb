@@ -605,6 +605,30 @@ public class IndexGatherEstimateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyCountsCappedAtFrameRows() throws Exception {
+        // legacy EF blocks (no rank trailer) cannot count a clipped range, so each of the two
+        // keys counts all 33 rows of its frame: the frame's 66 is capped at its 33 rows, and the
+        // four frames select 132 of 132 rather than 264
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, s symbol index type posting ef, a long) timestamp(ts) partition by hour bypass wal");
+            io.questdb.cairo.idx.PostingIndexUtils.isEfRankTrailerEnabled = false;
+            try {
+                execute("insert into t select ((x - 1) * 36_000_000L)::timestamp, 'k' || ((x - 1) % 2), x from long_sequence(400)");
+            } finally {
+                io.questdb.cairo.idx.PostingIndexUtils.isEfRankTrailerEnabled = true;
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            final Open open = open("select count() n, sum(a) s from t where s in ('k0', 'k1') and ts in '1970-01-01T00:10;20m;1h;4'");
+            Assert.assertEquals("[0,1,2,3]", open.partitions);
+            Assert.assertEquals(4 * 33, open.scanned);
+            Assert.assertEquals(4 * 33, open.selected);
+            Assert.assertFalse(open.index);
+            TestUtils.assertContains(open.rows, "132\t");
+        });
+    }
+
+    @Test
     public void testKeyPickDoesNotOverflow() throws Exception {
         // one partition and 50,001 keys sampled to 50,000 (the budget raised through the test
         // hook): the i-th sampled key sits at floor(i * N / nS), where i * N passes 2^31

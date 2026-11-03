@@ -215,15 +215,19 @@ public class IntGroupSort {
         for (; ; ) {
             while (compareGroups(array, ++i, low, n) < 0) {
                 if (i == hi) {
+                    assert false : "the left scan passed hi: a group >= the pivot always lies in (low, hi]";
                     break;
                 }
             }
             while (compareGroups(array, low, --j, n) < 0) {
                 if (j == low) {
+                    assert false : "the right scan reached low: the pivot at low stops it first";
                     break;
                 }
             }
-            if (i == j && compareGroups(array, i, low, n) == 0) {
+            if (i == j) {
+                // the scans stop on the same group only when it is both >= and <= the pivot
+                assert compareGroups(array, i, low, n) == 0;
                 swapGroups(array, ++p, i, n);
             }
             if (i >= j) {
