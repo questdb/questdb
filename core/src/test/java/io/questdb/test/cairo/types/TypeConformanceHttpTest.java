@@ -44,6 +44,7 @@ import io.questdb.test.cutlass.http.HttpServerConfigurationBuilder;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -119,6 +120,7 @@ public class TypeConformanceHttpTest extends AbstractTest {
 
     @Test
     public void testCsv() throws Exception {
+        TypeConformanceInvariants.assumeEnabled(type, "http.csv", MODES);
         for (String mode : MODES) {
             if (!TypeConformanceInvariants.isEnabled(type, "http.csv", mode)) {
                 continue;
@@ -144,6 +146,7 @@ public class TypeConformanceHttpTest extends AbstractTest {
 
     @Test
     public void testJson() throws Exception {
+        TypeConformanceInvariants.assumeEnabled(type, "http.json", MODES);
         for (String mode : MODES) {
             if (!TypeConformanceInvariants.isEnabled(type, "http.json", mode)) {
                 continue;
@@ -169,10 +172,17 @@ public class TypeConformanceHttpTest extends AbstractTest {
 
     @Test
     public void testParquet() throws Exception {
+        boolean isAnyEnabled = false;
+        for (String tableMode : MODES) {
+            for (String exportMode : PARQUET_MODES) {
+                isAnyEnabled |= TypeConformanceInvariants.isEnabled(type, parquetPath(exportMode), tableMode + "-" + exportMode);
+            }
+        }
+        Assume.assumeTrue(type.label + " runs none of the Parquet export paths", isAnyEnabled);
         for (String tableMode : MODES) {
             for (String exportMode : PARQUET_MODES) {
                 final String mode = tableMode + "-" + exportMode;
-                final String path = "direct".equals(exportMode) ? "http.parquet" : "http.parquet-" + exportMode;
+                final String path = parquetPath(exportMode);
                 if (!TypeConformanceInvariants.isEnabled(type, path, mode)) {
                     continue;
                 }
@@ -324,6 +334,11 @@ public class TypeConformanceHttpTest extends AbstractTest {
                 .replace(root, "<dbRoot>")
                 .replaceAll("(?m)^header\tDate: .*$", "header\tDate: <date>")
                 .replaceAll("questdb-query-[0-9]+", "questdb-query-<clock>");
+    }
+
+    // the kit path of a Parquet export mode
+    private static String parquetPath(String exportMode) {
+        return "direct".equals(exportMode) ? "http.parquet" : "http.parquet-" + exportMode;
     }
 
 

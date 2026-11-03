@@ -129,6 +129,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
 
     @Test
     public void testAlterColumnType() throws Exception {
+        TypeConformanceInvariants.assumeEnabled(type, "storage.alter", PARTITIONED_MODES);
         assertMemoryLeak(() -> {
             for (String mode : PARTITIONED_MODES) {
                 if (!TypeConformanceInvariants.isEnabled(type, "storage.alter", mode)) {
@@ -182,6 +183,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
 
     @Test
     public void testColumnTops() throws Exception {
+        TypeConformanceInvariants.assumeEnabled(type, "storage.tops", PARTITIONED_MODES);
         assertMemoryLeak(() -> {
             for (String mode : PARTITIONED_MODES) {
                 if (!TypeConformanceInvariants.isEnabled(type, "storage.tops", mode)) {
@@ -236,11 +238,9 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
 
     @Test
     public void testDedup() throws Exception {
+        final String mode = "wal-day";
+        TypeConformanceInvariants.assumeEnabled(type, "storage.dedup", mode);
         assertMemoryLeak(() -> {
-            final String mode = "wal-day";
-            if (!TypeConformanceInvariants.isEnabled(type, "storage.dedup", mode)) {
-                return;
-            }
             if (type.isLater()) {
                 checkLaterDedup(mode);
                 return;
@@ -276,6 +276,13 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
 
     @Test
     public void testInsert() throws Exception {
+        // each table mode runs in order and out of order
+        final String[] modes = new String[2 * TABLE_MODES.length];
+        for (int i = 0; i < TABLE_MODES.length; i++) {
+            modes[2 * i] = TABLE_MODES[i];
+            modes[2 * i + 1] = TABLE_MODES[i] + "-o3";
+        }
+        TypeConformanceInvariants.assumeEnabled(type, "storage.insert", modes);
         assertMemoryLeak(() -> {
             for (String tableMode : TABLE_MODES) {
                 for (int o3 = 0; o3 < 2; o3++) {
@@ -329,6 +336,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
 
     @Test
     public void testLatestByKey() throws Exception {
+        TypeConformanceInvariants.assumeEnabled(type, "sql.latest_by_key", TABLE_MODES);
         assertMemoryLeak(() -> {
             for (String mode : TABLE_MODES) {
                 final String path = "sql.latest_by_key";
@@ -360,6 +368,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
 
     @Test
     public void testParquet() throws Exception {
+        TypeConformanceInvariants.assumeEnabled(type, "storage.parquet", PARTITIONED_MODES);
         assertMemoryLeak(() -> {
             for (String mode : PARTITIONED_MODES) {
                 if (!TypeConformanceInvariants.isEnabled(type, "storage.parquet", mode)) {
@@ -405,6 +414,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
 
     @Test
     public void testParquetConvert() throws Exception {
+        TypeConformanceInvariants.assumeEnabled(type, "storage.parquet_convert", PARTITIONED_MODES);
         assertMemoryLeak(() -> {
             for (String mode : PARTITIONED_MODES) {
                 final String path = "storage.parquet_convert";
@@ -484,6 +494,7 @@ public class TypeConformanceStorageTest extends AbstractCairoTest {
 
     @Test
     public void testShapes() throws Exception {
+        TypeConformanceInvariants.assumeEnabled(type, "storage.shapes", TABLE_MODES);
         assertMemoryLeak(() -> {
             for (String mode : TABLE_MODES) {
                 if (!TypeConformanceInvariants.isEnabled(type, "storage.shapes", mode)) {

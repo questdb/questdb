@@ -32,6 +32,7 @@ import io.questdb.cairo.TypeDriver;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Assume;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -397,6 +398,18 @@ public final class TypeConformanceInvariants {
             }
         }
         return false;
+    }
+
+    /**
+     * Skips the test, as JUnit counts it, when the type runs the path in none of the modes
+     * ({@link #isEnabled}), so an instance that would check nothing is not counted as passed.
+     */
+    public static void assumeEnabled(TypeConformanceTypes.Entry type, String path, String... modes) {
+        boolean isAnyEnabled = false;
+        for (String mode : modes) {
+            isAnyEnabled |= isEnabled(type, path, mode);
+        }
+        Assume.assumeTrue(type.label + " runs " + path + " in none of the modes " + Arrays.toString(modes), isAnyEnabled);
     }
 
     /**

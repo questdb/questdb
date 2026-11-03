@@ -216,9 +216,7 @@ public class TypeConformancePgWireTest extends BasePGTest {
     }
 
     private void assertPath(String path, String queryHex) throws Exception {
-        if (!TypeConformanceInvariants.isEnabled(type, path, MODE)) {
-            return;
-        }
+        TypeConformanceInvariants.assumeEnabled(type, path, MODE);
         assertMemoryLeak(() -> {
             final StringSink steps = new StringSink();
             try {

@@ -63,6 +63,7 @@ import io.questdb.test.QueryAssertion;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -189,12 +190,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
 
     @Test
     public void testBindValue() throws Exception {
+        final String path = "sql.bind_value";
+        final String mode = MODES[0];
+        TypeConformanceInvariants.assumeEnabled(type, path, mode);
         assertMemoryLeak(() -> {
-            final String path = "sql.bind_value";
-            final String mode = MODES[0];
-            if (!TypeConformanceInvariants.isEnabled(type, path, mode)) {
-                return;
-            }
             configure(sqlExecutionContext, mode);
             final BindVariableService service = sqlExecutionContext.getBindVariableService();
             final StringSink section = new StringSink();
@@ -253,11 +252,9 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
 
     @Test
     public void testCast() throws Exception {
+        final String mode = MODES[0];
+        TypeConformanceInvariants.assumeEnabled(type, "sql.cast", mode);
         assertMemoryLeak(() -> {
-            final String mode = MODES[0];
-            if (!TypeConformanceInvariants.isEnabled(type, "sql.cast", mode)) {
-                return;
-            }
             configure(sqlExecutionContext, mode);
             if (type.isLater()) {
                 checkLaterCasts(mode);
@@ -309,12 +306,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
 
     @Test
     public void testCopyBind() throws Exception {
+        final String path = "sql.copy_bind";
+        final String mode = MODES[0];
+        TypeConformanceInvariants.assumeEnabled(type, path, mode);
         assertMemoryLeak(() -> {
-            final String path = "sql.copy_bind";
-            final String mode = MODES[0];
-            if (!TypeConformanceInvariants.isEnabled(type, path, mode)) {
-                return;
-            }
             configure(sqlExecutionContext, mode);
             final String exportRoot = temp.newFolder().getAbsolutePath();
             node1.setProperty(PropertyKey.CAIRO_SQL_COPY_ROOT, exportRoot);
@@ -369,10 +364,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 firstLater = TypeConformanceTypes.ALL.getQuick(i);
             }
         }
-        if (cases.size() == 0 || firstLater != type) {
-            // the cases run once, in the first later type's instance; no later type, no cases
-            return;
-        }
+        // the cases run once, in the first later type's instance; no later type, no cases
+        Assume.assumeTrue("the mixing cases run in the first type registered later only", cases.size() > 0 && firstLater == type);
         assertMemoryLeak(() -> runModes((eng, ctx, mode) -> {
             for (int i = 0, n = cases.size(); i < n; i++) {
                 final String[] mixingCase = cases.getQuick(i);
@@ -406,16 +399,15 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
      * included. A pair the rules give no value for (a conversion into text or DECIMAL,
      * a type without an integer tier) is checked by the three copiers agreeing. Into the type, the
      * source rows are the other type's kit rows and the type's own rows cast to it. An existing
-     * type's conversions are master's, which {@code InsertTest} covers, so it runs nothing here.
+     * type's conversions are master's, which {@code InsertTest} covers, so its instance is skipped.
      */
     @Test
     public void testInsertConversions() throws Exception {
+        final String path = "sql.insert_convert";
+        final String mode = MODES[0];
+        Assume.assumeTrue("an existing type's conversions are master's, which InsertTest covers", type.isLater());
+        TypeConformanceInvariants.assumeEnabled(type, path, mode);
         assertMemoryLeak(() -> {
-            final String path = "sql.insert_convert";
-            final String mode = MODES[0];
-            if (!type.isLater() || !TypeConformanceInvariants.isEnabled(type, path, mode)) {
-                return;
-            }
             configure(sqlExecutionContext, mode);
             final StringSink steps = new StringSink();
             if (!createTables(engine, sqlExecutionContext, steps)) {
@@ -450,12 +442,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
 
     @Test
     public void testLiveViewAnchor() throws Exception {
+        final String path = "lv.window_anchor";
+        final String mode = MODES[0];
+        TypeConformanceInvariants.assumeEnabled(type, path, mode);
         assertMemoryLeak(() -> {
-            final String path = "lv.window_anchor";
-            final String mode = MODES[0];
-            if (!TypeConformanceInvariants.isEnabled(type, path, mode)) {
-                return;
-            }
             configure(sqlExecutionContext, mode);
             final StringSink section = new StringSink();
             // g stays NULL in every row: one window partition, so only the anchor resets the count

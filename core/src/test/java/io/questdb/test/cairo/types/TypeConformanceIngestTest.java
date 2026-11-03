@@ -1076,6 +1076,7 @@ public class TypeConformanceIngestTest extends AbstractBootstrapTest {
     }
 
     private void runPath(String path, String[] modes, PathBody body) throws Exception {
+        TypeConformanceInvariants.assumeEnabled(type, path, modes);
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain server = startServer()) {
                 for (String mode : modes) {
