@@ -731,6 +731,33 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInDateListOverMaxIntervalsFailsEarly() throws Exception {
+        // The one-minute values of the second element lie an hour apart and never touch. Its
+        // incremental merge counts its own 1,025th interval in February, so too-many-intervals
+        // wins over month 13.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE x (k INT, tm #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T00:00:30.000000Z', '2024-01-01T00:00:30.000000Z'),
+                    (2, '2024-01-21T00:00:30.000000Z', '2024-01-21T00:00:30.000000Z')
+                    """);
+            for (String column : new String[]{"ts", "tm"}) {
+                assertOverMaxIntervalsError("SELECT k FROM x WHERE " + column + " IN '[2024-01-01,2024-[01..13]-[01..28]T[00..23]:00]'");
+                // The failed compilation leaves the next query intact. The second element repeats
+                // days 1-11 of January, and its merges count only its own intervals against the
+                // cap, not the first element's 960 as well.
+                assertQuery("SELECT k FROM x WHERE " + column + " IN '[2024-[01..02]-[01..20]T[00..23]:00,2024-01-[01..11]T[00..23]:00]'")
+                        .noLeakCheck()
+                        .returns("k\n1\n");
+            }
+        });
+    }
+
+    @Test
     public void testInDateListTimeZoneAboveMergeThreshold() throws Exception {
         // One row per hour from 2023-12-31T00:00Z to 2025-01-08T23:00Z, so every local day of 2024
         // at +05:00 holds 24 rows. January's 31 days and the 308 days 1 to 28 of February to
@@ -769,6 +796,14 @@ public class IntervalFilterTest extends AbstractCairoTest {
                     {"'[2024-01-[01..31],2024-[02..12]-[01..28]#mon]@+05:00'", String.valueOf((31 + 11 * 4) * 24), januaryAndMondays},
                     // 09:00 to 10:00 local on each day
                     {"'[2024-01-[01..31],2024-[02..12]-[01..28]]T09:00@+05:00;1h'", String.valueOf(31 + 11 * 28), days + " AND hour(l) = 9"},
+                    // Every hour of days 1-20 of January and February, one minute each. The second
+                    // element repeats days 1-11 of January, and its merges count only its own
+                    // intervals against the cap (1,024), not the first element's 960 as well.
+                    {
+                            "'[2024-[01..02]-[01..20]T[00..23]:00,2024-01-[01..11]T[00..23]:00]@+05:00'",
+                            String.valueOf(2 * 20 * 24),
+                            "year(l) = 2024 AND month(l) <= 2 AND day(l) <= 20"
+                    },
             };
             for (String[] c : cases) {
                 final String reference = "SELECT ts FROM (SELECT ts, dateadd('h', 5, ts) l FROM t) WHERE " + c[2];
@@ -2288,6 +2323,48 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRandomTickStringExceedsMaxIntervalsFromListStart() throws Exception {
+        // testIncrementalMergeMatchesUnmergedParse catches an incremental merge that counts the
+        // earlier elements' intervals against the cap (1,024) only if randomTickString builds
+        // lists that hold more than the cap while a later element merges. Without a day filter,
+        // no other read of the cap sees such a list: the assertion on entry sees the empty list,
+        // and the other checks follow a union of the whole list, which holds at most 960
+        // intervals here. Each element order must reach such a merge.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            final TimestampDriver timestampDriver = timestampType.getDriver();
+            final StringSink tickSink = new StringSink();
+            final StringSink sink = new StringSink();
+            final LongList intervals = new LongList();
+            final ListSizeAtCapCheckConfiguration listSizeConfiguration = new ListSizeAtCapCheckConfiguration(intervals);
+            final int maxIntervals = listSizeConfiguration.getSqlIntervalMaxIntervalsAfterMerge();
+            // the configuration of testIncrementalMergeMatchesUnmergedParse
+            Assert.assertEquals(configuration.getSqlIntervalIncrementalMergeThreshold(), listSizeConfiguration.getSqlIntervalIncrementalMergeThreshold());
+            Assert.assertEquals(configuration.getSqlIntervalMaxIntervalsAfterMerge(), maxIntervals);
+            boolean hasLargerFirstOverCap = false;
+            boolean hasSmallerFirstOverCap = false;
+            for (int i = 0; i < 3_000; i++) {
+                final String tick = randomTickString(rnd, tickSink, true);
+                if (tick.indexOf('#') >= 0) {
+                    continue;
+                }
+                intervals.clear();
+                listSizeConfiguration.maxListIntervalCount = 0;
+                IntervalUtils.parseTickExpr(timestampDriver, listSizeConfiguration, tick, 0, tick.length(), 0, intervals, IntervalOperation.INTERSECT, sink, true);
+                if (listSizeConfiguration.maxListIntervalCount > maxIntervals) {
+                    if (tick.startsWith("[2024-[01..02]")) {
+                        hasLargerFirstOverCap = true;
+                    } else if (tick.contains(",2024-[01..02]")) {
+                        hasSmallerFirstOverCap = true;
+                    }
+                }
+            }
+            Assert.assertTrue("larger element first", hasLargerFirstOverCap);
+            Assert.assertTrue("smaller element first", hasSmallerFirstOverCap);
+        });
+    }
+
+    @Test
     public void testTimestampCursorMixed() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -2351,14 +2428,15 @@ public class IntervalFilterTest extends AbstractCairoTest {
         }
     }
 
-    // A tick string over the days of January 2024 that both the interval scan and the row filter
-    // resolve: lists, ranges, times, durations, repetitions, fixed offsets and day filters.
+    // A tick string over the days of January 2024, in one case also of February, that both the
+    // interval scan and the row filter resolve: lists, ranges, times, durations, repetitions,
+    // fixed offsets and day filters.
     private static String randomTickString(Rnd rnd, StringSink sink, boolean canHaveDayFilter) {
         sink.clear();
         final int day = 1 + rnd.nextInt(20);
         boolean hasTime = rnd.nextBoolean();
         int listDurationMinutes = 0;
-        switch (rnd.nextInt(5)) {
+        switch (rnd.nextInt(6)) {
             case 0 -> sink.put("2024-01-").put(twoDigits(day));
             case 1 -> {
                 sink.put("2024-01-[").put(twoDigits(day));
@@ -2377,6 +2455,26 @@ public class IntervalFilterTest extends AbstractCairoTest {
                         .put(']');
                 hasTime = false;
                 listDurationMinutes = rnd.nextBoolean() ? 1 + rnd.nextInt(90) : 0;
+            }
+            case 4 -> {
+                // Two overlapping elements of hourly values at one minute, in random order: days
+                // 1-20 of January and February, and 3 to 20 of those days in January. The union
+                // is the larger element's 960 values, but while the later element merges, the
+                // list holds more than the cap (1,024): 960 + 256 intervals at the first merge of
+                // a smaller second element of 11 days or more, and 72 + 960 or more at the last
+                // merge of a larger second element. Each merge must count only the later
+                // element's intervals.
+                final String minute = twoDigits(rnd.nextInt(60));
+                final int smallerDayCount = 3 + rnd.nextInt(18);
+                final int smallerFirstDay = 1 + rnd.nextInt(21 - smallerDayCount);
+                final String larger = "2024-[01..02]-[01..20]T[00..23]:" + minute;
+                final String smaller = "2024-01-[" + twoDigits(smallerFirstDay) + ".." + twoDigits(smallerFirstDay + smallerDayCount - 1)
+                        + "]T[00..23]:" + minute;
+                final boolean isLargerFirst = rnd.nextBoolean();
+                sink.put('[').put(isLargerFirst ? larger : smaller).put(',').put(isLargerFirst ? smaller : larger).put(']');
+                hasTime = false;
+                // durations up to 58 minutes keep the values apart
+                listDurationMinutes = rnd.nextBoolean() ? 1 + rnd.nextInt(58) : 0;
             }
             default -> {
                 sink.put("[2024-01-").put(twoDigits(day));
@@ -2467,5 +2565,23 @@ public class IntervalFilterTest extends AbstractCairoTest {
                 """);
         // Monday
         setCurrentMicros(Micros.toMicros(2024, 1, 8, 1, 0));
+    }
+
+    // IntervalUtils reads the cap through this getter in an assertion on entry and wherever it
+    // checks an interval count. Records the largest list, counted from its start, at such a read.
+    private static class ListSizeAtCapCheckConfiguration extends DefaultCairoConfiguration {
+        private final LongList intervals;
+        private int maxListIntervalCount;
+
+        ListSizeAtCapCheckConfiguration(LongList intervals) {
+            super(".");
+            this.intervals = intervals;
+        }
+
+        @Override
+        public int getSqlIntervalMaxIntervalsAfterMerge() {
+            maxListIntervalCount = Math.max(maxListIntervalCount, intervals.size() / 2);
+            return super.getSqlIntervalMaxIntervalsAfterMerge();
+        }
     }
 }

@@ -1725,6 +1725,22 @@ public class TickExprTest {
     }
 
     @Test
+    public void testDateListElementOverMaxIntervalsFailsEarly() throws SqlException {
+        // control: month 13 fails at the first value of the second element
+        assertTickExprErrorAtMonday("[2024-01-01,2024-13-[01..28]T[00..23]:00]", "Invalid date: 2024-13-01T00:00");
+        // The one-minute values of the second element lie an hour apart and never touch. Its
+        // incremental merge counts its own 1,025th interval in February, so too-many-intervals
+        // wins over month 13.
+        assertTickExprErrorAtMonday(
+                "[2024-01-01,2024-[01..13]-[01..28]T[00..23]:00]",
+                "Bracket expansion produces too many intervals (max 1024)"
+        );
+        // parseTickExpr unwinds the list, and the next parse on this thread succeeds
+        Assert.assertEquals(0, out.size());
+        assertFirstMinuteOfEachHour(configuration, "[2024-[01..02]-[01..20]T[00..23]:00,2024-01-[01..11]T[00..23]:00]", 2, 20, 24);
+    }
+
+    @Test
     public void testDateListElementWithHighPrecisionTime() throws SqlException {
         // Element with microseconds keeps precise time, second element gets T10:00 suffix
         // Note: nano mode fills remaining nanos with 9s for hi (.123456999Z)
@@ -1799,6 +1815,38 @@ public class TickExprTest {
                 "[{lo=2026-01-01T09:30:00.000000Z, hi=2026-01-01T09:30:59.999999Z},{lo=2026-01-02T10:00:00.000000Z, hi=2026-01-02T10:00:59.999999Z},{lo=2026-01-02T14:00:00.000000Z, hi=2026-01-02T14:00:59.999999Z}]",
                 "[2026-01-01T09:30, 2026-01-02]T[10:00,14:00]"
         );
+    }
+
+    @Test
+    public void testDateListElementsAtMaxIntervals() throws SqlException {
+        // The one-minute values of each list lie an hour apart and never touch, so each stays an
+        // interval of its own. Without a day filter, the incremental merge of a later element
+        // must count only that element's intervals against the cap, not the earlier elements'.
+        // The first two cases rely on the default merge threshold and cap.
+        Assert.assertEquals(256, configuration.getSqlIntervalIncrementalMergeThreshold());
+        Assert.assertEquals(1_024, configuration.getSqlIntervalMaxIntervalsAfterMerge());
+        // The second element repeats days 1-11 of January. Its first merge, at its 256th value,
+        // counts 256 intervals; with the first element's 960 it would count 1,216.
+        assertFirstMinuteOfEachHour(configuration, "[2024-[01..02]-[01..20]T[00..23]:00,2024-01-[01..11]T[00..23]:00]", 2, 20, 24);
+        // The second element ends at exactly the cap of 1,024 intervals. The first element's one
+        // interval stays below the merge threshold of the list, so no union of the list has
+        // joined it yet, and with it the count would be 1,025.
+        assertFirstMinuteOfEachHour(configuration, "[2024-01-01T00:00,2024-[01..04]-[01..16]T[00..15]:00]", 4, 16, 16);
+        // A merge threshold of 1 and a cap of 2, the smallest cap above it. The second element
+        // merges at its first value and counts 1 interval; with the first element's 2 it would
+        // count 3.
+        final CairoConfiguration mergeThreshold1Configuration = new DefaultCairoConfiguration(".") {
+            @Override
+            public int getSqlIntervalIncrementalMergeThreshold() {
+                return 1;
+            }
+
+            @Override
+            public int getSqlIntervalMaxIntervalsAfterMerge() {
+                return 2;
+            }
+        };
+        assertFirstMinuteOfEachHour(mergeThreshold1Configuration, "[2024-01-01T[00,01]:00,2024-01-01T[00,01]:00]", 1, 1, 2);
     }
 
     @Test
@@ -6830,6 +6878,32 @@ public class TickExprTest {
                         : expected,
                 encodedIntervalToSink(timestampDriver, out)
         );
+    }
+
+    // Parses the interval and expects one interval for the first minute of each hour from 0 to
+    // hourCount - 1 on days 1 to dayCount of months 1 to monthCount of 2024, as java.time
+    // computes them.
+    private void assertFirstMinuteOfEachHour(
+            CairoConfiguration cfg,
+            String interval,
+            int monthCount,
+            int dayCount,
+            int hourCount
+    ) throws SqlException {
+        final TimestampDriver timestampDriver = timestampType.getDriver();
+        final LongList expected = new LongList();
+        for (int month = 1; month <= monthCount; month++) {
+            for (int day = 1; day <= dayCount; day++) {
+                for (int hour = 0; hour < hourCount; hour++) {
+                    final long loMicros = LocalDate.of(2024, month, day).atTime(hour, 0).toEpochSecond(ZoneOffset.UTC) * Micros.SECOND_MICROS;
+                    expected.add(timestampDriver.fromMicros(loMicros));
+                    expected.add(timestampDriver.fromMicros(loMicros + Micros.MINUTE_MICROS) - 1);
+                }
+            }
+        }
+        out.clear();
+        parseTickExprAtMonday(cfg, out, interval);
+        TestUtils.assertEquals(intervalToString(timestampDriver, expected).toString(), intervalToString(timestampDriver, out));
     }
 
     private void assertFullDayMondays(LongList intervals, int expectedCount) {
