@@ -28,6 +28,7 @@ import com.sun.management.ThreadMXBean;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SymbolMapCachePool;
+import io.questdb.cairo.SymbolMapLowSlice;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.SymbolMapUtil;
 import io.questdb.cairo.SymbolMapWriter;
@@ -345,6 +346,38 @@ public class SymbolMapTest extends AbstractCairoTest {
                     logs.assertOnlyOnce("symbol cache low slice stopped admitting new values.*column=x, reason=oom");
                 } finally {
                     logs.stop();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testSharedLowCacheHidesValueUntilCopied() throws Exception {
+        assertMemoryLeak(() -> {
+            DirectString view = new DirectString();
+            int[] copyingKey = {0};
+            int[] copies = {0};
+            try (
+                    DirectUtf16Sink chars = new DirectUtf16Sink(2L * SymbolMapLowSlice.MAX_INLINE_CHARS);
+                    SymbolMapLowSlice slice = new SymbolMapLowSlice() {
+                        @Override
+                        protected void onValueCopied() {
+                            copies[0]++;
+                            Assert.assertNull(get(copyingKey[0], view));
+                        }
+                    }
+            ) {
+                int[] keys = {0, 1, 2, 64};
+                String[] values = {"abcd", "", "x".repeat(SymbolMapLowSlice.MAX_INLINE_CHARS), "after growth"};
+                for (int i = 0; i < keys.length; i++) {
+                    copyingKey[0] = keys[i];
+                    chars.clear();
+                    chars.put(values[i]);
+                    Assert.assertEquals(SymbolMapLowSlice.INSERTED, slice.tryPut(keys[i], 65, chars.ptr(), chars.length()));
+                    Assert.assertEquals(i + 1, copies[0]);
+                    for (int j = 0; j <= i; j++) {
+                        TestUtils.assertEquals(values[j], slice.get(keys[j], view));
+                    }
                 }
             }
         });

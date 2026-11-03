@@ -29,8 +29,10 @@ import io.questdb.std.Chars;
 import io.questdb.std.DirectIntCharSequenceHashMap;
 import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.NativeMemoryBudget;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.AbstractCharSequence;
@@ -42,7 +44,9 @@ import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
@@ -740,6 +744,87 @@ public class DirectSymbolMapTest {
                 Assert.assertFalse(put(map, 0, "closed"));
             }
             Assert.assertEquals(0, budget.getUsedBytes());
+        });
+    }
+
+    @Test
+    public void testConcurrentCacheGetRacesChunkPublish() throws Exception {
+        assertMemoryLeak(() -> {
+            final int readerCount = 2;
+            final int rounds = 20_000;
+            // The eighth 120-char value adds the fourth chunk and outgrows the first directory.
+            final int keyCount = 8;
+            ObjList<DirectUtf16Sink> values = new ObjList<>();
+            ObjList<String> expected = new ObjList<>();
+            AtomicReference<DirectIntCharSequenceHashMap> current = new AtomicReference<>();
+            AtomicInteger readersIn = new AtomicInteger();
+            AtomicInteger readersOut = new AtomicInteger();
+            AtomicBoolean isFailed = new AtomicBoolean();
+            try {
+                for (int key = 0; key < keyCount; key++) {
+                    String value = (char) ('a' + key) + "-".repeat(119);
+                    DirectUtf16Sink sink = new DirectUtf16Sink(2L * value.length());
+                    values.add(sink);
+                    sink.put(value);
+                    expected.add(value);
+                }
+                TestUtils.runConcurrently(readerCount + 1, worker -> {
+                    if (worker == 0) {
+                        for (int round = 0; round < rounds && !isFailed.get(); round++) {
+                            try (DirectIntCharSequenceHashMap map = new DirectIntCharSequenceHashMap(4, 0.7, MemoryTag.NATIVE_DEFAULT, null)) {
+                                readersIn.set(0);
+                                readersOut.set(0);
+                                current.set(map);
+                                while (readersIn.get() < readerCount) {
+                                    Os.pause();
+                                }
+                                for (int key = 0; key < keyCount; key++) {
+                                    DirectUtf16Sink value = values.getQuick(key);
+                                    if (map.tryPutIfAbsent(key, value.ptr(), value.length()) != DirectIntCharSequenceHashMap.INSERTED) {
+                                        isFailed.set(true);
+                                    }
+                                }
+                                while (readersOut.get() < readerCount) {
+                                    Os.pause();
+                                }
+                            }
+                        }
+                    } else {
+                        DirectString view = new DirectString();
+                        DirectIntCharSequenceHashMap previous = null;
+                        for (int round = 0; round < rounds; round++) {
+                            DirectIntCharSequenceHashMap map;
+                            while ((map = current.get()) == previous) {
+                                if (isFailed.get()) {
+                                    return;
+                                }
+                                Os.pause();
+                            }
+                            previous = map;
+                            readersIn.incrementAndGet();
+                            try {
+                                for (int key = 0; key < keyCount; key++) {
+                                    CharSequence result;
+                                    while ((result = map.get(key, view)) == null) {
+                                        if (isFailed.get()) {
+                                            return;
+                                        }
+                                    }
+                                    TestUtils.assertEquals(expected.getQuick(key), result);
+                                }
+                            } catch (Throwable e) {
+                                isFailed.set(true);
+                                throw e;
+                            } finally {
+                                readersOut.incrementAndGet();
+                            }
+                        }
+                    }
+                });
+                Assert.assertFalse(isFailed.get());
+            } finally {
+                Misc.freeObjList(values);
+            }
         });
     }
 

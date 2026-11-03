@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.regex;
 
 import io.questdb.std.BitSet;
 import io.questdb.std.IntList;
+import org.jetbrains.annotations.TestOnly;
 
 public final class SymbolKeySet {
     private static final long MAX_SPAN_PER_KEY = 32L;
@@ -88,5 +89,10 @@ public final class SymbolKeySet {
 
     public IntList getKeys() {
         return keys;
+    }
+
+    @TestOnly
+    public boolean isDense() {
+        return isDense;
     }
 }

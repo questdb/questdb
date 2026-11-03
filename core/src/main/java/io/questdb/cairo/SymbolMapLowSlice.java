@@ -44,11 +44,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * close, so views survive later copies. {@link #MAX_KEYS} bounds every array, so the arrays do not
  * count toward the shared cache limit. An allocation that runs out of memory stops admission for good.
  */
-final class SymbolMapLowSlice implements QuietCloseable {
-    static final int BUSY = 3;
-    static final int INSERTED = 0;
+public class SymbolMapLowSlice implements QuietCloseable {
+    public static final int INSERTED = 0;
     // (SLOT_SIZE - Integer.BYTES) / Character.BYTES
-    static final int MAX_INLINE_CHARS = 30;
+    public static final int MAX_INLINE_CHARS = 30;
+    static final int BUSY = 3;
     static final int MAX_KEYS = 4096;
     static final int NOT_INSERTED = 1;
     static final int STOPPED = 2;
@@ -140,6 +140,7 @@ final class SymbolMapLowSlice implements QuietCloseable {
             if (len > 0) {
                 Vect.memcpy(slot + Integer.BYTES, charsAddr, (long) len * Character.BYTES);
             }
+            onValueCopied();
             // Publishes the chars copied above.
             Unsafe.putOrderedInt(null, slot, len + 1);
             //noinspection NonAtomicOperationOnVolatileField
@@ -148,6 +149,10 @@ final class SymbolMapLowSlice implements QuietCloseable {
         } finally {
             lock.set(false);
         }
+    }
+
+    // Test hook.
+    protected void onValueCopied() {
     }
 
     private static long slotAddress(long array, int key) {

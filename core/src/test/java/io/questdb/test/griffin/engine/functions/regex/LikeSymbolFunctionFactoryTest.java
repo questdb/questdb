@@ -917,6 +917,47 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolKeySetChoosesBitmapByDensity() {
+        SymbolKeySet keys = new SymbolKeySet();
+        keys.build();
+        Assert.assertFalse(keys.isDense());
+        keys.add(0);
+        Assert.assertFalse(keys.isDense());
+        keys.build();
+        Assert.assertTrue(keys.isDense());
+        keys.add(63);
+        Assert.assertFalse(keys.isDense());
+        keys.build();
+        Assert.assertTrue(keys.isDense());
+        SymbolKeySet copy = new SymbolKeySet();
+        copy.copyFrom(keys);
+        Assert.assertTrue(copy.isDense());
+        keys.clear();
+        Assert.assertFalse(keys.isDense());
+        keys.add(0);
+        keys.add(64);
+        keys.build();
+        Assert.assertFalse(keys.isDense());
+        Assert.assertTrue(keys.contains(64));
+        Assert.assertFalse(keys.contains(63));
+        copy.copyFrom(keys);
+        Assert.assertFalse(copy.isDense());
+        keys.clear();
+        keys.add(1_000_000);
+        keys.add(1_000_063);
+        keys.build();
+        Assert.assertTrue(keys.isDense());
+        Assert.assertTrue(keys.contains(1_000_063));
+        Assert.assertFalse(keys.contains(63));
+        keys.clear();
+        keys.add(1);
+        keys.add(Integer.MAX_VALUE);
+        keys.build();
+        Assert.assertFalse(keys.isDense());
+        Assert.assertTrue(keys.contains(Integer.MAX_VALUE));
+    }
+
+    @Test
     public void testSymbolKeySetCopiesRemainIndependent() {
         SymbolKeySet source = new SymbolKeySet();
         source.add(0);

@@ -91,6 +91,20 @@ public class Utf8StringSinkTest {
     }
 
     @Test
+    public void testEscapeJsonStrCopiesAsciiWordsWithoutCharWrites() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            String ascii = "abcdefgh".repeat(8);
+            String quoted = ascii.substring(0, 9) + '"' + ascii.substring(10);
+            assertEscapeJsonCharWrites(ascii, true, 256, 0);
+            assertEscapeJsonCharWrites(ascii + "ab", true, 256, 2);
+            assertEscapeJsonCharWrites("abc", true, 256, 3);
+            assertEscapeJsonCharWrites(quoted, true, 256, ascii.length() - 8 + 1);
+            assertEscapeJsonCharWrites(ascii, false, 256, 64);
+            assertEscapeJsonCharWrites(ascii, true, 8, 64);
+        });
+    }
+
+    @Test
     public void testEscapeJsonStrFourCharWords() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (DirectUtf16Sink input = new DirectUtf16Sink(32);
@@ -348,6 +362,25 @@ public class Utf8StringSinkTest {
         sink.put(utf8str2, 2, 6);
         byte[] expectedBytes3 = "cdef".getBytes(StandardCharsets.UTF_8);
         TestUtils.assertEquals(expectedBytes3, sink);
+    }
+
+    private static void assertEscapeJsonCharWrites(String value, boolean isDirect, int capacity, int expectedCharWrites) {
+        int[] charWrites = {0};
+        Utf8StringSink actual = new Utf8StringSink(capacity) {
+            @Override
+            public Utf8StringSink putAscii(char c) {
+                charWrites[0]++;
+                return super.putAscii(c);
+            }
+        };
+        Utf8StringSink expected = new Utf8StringSink();
+        try (DirectUtf16Sink input = new DirectUtf16Sink(2L * value.length())) {
+            input.put(value);
+            expected.escapeJsonStr(value);
+            actual.escapeJsonStr(isDirect ? new DirectString().of(input.ptr(), input.length()) : value);
+            Assert.assertEquals(expectedCharWrites, charWrites[0]);
+            TestUtils.assertEquals(expected, actual);
+        }
     }
 
     private static void assertUtf8Encoding(Utf8StringSink sink, String s) {

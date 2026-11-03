@@ -65,6 +65,64 @@ public class ModeSymbolGroupByFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testModeAndFirstResolveIndependentlyOnFilledRows() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String cacheFlag : new String[]{"CACHE", "NOCACHE"}) {
+                execute("CREATE TABLE tab (s SYMBOL " + cacheFlag + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("""
+                        INSERT INTO tab VALUES
+                            ('abc', '2024-01-01T00:10:00.000000Z'),
+                            ('b', '2024-01-01T00:20:00.000000Z'),
+                            ('b', '2024-01-01T00:30:00.000000Z'),
+                            ('zz', '2024-01-01T02:10:00.000000Z')
+                        """);
+                assertQuery("SELECT ts, first(s) f, mode(s) m, strpos(first(s), mode(s)) p FROM tab SAMPLE BY 1h FILL(PREV)")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .noRandomAccess()
+                        .sizeMayVary()
+                        .returns("""
+                                ts\tf\tm\tp
+                                2024-01-01T00:00:00.000000Z\tabc\tb\t2
+                                2024-01-01T01:00:00.000000Z\tabc\tb\t2
+                                2024-01-01T02:00:00.000000Z\tzz\tzz\t1
+                                """);
+                execute("DROP TABLE tab");
+            }
+        });
+    }
+
+    @Test
+    public void testModeAndOtherSymbolAggregatesResolveIndependently() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String cacheFlag : new String[]{"CACHE", "NOCACHE"}) {
+                execute("CREATE TABLE tab (k SYMBOL, s SYMBOL " + cacheFlag + ")");
+                execute("""
+                        INSERT INTO tab VALUES
+                            ('k1', 'abc'), ('k1', 'b'), ('k1', 'b'), ('k1', 'zz'),
+                            ('k2', NULL), ('k2', 'ee'), ('k2', 'cc'), ('k2', 'cc'), ('k2', 'cc'), ('k2', 'dd'), ('k2', NULL)
+                        """);
+                assertQuery("""
+                        SELECT k,
+                            nullif(mode(s), first(s)) mf,
+                            nullif(last(s), mode(s)) lm,
+                            nullif(mode(s), first_not_null(s)) mfn,
+                            nullif(last_not_null(s), mode(s)) lnm
+                        FROM tab ORDER BY k
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tmf\tlm\tmfn\tlnm
+                                k1\tb\tzz\tb\tzz
+                                k2\tcc\t\tcc\tdd
+                                """);
+                execute("DROP TABLE tab");
+            }
+        });
+    }
+
+    @Test
     public void testModeBasic() throws Exception {
         assertQuery("select mode(f) from tab")
                 .ddl("create table tab as (" +
