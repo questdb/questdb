@@ -21782,7 +21782,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 putLong256Utf8(columnIndex, ds);
                 return;
             }
-            // Long256 hex strings are always ASCII
+            // hex digits are ASCII; a non-ASCII byte reads as a char above 127, which the decoder refuses
             putLong256(columnIndex, hexString.asAsciiCharSequence());
         }
 

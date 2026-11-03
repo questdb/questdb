@@ -213,7 +213,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
         if (hexString == null || (len = hexString.length()) == 0) {
             putLong256Null();
         } else {
-            putLong256(hexString, 2, len);
+            putLong256(hexString, Long256FromCharSequenceDecoder.hexDigitsLo(hexString, len), len);
         }
     }
 
@@ -244,7 +244,7 @@ public interface MemoryCARW extends MemoryCR, MemoryARW, MemoryCA, MemoryMAT {
 
     @Override
     default void putLong256Utf8(@Nullable Utf8Sequence hexString) {
-        throw new UnsupportedOperationException();
+        putLong256(hexString != null ? hexString.asAsciiCharSequence() : null);
     }
 
     @Override

@@ -6299,8 +6299,8 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 sentinel\t
                 null\t
                 ## where_bound_bind
-                min\tbind error: inconvertible value: `0x00` [STRING -> LONG256]
-                max\tbind error: inconvertible value: `0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff` [STRING -> LONG256]
+                min\tmin,max,sentinel,null
+                max\tmin,max,sentinel,null
                 sentinel\t
                 null\t
                 ## where_key
@@ -6309,7 +6309,10 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 sentinel\tb:null
                 null\tb:null
                 ## copy_bind
-                bind error: inconvertible value: `0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff` [STRING -> LONG256]
+                status\tmessage
+                finished\t
+                k
+                max
                 ## between_timestamp
                 error: [27] there is no matching operator `between` with the argument type: LONG256
                 ## bind_value

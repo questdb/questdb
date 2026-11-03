@@ -449,6 +449,33 @@ public class InsertCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCastCharToGeoByteBindNull() throws Exception {
+        // a NULL CHAR is a NULL geohash of any width the CHAR fits
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y (a GEOHASH(1c), b GEOHASH(3b))");
+            try (
+                    SqlCompiler compiler = engine.getSqlCompiler();
+                    InsertOperation insert = compiler.compile("INSERT INTO y VALUES ($1, $2)", sqlExecutionContext).popInsertOperation()
+            ) {
+                bindVariableService.setChar(0, 'u');
+                bindVariableService.setChar(1, 'u');
+                insert.execute(sqlExecutionContext);
+                bindVariableService.setChar(0, Numbers.CHAR_NULL);
+                bindVariableService.setChar(1, Numbers.CHAR_NULL);
+                insert.execute(sqlExecutionContext);
+            }
+            assertQuery("y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            a\tb
+                            u\t110
+                            \t
+                            """);
+        });
+    }
+
+    @Test
     public void testCastCharToGeoByteLit() throws Exception {
         assertMemoryLeak(() -> assertCharLit(
                 "geohash(1c)",

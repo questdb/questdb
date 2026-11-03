@@ -3618,7 +3618,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 putLong256Utf8(columnIndex, (DirectUtf8Sequence) hexString);
                 return;
             }
-            // Long256 hex strings are always ASCII
+            // hex digits are ASCII; a non-ASCII byte reads as a char above 127, which the decoder refuses
             putLong256(columnIndex, hexString.asAsciiCharSequence());
         }
 

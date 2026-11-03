@@ -1687,7 +1687,7 @@ public class BindVariableServiceImpl implements BindVariableService {
                 ((DateBindVariable) function).value = MillisTimestampDriver.INSTANCE.implicitCastVarchar(value);
                 break;
             case ColumnType.LONG256:
-                SqlUtil.implicitCastStrAsLong256(sinkVarchar(value), ((Long256BindVariable) function).value);
+                SqlUtil.implicitCastStrAsLong256(value != null ? sinkVarchar(value) : null, ((Long256BindVariable) function).value);
                 break;
             case ColumnType.FLOAT:
                 ((FloatBindVariable) function).value = SqlUtil.implicitCastVarcharAsFloat(value);

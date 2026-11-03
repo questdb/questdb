@@ -1301,6 +1301,50 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testImportLong256TextReadsOptionalPrefixSkipColumn() throws Exception {
+        // a LONG256 cell reads as a STRING does: an optional 0x or 0X, then hex digits; a refused
+        // cell is left NULL and its row kept
+        assertImportLong256Text(
+                Atomicity.SKIP_COL,
+                """
+                        ts\ti\tl
+                        1970-01-01T00:00:00.000001Z\t1\t0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+                        1970-01-01T00:00:00.000002Z\t2\t0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+                        1970-01-01T00:00:00.000003Z\t3\t0x2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90
+                        1970-01-01T00:00:00.000004Z\t4\t0x12
+                        1970-01-01T00:00:00.000005Z\t5\t0x0abc
+                        1970-01-01T00:00:00.000006Z\t6\t0x0f
+                        1970-01-01T00:00:00.000007Z\t7\t
+                        1970-01-01T00:00:00.000008Z\t8\t
+                        1970-01-01T00:00:00.000009Z\t9\t
+                        1970-01-01T00:00:00.000010Z\t10\t
+                        1970-01-01T00:00:00.000011Z\t11\t
+                        1970-01-01T00:00:00.000012Z\t12\t
+                        """,
+                12
+        );
+    }
+
+    @Test
+    public void testImportLong256TextReadsOptionalPrefixSkipRow() throws Exception {
+        // a row with a refused LONG256 cell is dropped
+        assertImportLong256Text(
+                Atomicity.SKIP_ROW,
+                """
+                        ts\ti\tl
+                        1970-01-01T00:00:00.000001Z\t1\t0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+                        1970-01-01T00:00:00.000002Z\t2\t0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+                        1970-01-01T00:00:00.000003Z\t3\t0x2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90
+                        1970-01-01T00:00:00.000004Z\t4\t0x12
+                        1970-01-01T00:00:00.000005Z\t5\t0x0abc
+                        1970-01-01T00:00:00.000006Z\t6\t0x0f
+                        1970-01-01T00:00:00.000007Z\t7\t
+                        """,
+                7
+        );
+    }
+
+    @Test
     public void testImportNullForAllTypesWithDesignatedColumnWhenTableExists() throws Exception {
         assertNoLeak(
                 engine,
@@ -4093,6 +4137,48 @@ public class TextLoaderTest extends AbstractCairoTest {
                     }
             );
         }
+    }
+
+    // rows 1 to 7 hold text a LONG256 column takes, rows 8 to 12 text it refuses
+    private void assertImportLong256Text(int atomicity, String expected, long expectedWrittenLineCount) throws Exception {
+        assertNoLeak(
+                engine,
+                textLoader -> {
+                    execute("CREATE TABLE test (ts TIMESTAMP, i INT, l LONG256) TIMESTAMP(ts) PARTITION BY NONE");
+                    final String csv = """
+                            ts,i,l
+                            1970-01-01T00:00:00.000001Z,1,0x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
+                            1970-01-01T00:00:00.000002Z,2,0X0102030405060708090A0B0C0D0E0F101112131415161718191A1B1C1D1E1F20
+                            1970-01-01T00:00:00.000003Z,3,2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90
+                            1970-01-01T00:00:00.000004Z,4,12
+                            1970-01-01T00:00:00.000005Z,5,abc
+                            1970-01-01T00:00:00.000006Z,6,f
+                            1970-01-01T00:00:00.000007Z,7,
+                            1970-01-01T00:00:00.000008Z,8,zz
+                            1970-01-01T00:00:00.000009Z,9,u33d
+                            1970-01-01T00:00:00.000010Z,10,0x
+                            1970-01-01T00:00:00.000011Z,11,10000000000000000000000000000000000000000000000000000000000000000
+                            1970-01-01T00:00:00.000012Z,12,й12
+                            """;
+                    configureLoaderDefaults(textLoader, atomicity, false, PartitionBy.NONE);
+                    textLoader.setForceHeaders(true);
+                    playText(
+                            engine,
+                            textLoader,
+                            csv,
+                            1024,
+                            expected,
+                            "{\"columnCount\":3,\"columns\":["
+                                    + "{\"index\":0,\"name\":\"ts\",\"type\":\"TIMESTAMP\"},"
+                                    + "{\"index\":1,\"name\":\"i\",\"type\":\"INT\"},"
+                                    + "{\"index\":2,\"name\":\"l\",\"type\":\"LONG256\"}"
+                                    + "],\"timestampIndex\":0}",
+                            12,
+                            expectedWrittenLineCount,
+                            true
+                    );
+                }
+        );
     }
 
     private void configureLoaderDefaults(TextLoader textLoader) {
