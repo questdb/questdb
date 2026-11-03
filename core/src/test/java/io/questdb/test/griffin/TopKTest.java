@@ -219,8 +219,7 @@ public class TopKTest extends AbstractCairoTest {
                 assertQuery("SELECT * FROM (SELECT b,a FROM (SELECT a+1 aa,a,b FROM lp_top_pruned)) ORDER BY a,b LIMIT 2")
                         .noLeakCheck()
                         .withPlan("""
-                                VirtualRecord
-                                  functions: [b,a]
+                                SelectedRecord
                                     Async Top K lo: 2 workers: 1
                                       filter: null
                                       keys: [a, b]

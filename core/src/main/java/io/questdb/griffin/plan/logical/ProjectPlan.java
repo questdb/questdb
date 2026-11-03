@@ -36,7 +36,6 @@ public final class ProjectPlan extends UnaryPlan {
     private final IntList updateTargetTypes = new IntList();
     private int distinctColumnCount = -1;
     private int distinctWindowColumnCount = -1;
-    private boolean hasPrunedComputedColumns;
     private boolean hasTimestampDeclaration;
     private boolean isImplied;
     private int requestedOrderColumnId = -1;
@@ -49,7 +48,6 @@ public final class ProjectPlan extends UnaryPlan {
         updateTargetTypes.clear();
         distinctColumnCount = -1;
         distinctWindowColumnCount = -1;
-        hasPrunedComputedColumns = false;
         hasTimestampDeclaration = false;
         isImplied = false;
         requestedOrderColumnId = -1;
@@ -107,15 +105,6 @@ public final class ProjectPlan extends UnaryPlan {
         return updateTargetTypes;
     }
 
-    /**
-     * True when column pruning removed every computed column of a computing projection. The
-     * generator still evaluates it as a virtual record, which the optimiser does not merge with
-     * column projections.
-     */
-    public boolean hasPrunedComputedColumns() {
-        return hasPrunedComputedColumns;
-    }
-
     public boolean hasTimestampDeclaration() {
         return hasTimestampDeclaration;
     }
@@ -145,10 +134,6 @@ public final class ProjectPlan extends UnaryPlan {
         return this;
     }
 
-    public void setPrunedComputedColumns(boolean hasPrunedComputedColumns) {
-        this.hasPrunedComputedColumns = hasPrunedComputedColumns;
-    }
-
     public void setRequestedOrderColumnId(int requestedOrderColumnId) {
         checkRewritable("ProjectPlan.setRequestedOrderColumnId");
         this.requestedOrderColumnId = requestedOrderColumnId;
@@ -162,7 +147,6 @@ public final class ProjectPlan extends UnaryPlan {
         visitor.facts("updateTargetTypes", updateTargetTypes);
         visitor.fact("distinctColumnCount", distinctColumnCount);
         visitor.fact("distinctWindowColumnCount", distinctWindowColumnCount);
-        visitor.fact("hasPrunedComputedColumns", hasPrunedComputedColumns);
         visitor.fact("hasTimestampDeclaration", hasTimestampDeclaration);
         visitor.fact("isImplied", isImplied);
         visitor.columnId("requestedOrderColumnId", requestedOrderColumnId);

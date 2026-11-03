@@ -7693,6 +7693,62 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftLateralLiftedColumnAliasCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            createT0("(1), (2), (3)");
+            execute("CREATE TABLE t1 (k INT, x INT)");
+            execute("INSERT INTO t1 VALUES (10, 1), (20, 2)");
+            // the correlation lifts t1.x above the projection, whose visible column already takes the name x, and whose
+            // other aliases take the first names the lifted column would be given next
+            assertQuery("""
+                    SELECT t0.a, l.x, l."__qdb_lifted_0_x", l."__qdb_lifted_1_x"
+                    FROM t0
+                    LEFT JOIN LATERAL (
+                        SELECT k AS x, k + 1 AS "__qdb_lifted_0_x", k + 2 AS "__qdb_lifted_1_x"
+                        FROM t1
+                        WHERE t1.x = t0.a
+                    ) l
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a	x	__qdb_lifted_0_x	__qdb_lifted_1_x
+                            1	10	11	12
+                            2	20	21	22
+                            3	null	null	null
+                            """);
+        });
+    }
+
+    @Test
+    public void testLeftLateralRowMarkerAliasCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            createT0("(1), (2)");
+            createT2("(1), (1)");
+            execute("CREATE TABLE t3 (y INT)");
+            execute("INSERT INTO t3 VALUES (1), (3)");
+            // the count of the unmatched row of t3 reads NULL, not 0, by the row marker of the first input, whose name the
+            // sub-query aliases; a = 1 counts 2 rows and matches y = 1, and y = 3 matches no row
+            assertQuery("""
+                    SELECT t0.a, t0."__qdb_row_marker__0", t0."__qdb_row_marker__1", t0."__qdb_row_marker__2", l.n, t3.y
+                    FROM (
+                        SELECT a, a AS "__qdb_row_marker__0", a AS "__qdb_row_marker__1", a AS "__qdb_row_marker__2"
+                        FROM t0
+                    ) t0
+                    LEFT JOIN LATERAL (SELECT count(*) n FROM t2 WHERE t2.x = t0.a) l
+                    RIGHT JOIN t3 ON t0.a = t3.y
+                    ORDER BY t3.y
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            a	__qdb_row_marker__0	__qdb_row_marker__1	__qdb_row_marker__2	n	y
+                            1	1	1	1	2	1
+                            null	null	null	null	null	3
+                            """);
+        });
+    }
+
+    @Test
     public void testLeftLateralSetOperationCountBranches() throws Exception {
         assertMemoryLeak(() -> {
             createCountSetOperationTables();

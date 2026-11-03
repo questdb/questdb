@@ -562,16 +562,14 @@ public class ViewQueryTest extends AbstractViewTest {
                               keys: [ts]
                                 VirtualRecord
                                   functions: [ts,1,2*v_max]
-                                    VirtualRecord
-                                      functions: [ts,v_max]
-                                        Filter filter: 6<v_max
-                                            Async Group By workers: 1
-                                              keys: [ts]
-                                              values: [max(v)]
-                                              filter: 5<v
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: table1
+                                    Filter filter: 6<v_max
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          values: [max(v)]
+                                          filter: 5<v
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: table1
                             """,
                     VIEW1
             );

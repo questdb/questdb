@@ -492,7 +492,7 @@ public final class LogicalPlans {
     }
 
     public static boolean isColumnProjection(ProjectPlan project) {
-        return !project.hasUpdateConversions() && !project.hasPrunedComputedColumns() && isColumnReferenceProjection(project);
+        return !project.hasUpdateConversions() && isColumnReferenceProjection(project);
     }
 
     /**
@@ -523,7 +523,7 @@ public final class LogicalPlans {
      * True when the projection computes a column: anything but plain, uncast column references.
      */
     public static boolean isComputedProjection(ProjectPlan project) {
-        return project.hasUpdateConversions() || project.hasPrunedComputedColumns() || !isPlainColumnProjection(project);
+        return project.hasUpdateConversions() || !isPlainColumnProjection(project);
     }
 
     /**

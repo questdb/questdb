@@ -510,7 +510,7 @@ final class DecorrelationContext implements Mutable {
     int markRows(ProjectPlan project, int position) {
         project.getExpressions().add(planNodes.constants.next().ofBoolean(true, position));
         final int markerId = context.newColumnId();
-        project.getOutput().add(markerId, sequencedName(ROW_MARKER_PREFIX).toImmutable(), ColumnType.BOOLEAN, false);
+        project.getOutput().add(markerId, sequencedName(ROW_MARKER_PREFIX, project.getOutput()), ColumnType.BOOLEAN, false);
         return markerId;
     }
 
@@ -748,6 +748,18 @@ final class DecorrelationContext implements Mutable {
     CharacterStoreEntry sequencedName(CharSequence prefix) {
         final CharacterStoreEntry name = characterStore.newEntry();
         name.put(prefix).put(carrierSequence++);
+        return name;
+    }
+
+    /**
+     * A new name of the prefix and the next carrier sequence that no column of the output holds, which a query may have
+     * aliased so.
+     */
+    CharSequence sequencedName(CharSequence prefix, OutputSchema output) {
+        CharSequence name;
+        do {
+            name = sequencedName(prefix).toImmutable();
+        } while (output.hasColumnName(name));
         return name;
     }
 

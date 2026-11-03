@@ -923,12 +923,13 @@ final class Decorrelation implements OptimiserPass {
     }
 
     private CharSequence liftedName(OutputSchema output, CharSequence name) {
-        if (!output.hasColumnName(name)) {
-            return name;
+        CharSequence lifted = name;
+        while (output.hasColumnName(lifted)) {
+            final CharacterStoreEntry entry = ctx.sequencedName("__qdb_lifted_");
+            entry.put('_').put(name);
+            lifted = entry.toImmutable();
         }
-        final CharacterStoreEntry entry = ctx.sequencedName("__qdb_lifted_");
-        entry.put('_').put(name);
-        return entry.toImmutable();
+        return lifted;
     }
 
     /**

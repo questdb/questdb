@@ -8985,7 +8985,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
             // The virtual `p2` column wraps the master in a VirtualRecordCursorFactory,
             // which does not support page frames, so the single-threaded fast path is used.
-            final String query = "SELECT a.sym, a.ts, sum(p.bid) AS s " +
+            final String query = "SELECT a.sym, a.ts, a.p2, sum(p.bid) AS s " +
                     "FROM (SELECT sym, ts, price + 0 AS p2 FROM trades) a " +
                     "WINDOW JOIN prices p " +
                     "ON (a.sym = p.sym) " +
@@ -9005,7 +9005,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                   window lo: 60000000 preceding (exclude prevailing)
                                   window hi: 60000000 following
                                     VirtualRecord
-                                      functions: [sym,ts]
+                                      functions: [sym,ts,price+0]
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: trades
@@ -9014,11 +9014,11 @@ public class WindowJoinTest extends AbstractCairoTest {
                                         Frame forward scan on: prices
                             """)
                     .returns("""
-                            sym\tts\ts
-                            A\t2023-01-01T09:00:00.000000Z\t30.0
-                            B\t2023-01-01T09:00:00.000000Z\t40.0
-                            A\t2023-01-01T09:01:00.000000Z\t50.0
-                            B\t2023-01-01T09:02:00.000000Z\t50.0
+                            sym\tts\tp2\ts
+                            A\t2023-01-01T09:00:00.000000Z\t1.0\t30.0
+                            B\t2023-01-01T09:00:00.000000Z\t3.0\t40.0
+                            A\t2023-01-01T09:01:00.000000Z\t2.0\t50.0
+                            B\t2023-01-01T09:02:00.000000Z\t4.0\t50.0
                             """);
         });
     }
@@ -9063,7 +9063,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "('B', 50.0, '2023-01-01T09:02:30.000000Z');"
             );
 
-            final String query = "SELECT a.sym, a.ts, sum(p.bid) AS s " +
+            final String query = "SELECT a.sym, a.ts, a.p2, sum(p.bid) AS s " +
                     "FROM (SELECT sym, ts, price + 0 AS p2 FROM trades) a " +
                     "WINDOW JOIN prices p " +
                     "ON (a.sym = p.sym AND p.bid > 15) " +
@@ -9084,7 +9084,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                   window hi: 60000000 following
                                   join filter: 15<p.bid
                                     VirtualRecord
-                                      functions: [sym,ts]
+                                      functions: [sym,ts,price+0]
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: trades
@@ -9093,11 +9093,11 @@ public class WindowJoinTest extends AbstractCairoTest {
                                         Frame forward scan on: prices
                             """)
                     .returns("""
-                            sym\tts\ts
-                            A\t2023-01-01T09:00:00.000000Z\t20.0
-                            B\t2023-01-01T09:00:00.000000Z\t40.0
-                            A\t2023-01-01T09:01:00.000000Z\t50.0
-                            B\t2023-01-01T09:02:00.000000Z\t50.0
+                            sym\tts\tp2\ts
+                            A\t2023-01-01T09:00:00.000000Z\t1.0\t20.0
+                            B\t2023-01-01T09:00:00.000000Z\t3.0\t40.0
+                            A\t2023-01-01T09:01:00.000000Z\t2.0\t50.0
+                            B\t2023-01-01T09:02:00.000000Z\t4.0\t50.0
                             """);
         });
     }
@@ -9142,7 +9142,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "('B', 50.0, '2023-01-01T09:02:30.000000Z');"
             );
 
-            final String query = "SELECT a.sym, a.ts, sum(p.bid) AS s " +
+            final String query = "SELECT a.sym, a.ts, a.p2, sum(p.bid) AS s " +
                     "FROM (SELECT sym, ts, price + 0 AS p2 FROM trades) a " +
                     "WINDOW JOIN prices p " +
                     "ON (a.sym = p.sym) " +
@@ -9162,7 +9162,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                   window lo: 60000000 preceding (include prevailing)
                                   window hi: 60000000 following
                                     VirtualRecord
-                                      functions: [sym,ts]
+                                      functions: [sym,ts,price+0]
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: trades
@@ -9171,11 +9171,11 @@ public class WindowJoinTest extends AbstractCairoTest {
                                         Frame forward scan on: prices
                             """)
                     .returns("""
-                            sym\tts\ts
-                            A\t2023-01-01T09:00:00.000000Z\t30.0
-                            B\t2023-01-01T09:00:00.000000Z\t40.0
-                            A\t2023-01-01T09:01:00.000000Z\t60.0
-                            B\t2023-01-01T09:02:00.000000Z\t90.0
+                            sym\tts\tp2\ts
+                            A\t2023-01-01T09:00:00.000000Z\t1.0\t30.0
+                            B\t2023-01-01T09:00:00.000000Z\t3.0\t40.0
+                            A\t2023-01-01T09:01:00.000000Z\t2.0\t60.0
+                            B\t2023-01-01T09:02:00.000000Z\t4.0\t90.0
                             """);
         });
     }

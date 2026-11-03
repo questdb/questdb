@@ -396,9 +396,7 @@ final class ColumnPruning implements OptimiserPass {
                 columnReads.retainOutputs(project);
                 retainGroupingKeys(project);
                 selectProjectOutputs(project);
-                final boolean isComputed = !LogicalPlans.isColumnProjection(project);
                 pruneOutput(project, retainedProjectOutputIds);
-                project.setPrunedComputedColumns(isComputed && LogicalPlans.isColumnProjection(project));
                 final LogicalPlan projectInput = project.getChild();
                 // A computing projection reads a table function in place; narrowing
                 // a source that produces every column anyway only adds a mapping.

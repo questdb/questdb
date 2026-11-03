@@ -59,8 +59,8 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
 import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.rowCountTolerantContext;
 
 public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
-    // The optimiser pushes the interval below dateadd() as and_offset, which the fused analysis cannot
-    // parse, so the analysis falls back to the ordinary plan. The placeholder takes a join.
+    // A consumer that reads the computed column keeps the projection over the scan, so the fused analysis
+    // falls back to the ordinary plan. The placeholder takes a join.
     private static final String INTERVAL_FROM = " FROM (SELECT id, d, s, dateadd('d', -1, t) ts FROM a) r%sb p"
             + " ON r.id = p.id WHERE r.ts IN '2020-01-01'";
     // Aliases denote SQL sides, including RIGHT: r is always the SQL LHS.
@@ -907,18 +907,37 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntervalFilterThroughPrunedProjectionFusesOverItsIntervals() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables(false);
+            try (SqlExecutionContextImpl context = context(engine, 4)) {
+                context.changePageFrameSizes(1, 2);
+                for (String join : JOINS) {
+                    // No consumer reads the computed column, so the projection is a selection of plain columns over the
+                    // table and the interval, shifted by the dateadd(), scans the table under the fused join.
+                    final String from = " FROM (SELECT id, d, s, dateadd('d', -1, t) ts FROM a) r" + join + "b p ON r.id = p.id"
+                            + " WHERE r.ts IN '2020-01-01'";
+                    final boolean isFused = !join.equals(" right join ");
+                    assertOutcome("SELECT r.s, count(*) n, sum(p.d) d" + from + " ORDER BY 1", context, isFused);
+                    assertOutcome("SELECT count(*) n, sum(p.d) d" + from, context, isFused);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testIntervalFilterThroughProjectionKeepsOrdinaryResults() throws Exception {
         assertMemoryLeak(() -> {
             createTables(false);
             try (SqlExecutionContextImpl context = context(engine, 4)) {
                 context.changePageFrameSizes(1, 2);
                 for (String join : JOINS) {
-                    // The optimiser pushes the interval below dateadd() as an and_offset pseudo-function,
-                    // which only interval extraction and generateFilter() can compile.
+                    // The aggregates read the computed column, which keeps the projection over the scan, so the
+                    // fused analysis falls back to the ordinary plan under the interval pushed below dateadd().
                     String from = " FROM (SELECT id, d, s, dateadd('d', -1, t) ts FROM a) r" + join + "b p ON r.id = p.id"
                             + " WHERE r.ts IN '2020-01-01'";
-                    assertOutcome("SELECT r.s, count(*) n, sum(p.d) d" + from + " ORDER BY 1", context, false);
-                    assertOutcome("SELECT count(*) n, sum(p.d) d" + from, context, false);
+                    assertOutcome("SELECT r.s, count(*) n, sum(p.d) d, max(r.ts) m" + from + " ORDER BY 1", context, false);
+                    assertOutcome("SELECT count(*) n, sum(p.d) d, max(r.ts) m" + from, context, false);
                 }
             }
         });
@@ -926,18 +945,18 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
 
     @Test
     public void testScalarSubqueryOnOrLhsKeepsOuterOperand() throws Exception {
-        assertSubqueryOperand("SELECT id, d FROM a", "d > (SELECT sum(p.d) d" + INTERVAL_FROM + ")", "OR", false);
+        assertSubqueryOperand("SELECT id, d FROM a", "d > (SELECT sum(p.d) + count(r.ts) d" + INTERVAL_FROM + ")", "OR", false);
     }
 
     @Test
     public void testInSubqueryOnOrLhsKeepsOuterOperand() throws Exception {
         assertSubqueryOperand("SELECT id, s FROM a",
-                "s IN (SELECT s FROM (SELECT r.s, count(*) n, sum(p.d) d" + INTERVAL_FROM + ") WHERE n > 0)", "OR", false);
+                "s IN (SELECT s FROM (SELECT r.s, count(r.ts) n, sum(p.d) d" + INTERVAL_FROM + ") WHERE n > 0)", "OR", false);
     }
 
     @Test
     public void testScalarSubqueryOnAndLhsKeepsOuterOperand() throws Exception {
-        assertSubqueryOperand("SELECT id, d FROM a", "d > (SELECT sum(p.d) d" + INTERVAL_FROM + ")", "AND", false);
+        assertSubqueryOperand("SELECT id, d FROM a", "d > (SELECT sum(p.d) + count(r.ts) d" + INTERVAL_FROM + ")", "AND", false);
     }
 
     @Test

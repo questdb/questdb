@@ -315,10 +315,6 @@ final class ScalarCompensation implements Mutable {
         boundChecks = boundChecks == null ? check : context.getRewriter().combineConjunction(boundChecks, check, position);
     }
 
-    private CharSequence carrierName() {
-        return ctx.sequencedName(CARRIER_PREFIX).toImmutable();
-    }
-
     /**
      * The value a column of the projection over a keyless aggregate takes over no rows, over
      * {@code input}: counts read zero, other aggregates read their carried value (NULL), and the columns
@@ -979,7 +975,7 @@ final class ScalarCompensation implements Mutable {
                     final int type = aggregate.getOutput().getColumnType(aggregateIndex);
                     project.getExpressions().add(planNodes.columns.next().of(columnId, type, project.getPosition()));
                     final int carrierId = context.newColumnId();
-                    project.getOutput().add(carrierId, carrierName(), type, false);
+                    project.getOutput().add(carrierId, ctx.sequencedName(CARRIER_PREFIX, project.getOutput()), type, false);
                     carrierColumnIds.add(columnId);
                     carrierColumnIds.add(carrierId);
                 }

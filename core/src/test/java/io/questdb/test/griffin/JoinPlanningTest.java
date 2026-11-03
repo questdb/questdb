@@ -1305,8 +1305,7 @@ public class JoinPlanningTest extends AbstractCairoTest {
             assertQuery("SELECT count() FROM (SELECT a.id + 1 x, sum(a.id) OVER (ORDER BY a.ts RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW) s FROM " + join + ")")
                     .noLeakCheck().noRandomAccess().expectSize().withPlan("""
                             Count
-                                VirtualRecord
-                            """ + TRAILING_CROSS_PLAN.indent(8)).returns("count\n3\n");
+                            """ + TRAILING_CROSS_PLAN.indent(4)).returns("count\n3\n");
             assertQuery("SELECT count() FROM (SELECT b.k, first(a.id) f FROM " + join + ")")
                     .noLeakCheck().noRandomAccess().expectSize().withPlan("""
                             Count

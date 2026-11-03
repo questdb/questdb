@@ -17781,8 +17781,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                               keys: [Schema]
                                 Encode sort
                                   keys: [Schema, Name]
-                                    VirtualRecord
-                                      functions: [n.nspname,c.relname]
+                                    SelectedRecord
                                         Filter filter: (n.nspname!='pg_catalog' and n.nspname!='information_schema' and n.nspname !~ ^pg_toast)
                                             Hash Left Outer Join
                                               condition: n.oid=c.relnamespace
@@ -17798,8 +17797,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                               keys: [Schema]
                                 Encode sort
                                   keys: [Schema, Name]
-                                    VirtualRecord
-                                      functions: [n.nspname,c.relname]
+                                    SelectedRecord
                                         Filter filter: c.relkind in [114,112,118,109,83,102,0]
                                             Hash Right Outer Join
                                               condition: n.oid=c.relnamespace
@@ -17815,8 +17813,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                               keys: [Schema]
                                 Encode sort
                                   keys: [Schema, Name]
-                                    VirtualRecord
-                                      functions: [n.nspname,c.relname]
+                                    SelectedRecord
                                         Filter filter: (c.relkind in [114,112,118,109,83,102,0] and n.nspname!='pg_catalog' and n.nspname!='information_schema' and n.nspname !~ ^pg_toast)
                                             Hash Full Outer Join
                                               condition: n.oid=c.relnamespace

@@ -194,7 +194,7 @@ final class ProjectionMerge implements OptimiserPass {
      * A computing projection reads the input of a column projection beneath it directly.
      */
     private void absorbColumnProject(ProjectPlan project) {
-        if (project.hasUpdateConversions() || project.hasPrunedComputedColumns()) {
+        if (project.hasUpdateConversions()) {
             return;
         }
         final ProjectPlan inner = absorbableProject(project.getChild());
@@ -278,7 +278,7 @@ final class ProjectionMerge implements OptimiserPass {
                 boundary = limit;
                 input = limit.getChild();
             }
-            if (!(input instanceof ProjectPlan inner) || !LogicalPlans.isColumnProjection(inner) && !inner.hasPrunedComputedColumns()) {
+            if (!(input instanceof ProjectPlan inner) || !LogicalPlans.isColumnProjection(inner)) {
                 return project;
             }
             // Generation elides an identity declaration over an undesignated input, which
@@ -314,9 +314,6 @@ final class ProjectionMerge implements OptimiserPass {
             }
             if (inner.hasTimestampDeclaration() && project.getOutput().getTimestampIndex() >= 0) {
                 project.markTimestampDeclaration();
-            }
-            if (inner.hasPrunedComputedColumns()) {
-                project.setPrunedComputedColumns(true);
             }
             // Pruning already resolved duplicate timestamp aliases. Keep the outer
             // schema exactly. Order-sensitive rules have finished, so a declaration
@@ -400,8 +397,8 @@ final class ProjectionMerge implements OptimiserPass {
      * values only from columns the inner one passes through.
      */
     void mergeComputingProject(ProjectPlan project, ProjectPlan inner) {
-        if (project.hasUpdateConversions() || project.hasPrunedComputedColumns() || project.hasTimestampDeclaration()
-                || inner.hasUpdateConversions() || inner.hasPrunedComputedColumns() || inner.hasTimestampDeclaration()) {
+        if (project.hasUpdateConversions() || project.hasTimestampDeclaration()
+                || inner.hasUpdateConversions() || inner.hasTimestampDeclaration()) {
             return;
         }
         final ObjList<BoundExpression> expressions = project.getExpressions();

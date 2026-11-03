@@ -130,7 +130,7 @@ final class OuterJoinCarriers implements Mutable {
         final FunctionExpression marker = (FunctionExpression) context.bindCall("count", position, domain.getChild().getOutput());
         domain.getAggregates().add(marker);
         slaveMarkerId = context.newColumnId();
-        domain.getOutput().add(slaveMarkerId, markerName(), marker.getDataType(), false);
+        domain.getOutput().add(slaveMarkerId, markerName(domain.getOutput()), marker.getDataType(), false);
         return domain;
     }
 
@@ -193,8 +193,8 @@ final class OuterJoinCarriers implements Mutable {
         return true;
     }
 
-    private CharSequence markerName() {
-        return ctx.sequencedName(DecorrelationContext.OUTER_REF_PREFIX + "marker_").toImmutable();
+    private CharSequence markerName(OutputSchema output) {
+        return ctx.sequencedName(DecorrelationContext.OUTER_REF_PREFIX + "marker_", output);
     }
 
     /**
@@ -260,7 +260,7 @@ final class OuterJoinCarriers implements Mutable {
         if (isMarked) {
             project.getExpressions().add(planNodes.constants.next().ofLong(1, position));
             markerId = context.newColumnId();
-            output.add(markerId, markerName(), ColumnType.LONG, false);
+            output.add(markerId, markerName(output), ColumnType.LONG, false);
         }
 
         LogicalPlan top = project;

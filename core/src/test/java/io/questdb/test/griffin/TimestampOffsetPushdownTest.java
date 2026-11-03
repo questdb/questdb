@@ -781,8 +781,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             assertQuery("SELECT i FROM (SELECT dateadd('M', 1, ts) x, i FROM jan) WHERE x = '2024-02-29T06:00:00'")
                     .noLeakCheck()
                     .withPlan("""
-                            VirtualRecord
-                              functions: [i]
+                            SelectedRecord
                                 Async Filter workers: 1
                                   filter: 2024-02-29T06:00:00.000000Z=dateadd('M',1,ts)
                                     PageFrame
@@ -799,8 +798,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
             assertQuery("SELECT i FROM (SELECT dateadd('y', 1, ts) x, i FROM feb) WHERE x >= '2025-02-28T18:00:00'")
                     .noLeakCheck()
                     .withPlan("""
-                            VirtualRecord
-                              functions: [i]
+                            SelectedRecord
                                 Async Filter workers: 1
                                   filter: dateadd('y',1,ts)>=2025-02-28T18:00:00.000000Z
                                     PageFrame

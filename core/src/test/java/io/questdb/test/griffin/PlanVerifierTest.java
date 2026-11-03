@@ -1458,22 +1458,25 @@ public class PlanVerifierTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowJoinNullExtensionContradictsFilter() throws Exception {
+    public void testWindowJoinNullExtensionFollowsFilterAndAggregates() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             final String sql = "SELECT a.ts, %s FROM a WINDOW JOIN a b ON (%s) RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW";
             final Object[][] cases = {
-                    {"sum(b.x)", "1 = 0", WindowJoinStep.NullExtension.NULL_PADDING, WindowJoinStep.NullExtension.EMPTY_VALUES},
-                    {"sum(b.x), count()", "1 = 0", WindowJoinStep.NullExtension.EMPTY_VALUES, WindowJoinStep.NullExtension.NULL_PADDING},
-                    {"sum(b.x)", "b.x > 0", WindowJoinStep.NullExtension.NONE, WindowJoinStep.NullExtension.NULL_PADDING},
-                    {"sum(b.x)", "1 = 0", WindowJoinStep.NullExtension.NULL_PADDING, WindowJoinStep.NullExtension.NONE}
+                    {"sum(b.x)", "1 = 0", WindowJoinStep.NullExtension.NULL_PADDING},
+                    {"sum(b.x), count()", "1 = 0", WindowJoinStep.NullExtension.EMPTY_VALUES},
+                    {"sum(b.x)", "b.x > 0", WindowJoinStep.NullExtension.NONE},
+                    {"sum(b.x)", "1 = 1", WindowJoinStep.NullExtension.NONE}
             };
             for (Object[] c : cases) {
-                assertAlgorithmContradicts(sql.formatted(c[0], c[1]), WindowJoinPlan.class, join -> {
-                    final WindowJoinStep step = join.getSteps().getQuick(0);
-                    Assert.assertEquals(c[2], step.getNullExtension());
-                    step.setNullExtension((WindowJoinStep.NullExtension) c[3]);
-                }, PlanVerifier.WINDOW_JOIN_ALGORITHM);
+                try (
+                        SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                        RecordCursorFactory ignored = compiler.compile(sql.formatted(c[0], c[1]), sqlExecutionContext).getRecordCursorFactory()
+                ) {
+                    final LogicalPlan plan = compiler.getPlanForTesting();
+                    Assert.assertEquals(c[2], find(plan, WindowJoinPlan.class).getSteps().getQuick(0).getNullExtension());
+                    verifier.verify(plan, PlanStage.PHYSICAL, PASS);
+                }
             }
         });
     }

@@ -825,9 +825,6 @@ final class PhysicalChoiceVerifier {
 
     static String windowJoinStep(WindowJoinPlan windowJoin, int index, WindowJoinStep step, boolean isPlanned) {
         final WindowJoinStep.NullExtension nullExtension = step.getNullExtension();
-        if (nullExtension != WindowJoinStep.NullExtension.of(step.getFilter(), step.getAggregates())) {
-            return PlanVerifier.WINDOW_JOIN_ALGORITHM;
-        }
         final WindowJoinStep.Algorithm algorithm = step.getAlgorithm();
         if (algorithm == null) {
             return isPlanned && nullExtension == WindowJoinStep.NullExtension.NONE ? PlanVerifier.CHOICE_UNPLANNED : null;

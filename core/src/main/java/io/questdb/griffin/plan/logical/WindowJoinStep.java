@@ -56,7 +56,6 @@ public final class WindowJoinStep implements PlanFactSource {
     private int loSign;
     private char loTimeUnit;
     private CharSequence masterAlias;
-    private NullExtension nullExtension = NullExtension.NONE;
     private int position;
     private LogicalPlan slave;
     private CharSequence slaveAlias;
@@ -82,7 +81,6 @@ public final class WindowJoinStep implements PlanFactSource {
         loSign = 0;
         loTimeUnit = 0;
         masterAlias = null;
-        nullExtension = NullExtension.NONE;
         position = 0;
         slave = null;
         slaveAlias = null;
@@ -176,11 +174,10 @@ public final class WindowJoinStep implements PlanFactSource {
     }
 
     /**
-     * How the step null-extends its master instead of joining, which binding records once the step's filter and
-     * aggregates are bound, see {@link NullExtension#of}.
+     * How the step null-extends its master instead of joining, see {@link NullExtension#of}.
      */
     public NullExtension getNullExtension() {
-        return nullExtension;
+        return NullExtension.of(filter, aggregates);
     }
 
     public int getPosition() {
@@ -244,10 +241,6 @@ public final class WindowJoinStep implements PlanFactSource {
         this.loPosition = position;
     }
 
-    public void setNullExtension(NullExtension nullExtension) {
-        this.nullExtension = nullExtension;
-    }
-
     public void setTableSource(boolean isTableSource) {
         this.isTableSource = isTableSource;
     }
@@ -273,7 +266,6 @@ public final class WindowJoinStep implements PlanFactSource {
         visitor.fact("loSign", loSign);
         visitor.fact("loTimeUnit", loTimeUnit);
         visitor.fact("masterAlias", masterAlias);
-        visitor.fact("nullExtension", nullExtension);
         visitor.fact("position", position);
         visitor.fact("slaveAlias", slaveAlias);
     }

@@ -404,8 +404,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                             Row forward scan
                                             Frame forward scan on: tab
                                         Hash
-                                            VirtualRecord
-                                              functions: [__qdb_outer_ref__0_k,sum,COUNT]
+                                            SelectedRecord
                                                 GroupBy vectorized: true workers: 1
                                                   keys: [k]
                                                   values: [sum(x),count(x)]
