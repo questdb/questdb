@@ -132,9 +132,9 @@ public class IndexGatherUnitTest extends AbstractCairoTest {
 
     @Test
     public void testEstimateProbesStayWithinBudget() throws Exception {
-        // 96 hourly partitions and a list of 50 keys: 4800 (partition, key) counts, which the
-        // estimate samples down to its budget with the switch on, and reads in full with it off;
-        // the plan choice and the result are the same
+        // 97 hourly partitions (x = 60,000 lands alone in hour 96) and a list of 50 keys, all
+        // present: the estimate probes 64 partitions, floor(j * 97 / 64), and counts every key in
+        // each, 3200 counts, whatever the frame dispatch switch; the result is the same
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext, 60_000);
             final StringBuilder in = new StringBuilder();
@@ -144,17 +144,18 @@ public class IndexGatherUnitTest extends AbstractCairoTest {
             final String sql = "select sym, count() n, sum(z) s from t where sym in (" + in + ") order by sym";
             setFeatures(false, false);
             final String expected = runToString(engine, sqlExecutionContext, sql);
+            final io.questdb.std.IntList partitions = new io.questdb.std.IntList();
+            for (int j = 0; j < 64; j++) {
+                partitions.add(j * 97 / 64);
+            }
             setFeatures(true, true);
             for (boolean dispatch : new boolean[]{false, true}) {
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, String.valueOf(dispatch));
                 try (RecordCursorFactory factory = select(sql)) {
                     TestUtils.assertEquals(sql, expected, print(factory, sqlExecutionContext));
-                    final long probes = findGather(factory).getLastEstimateProbes();
-                    if (dispatch) {
-                        Assert.assertTrue("probes " + probes, probes > 0 && probes <= 4096);
-                    } else {
-                        Assert.assertTrue("probes " + probes, probes >= 4800 && probes % 50 == 0);
-                    }
+                    final IndexGatherRecordCursorFactory gather = findGather(factory);
+                    Assert.assertEquals("dispatch " + dispatch, partitions.toString(), gather.getLastEstimatePartitions().toString());
+                    Assert.assertEquals("dispatch " + dispatch, 64 * 50, gather.getLastEstimateProbes());
                 }
             }
         });

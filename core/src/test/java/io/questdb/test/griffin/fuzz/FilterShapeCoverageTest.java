@@ -30,6 +30,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.fuzz.clauses.GroupByClause;
+import io.questdb.test.griffin.fuzz.clauses.PostingClause;
 import io.questdb.test.griffin.fuzz.clauses.SampleByClause;
 import io.questdb.test.griffin.fuzz.expr.ColumnRefExpr;
 import io.questdb.test.griffin.fuzz.expr.ExpressionGenerator;
@@ -145,6 +146,56 @@ public class FilterShapeCoverageTest {
     // 8-4-4-4-12, the spelling UuidType.randomLiteral emits.
     private static final String UUID_LITERAL =
             "'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'";
+
+    @Test
+    public void testPostingClauseGeneratesSelectiveGroupBy() {
+        // PostingClause's GROUP BY shape, which runs the Index Or Scan choice and its sampled
+        // selectivity estimate: equality and IN lists, NULL in a list, lists long enough to be
+        // sampled under QueryFuzzTest's small budgets, interval windows (frames of an interval
+        // scan), and each key choice
+        final ObjList<FuzzColumn> columns = new ObjList<>();
+        columns.add(new FuzzColumn("sym", SymbolType.INSTANCE, new FuzzIndex(FuzzIndex.Kind.POSTING, new ObjList<>())));
+        columns.add(new FuzzColumn("c_int", IntType.INSTANCE));
+        columns.add(new FuzzColumn("c_bool", BooleanType.INSTANCE));
+        columns.add(new FuzzColumn("ts", TimestampType.INSTANCE));
+        final FuzzTable table = new FuzzTable("t", columns, "ts");
+        final String[] pins = {
+                "^SELECT count\\(\\) c, .* FROM t WHERE sym = '[^']*'$",
+                "^SELECT sym, count\\(\\) c, .* WHERE sym IN \\(",
+                "^SELECT c_(int|bool), count\\(\\) c, .* WHERE sym ",
+                "WHERE sym IN \\([^)]*null",
+                "WHERE sym IN \\(('[^']*', ){3,}'[^']*'\\)",
+                "sum\\(c_int\\) sv",
+                " AND ts IN '2024-01-0[12]T\\d\\d:00;\\dh;\\d{1,2}h;[123]'$",
+        };
+        final int[] matches = new int[pins.length];
+        final Pattern[] patterns = new Pattern[pins.length];
+        for (int i = 0; i < pins.length; i++) {
+            patterns[i] = Pattern.compile(pins[i]);
+        }
+        final Rnd rnd = new Rnd(42, 4242);
+        int groupBy = 0;
+        for (int q = 0; q < CORPUS_SIZE; q++) {
+            final GeneratedQuery query = PostingClause.tryGenerate(rnd, table, null);
+            Assert.assertNotNull(query);
+            final String sql = query.sql();
+            if (!sql.contains("count() c")) {
+                continue;
+            }
+            groupBy++;
+            Assert.assertTrue(sql, query.deterministic());
+            for (int i = 0; i < pins.length; i++) {
+                if (patterns[i].matcher(sql).find()) {
+                    matches[i]++;
+                }
+            }
+        }
+        // a third of the draws
+        Assert.assertTrue("GROUP BY shapes " + groupBy, groupBy > CORPUS_SIZE / 4 && groupBy < CORPUS_SIZE * 2 / 5);
+        for (int i = 0; i < pins.length; i++) {
+            Assert.assertTrue(pins[i] + " matched " + matches[i] + " of " + groupBy, matches[i] > 100);
+        }
+    }
 
     @Test
     public void testCharComparesAgainstHighCodePointLiteral() {

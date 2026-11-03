@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
+import io.questdb.griffin.engine.table.IndexGatherRecordCursorFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -44,6 +45,7 @@ import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -245,6 +247,13 @@ public class QueryFuzzTest extends AbstractCairoTest {
     private static final String QUERY_POOL_NAME = "fuzzQuery";
     // Per-query chance, in percent, of running with parallel SQL execution disabled.
     private static final int SERIAL_PROBABILITY_PCT = 5;
+
+    @Override
+    @After
+    public void tearDown() throws Exception {
+        IndexGatherRecordCursorFactory.setEstimateBudgetForTesting(64, 4096);
+        super.tearDown();
+    }
 
     @Test
     public void testDecimalAggregationOverflowToleratedByOracle() throws Exception {
@@ -896,6 +905,14 @@ public class QueryFuzzTest extends AbstractCairoTest {
         // provide. isParallelHashJoinGroupByEnabled() also requires parallel
         // GROUP BY and query workers, both on at this point, so the snapshot
         // reads the context's own flag.
+        // The POSTING GROUP BY's selectivity estimate samples 64 partitions and 4096 key counts,
+        // more than the fuzz tables' 2-4 days hold, so it would count everything. A run draws a
+        // smaller budget, which makes it sample and scale, and misestimate: the plans it picks
+        // must still match the shadow. tearDown() restores the default.
+        final int[][] estimateBudgets = {{64, 4096}, {1, 1}, {2, 3}, {3, 64}};
+        final int[] estimateBudget = estimateBudgets[rnd.nextInt(estimateBudgets.length)];
+        IndexGatherRecordCursorFactory.setEstimateBudgetForTesting(estimateBudget[0], estimateBudget[1]);
+        LOG.info().$("posting estimate budget [partitions=").$(estimateBudget[0]).$(", counts=").$(estimateBudget[1]).I$();
         final boolean savedParallelFilter = sqlExecutionContext.isParallelFilterEnabled();
         final boolean savedParallelGroupBy = sqlExecutionContext.isParallelGroupByEnabled();
         final boolean savedParallelHashJoinGroupBy = sqlExecutionContext.isParallelHashJoinGroupByEnabled();

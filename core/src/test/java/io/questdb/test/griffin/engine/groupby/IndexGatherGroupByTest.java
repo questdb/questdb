@@ -56,6 +56,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -94,6 +95,14 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
             "select arg_max(x, y) am, arg_min(x, y) an, mode(y) m from t where sym = 'A'",
             "select sym, first(x) f, last(x) l, first_not_null(x) fn, last_not_null(x) ln from t where sym in ('A', 'B') order by sym",
     };
+
+    @Override
+    @After
+    public void tearDown() throws Exception {
+        // a test may change the estimate's budget; surefire reuses the JVM across classes
+        IndexGatherRecordCursorFactory.setEstimateBudgetForTesting(64, 4096);
+        super.tearDown();
+    }
 
     @Override
     public void setUp() {

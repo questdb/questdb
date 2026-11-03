@@ -608,6 +608,53 @@ public class IntListTest {
     }
 
     @Test
+    public void testSortGroupsPurgingOperatorEntries() {
+        // PurgingOperator's groups of 4 (column index, type, index type, name index), with
+        // repeated column indexes: they come out ordered by column index, equal column indexes
+        // adjacent, and every group intact (its name index travels inside the group)
+        final int columns = 40;
+        final IntList list = new IntList();
+        final int[][] expected = new int[columns * 3][];
+        int e = 0;
+        // a column's entries arrive interleaved with the others', newest first
+        for (int round = 2; round >= 0; round--) {
+            for (int c = columns - 1; c >= 0; c -= 2) {
+                list.add(c);
+                list.add(round);
+                list.add(c % 3);
+                list.add(c * 3 + round);
+                expected[e++] = new int[]{c, round, c % 3, c * 3 + round};
+            }
+            for (int c = 0; c < columns; c += 2) {
+                list.add(c);
+                list.add(round);
+                list.add(c % 3);
+                list.add(c * 3 + round);
+                expected[e++] = new int[]{c, round, c % 3, c * 3 + round};
+            }
+        }
+        Arrays.sort(expected, (a, b) -> {
+            for (int k = 0; k < 4; k++) {
+                final int cmp = Integer.compare(a[k], b[k]);
+                if (cmp != 0) {
+                    return cmp;
+                }
+            }
+            return 0;
+        });
+        list.sortGroups(4);
+        Assert.assertEquals(columns * 3 * 4, list.size());
+        for (int g = 0; g < columns * 3; g++) {
+            // column g / 3, rounds 0, 1, 2 in a row
+            Assert.assertEquals(g / 3, list.getQuick(4 * g));
+            Assert.assertEquals(g % 3, list.getQuick(4 * g + 1));
+            for (int k = 0; k < 4; k++) {
+                Assert.assertEquals(expected[g][k], list.getQuick(4 * g + k));
+            }
+        }
+    }
+
+    @Test
     public void testSortGroupsPartitionBoundsIssue() {
         // This test demonstrates the off-by-one error in partition bounds
         // The bug is that pivotIndex = high - 1, but the code treats high as exclusive
