@@ -167,9 +167,9 @@ public class QueryPlanBenchmark {
                     SELECT m.ts, sum(p.x) FROM (SELECT ts, s, a + 1 c FROM t) m WINDOW JOIN p ON (m.s = p.s)
                     RANGE BETWEEN 1 SECOND PRECEDING AND 1 SECOND FOLLOWING EXCLUDE PREVAILING""";
             case "unread_column_hash_join" ->
-                    "SELECT count(*) n, sum(j.x) d, max(r.ts) m FROM (SELECT a, s, dateadd('d', -1, ts) ts FROM t) r JOIN p j ON r.a = j.a WHERE r.ts IN '1969-12-31'";
+                    "SELECT count(*) n, sum(j.x) d FROM (SELECT a, s, dateadd('d', -1, ts) ts FROM t) r JOIN p j ON r.a = j.a WHERE r.ts IN '1969-12-31'";
             case "endpoint_over_sub_query" -> "SELECT max(ts) FROM (SELECT * FROM t WHERE a > 5)";
-            case "negative_limit_no_match" -> "SELECT m.a, n.x FROM t m JOIN p n ON m.a = n.b LIMIT -10";
+            case "negative_limit_no_match" -> "SELECT m.a, n.x FROM p m JOIN p n ON m.a = n.b WHERE m.a > 5 LIMIT -10";
             default -> throw new IllegalArgumentException("unknown query: " + query);
         };
         factory = engine.select(sql, ctx);
