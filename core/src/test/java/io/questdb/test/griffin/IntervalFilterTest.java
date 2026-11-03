@@ -1601,44 +1601,6 @@ public class IntervalFilterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInTimeListTimeZoneAboveMergeThreshold() throws Exception {
-        // Each time list value expands the first minute of its hour to 600 tenths of a second, above
-        // the incremental merge threshold (256), and then converts them from its own time zone.
-        // 20:00 at -05:00 is 01:00Z on the next day, and 10:00 at +05:00 is 05:00Z.
-        assertMemoryLeak(() -> {
-            executeWithRewriteTimestamp(
-                    "CREATE TABLE x (k INT, tm #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
-                    timestampType.getTypeName()
-            );
-            execute("""
-                    INSERT INTO x VALUES
-                    (1, '2024-01-01T05:00:30.000000Z', '2024-01-01T05:00:30.000000Z'),
-                    (2, '2024-01-01T10:00:30.000000Z', '2024-01-01T10:00:30.000000Z'),
-                    (5, '2024-01-01T15:00:30.000000Z', '2024-01-01T15:00:30.000000Z'),
-                    (3, '2024-01-01T20:00:30.000000Z', '2024-01-01T20:00:30.000000Z'),
-                    (4, '2024-01-02T01:00:30.000000Z', '2024-01-02T01:00:30.000000Z')
-                    """);
-            for (String column : new String[]{"ts", "tm"}) {
-                assertQuery("SELECT k FROM x WHERE " + column + " IN '2024-01-01T[20:00@-05:00,10:00@+05:00]:[00..59].[0..9]'")
-                        .noLeakCheck()
-                        .returns("""
-                                k
-                                1
-                                4
-                                """);
-                // both values at -05:00: 10:00 is 15:00Z
-                assertQuery("SELECT k FROM x WHERE " + column + " IN '2024-01-01T[20:00,10:00]:[00..59].[0..9]@-05:00'")
-                        .noLeakCheck()
-                        .returns("""
-                                k
-                                5
-                                4
-                                """);
-            }
-        });
-    }
-
-    @Test
     public void testInTickListWithRuntimeInterval() throws Exception {
         // The predicate written last reaches the interval model builder first. A tick string with
         // several values that follows a run-time interval must intersect with it as one union of its
@@ -1826,6 +1788,44 @@ public class IntervalFilterTest extends AbstractCairoTest {
             }
             // the failed compilations leave the next query intact
             assertInBothOrders("ts IN '2024-01-[05,09]'", "ts < now()", "k\n1\n");
+        });
+    }
+
+    @Test
+    public void testInTimeListTimeZoneAboveMergeThreshold() throws Exception {
+        // Each time list value expands the first minute of its hour to 600 tenths of a second, above
+        // the incremental merge threshold (256), and then converts them from its own time zone.
+        // 20:00 at -05:00 is 01:00Z on the next day, and 10:00 at +05:00 is 05:00Z.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE x (k INT, tm #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                    timestampType.getTypeName()
+            );
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2024-01-01T05:00:30.000000Z', '2024-01-01T05:00:30.000000Z'),
+                    (2, '2024-01-01T10:00:30.000000Z', '2024-01-01T10:00:30.000000Z'),
+                    (5, '2024-01-01T15:00:30.000000Z', '2024-01-01T15:00:30.000000Z'),
+                    (3, '2024-01-01T20:00:30.000000Z', '2024-01-01T20:00:30.000000Z'),
+                    (4, '2024-01-02T01:00:30.000000Z', '2024-01-02T01:00:30.000000Z')
+                    """);
+            for (String column : new String[]{"ts", "tm"}) {
+                assertQuery("SELECT k FROM x WHERE " + column + " IN '2024-01-01T[20:00@-05:00,10:00@+05:00]:[00..59].[0..9]'")
+                        .noLeakCheck()
+                        .returns("""
+                                k
+                                1
+                                4
+                                """);
+                // both values at -05:00: 10:00 is 15:00Z
+                assertQuery("SELECT k FROM x WHERE " + column + " IN '2024-01-01T[20:00,10:00]:[00..59].[0..9]@-05:00'")
+                        .noLeakCheck()
+                        .returns("""
+                                k
+                                5
+                                4
+                                """);
+            }
         });
     }
 
