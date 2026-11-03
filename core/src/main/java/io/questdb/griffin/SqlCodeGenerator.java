@@ -4729,13 +4729,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     && isPrevKeyword(fillValuesExprs.getQuick(0).token)
                     && fillValuesExprs.getQuick(0).type == ExpressionNode.LITERAL) {
                 // Bare FILL(PREV): -1 in the user-fill-idx map means key/timestamp
-                // (FILL_KEY); >= 0 means aggregate (FILL_PREV_SELF).
+                // (FILL_KEY); >= 0 means aggregate (FILL_PREV_SELF). Grouping sets
+                // reject FILL(PREV) above, so no column is a forced fill key here.
+                assert forcedFillKeyColumns.size() == 0;
                 for (int col = 0; col < columnCount; col++) {
                     if (col == timestampIndex) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
-                        constantFills.add(NullConstant.NULL);
-                    } else if (forcedFillKeyColumns.contains(col)) {
-                        fillModes.add(SampleByFillRecordCursorFactory.FILL_KEY);
                         constantFills.add(NullConstant.NULL);
                     } else if (factoryColToUserFillIdx.getQuick(col) < 0) {
                         fillModes.add(SampleByFillRecordCursorFactory.FILL_KEY);
@@ -11627,7 +11626,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 outerProjectionFunctions0,
                                 model.getGroupingSets(),
                                 groupingSetKeyColumnIndices,
-                                model.getModelPosition()
+                                model.getGroupByPosition() > 0 ? model.getGroupByPosition() : model.getModelPosition()
                         ),
                         executionContext,
                         fillKeyColumnPositions

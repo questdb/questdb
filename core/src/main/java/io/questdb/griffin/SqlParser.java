@@ -42,6 +42,7 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cutlass.text.Atomicity;
 import io.questdb.griffin.engine.functions.json.JsonExtractTypedFunctionFactory;
+import io.questdb.griffin.engine.groupby.GroupByUtils;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.ops.CreateLiveViewOperationBuilder;
@@ -1415,7 +1416,7 @@ public class SqlParser {
         for (int i = 0, n = columns.size(); i < n; i++) {
             ExpressionNode node = columns.getQuick(i);
             if (node.type != ExpressionNode.LITERAL) {
-                throw SqlException.$(node.position, "column reference expected");
+                throw SqlException.$(node.position, GroupByUtils.EXPRESSION_GROUPING_KEY_MESSAGE);
             }
         }
     }
@@ -5899,9 +5900,8 @@ public class SqlParser {
             int kwPos = firstTokenPosition;
             guardAgainstLatestOnWithGroupingSets(model, kwPos);
             tok = optTok(lexer);
-            if (tok == null || !isSetsKeyword(tok)) {
-                throw SqlException.$(kwPos, "expected SETS after GROUPING");
-            }
+            // hasGroupingSyntaxLookahead() has already matched SETS.
+            assert tok != null && isSetsKeyword(tok);
             parseExplicitGroupingSets(lexer, model, sqlParserCallback);
             return optTokAfterGroupingSets(lexer);
         }
@@ -6013,11 +6013,10 @@ public class SqlParser {
         LowerCaseCharSequenceIntHashMap columnIndex = new LowerCaseCharSequenceIntHashMap();
 
         do {
+            // Like PostgreSQL, the list holds at least one set and no trailing comma, so
+            // every element starts with '('. The empty set is written "()".
             // Use tokIncludingLocalBrace to avoid subQueryMode swallowing ')'
-            CharSequence tok = tokIncludingLocalBrace(lexer, "'(' or ')'");
-            if (Chars.equals(tok, ')')) {
-                break;
-            }
+            CharSequence tok = tokIncludingLocalBrace(lexer, "'('");
             expectTok(tok, lexer.lastTokenPosition(), '(');
 
             IntList setIndices = new IntList();
@@ -6029,7 +6028,9 @@ public class SqlParser {
                 do {
                     ExpressionNode n = expr(lexer, model, sqlParserCallback, model.getDecls());
                     if (n == null || n.type != ExpressionNode.LITERAL) {
-                        throw SqlException.$(n == null ? lexer.lastTokenPosition() : n.position, "column reference expected");
+                        throw n == null
+                                ? SqlException.$(lexer.lastTokenPosition(), "column reference expected")
+                                : SqlException.$(n.position, GroupByUtils.EXPRESSION_GROUPING_KEY_MESSAGE);
                     }
 
                     // Detect mixed qualified/unqualified references to the
@@ -6066,9 +6067,9 @@ public class SqlParser {
                 throw SqlException.$(lexer.lastTokenPosition(), "too many grouping sets (maximum " + maxSets + ")");
             }
 
-            // Use SqlUtil.fetchNext to avoid subQueryMode swallowing ')'
-            tok = SqlUtil.fetchNext(lexer);
-            if (tok == null || Chars.equals(tok, ')')) {
+            // Use tokIncludingLocalBrace to avoid subQueryMode swallowing ')'
+            tok = tokIncludingLocalBrace(lexer, "',' or ')'");
+            if (Chars.equals(tok, ')')) {
                 break;
             }
             expectTok(tok, lexer.lastTokenPosition(), ',');

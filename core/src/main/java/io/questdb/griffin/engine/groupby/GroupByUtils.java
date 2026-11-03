@@ -85,6 +85,8 @@ import java.util.ArrayDeque;
 import static io.questdb.griffin.model.ExpressionNode.LITERAL;
 
 public class GroupByUtils {
+    // Grouping sets roll up columns only: a rolled-up key is replaced with NULL by its input column.
+    public static final String EXPRESSION_GROUPING_KEY_MESSAGE = "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery";
     public static final int PROJECTION_FUNCTION_FLAG_COLUMN = 0;
     public static final int PROJECTION_FUNCTION_FLAG_GROUP_BY = 2;
     public static final int PROJECTION_FUNCTION_FLAG_VIRTUAL = 1;
@@ -140,10 +142,9 @@ public class GroupByUtils {
                     outerProjectionFunctions.add(func);
                     if (extraOuterProjectionFunctions != null) {
                         for (int d = 0, dn = extraOuterProjectionFunctions.size(); d < dn; d++) {
+                            // Shared projections exist only without grouping sets, where GROUPING() is
+                            // rejected, so these copies never need GROUPING() key positions.
                             Function extraFunc = functionParser.parseFunction(node, baseMetadata, executionContext);
-                            if (extraFunc instanceof GroupingFunction extraGroupingFunction) {
-                                setGroupingArgKeyPositions(extraGroupingFunction, column);
-                            }
                             extraOuterProjectionFunctions.getQuick(d).add(extraFunc);
                         }
                     }
@@ -443,23 +444,7 @@ public class GroupByUtils {
         for (int k = 0, n = model.getGroupBy().size(); k < n; k++) {
             ExpressionNode key = model.getGroupBy().getQuick(k);
             boolean isFound = false;
-            if (hasGroupingFunction && key.type == LITERAL) {
-                for (int i = 0, m = model.getColumns().size(); i < m; i++) {
-                    QueryColumn column = model.getColumns().getQuick(i);
-                    ExpressionNode columnAst = column.getAst();
-                    if (Chars.equalsIgnoreCase(key.token, column.getAlias())
-                            && columnAst.type == LITERAL
-                            && !Chars.equalsIgnoreCase(key.token, columnAst.token)) {
-                        keyColumnIndices.add(i);
-                        isFound = true;
-                        break;
-                    }
-                }
-            }
             for (int i = 0, m = model.getColumns().size(); i < m; i++) {
-                if (isFound) {
-                    break;
-                }
                 QueryColumn column = model.getColumns().getQuick(i);
                 if (ExpressionNode.compareNodesGroupBy(key, column.getAst(), chooseModel)) {
                     int baseColumnIndex = findColumnKeyIndex(
@@ -471,7 +456,7 @@ public class GroupByUtils {
                     if (baseColumnIndex < 0) {
                         for (int s = 0, sn = model.getGroupingSets().size(); s < sn; s++) {
                             if (!model.getGroupingSets().getQuick(s).contains(k)) {
-                                throw SqlException.$(key.position, "column reference expected");
+                                throw SqlException.$(key.position, EXPRESSION_GROUPING_KEY_MESSAGE);
                             }
                         }
                     }
@@ -483,35 +468,9 @@ public class GroupByUtils {
                     break;
                 }
             }
-            if (!isFound && key.type == LITERAL) {
-                for (int i = 0, m = model.getColumns().size(); i < m; i++) {
-                    QueryColumn column = model.getColumns().getQuick(i);
-                    if (Chars.equalsIgnoreCase(key.token, column.getAlias())) {
-                        int baseColumnIndex = findColumnKeyIndex(
-                                column.getAst(),
-                                innerProjectionFunctions.getQuick(i),
-                                baseMetadata,
-                                true
-                        );
-                        if (baseColumnIndex < 0) {
-                            for (int s = 0, sn = model.getGroupingSets().size(); s < sn; s++) {
-                                if (!model.getGroupingSets().getQuick(s).contains(k)) {
-                                    throw SqlException.$(key.position, "column reference expected");
-                                }
-                            }
-                        }
-                        if (hasGroupingFunction && baseColumnIndex >= 0 && keyColumnIndices.contains(baseColumnIndex)) {
-                            baseColumnIndex = k;
-                        }
-                        keyColumnIndices.add(baseColumnIndex);
-                        isFound = true;
-                        break;
-                    }
-                }
-            }
-            if (!isFound) {
-                throw SqlException.$(key.position, "grouping key does not match a key expression");
-            }
+            // The optimiser replaces GROUP BY aliases and positions with the projected
+            // expressions, so every key matches a column of the group-by model.
+            assert isFound : "grouping key does not match a key expression: " + key.token;
         }
         for (int i = 0, n = innerProjectionFunctions.size(); i < n; i++) {
             Function function = innerProjectionFunctions.getQuick(i);
@@ -526,7 +485,10 @@ public class GroupByUtils {
                         }
                     }
                     if (isAligned) {
+                        // A GROUPING() nested in another expression reaches the group-by model
+                        // without resolved key positions, so size the list before filling it.
                         IntList keyPositions = model.getColumns().getQuick(i).getGroupingArgKeyPositions();
+                        keyPositions.setAll(argColumnIndices.size(), -1);
                         for (int a = 0, an = argColumnIndices.size(); a < an; a++) {
                             keyPositions.setQuick(a, a);
                             groupingFunction.setArgKeyPosition(a, a);

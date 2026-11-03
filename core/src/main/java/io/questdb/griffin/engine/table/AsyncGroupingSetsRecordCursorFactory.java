@@ -211,7 +211,7 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
         sink.type("Async Group By");
         sink.meta("workers").val(workerCount);
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(recordFunctions, getMetadata()));
-        sink.optAttr("values", frameSequence.getAtom().getGroupByFunctions(-1), true);
+        sink.optAttr("values", frameSequence.getAtom().getOwnerGroupByFunctions(), true);
         sink.attr("vectorized").val(false);
         sink.attr("groupingSets").val(true);
         sink.child(base);
@@ -470,7 +470,7 @@ public class AsyncGroupingSetsRecordCursorFactory extends AbstractRecordCursorFa
                     if (value.isNew()) {
                         updater.updateEmpty(value);
                         atom.setCurrentGroupingSet(-1, setIndex);
-                        ObjList<GroupByFunction> groupByFunctions = atom.getGroupByFunctions(-1);
+                        ObjList<GroupByFunction> groupByFunctions = atom.getOwnerGroupByFunctions();
                         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
                             GroupByFunction function = groupByFunctions.getQuick(i);
                             if (function instanceof GroupingFunction groupingFunction) {

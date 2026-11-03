@@ -24,7 +24,9 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -32,18 +34,79 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.functions.test.TestFaultFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.table.AsyncGroupingSetsRecordCursorFactory;
+import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class GroupingSetsTest extends AbstractCairoTest {
+
+    @Test
+    public void testAllocationFailureReleasesMemory() throws Exception {
+        // Caps native memory just above what is in use, at compile time and after it, and raises
+        // the cap step by step, so an allocation fails at every point where the grouping sets
+        // factory and cursor allocate. Each failure must be a clean out-of-memory error;
+        // assertMemoryLeak then checks that nothing stayed allocated.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT (x % 50)::INT, (x % 7)::INT, x, (x * 60_000_000)::TIMESTAMP FROM long_sequence(5_000)");
+            String query = "SELECT a, b, grouping_id(a, b) g, sum(v) FROM t GROUP BY CUBE(a, b)";
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                int failures = 0;
+                int successes = 0;
+                for (int isArmedBeforeCompile = 0; isArmedBeforeCompile < 2; isArmedBeforeCompile++) {
+                    for (long slack = 0; slack <= 512 * 1024; slack += 4 * 1024) {
+                        final long savedLimit = Unsafe.getRssMemLimit();
+                        try {
+                            if (isArmedBeforeCompile == 1) {
+                                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
+                            }
+                            try (RecordCursorFactory factory = select(query)) {
+                                if (isArmedBeforeCompile == 0) {
+                                    Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + slack);
+                                }
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    while (cursor.hasNext()) {
+                                        // drain
+                                    }
+                                }
+                            }
+                            successes++;
+                        } catch (CairoException e) {
+                            Assert.assertTrue("expected out of memory, got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                            failures++;
+                        } finally {
+                            Unsafe.setRssMemLimit(savedLimit);
+                        }
+                    }
+                }
+                Assert.assertTrue("the sweep never failed an allocation", failures > 0);
+                Assert.assertTrue("the sweep never let the query finish", successes > 0);
+                // The engine still answers the query after the failures.
+                assertQuery("SELECT count() n, sum(s) s FROM (" + query.replace("sum(v)", "sum(v) s") + ")")
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("n\ts\n408\t50010000\n");
+            }
+        });
+    }
 
     @Test
     public void testAsyncGroupingSets() throws Exception {
@@ -203,6 +266,24 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "FROM trades " +
                             "GROUP BY region, ROLLUP(symbol)"
             );
+        });
+    }
+
+    @Test
+    public void testCompositeGroupingSetsSyntaxErrors() throws Exception {
+        // A plain key before ROLLUP or CUBE takes its own parse path, with its own checks.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, c1 INT, c2 INT, c3 INT, c4 INT, c5 INT, c6 INT, c7 INT, c8 INT, c9 INT, c10 INT, c11 INT, c12 INT, c13 INT, c14 INT, c15 INT, c16 INT, v INT)");
+            String query = "SELECT a, count() FROM t GROUP BY a, ROLLUP()";
+            assertException(query, query.indexOf("ROLLUP"), "ROLLUP requires at least one column");
+            query = "SELECT a, count() FROM t GROUP BY a, CUBE()";
+            assertException(query, query.indexOf("CUBE"), "CUBE requires at least one column");
+            query = "SELECT a, count() FROM t GROUP BY a, CUBE(c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16)";
+            assertException(query, query.indexOf("CUBE"), "CUBE supports at most 15 columns");
+            query = "SELECT a, count() FROM t GROUP BY a, (SELECT 1)";
+            assertException(query, query.indexOf("SELECT 1"), "literal expected");
+            query = "SELECT a, count() FROM t GROUP BY ROLLUP((SELECT 1))";
+            assertException(query, query.indexOf("SELECT 1"), "literal expected");
         });
     }
 
@@ -740,6 +821,43 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFactoryPropertiesFollowInputs() throws Exception {
+        // The query cache, materialized views and plans read these properties, and a grouping
+        // sets factory takes them from its input, its expression keys and its aggregates.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (s SYMBOL INDEX, a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES ('x', 1, 2, '2024-01-01'), ('y', 2, 3, '2024-01-02')");
+            // Each grouping sets query must report what the plain GROUP BY over the same input,
+            // keys and aggregates reports. The pairs differ in every property, so a factory that
+            // ignores an input disagrees on at least one pair.
+            String[][] pairs = {
+                    {"SELECT a, sum(v) FROM t GROUP BY a", "SELECT a, sum(v) FROM t GROUP BY ROLLUP(a)"},
+                    {"SELECT a, sum(rnd_int()) FROM t GROUP BY a", "SELECT a, sum(rnd_int()) FROM t GROUP BY ROLLUP(a)"},
+                    {"SELECT rnd_int(0, 1, 0) k, a, sum(v) FROM t GROUP BY k, a", "SELECT rnd_int(0, 1, 0) k, a, sum(v) FROM t GROUP BY k, ROLLUP(a)"},
+                    {"SELECT a, sum(v) FROM t WHERE s = 'x' GROUP BY a", "SELECT a, sum(v) FROM t WHERE s = 'x' GROUP BY ROLLUP(a)"},
+                    {"SELECT a, sum(v) FROM t WHERE ts > now() GROUP BY a", "SELECT a, sum(v) FROM t WHERE ts > now() GROUP BY ROLLUP(a)"}
+            };
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                for (String[] pair : pairs) {
+                    try (
+                            RecordCursorFactory plainTop = select(pair[0]);
+                            RecordCursorFactory rollupTop = select(pair[1])
+                    ) {
+                        // QueryProgress wraps every top-level factory and keeps the interface defaults.
+                        RecordCursorFactory plain = findGroupByFactory(plainTop);
+                        RecordCursorFactory rollup = findGroupByFactory(rollupTop);
+                        Assert.assertTrue(pair[1], rollup.getClass().getSimpleName().contains("GroupingSets"));
+                        Assert.assertEquals(pair[1], plain.isNonDeterministic(), rollup.isNonDeterministic());
+                        Assert.assertEquals(pair[1], plain.isStableWithinExecution(), rollup.isStableWithinExecution());
+                        Assert.assertEquals(pair[1], plain.usesIndex(), rollup.usesIndex());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFilterByGroupingViaSubquery() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (sym SYMBOL, val DOUBLE)");
@@ -772,6 +890,73 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "7\t300.0\n",
                     "SELECT a + b, SUM(v) FROM t GROUP BY a + b ORDER BY 1"
             );
+        });
+    }
+
+    @Test
+    public void testGroupingAliasShadowsColumnName() throws Exception {
+        // GROUP BY names resolve to SELECT aliases first, as plain GROUP BY b, a does, so
+        // ROLLUP(b, a) groups b twice when a is the alias of b. GROUPING(a) follows the key.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10, 3), (2, 20, 5), (1, 20, 7)");
+            execute("CREATE TABLE u (a INT, w INT)");
+            execute("INSERT INTO u VALUES (1, 100), (2, 200), (1, 300)");
+            for (int mode = 0; mode < 2; mode++) {
+                sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                assertGroupingSetsQuery(
+                        """
+                                a\tg\ts
+                                null\t1\t15
+                                10\t0\t3
+                                10\t0\t3
+                                20\t0\t12
+                                20\t0\t12
+                                """,
+                        "SELECT b AS a, GROUPING(a) g, sum(v) s FROM t GROUP BY ROLLUP(b, a) ORDER BY a, g"
+                );
+                // The alias also shadows a column of a joined table.
+                assertGroupingSetsQuery(
+                        """
+                                w\tg\tn
+                                null\t1\t5
+                                10\t0\t2
+                                10\t0\t2
+                                20\t0\t3
+                                20\t0\t3
+                                """,
+                        "SELECT t.b AS w, GROUPING(w) g, count() n FROM t JOIN u ON t.a = u.a GROUP BY ROLLUP(t.b, w) ORDER BY w, g"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testGroupingExpressionKeyAlias() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10, 3), (2, 20, 5), (1, 20, 7)");
+            for (int mode = 0; mode < 2; mode++) {
+                sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                // An alias of an expression key present in every set.
+                assertGroupingSetsQuery(
+                        """
+                                k\tb\tgk\tgb\ts
+                                2\tnull\t0\t1\t10
+                                2\t10\t0\t0\t3
+                                2\t20\t0\t0\t7
+                                3\tnull\t0\t1\t5
+                                3\t20\t0\t0\t5
+                                """,
+                        "SELECT a + 1 AS k, b, GROUPING(k) gk, GROUPING(b) gb, sum(v) s FROM t GROUP BY a + 1, ROLLUP(b) ORDER BY k, b"
+                );
+                // An ordinal makes the expression a rolled-up key, which needs a subquery.
+                String query = "SELECT a + 1 AS k, GROUPING(k) g, sum(v) s FROM t GROUP BY ROLLUP(1)";
+                assertQuery(query).withContext(sqlExecutionContext).fails(
+                        query.indexOf("ROLLUP(1)") + "ROLLUP(".length(),
+                        "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery"
+                );
+            }
         });
     }
 
@@ -1151,6 +1336,22 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupingIdTooManyArguments() throws Exception {
+        // GROUPING_ID packs one bit per argument into an INT.
+        assertMemoryLeak(() -> {
+            StringBuilder columns = new StringBuilder("c1");
+            StringBuilder ddl = new StringBuilder("CREATE TABLE w (c1 INT");
+            for (int i = 2; i <= 32; i++) {
+                columns.append(", c").append(i);
+                ddl.append(", c").append(i).append(" INT");
+            }
+            execute(ddl.append(')').toString());
+            String query = "SELECT c1, grouping_id(" + columns + "), count() FROM w GROUP BY GROUPING SETS ((" + columns + "))";
+            assertException(query, query.indexOf("grouping_id"), "GROUPING_ID() supports at most 31 arguments");
+        });
+    }
+
+    @Test
     public void testGroupingIdWithCube() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -1273,6 +1474,108 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupingInsideExpressions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10, 3), (2, 20, 5), (1, 20, 7)");
+            for (int mode = 0; mode < 2; mode++) {
+                sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                assertGroupingSetsQuery(
+                        """
+                                a\tb\tg1\tg2\tg3\ts
+                                1\t10\t1\t0\t0\t3
+                                1\t20\t1\t0\t0\t7
+                                2\t20\t1\t0\t0\t5
+                                1\tnull\t1\t0\t2\t10
+                                2\tnull\t1\t0\t2\t5
+                                null\tnull\t2\t-1\t3\t15
+                                """,
+                        "SELECT a, b, GROUPING(a) + 1 g1, -abs(GROUPING(a)) g2, GROUPING_ID(b, a) * 1 g3, sum(v) s " +
+                                "FROM t GROUP BY ROLLUP(a, b) ORDER BY g3, a, b"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testGroupingInsideFunctionArguments() throws Exception {
+        // CASE and functions of three or more arguments keep their operands in an argument list.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10, 3), (2, 20, 5), (1, 20, 7)");
+            for (int mode = 0; mode < 2; mode++) {
+                sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                assertGroupingSetsQuery(
+                        """
+                                a\tk\ts
+                                null\ttotal\t15
+                                1\trow\t10
+                                2\trow\t5
+                                """,
+                        "SELECT a, CASE WHEN GROUPING(a) = 1 THEN 'total' ELSE 'row' END k, sum(v) s FROM t GROUP BY ROLLUP(a) ORDER BY a"
+                );
+                // A SELECT alias works as it does in a top-level GROUPING().
+                assertGroupingSetsQuery(
+                        """
+                                x\tk\ts
+                                null\ttotal\t15
+                                1\trow\t10
+                                2\trow\t5
+                                """,
+                        "SELECT a x, CASE WHEN GROUPING(x) = 1 THEN 'total' ELSE 'row' END k, sum(v) s FROM t GROUP BY ROLLUP(x) ORDER BY x"
+                );
+                assertGroupingSetsQuery(
+                        """
+                                x\tb\tg\ts
+                                1\t10\t0\t3
+                                1\t20\t0\t7
+                                2\t20\t0\t5
+                                1\tnull\t1\t10
+                                2\tnull\t1\t5
+                                null\tnull\t3\t15
+                                """,
+                        "SELECT a x, b, coalesce(GROUPING_ID(x, b), 0, 0) g, sum(v) s FROM t GROUP BY ROLLUP(x, b) ORDER BY g, x, b"
+                );
+                // x is an alias of a, so ROLLUP(a, x) groups a twice, as in
+                // testGroupingIdWithDuplicatePhysicalKeys: (a, x) and (a) give the same rows.
+                assertGroupingSetsQuery(
+                        """
+                                a\tx\tgx\tga\ts
+                                1\t1\t0\t0\t10
+                                1\t1\t0\t0\t10
+                                2\t2\t0\t0\t5
+                                2\t2\t0\t0\t5
+                                null\tnull\t1\t1\t15
+                                """,
+                        "SELECT a, a AS x, coalesce(GROUPING(x), 9, 9) gx, coalesce(GROUPING(a), 9, 9) ga, sum(v) s " +
+                                "FROM t GROUP BY ROLLUP(a, x) ORDER BY gx, ga, a"
+                );
+                // Nested and top-level GROUPING_ID() agree with reversed duplicate keys.
+                assertGroupingSetsQuery(
+                        """
+                                a\ta2\tb\tgid\tgid2\ts
+                                1\t1\t10\t0\t0\t3
+                                1\t1\t20\t0\t0\t7
+                                2\t2\t20\t0\t0\t5
+                                1\t1\tnull\t1\t1\t10
+                                1\t1\tnull\t1\t1\t10
+                                2\t2\tnull\t1\t1\t5
+                                2\t2\tnull\t1\t1\t5
+                                null\tnull\tnull\t7\t7\t15
+                                """,
+                        "SELECT a, a AS a2, b, coalesce(GROUPING_ID(a2, a, b), 0, 0) gid, GROUPING_ID(a2, a, b) gid2, sum(v) s " +
+                                "FROM t GROUP BY ROLLUP(a, a2, b) ORDER BY gid, a, a2, b"
+                );
+                String query = "SELECT a, CASE WHEN GROUPING(b) = 1 THEN 'all' ELSE 'one' END k FROM t GROUP BY ROLLUP(a)";
+                assertQuery(query).withContext(sqlExecutionContext).fails(
+                        query.indexOf("GROUPING(b)") + "GROUPING(".length(),
+                        "argument must be a grouping key column"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testGroupingNoArgs() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -1358,7 +1661,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             assertException(
                     "SELECT SUM(v) FROM t GROUP BY CUBE(a + b)",
                     37,
-                    "column reference expected"
+                    "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery"
             );
         });
     }
@@ -1370,8 +1673,11 @@ public class GroupingSetsTest extends AbstractCairoTest {
             assertException(
                     "SELECT SUM(v) FROM t GROUP BY GROUPING SETS ((a + b))",
                     48,
-                    "column reference expected"
+                    "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery"
             );
+            // A missing key is not an expression, so it keeps the plain message.
+            String query = "SELECT SUM(v) FROM t GROUP BY GROUPING SETS ((a, ))";
+            assertException(query, query.indexOf("))"), "column reference expected");
         });
     }
 
@@ -1382,7 +1688,7 @@ public class GroupingSetsTest extends AbstractCairoTest {
             assertException(
                     "SELECT SUM(v) FROM t GROUP BY ROLLUP(a + b)",
                     39,
-                    "column reference expected"
+                    "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery"
             );
         });
     }
@@ -1397,8 +1703,35 @@ public class GroupingSetsTest extends AbstractCairoTest {
             assertException(
                     "SELECT SUM(v) FROM t SAMPLE BY 1h ROLLUP(a + b)",
                     43,
-                    "column reference expected"
+                    "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery"
             );
+        });
+    }
+
+    @Test
+    public void testGroupingSetsKeyLimitWithGroupingFunction() throws Exception {
+        // GROUPING() and GROUPING_ID() read one bit per key from an INT mask, so 32 keys are too
+        // many for them, and the error points at the GROUP BY clause.
+        assertMemoryLeak(() -> {
+            StringBuilder columns = new StringBuilder("c1");
+            StringBuilder ddl = new StringBuilder("CREATE TABLE w (c1 INT");
+            for (int i = 2; i <= 32; i++) {
+                columns.append(", c").append(i);
+                ddl.append(", c").append(i).append(" INT");
+            }
+            execute(ddl.append(')').toString());
+            String query = "SELECT " + columns + ", grouping(c1), count() FROM w GROUP BY GROUPING SETS ((" + columns + "))";
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                assertQuery(query)
+                        .withContext(sqlExecutionContext)
+                        .fails(query.indexOf("GROUP BY"), "GROUPING SETS with GROUPING()/GROUPING_ID() supports at most 31 key columns");
+            }
+            // Without GROUPING() the same keys run.
+            assertQuery("SELECT " + columns + ", count() FROM w GROUP BY GROUPING SETS ((" + columns + "))")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("c1\tc2\tc3\tc4\tc5\tc6\tc7\tc8\tc9\tc10\tc11\tc12\tc13\tc14\tc15\tc16\tc17\tc18\tc19\tc20\tc21\tc22\tc23\tc24\tc25\tc26\tc27\tc28\tc29\tc30\tc31\tc32\tcount\n");
         });
     }
 
@@ -1411,6 +1744,50 @@ public class GroupingSetsTest extends AbstractCairoTest {
             assertGroupingSetsQuery("a\tb\tSUM\n", "SELECT a,b,SUM(v) FROM t GROUP BY a, ROLLUP(b) LIMIT 0");
             assertGroupingSetsQuery("a\tb\tSUM\n", "SELECT a,b,SUM(v) FROM t GROUP BY a, CUBE(b) LIMIT 0");
             assertGroupingSetsQuery("a\tSUM\n", "SELECT a,SUM(v) FROM t GROUP BY GROUPING SETS ((a)) LIMIT 0");
+        });
+    }
+
+    @Test
+    public void testGroupingSetsLimitFromConfiguration() throws Exception {
+        // cairo.sql.max.grouping.sets bounds every way of spelling the sets.
+        assertMemoryLeak(() -> {
+            // An embedded engine defaults to the server's limit.
+            Assert.assertEquals(4096, new DefaultCairoConfiguration(root).getSqlMaxGroupingSets());
+            setProperty(PropertyKey.CAIRO_SQL_MAX_GROUPING_SETS, 2);
+            execute("CREATE TABLE t (a INT, b INT, v INT)");
+            String query = "SELECT a, b, count() FROM t GROUP BY GROUPING SETS ((a), (b), ())";
+            assertException(query, query.indexOf("())") + 1, "too many grouping sets (maximum 2)");
+            query = "SELECT a, b, count() FROM t GROUP BY ROLLUP(a, b)";
+            assertException(query, query.indexOf("ROLLUP"), "ROLLUP produces too many grouping sets (3, maximum 2)");
+            query = "SELECT a, b, v, count() FROM t GROUP BY a, ROLLUP(b, v)";
+            assertException(query, query.indexOf("ROLLUP"), "ROLLUP produces too many grouping sets (3, maximum 2)");
+            query = "SELECT a, b, v, count() FROM t GROUP BY a, CUBE(b, v)";
+            assertException(query, query.indexOf("CUBE"), "CUBE produces too many grouping sets (4, maximum 2)");
+            // Within the limit the query runs: over no rows, ROLLUP(a) is the grand total alone.
+            assertGroupingSetsQuery("a\tcount\nnull\t0\n", "SELECT a, count() FROM t GROUP BY ROLLUP(a)");
+        });
+    }
+
+    @Test
+    public void testGroupingSetsListSyntaxErrors() throws Exception {
+        // Like PostgreSQL, a GROUPING SETS list holds at least one set and no trailing comma.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            for (String prefix : new String[]{
+                    "SELECT a, sum(v) FROM t GROUP BY ",
+                    "SELECT ts, a, sum(v) FROM t SAMPLE BY 1d "
+            }) {
+                String query = prefix + "GROUPING SETS ()";
+                assertException(query, query.length() - 1, "'(' expected");
+                query = prefix + "GROUPING SETS ((a), )";
+                assertException(query, query.length() - 1, "'(' expected");
+                query = prefix + "GROUPING SETS ((a),";
+                assertException(query, query.length(), "'(' expected");
+                query = prefix + "GROUPING SETS ((a)";
+                assertException(query, query.length(), "',' or ')' expected");
+                query = prefix + "GROUPING SETS ((a) (a))";
+                assertException(query, query.indexOf("(a))"), "',' expected");
+            }
         });
     }
 
@@ -1588,6 +1965,102 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInjectedFaultsKeepFactoryReusable() throws Exception {
+        // A failure while the cursor opens or while it scans must release what the cursor
+        // holds and leave the compiled factory able to run again.
+        assertMemoryLeak(() -> {
+            // test_fault() folds to TRUE outside dev mode.
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            execute("CREATE TABLE t (a INT, b INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10, 3), (2, 20, 5), (1, 20, 7)");
+            final String expected = """
+                    a\tb\ts
+                    null\tnull\t15
+                    1\tnull\t10
+                    1\t10\t3
+                    1\t20\t7
+                    2\tnull\t5
+                    2\t20\t5
+                    """;
+            final String query = "SELECT a, b, sum(CASE WHEN test_fault() THEN v ELSE 0 END) s FROM t GROUP BY ROLLUP(a, b) ORDER BY a, b";
+            for (int mode = 0; mode < 2; mode++) {
+                sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                try (RecordCursorFactory factory = select(query)) {
+                    for (int stage = 0; stage < 2; stage++) {
+                        if (stage == 0) {
+                            TestFaultFunctionFactory.armToFailAfterInits(0);
+                        } else {
+                            TestFaultFunctionFactory.armToFailAfter(1);
+                        }
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+                            Assert.fail("expected an injected fault, mode=" + mode + ", stage=" + stage);
+                        } catch (Throwable e) {
+                            TestUtils.assertContains(e.getMessage(), stage == 0 ? "test_fault: injected init failure" : "test_fault: injected failure");
+                        } finally {
+                            TestFaultFunctionFactory.disarm();
+                        }
+                        Assert.assertEquals(1, TestFaultFunctionFactory.faultsTriggered());
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            TestUtils.assertCursor(expected, cursor, factory.getMetadata(), true, sink);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLateralCorrelatedGroupingSetsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE u (a INT, w INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            final String message = "correlated GROUPING SETS are not supported with LATERAL";
+            // GROUP BY grouping sets point at GROUP BY.
+            String[] groupByQueries = {
+                    "SELECT * FROM t o JOIN LATERAL (SELECT w, count() n FROM u WHERE u.a = o.a GROUP BY ROLLUP(w)) l",
+                    "SELECT * FROM t o JOIN LATERAL (SELECT count() n FROM u WHERE u.a = o.a GROUP BY GROUPING SETS (())) l",
+                    "SELECT * FROM t o JOIN LATERAL (SELECT w, count() n FROM (SELECT * FROM u WHERE u.a = o.a) GROUP BY ROLLUP(w)) l"
+            };
+            for (String query : groupByQueries) {
+                assertException(query, query.indexOf("GROUP BY"), message);
+            }
+            // SAMPLE BY grouping sets have no GROUP BY clause: the error points at the first
+            // grouping key, or at the stride when the only set is empty.
+            String query = "SELECT * FROM t o JOIN LATERAL (SELECT ts, w, count() n FROM u WHERE u.a = o.a SAMPLE BY 1d ROLLUP(w)) l";
+            assertException(query, query.indexOf("ROLLUP(w)") + "ROLLUP(".length(), message);
+            query = "SELECT * FROM t o JOIN LATERAL (SELECT ts, count() n FROM u WHERE u.a = o.a SAMPLE BY 1d GROUPING SETS (())) l";
+            assertException(query, query.indexOf("1d"), message);
+        });
+    }
+
+    @Test
+    public void testLateralOverRollupSubquery() throws Exception {
+        // The LATERAL rewrite reads the outer ROLLUP query through a shared, read-only wrapper.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 3), (2, 5), (1, 7)");
+            execute("CREATE TABLE u (a INT, w INT)");
+            execute("INSERT INTO u VALUES (1, 100), (2, 200), (1, 300)");
+            for (int mode = 0; mode < 2; mode++) {
+                sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                assertGroupingSetsQuery(
+                        """
+                                a\ts\tn
+                                null\t15\t0
+                                1\t10\t2
+                                2\t5\t1
+                                """,
+                        "SELECT o.a, o.s, l.n FROM (SELECT a, sum(v) s FROM t GROUP BY ROLLUP(a)) o " +
+                                "JOIN LATERAL (SELECT count() n FROM u WHERE u.a = o.a) l ORDER BY o.a"
+                );
+            }
+            QueryModelWrapper wrapper = new QueryModelWrapper().of(QueryModel.FACTORY.newInstance(), 1);
+            Assert.assertThrows(UnsupportedOperationException.class, () -> wrapper.setGroupByPosition(1));
+        });
+    }
+
+    @Test
     public void testLatestOnWithCubeRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -1745,6 +2218,29 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollupArrayKeyWithPlainKey() throws Exception {
+        // A rolled-up array key reads as a NULL array.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k INT, arr DOUBLE[])");
+            execute("INSERT INTO t VALUES (1, ARRAY[1.0, 2.0]), (1, ARRAY[1.0, 2.0]), (2, ARRAY[3.0])");
+            for (int mode = 0; mode < 2; mode++) {
+                sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                assertGroupingSetsQuery(
+                        """
+                                k\tarr\tn\tg
+                                1\t[1.0,2.0]\t2\t0
+                                2\t[3.0]\t1\t0
+                                1\tnull\t2\t1
+                                2\tnull\t1\t1
+                                null\tnull\t3\t3
+                                """,
+                        "SELECT k, arr, count() n, GROUPING_ID(k, arr) g FROM t GROUP BY ROLLUP(k, arr) ORDER BY g, k"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testRollupBasic() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -1811,6 +2307,37 @@ public class GroupingSetsTest extends AbstractCairoTest {
                                 1\t1\t3.0
                                 1\t2\t5.0
                                 """);
+            }
+        });
+    }
+
+    @Test
+    public void testRollupCteReferencedTwice() throws Exception {
+        // A CTE read twice shares one model between both readers.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10, 3), (2, 20, 5), (1, 20, 7)");
+            for (int mode = 0; mode < 2; mode++) {
+                sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                assertGroupingSetsQuery(
+                        """
+                                a\tb\ts\tg
+                                null\tnull\t15\t3
+                                null\tnull\t15\t3
+                                1\tnull\t10\t1
+                                1\tnull\t10\t1
+                                1\t10\t3\t0
+                                1\t10\t3\t0
+                                1\t20\t7\t0
+                                1\t20\t7\t0
+                                2\tnull\t5\t1
+                                2\tnull\t5\t1
+                                2\t20\t5\t0
+                                2\t20\t5\t0
+                                """,
+                        "WITH r AS (SELECT a, b, sum(v) s, GROUPING_ID(a, b) g FROM t GROUP BY ROLLUP(a, b)) " +
+                                "SELECT * FROM (SELECT * FROM r UNION ALL SELECT * FROM r) ORDER BY a, b, s"
+                );
             }
         });
     }
@@ -1902,11 +2429,11 @@ public class GroupingSetsTest extends AbstractCairoTest {
     public void testRollupExpressionAliasRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, v DOUBLE)");
-            assertException("SELECT a + 1 AS k, SUM(v) FROM t GROUP BY ROLLUP(k)", 49, "column reference expected");
-            assertException("SELECT a + 1 AS k, SUM(v) FROM t GROUP BY CUBE(k)", 47, "column reference expected");
-            assertException("SELECT a + 1 AS k, SUM(v) FROM t GROUP BY GROUPING SETS ((k), ())", 58, "column reference expected");
+            assertException("SELECT a + 1 AS k, SUM(v) FROM t GROUP BY ROLLUP(k)", 49, "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery");
+            assertException("SELECT a + 1 AS k, SUM(v) FROM t GROUP BY CUBE(k)", 47, "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery");
+            assertException("SELECT a + 1 AS k, SUM(v) FROM t GROUP BY GROUPING SETS ((k), ())", 58, "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery");
             String groupingAliasQuery = "SELECT a + 1 AS k, GROUPING(k), SUM(v) FROM t GROUP BY ROLLUP(k)";
-            assertException(groupingAliasQuery, groupingAliasQuery.indexOf("ROLLUP(k)") + 7, "column reference expected");
+            assertException(groupingAliasQuery, groupingAliasQuery.indexOf("ROLLUP(k)") + 7, "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery");
         });
     }
 
@@ -1977,6 +2504,69 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRollupKeyOfEveryType() throws Exception {
+        // ROLLUP(c) over one row is the detail row plus a total whose key is the type's NULL.
+        // The reference spells both out as plain GROUP BY queries, so this checks that a rolled-up
+        // key of every groupable type reads back as that type's NULL, serially and in parallel.
+        assertMemoryLeak(() -> {
+            String[][] columns = {
+                    {"c_bool", "BOOLEAN", "rnd_boolean()"},
+                    {"c_byte", "BYTE", "rnd_byte()"},
+                    {"c_short", "SHORT", "rnd_short()"},
+                    {"c_char", "CHAR", "rnd_char()"},
+                    {"c_int", "INT", "rnd_int()"},
+                    {"c_long", "LONG", "rnd_long()"},
+                    {"c_float", "FLOAT", "rnd_float()"},
+                    {"c_double", "DOUBLE", "rnd_double()"},
+                    {"c_date", "DATE", "rnd_date(1577836800000L, 1767225600000L, 0)"},
+                    {"c_ts", "TIMESTAMP", "rnd_timestamp(to_timestamp('2024-01-01', 'yyyy-MM-dd'), to_timestamp('2024-04-01', 'yyyy-MM-dd'), 0)"},
+                    {"c_str", "STRING", "rnd_str(3, 8, 0)"},
+                    {"c_varchar", "VARCHAR", "rnd_varchar(3, 8, 0)"},
+                    {"c_sym", "SYMBOL", "rnd_symbol('a', 'b')"},
+                    {"c_uuid", "UUID", "rnd_uuid4()"},
+                    {"c_ipv4", "IPv4", "rnd_ipv4()"},
+                    {"c_long256", "LONG256", "rnd_long256()"},
+                    {"c_geo1", "GEOHASH(1c)", "rnd_geohash(5)"},
+                    {"c_geo3", "GEOHASH(3c)", "rnd_geohash(15)"},
+                    {"c_geo6", "GEOHASH(6c)", "rnd_geohash(30)"},
+                    {"c_geo12", "GEOHASH(12c)", "rnd_geohash(60)"},
+                    {"c_dec8", "DECIMAL(2, 0)", "rnd_decimal(2, 0, 0)"},
+                    {"c_dec16", "DECIMAL(4, 1)", "rnd_decimal(4, 1, 0)"},
+                    {"c_dec32", "DECIMAL(9, 2)", "rnd_decimal(9, 2, 0)"},
+                    {"c_dec64", "DECIMAL(18, 3)", "rnd_decimal(18, 3, 0)"},
+                    {"c_dec128", "DECIMAL(38, 4)", "rnd_decimal(38, 4, 0)"},
+                    {"c_dec256", "DECIMAL(76, 5)", "rnd_decimal(76, 5, 0)"},
+                    {"c_bin", "BINARY", "rnd_bin(2, 4, 0)"}
+            };
+            StringBuilder create = new StringBuilder("CREATE TABLE kt (");
+            StringBuilder insert = new StringBuilder("INSERT INTO kt SELECT ");
+            for (String[] column : columns) {
+                create.append(column[0]).append(' ').append(column[1]).append(", ");
+                insert.append(column[2]).append(", ");
+            }
+            execute(create.append("ts TIMESTAMP) TIMESTAMP(ts)").toString());
+            execute(insert.append("x::TIMESTAMP FROM long_sequence(1)").toString());
+            // An INTERVAL cannot be stored, so its key comes from a subquery.
+            String intervalSource = "(SELECT interval(ts, ts) c_iv FROM kt)";
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                for (String[] column : columns) {
+                    assertRolledUpKeyMatchesReference(column[0], "CASE WHEN 1 = 0 THEN " + column[0] + " END", "kt");
+                }
+                // CASE takes no INTERVAL, so the reference builds the NULL interval directly, and the
+                // cursor comparison has no INTERVAL case, so the two compare as printed text.
+                printSql("SELECT c_iv, count() n, 0 g FROM " + intervalSource + " GROUP BY c_iv"
+                        + " UNION ALL SELECT interval(NULL::TIMESTAMP, NULL::TIMESTAMP) c_iv, count() n, 1 g FROM " + intervalSource);
+                assertQuery("SELECT c_iv, count() n, grouping(c_iv) g FROM " + intervalSource + " GROUP BY ROLLUP(c_iv) ORDER BY g")
+                        .withContext(sqlExecutionContext)
+                        .inferRandomAccess()
+                        .sizeMayVary()
+                        .returns(sink.toString());
+            }
+        });
+    }
+
+    @Test
     public void testRollupMultipleAggregates() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -2031,9 +2621,9 @@ public class GroupingSetsTest extends AbstractCairoTest {
     public void testRollupNoOpCastAliasRejected() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (b INT, v DOUBLE)");
-            assertException("SELECT b::INT AS k, SUM(v) FROM t GROUP BY ROLLUP(k)", 50, "column reference expected");
-            assertException("SELECT b::INT AS k, SUM(v) FROM t GROUP BY CUBE(k)", 48, "column reference expected");
-            assertException("SELECT b::INT AS k, SUM(v) FROM t GROUP BY GROUPING SETS ((k), ())", 59, "column reference expected");
+            assertException("SELECT b::INT AS k, SUM(v) FROM t GROUP BY ROLLUP(k)", 50, "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery");
+            assertException("SELECT b::INT AS k, SUM(v) FROM t GROUP BY CUBE(k)", 48, "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery");
+            assertException("SELECT b::INT AS k, SUM(v) FROM t GROUP BY GROUPING SETS ((k), ())", 59, "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery");
         });
     }
 
@@ -2120,6 +2710,72 @@ public class GroupingSetsTest extends AbstractCairoTest {
                         .withContext(sqlExecutionContext)
                         .assertsPlanContaining("Filter filter: rnd_boolean()\n    "
                                 + (mode == 1 ? "Async Group By" : "GroupBy"));
+            }
+        });
+    }
+
+    @Test
+    public void testRollupOuterExpressionKeyFilter() throws Exception {
+        // The prefix key is computed below the group by, and a filter on it is safe to push down.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10, 3), (2, 20, 5), (1, 20, 7)");
+            for (int mode = 0; mode < 2; mode++) {
+                sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                assertGroupingSetsQuery(
+                        """
+                                k\tb\ts
+                                2\tnull\t10
+                                2\t10\t3
+                                2\t20\t7
+                                """,
+                        "SELECT * FROM (SELECT a + 1 k, b, sum(v) s FROM t GROUP BY k, ROLLUP(b)) WHERE k = 2 ORDER BY b"
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testRollupOuterInAndBetweenFilters() throws Exception {
+        // IN and BETWEEN keep their operands in an argument list. A filter on the rolled-up key
+        // b must stay above the group by, or the subtotal rows would survive it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, v INT)");
+            execute("INSERT INTO t VALUES (1, 10, 3), (2, 20, 5), (1, 20, 7)");
+            final String grouped = "SELECT * FROM (SELECT a, b, sum(v) s FROM t GROUP BY a, ROLLUP(b)) WHERE ";
+            final String allRows = """
+                    a\tb\ts
+                    1\tnull\t10
+                    1\t10\t3
+                    1\t20\t7
+                    2\tnull\t5
+                    2\t20\t5
+                    """;
+            final String detailRows = """
+                    a\tb\ts
+                    1\t10\t3
+                    1\t20\t7
+                    2\t20\t5
+                    """;
+            for (int mode = 0; mode < 2; mode++) {
+                sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                assertGroupingSetsQuery(allRows, grouped + "a IN (1, 2, 3) ORDER BY a, b");
+                assertGroupingSetsQuery(allRows, grouped + "a BETWEEN 1 AND 2 ORDER BY a, b");
+                // rnd_int() cannot be evaluated twice, so the filter stays above the group by.
+                assertGroupingSetsQuery(allRows, grouped + "a IN (1, 2, rnd_int()) ORDER BY a, b");
+                assertGroupingSetsQuery(detailRows, grouped + "b IN (10, 20, 30) ORDER BY a, b");
+                assertGroupingSetsQuery(detailRows, grouped + "b BETWEEN 10 AND 20 ORDER BY a, b");
+                // Over a source subquery that computes a key, a filter on the rolled-up a
+                // stays above the group by.
+                assertGroupingSetsQuery(
+                        """
+                                a\tb\ts
+                                1\tnull\t10
+                                1\t11\t3
+                                1\t21\t7
+                                """,
+                        "SELECT * FROM (SELECT a, b, sum(v) s FROM (SELECT a, b + 1 b, v FROM t) GROUP BY ROLLUP(a, b)) WHERE a = 1 ORDER BY b"
+                );
             }
         });
     }
@@ -2868,6 +3524,9 @@ public class GroupingSetsTest extends AbstractCairoTest {
                         "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a), (a)) FILL(NULL)",
                         "SELECT ts, a x, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a), (x)) FILL(NULL)",
                         "SELECT ts, a x, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((x), (a, x)) FILL(0)",
+                        // A qualified column behind the alias names the same key as the bare column.
+                        "SELECT ts, t.a x, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((x), (a)) FILL(0)",
+                        "SELECT ts, t.a x, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a), (x)) FILL(0)",
                         "SELECT ts, a, b, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a, b), (b, a)) FILL(0)",
                         "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d ROLLUP(a, a) FILL(0)",
                         "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d CUBE(a, a) FILL(NULL)"
@@ -2956,6 +3615,22 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             .fails(query.indexOf("FILL(") + "FILL(".length(), "FILL(NONE) cannot be combined with other fill values");
                 }
             }
+        });
+    }
+
+    @Test
+    public void testSampleByGroupingSetsSyntaxErrors() throws Exception {
+        // ROLLUP, CUBE and GROUPING SETS after SAMPLE BY take their own parse path, with its own checks.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c1 INT, c2 INT, c3 INT, c4 INT, c5 INT, c6 INT, c7 INT, c8 INT, c9 INT, c10 INT, c11 INT, c12 INT, c13 INT, c14 INT, c15 INT, c16 INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            String query = "SELECT ts, count() FROM t SAMPLE BY 1d ROLLUP()";
+            assertException(query, query.indexOf("ROLLUP"), "ROLLUP requires at least one column");
+            query = "SELECT ts, count() FROM t SAMPLE BY 1d CUBE()";
+            assertException(query, query.indexOf("CUBE"), "CUBE requires at least one column");
+            query = "SELECT ts, count() FROM t SAMPLE BY 1d CUBE(c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16)";
+            assertException(query, query.indexOf("CUBE"), "CUBE supports at most 15 columns");
+            query = "SELECT ts, count() FROM t SAMPLE BY 1d GROUPING x";
+            assertException(query, query.indexOf(" x") + 1, "expected SETS after GROUPING");
         });
     }
 
@@ -3132,6 +3807,39 @@ public class GroupingSetsTest extends AbstractCairoTest {
                             "SAMPLE BY 1h ROLLUP(symbol) FILL(NULL) " +
                             "ORDER BY ts, symbol"
             );
+        });
+    }
+
+    @Test
+    public void testSampleByRollupFillNullSortStrategies() throws Exception {
+        // The grouping sets cursors have no random access, so the RECORDCHAIN and ENCODED
+        // strategies fall back to their FULL forms.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (symbol SYMBOL, quantity DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute(
+                    "INSERT INTO trades VALUES " +
+                            "('BTC', 10, '2024-01-01T00:00:00.000000Z')," +
+                            "('ETH', 20, '2024-01-01T00:30:00.000000Z')," +
+                            "('BTC', 30, '2024-01-01T01:00:00.000000Z')"
+            );
+            for (String strategy : new String[]{"light_encoded", "full_encoded", "light_recordchain", "full_recordchain"}) {
+                setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_FILL_SORT_STRATEGY, strategy);
+                for (int mode = 0; mode < 2; mode++) {
+                    sqlExecutionContext.setParallelGroupByEnabled(mode == 1);
+                    assertGroupingSetsQuery(
+                            """
+                                    ts\tsymbol\tSUM
+                                    2024-01-01T00:00:00.000000Z\t\t30.0
+                                    2024-01-01T00:00:00.000000Z\tBTC\t10.0
+                                    2024-01-01T00:00:00.000000Z\tETH\t20.0
+                                    2024-01-01T01:00:00.000000Z\t\t30.0
+                                    2024-01-01T01:00:00.000000Z\tBTC\t30.0
+                                    2024-01-01T01:00:00.000000Z\tETH\tnull
+                                    """,
+                            "SELECT ts, symbol, SUM(quantity) FROM trades SAMPLE BY 1h ROLLUP(symbol) FILL(NULL) ORDER BY ts, symbol"
+                    );
+                }
+            }
         });
     }
 
@@ -3373,6 +4081,17 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByRollupWithBindVariableIntervalNotSupported() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            for (String grouping : new String[]{"ROLLUP(a)", "CUBE(a)", "GROUPING SETS ((a), ())"}) {
+                String query = "SELECT ts, a, SUM(v) FROM t SAMPLE BY $1 d " + grouping;
+                assertException(query, query.indexOf("$1"), "SAMPLE BY with grouping sets requires a constant interval");
+            }
+        });
+    }
+
+    @Test
     public void testSampleByRollupWithFirstObservationAlignmentNotSupported() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -3517,6 +4236,49 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWorkerFunctionCloseFailuresAreReported() throws Exception {
+        // Closing the factory closes the owner and every per-worker copy of the aggregate even
+        // when each close fails, and reports one failure with the others suppressed.
+        assertMemoryLeak(() -> {
+            // test_fault() folds to TRUE outside dev mode.
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            try (WorkerPool pool = new TestWorkerPool(4)) {
+                TestUtils.execute(pool, (engine, compiler, context) -> {
+                    execute(compiler, "CREATE TABLE t (a INT, v INT)", context);
+                    execute(compiler, "INSERT INTO t VALUES (1, 3), (2, 5)", context);
+                    context.setParallelGroupByEnabled(true);
+                    TestFaultFunctionFactory.armCloseFailures();
+                    try {
+                        RecordCursorFactory factory = compiler.compile(
+                                "SELECT a, sum(CASE WHEN test_fault() THEN v ELSE 0 END) s FROM t GROUP BY ROLLUP(a)",
+                                context
+                        ).getRecordCursorFactory();
+                        Assert.assertTrue(findGroupByFactory(factory) instanceof AsyncGroupingSetsRecordCursorFactory);
+                        // the owner's copy and one per worker
+                        final int created = TestFaultFunctionFactory.created();
+                        Assert.assertTrue("expected copies for several workers, got " + created, created > 2);
+                        try {
+                            factory.close();
+                            Assert.fail("expected the injected close failures");
+                        } catch (Throwable failure) {
+                            Assert.assertEquals(created, TestFaultFunctionFactory.closeCalls());
+                            Assert.assertEquals(created, TestFaultFunctionFactory.closeFailureCount());
+                            Set<Throwable> reported = ConcurrentHashMap.newKeySet();
+                            reported.add(failure);
+                            reported.addAll(Arrays.asList(failure.getSuppressed()));
+                            for (int i = 0; i < created; i++) {
+                                Assert.assertTrue("close failure " + i + " was not reported", reported.contains(TestFaultFunctionFactory.closeFailure(i)));
+                            }
+                        }
+                    } finally {
+                        TestFaultFunctionFactory.disarm();
+                    }
+                }, configuration, LOG);
+            }
+        });
+    }
+
+    @Test
     public void testWorkerPoolGroupingSetsMergeAndReuse() throws Exception {
         assertMemoryLeak(() -> {
             try (WorkerPool pool = new TestWorkerPool(4)) {
@@ -3557,11 +4319,25 @@ public class GroupingSetsTest extends AbstractCairoTest {
                     }
                     context.setParallelGroupByEnabled(true);
                     AtomicBoolean isWorkerObserved = new AtomicBoolean();
+                    // Every day partition holds every (a, b) key, so when two threads aggregate
+                    // rows, both build partial maps with the same keys and the totals below are
+                    // right only if those maps merge. The first thread to see a row waits for a
+                    // second thread to arrive, so the frames cannot all go to one thread.
+                    Set<Thread> aggregatingThreads = ConcurrentHashMap.newKeySet();
+                    CountDownLatch secondThreadArrived = new CountDownLatch(2);
                     TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
                         @Override
                         public boolean onGet(Record record, int count) {
                             if (Thread.currentThread() != ownerThread) {
                                 isWorkerObserved.set(true);
+                            }
+                            if (aggregatingThreads.add(Thread.currentThread())) {
+                                secondThreadArrived.countDown();
+                                try {
+                                    secondThreadArrived.await(10, TimeUnit.SECONDS);
+                                } catch (InterruptedException e) {
+                                    Thread.currentThread().interrupt();
+                                }
                             }
                             return true;
                         }
@@ -3574,6 +4350,10 @@ public class GroupingSetsTest extends AbstractCairoTest {
                                 .noLeakCheck()
                                 .returns("gid\tgroup_count\trow_count\n0\t28\t3921400\n1\t4\t3921400\n3\t1\t3921400\n");
                         Assert.assertTrue("a non-owner worker must process grouping-set input", isWorkerObserved.get());
+                        Assert.assertTrue(
+                                "at least two threads must aggregate, so that their partial maps merge: " + aggregatingThreads,
+                                aggregatingThreads.size() >= 2
+                        );
                     } finally {
                         TestLatchedCounterFunctionFactory.reset(null);
                     }
@@ -3650,6 +4430,28 @@ public class GroupingSetsTest extends AbstractCairoTest {
                 }, configuration, LOG);
             }
         });
+    }
+
+    // nullOfType is an expression of the key's type whose value is NULL, the reference for the total row.
+    private static void assertRolledUpKeyMatchesReference(String name, String nullOfType, String source) throws Exception {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "SELECT " + name + ", count() n, 0 g FROM " + source + " GROUP BY " + name
+                        + " UNION ALL SELECT " + nullOfType + " " + name + ", count() n, 1 g FROM " + source,
+                "SELECT " + name + ", count() n, grouping(" + name + ") g FROM " + source + " GROUP BY ROLLUP(" + name + ") ORDER BY g",
+                LOG,
+                true
+        );
+    }
+
+    private static RecordCursorFactory findGroupByFactory(RecordCursorFactory factory) {
+        RecordCursorFactory current = factory;
+        while (!current.getClass().getSimpleName().contains("Group")) {
+            current = current.getBaseFactory();
+            Assert.assertNotNull("no group by factory under " + factory.getClass().getSimpleName(), current);
+        }
+        return current;
     }
 
     private void assertGroupingSetsQuery(String expected, String query) throws Exception {

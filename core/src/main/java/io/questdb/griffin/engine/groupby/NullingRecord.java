@@ -37,13 +37,18 @@ import io.questdb.std.Interval;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.Numbers;
-import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Utf8Sequence;
 
 /**
  * Wraps a source Record and returns NULL values for "nulled" columns.
  * Used by GROUPING SETS to mask out columns that are not part of the
  * current grouping set, so the map key treats them as identical NULLs.
+ * <p>
+ * Only the key RecordSink and GROUPING()/GROUPING_ID() read this record, so it
+ * overrides the getters a RecordSink calls for each key type. The sinks copy a
+ * SYMBOL key as its int id, so getSymA() is not among them. The B variants,
+ * getSymA(), the length getters, getRowId() and the sink form of getLong256()
+ * keep the Record defaults, which throw.
  */
 public class NullingRecord implements Record {
     private Record base;
@@ -58,11 +63,6 @@ public class NullingRecord implements Record {
     @Override
     public BinarySequence getBin(int col) {
         return isNulled(col) ? null : base.getBin(col);
-    }
-
-    @Override
-    public long getBinLen(int col) {
-        return isNulled(col) ? -1 : base.getBinLen(col);
     }
 
     @Override
@@ -184,25 +184,8 @@ public class NullingRecord implements Record {
     }
 
     @Override
-    public void getLong256(int col, CharSink<?> sink) {
-        if (!isNulled(col)) {
-            base.getLong256(col, sink);
-        }
-    }
-
-    @Override
     public Long256 getLong256A(int col) {
         return isNulled(col) ? Long256Impl.NULL_LONG256 : base.getLong256A(col);
-    }
-
-    @Override
-    public Long256 getLong256B(int col) {
-        return isNulled(col) ? Long256Impl.NULL_LONG256 : base.getLong256B(col);
-    }
-
-    @Override
-    public long getRowId() {
-        return base.getRowId();
     }
 
     @Override
@@ -216,26 +199,6 @@ public class NullingRecord implements Record {
     }
 
     @Override
-    public CharSequence getStrB(int col) {
-        return isNulled(col) ? null : base.getStrB(col);
-    }
-
-    @Override
-    public int getStrLen(int col) {
-        return isNulled(col) ? -1 : base.getStrLen(col);
-    }
-
-    @Override
-    public CharSequence getSymA(int col) {
-        return isNulled(col) ? null : base.getSymA(col);
-    }
-
-    @Override
-    public CharSequence getSymB(int col) {
-        return isNulled(col) ? null : base.getSymB(col);
-    }
-
-    @Override
     public long getTimestamp(int col) {
         return isNulled(col) ? Numbers.LONG_NULL : base.getTimestamp(col);
     }
@@ -243,16 +206,6 @@ public class NullingRecord implements Record {
     @Override
     public Utf8Sequence getVarcharA(int col) {
         return isNulled(col) ? null : base.getVarcharA(col);
-    }
-
-    @Override
-    public Utf8Sequence getVarcharB(int col) {
-        return isNulled(col) ? null : base.getVarcharB(col);
-    }
-
-    @Override
-    public int getVarcharSize(int col) {
-        return isNulled(col) ? -1 : base.getVarcharSize(col);
     }
 
     public void of(Record base, IntList nulledColumns) {

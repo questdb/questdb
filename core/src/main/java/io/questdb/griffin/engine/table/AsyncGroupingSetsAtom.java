@@ -234,15 +234,12 @@ public class AsyncGroupingSetsAtom implements StatefulAtom, Reopenable, Closeabl
         return updaters.getQuick(slotIndex(slotId));
     }
 
-    public ObjList<Function> getOwnerKeyFunctions() {
-        return ownerKeyFunctions;
+    public ObjList<GroupByFunction> getOwnerGroupByFunctions() {
+        return ownerGroupByFunctions;
     }
 
-    public ObjList<GroupByFunction> getGroupByFunctions(int slotId) {
-        if (slotId < 0 || perWorkerGroupByFunctions == null) {
-            return ownerGroupByFunctions;
-        }
-        return perWorkerGroupByFunctions.getQuick(slotId);
+    public ObjList<Function> getOwnerKeyFunctions() {
+        return ownerKeyFunctions;
     }
 
     public RecordSink getRecordSink(int slotId) {

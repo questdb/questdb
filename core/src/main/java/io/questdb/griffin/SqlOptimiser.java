@@ -10974,6 +10974,11 @@ public class SqlOptimiser implements Mutable {
             if (sampleBy != null && nested.hasGroupingSets() && sampleByOffset == null) {
                 throw SqlException.$(sampleBy.position, "SAMPLE BY with grouping sets requires calendar alignment");
             }
+            // An interval with a separate unit, such as "$1 d", keeps the query on the legacy SAMPLE BY
+            // path, which does not support grouping sets.
+            if (sampleBy != null && nested.hasGroupingSets() && sampleByUnit != null) {
+                throw SqlException.$(sampleBy.position, "SAMPLE BY with grouping sets requires a constant interval");
+            }
             if (sampleBy != null && nested.hasGroupingSets()
                     && sampleByFrom != null && sampleByFrom.type != CONSTANT) {
                 throw SqlException.$(sampleByFrom.position, "non-literal FROM bounds are not supported with SAMPLE BY grouping sets");
@@ -12874,8 +12879,10 @@ public class SqlOptimiser implements Mutable {
             if (aliasExpression != null
                     && (aliasExpression.type != LITERAL || !baseModelHasColumn(baseModel, argument.token))) {
                 int keyPosition = findColumnIdxByAst(groupByNodes, aliasExpression);
-                if (keyPosition >= 0
-                        && (aliasExpression.type == LITERAL || isGroupingKeyAlwaysPresent(groupByModel, keyPosition))) {
+                // An expression key can be rolled up only through an ordinal or an alias, and
+                // the GROUP BY alias match above resolves both, so this key is in every set.
+                assert keyPosition < 0 || aliasExpression.type == LITERAL || isGroupingKeyAlwaysPresent(groupByModel, keyPosition);
+                if (keyPosition >= 0) {
                     ExpressionNode resolved = deepClone(expressionNodePool, aliasExpression);
                     resolved.position = argument.position;
                     return resolved;
@@ -12920,6 +12927,31 @@ public class SqlOptimiser implements Mutable {
         return keyPositions;
     }
 
+    // A GROUPING() nested in an expression resolves its SELECT alias arguments before the
+    // table prefixes are added, as a top-level one does in rewriteSelect0HandleFunction().
+    // Its key positions are left to GroupingFunction, which matches arguments to keys by
+    // column; an alias key is the same column as the key it names.
+    private void resolveNestedGroupingFunctions(
+            ExpressionNode node,
+            IQueryModel baseModel,
+            IQueryModel groupByModel,
+            LowerCaseCharSequenceObjHashMap<ExpressionNode> groupingAliasExpressions
+    ) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.type == FUNCTION
+                && (Chars.equalsIgnoreCase(node.token, "grouping") || Chars.equalsIgnoreCase(node.token, "grouping_id"))) {
+            resolveGroupingAliases(node, baseModel, groupByModel, groupByNodes, groupByAliases, groupingAliasExpressions);
+            return;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            resolveNestedGroupingFunctions(node.args.getQuick(i), baseModel, groupByModel, groupingAliasExpressions);
+        }
+        resolveNestedGroupingFunctions(node.lhs, baseModel, groupByModel, groupingAliasExpressions);
+        resolveNestedGroupingFunctions(node.rhs, baseModel, groupByModel, groupingAliasExpressions);
+    }
+
     private int rewriteSelect0HandleOperation(
             SqlExecutionContext sqlExecutionContext,
             SqlParserCallback sqlParserCallback,
@@ -12940,8 +12972,12 @@ public class SqlOptimiser implements Mutable {
             ExpressionNode sampleBy,
             IQueryModel windowModel,
             boolean isWindowJoin,
-            boolean isHorizonJoin
+            boolean isHorizonJoin,
+            @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> groupingAliasExpressions
     ) throws SqlException {
+        if (groupingAliasExpressions != null) {
+            resolveNestedGroupingFunctions(qc.getAst(), baseModel, groupByModel, groupingAliasExpressions);
+        }
         // dealing with OPERATIONs here (and FUNCTIONS that have not bailed out yet)
         if (explicitGroupBy) {
             nonAggSelectCount.incrementAndGet();
@@ -13810,7 +13846,8 @@ public class SqlOptimiser implements Mutable {
                             sampleBy,
                             windowModel,
                             isWindowJoin,
-                            isHorizonJoin
+                            isHorizonJoin,
+                            groupingAliasExpressions
                     );
                     break;
             }
