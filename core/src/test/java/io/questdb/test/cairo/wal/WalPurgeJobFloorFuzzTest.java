@@ -55,6 +55,7 @@ public class WalPurgeJobFloorFuzzTest extends AbstractCairoTest {
 
     @Test
     public void testRandomFloorsRollsAndSweepsHoldWhatTheConsumerNeeds() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: adaptive keeps the WAL until a second save point
         assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(LOG);
             // 0 is the V1 log, the default, which has no sequencer parts

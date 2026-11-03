@@ -366,6 +366,7 @@ public class WalPurgeJobTest extends AbstractCairoTest {
 
     @Test
     public void testExternalConsumerFloorHoldsSegmentsAndSequencerParts() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: adaptive keeps the WAL until a second save point
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
             final String tableName = testName.getMethodName();
