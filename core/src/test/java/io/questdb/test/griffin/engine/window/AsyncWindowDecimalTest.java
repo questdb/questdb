@@ -24,19 +24,28 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.AsyncWindowRecordCursorFactory;
+import io.questdb.jit.JitUtil;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 /**
  * Async Window over DECIMAL values wider than 64 bits. A record sink copies each output row into
@@ -47,10 +56,14 @@ import org.junit.Test;
  * the tasks of a key-major scan, the hash shards and the row slices of a plain scan, and the head
  * rows that a GROUP BY step replays.
  * <p>
- * Every test runs on four workers, at the server's default task and round sizes, over 300,000
- * rows, so that several tasks compute at once. Each compares the parallel result with the serial
- * window, with a plain scan of the table, or with sums computed outside QuestDB.
+ * Every test runs on four workers over 300,000 rows, so that several tasks compute at once, at the
+ * server's default task and round sizes but for one test, whose smaller tasks keep keys whole.
+ * Each compares the parallel result with the serial window, with a plain scan of the table, or
+ * with sums computed outside QuestDB. The tests run with each kind of sink, all of which stage the
+ * values in fields. The steps after the window, a projection, a filter or another window, copy
+ * their own rows into the buffer, through sinks of their own layout.
  */
+@RunWith(Parameterized.class)
 public class AsyncWindowDecimalTest extends AbstractCairoTest {
     private static final String W3 = " OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW)";
     // A DECIMAL128 column passed through, and windows with DECIMAL128 and DECIMAL256 results. The
@@ -58,6 +71,26 @@ public class AsyncWindowDecimalTest extends AbstractCairoTest {
     private static final String WINDOWS = "SELECT sym, ts, d128, s128, s256, l256 FROM (" +
             "SELECT sym, ts, d128, sum(d64)" + W3 + " s128, sum(d128)" + W3 + " s256, lag(d256) OVER (PARTITION BY sym ORDER BY ts) l256 FROM t" +
             ") ORDER BY sym, ts, d128, s128, s256, l256";
+    private final int sinkType;
+
+    public AsyncWindowDecimalTest(String sinkName, int sinkType) {
+        this.sinkType = sinkType;
+    }
+
+    @Parameterized.Parameters(name = "{0}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{
+                {"single method sink", RecordSinkFactory.SINK_TYPE_SINGLE_METHOD},
+                {"chunked sink", RecordSinkFactory.SINK_TYPE_CHUNKED},
+                {"looping sink", RecordSinkFactory.SINK_TYPE_LOOPING},
+        });
+    }
+
+    @Override
+    public void setUp() {
+        super.setUp();
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, sinkType);
+    }
 
     @Test
     public void testChainedGroupByOverDecimalHeadRows() throws Exception {
@@ -84,6 +117,49 @@ public class AsyncWindowDecimalTest extends AbstractCairoTest {
                             B\t75000\t1.1249925E10\t1.1249925E10\t299993
                             C\t75000\t-1.125E10\t-1.125E10\t299994
                             D\t75000\t1.1250075E10\t1.1250075E10\t299995
+                            """);
+        });
+    }
+
+    @Test
+    public void testChainedGroupByOverWholeKeys() throws Exception {
+        // A lag of more warm-up rows than half a task keeps each key whole in one task, whose GROUP
+        // BY step outputs the task's last group at its end: row by row with a DECIMAL column in
+        // the window's output, column-wise without one. A key's x rise by 4 from row to row, so
+        // ml, the largest lag(x, 60), is its last x - 240; s sums its values, as in
+        // testChainedGroupByOverDecimalHeadRows().
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS, 100);
+        final String lag = "lag(x, 60) OVER (PARTITION BY sym ORDER BY ts) l";
+        inPool((engine, compiler, ctx) -> {
+            createTable(engine, ctx, true);
+            ctx.setParallelWindowEnabled(true);
+            assertQuery("SELECT sym, count() c, max(l) ml, sum(v128::DOUBLE) s FROM (SELECT sym, ts, v128, " + lag + " FROM t) GROUP BY sym ORDER BY sym")
+                    .withEngine(engine)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Async Window workers: 4", "keyShards: sym", "then: group by")
+                    .withPlanNotContaining("keySplit")
+                    .returns("""
+                            sym\tc\tml\ts
+                            A\t75000\t299760\t-1.125015E10
+                            B\t75000\t299757\t1.1249925E10
+                            C\t75000\t299758\t-1.125E10
+                            D\t75000\t299759\t1.1250075E10
+                            """);
+            assertQuery("SELECT sym, count() c, max(l) ml FROM (SELECT sym, ts, " + lag + " FROM t) GROUP BY sym ORDER BY sym")
+                    .withEngine(engine)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Async Window workers: 4", "keyShards: sym", "then: group by")
+                    .withPlanNotContaining("keySplit")
+                    .returns("""
+                            sym\tc\tml
+                            A\t75000\t299760
+                            B\t75000\t299757
+                            C\t75000\t299758
+                            D\t75000\t299759
                             """);
         });
     }
@@ -120,6 +196,36 @@ public class AsyncWindowDecimalTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalColumnsOverFilteredRowSlices() throws Exception {
+        // The slices run the filter the JIT compiled over their rows. It drops rows 1 to 7, so the
+        // row number is x - 7: the plain scan with the same filter is the reference.
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        inPool((engine, compiler, ctx) -> {
+            createTable(engine, ctx, false);
+            ctx.setParallelWindowEnabled(true);
+            final String query = "SELECT ts, v128, d128, v256, d256, row_number() OVER () rn FROM t WHERE x > 7";
+            assertQuery(query)
+                    .withEngine(engine)
+                    .withContext(ctx)
+                    .noLeakCheck()
+                    .assertsPlanContaining("Async Window workers: 4", "rowSlices: true", "jit: true");
+            assertSameRows(engine, ctx, "SELECT ts, v128, d128, v256, d256, x - 7 rn FROM t WHERE x > 7", query);
+        });
+    }
+
+    @Test
+    public void testDecimalFilterStep() throws Exception {
+        // a projection, then a filter, after the window, with DECIMAL128 and DECIMAL256 columns
+        assertStepOverDecimals(
+                "SELECT sym, ts, d128, l256, dd FROM (" +
+                        "SELECT sym, ts, d128, lag(d256) OVER (PARTITION BY sym ORDER BY ts) l256, d128 - lag(d128) OVER (PARTITION BY sym ORDER BY ts) dd FROM t" +
+                        ") WHERE dd > 0 ORDER BY sym, ts, d128, l256, dd",
+                "then: project",
+                "then: filter"
+        );
+    }
+
+    @Test
     public void testDecimalWindowOverHashShards() throws Exception {
         // without an index, the workers shard the keys of a plain scan by hash
         inPool((engine, compiler, ctx) -> {
@@ -146,6 +252,19 @@ public class AsyncWindowDecimalTest extends AbstractCairoTest {
                     .assertsPlanContaining("Async Window workers: 4", "keyShards: sym", "keyMajor: true");
             assertMatchesSerialWindow(engine, ctx, WINDOWS);
         });
+    }
+
+    @Test
+    public void testDecimalWindowStep() throws Exception {
+        // a projection, then another window, after the window: s sums the DECIMAL128 dl
+        assertStepOverDecimals(
+                "WITH a AS (SELECT sym, ts, d128, lag(d128) OVER (PARTITION BY sym ORDER BY ts) l FROM t), " +
+                        "b AS (SELECT sym, ts, d128, l, d128 - l dl FROM a) " +
+                        "SELECT sym, ts, d128, dl, sum(dl) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) s " +
+                        "FROM b ORDER BY sym, ts, d128, dl, s",
+                "then: project",
+                "then: window"
+        );
     }
 
     @Test
@@ -252,6 +371,27 @@ public class AsyncWindowDecimalTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             executeWithPool(pool, runnable);
+        });
+    }
+
+    // The query's steps after the window, over the tasks of a key-major scan and over hash shards.
+    private void assertStepOverDecimals(String query, String... steps) throws Exception {
+        inPool((engine, compiler, ctx) -> {
+            for (boolean isIndexed : new boolean[]{true, false}) {
+                engine.execute("DROP TABLE IF EXISTS t", ctx);
+                createTable(engine, ctx, isIndexed);
+                ctx.setParallelWindowEnabled(true);
+                final String[] fragments = new String[steps.length + 2];
+                fragments[0] = "Async Window workers: 4";
+                fragments[1] = isIndexed ? "keyShards: sym" : "hashShards: sym";
+                System.arraycopy(steps, 0, fragments, 2, steps.length);
+                assertQuery(query)
+                        .withEngine(engine)
+                        .withContext(ctx)
+                        .noLeakCheck()
+                        .assertsPlanContaining(fragments);
+                assertMatchesSerialWindow(engine, ctx, query);
+            }
         });
     }
 }

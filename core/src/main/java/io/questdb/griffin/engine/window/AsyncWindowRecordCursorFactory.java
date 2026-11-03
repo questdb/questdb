@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
@@ -117,6 +118,8 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
      * @param perWorkerFunctions   separately compiled copies of {@code functions}, one per worker slot;
      *                             there may be fewer slots than workers, which then share them
      * @param perWorkerMapStates   the window Map groups of each copy, entries may be null
+     * @param sinkTemplate         the class of the sinks that copy the output into a task's row
+     *                             buffer, of which each worker slot gets an instance of its own
      * @param keyColumnIndex       the base column the scan walks key by key, which every window
      *                             function is partitioned by
      * @param partitionedByKeyOnly whether every window function is partitioned by that column and
@@ -139,7 +142,7 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
             @Nullable ObjList<WindowMapState> windowMapStates,
             @NotNull ObjList<ObjList<Function>> perWorkerFunctions,
             @NotNull ObjList<ObjList<WindowMapState>> perWorkerMapStates,
-            @NotNull RecordSink recordSink,
+            @NotNull RecordSinkTemplate sinkTemplate,
             @NotNull AsyncWindowSplitPlan splitPlan,
             int keyColumnIndex,
             boolean partitionedByKeyOnly,
@@ -180,6 +183,7 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
                     partitionedByKeyOnly && crossIndex == null ? keyColumnIndex : -1,
                     crossIndex
             );
+            atom.setOutputSinks(atom.newOutputSinks(sinkTemplate));
             for (int i = 0, n = Math.max(2, configuration.getSqlParallelWindowMaxRounds()); i < n; i++) {
                 // each owns its round atom, never the shared atom
                 sequences.add(new UnorderedPageFrameSequence<>(
@@ -192,9 +196,9 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
                 ));
             }
             if (shardKeyColumnIndex > -1 || sliceMode) {
-                this.shardCursor = new AsyncWindowShardCursor(configuration, atom, sequences, metadata, recordSink, base.getMetadata(), sliceMode ? -1 : shardKeyColumnIndex, splitPlan);
+                this.shardCursor = new AsyncWindowShardCursor(configuration, atom, sequences, metadata, base.getMetadata(), sliceMode ? -1 : shardKeyColumnIndex, splitPlan);
             } else {
-                this.cursor = new AsyncWindowRecordCursor(configuration, atom, sequences, metadata, recordSink, splitPlan, workerCount);
+                this.cursor = new AsyncWindowRecordCursor(configuration, atom, sequences, metadata, splitPlan, workerCount);
             }
         } catch (Throwable th) {
             // The caller keeps base, functions and windowMapStates; free what this built and the
@@ -220,15 +224,14 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
     private AsyncWindowRecordCursorFactory(
             AsyncWindowRecordCursorFactory from,
             GenericRecordMetadata metadata,
-            RecordSink recordSink,
             AsyncWindowSplitPlan splitPlan
     ) {
         super(metadata);
         // the only allocation that can fail, before anything changes hands
         if (from.shardKeyColumnIndex > -1 || from.sliceMode) {
-            this.shardCursor = new AsyncWindowShardCursor(from.configuration, from.atom, from.sequences, metadata, recordSink, from.base.getMetadata(), from.sliceMode ? -1 : from.shardKeyColumnIndex, splitPlan);
+            this.shardCursor = new AsyncWindowShardCursor(from.configuration, from.atom, from.sequences, metadata, from.base.getMetadata(), from.sliceMode ? -1 : from.shardKeyColumnIndex, splitPlan);
         } else {
-            this.cursor = new AsyncWindowRecordCursor(from.configuration, from.atom, from.sequences, metadata, recordSink, splitPlan, from.workerCount);
+            this.cursor = new AsyncWindowRecordCursor(from.configuration, from.atom, from.sequences, metadata, splitPlan, from.workerCount);
         }
         this.shardKeyColumnIndex = from.shardKeyColumnIndex;
         this.sliceMode = from.sliceMode;
@@ -540,7 +543,8 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
      * @param ownerStage   the query thread's copy of the step
      * @param workerStages one copy per worker slot, see {@link #getWorkerSlotCount()}
      * @param metadata     the step's output
-     * @param recordSink   copies the step's output into a task's row buffer
+     * @param sinkTemplate the class of the sinks that copy the step's output into a task's row
+     *                     buffer, of which each worker slot gets an instance of its own
      * @param splitPlan    how keys may split over tasks, now that the step is part of the rows
      * @param carryStage   see {@link AsyncWindowAtom#setCarryStage(int)}
      */
@@ -548,11 +552,12 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
             @NotNull AsyncWindowStage ownerStage,
             @NotNull ObjList<AsyncWindowStage> workerStages,
             @NotNull GenericRecordMetadata metadata,
-            @NotNull RecordSink recordSink,
+            @NotNull RecordSinkTemplate sinkTemplate,
             @NotNull AsyncWindowSplitPlan splitPlan,
             int carryStage
     ) {
         final AsyncWindowRecordCursorFactory next;
+        final ObjList<RecordSink> sinks;
         try {
             // The workers of a folded column output a stand-in for it (AsyncWindowFoldEcho), which
             // only the query thread's fold turns into the column: a step after it would read the
@@ -572,7 +577,9 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
                     }
                 }
             }
-            next = new AsyncWindowRecordCursorFactory(this, metadata, recordSink, splitPlan);
+            // built before anything changes hands, so that this factory stays unchanged if it fails
+            sinks = atom.newOutputSinks(sinkTemplate);
+            next = new AsyncWindowRecordCursorFactory(this, metadata, splitPlan);
         } catch (Throwable th) {
             Misc.free(ownerStage);
             Misc.freeObjListAndClear(workerStages);
@@ -584,6 +591,8 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         }
         next.ownerStages.add(ownerStage);
         next.atom.addStage(ownerStage, workerStages);
+        // the slots now output the step's rows
+        next.atom.setOutputSinks(sinks);
         next.atom.setCarryStage(carryStage);
         return next;
     }

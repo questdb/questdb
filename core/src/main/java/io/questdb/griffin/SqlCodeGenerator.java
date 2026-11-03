@@ -5561,12 +5561,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (!(metadata instanceof GenericRecordMetadata outputMetadata)) {
             return null;
         }
-        final RecordSink sink;
-        final RecordSink virtualSink;
+        final RecordSinkTemplate sinkTemplate;
         try {
-            entityColumnFilter.of(metadata.getColumnCount());
-            sink = RecordSinkFactory.getInstance(configuration, asm, metadata, entityColumnFilter, null);
-            virtualSink = virtual != null ? sink : null;
+            sinkTemplate = newAsyncWindowSinkTemplate(metadata);
         } catch (IllegalArgumentException e) {
             return null;
         }
@@ -5632,7 +5629,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     nonNull
             );
             final long[] wholeBounds = projectionWholeBounds(ownerStage.getFunctions(), virtual.getPriorityMetadata().getVirtualColumnReservedSlots(), next.getWholeBounds());
-            next = next.withStage(ownerStage, virtualCopies, outputMetadata, virtualSink, split.toPlan(taskRows), split.getCarryStage());
+            next = next.withStage(ownerStage, virtualCopies, outputMetadata, sinkTemplate, split.toPlan(taskRows), split.getCarryStage());
             next.setChainSplit(split);
             next.setColumnOrder(nonDecreasing, nonNegative, nonNull);
             next.setWholeBounds(wholeBounds);
@@ -5642,7 +5639,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final boolean[] filterNonNull = next.getNonNullColumns();
         final long[] filterWholeBounds = next.getWholeBounds();
         split = split.thenFilter();
-        next = next.withStage(AsyncWindowStage.filter(filter), filterCopies, outputMetadata, sink, split.toPlan(taskRows), split.getCarryStage());
+        next = next.withStage(AsyncWindowStage.filter(filter), filterCopies, outputMetadata, sinkTemplate, split.toPlan(taskRows), split.getCarryStage());
         next.setChainColumns(singleKey, chainColumns[0], chainColumns[1]);
         next.setChainSplit(split);
         // a filter keeps the columns and the order of the rows it keeps
@@ -15685,17 +15682,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return null;
             }
         }
-        final RecordSink windowSink;
-        final RecordSink virtualSink;
+        final RecordSinkTemplate windowSinkTemplate;
+        final RecordSinkTemplate virtualSinkTemplate;
         try {
-            entityColumnFilter.of(factoryMetadata.getColumnCount());
-            windowSink = RecordSinkFactory.getInstance(configuration, asm, factoryMetadata, entityColumnFilter, null);
-            if (virtual != null) {
-                entityColumnFilter.of(virtual.getMetadata().getColumnCount());
-                virtualSink = RecordSinkFactory.getInstance(configuration, asm, virtual.getMetadata(), entityColumnFilter, null);
-            } else {
-                virtualSink = null;
-            }
+            windowSinkTemplate = newAsyncWindowSinkTemplate(factoryMetadata);
+            virtualSinkTemplate = virtual != null ? newAsyncWindowSinkTemplate(virtual.getMetadata()) : null;
         } catch (IllegalArgumentException e) {
             // an output column type a task's row buffer cannot hold
             return null;
@@ -15764,7 +15755,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     nonNull
             );
             final long[] wholeBounds = projectionWholeBounds(ownerStage.getFunctions(), virtual.getPriorityMetadata().getVirtualColumnReservedSlots(), next.getWholeBounds());
-            next = next.withStage(ownerStage, virtualCopies, (GenericRecordMetadata) virtual.getMetadata(), virtualSink, split.toPlan(taskRows), split.getCarryStage());
+            next = next.withStage(ownerStage, virtualCopies, (GenericRecordMetadata) virtual.getMetadata(), virtualSinkTemplate, split.toPlan(taskRows), split.getCarryStage());
             next.setChainColumns(singleKey, keyOutput, timestampOutput);
             next.setChainSplit(split);
             next.setColumnOrder(nonDecreasing, nonNegative, nonNull);
@@ -15809,7 +15800,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 nonNull
         );
         final long[] wholeBounds = windowWholeBounds(columns, functions, next.getWholeBounds());
-        next = next.withStage(AsyncWindowStage.window(functions, windowMapStates), windowCopies, factoryMetadata, windowSink, chainPlan, split.getCarryStage());
+        next = next.withStage(AsyncWindowStage.window(functions, windowMapStates), windowCopies, factoryMetadata, windowSinkTemplate, chainPlan, split.getCarryStage());
         next.setChainColumns(singleKey, findColumnFunction(functions, keyOutput), findColumnFunction(functions, timestampOutput));
         next.setChainSplit(split);
         next.setColumnOrder(nonDecreasing, nonNegative, nonNull);
@@ -15824,6 +15815,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // its value slots and nothing allocated per group: each such function declares it.
     private static boolean isChainableAggregate(GroupByFunction function) {
         return function.isFixedSizeState();
+    }
+
+    /**
+     * The class of the sinks that copy every column of an Async Window's output into a task's
+     * row buffer. Each worker slot copies through an instance of its own, see
+     * {@link AsyncWindowAtom}: a sink stages DECIMAL128 and DECIMAL256 values in fields of its
+     * own, which two threads must not share. Throws IllegalArgumentException for a column type
+     * the buffer cannot hold.
+     */
+    private RecordSinkTemplate newAsyncWindowSinkTemplate(RecordMetadata metadata) {
+        final int columnCount = metadata.getColumnCount();
+        // the template keeps its filter: a list of its own, not the shared entityColumnFilter
+        final ListColumnFilter columns = new ListColumnFilter(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            columns.add(i + 1);
+        }
+        return new RecordSinkTemplate(configuration, asm, metadata, columns, null, null, null);
     }
 
     /**
@@ -15914,14 +15922,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (!hasScanKey && !singleKey) {
             return null;
         }
-        final RecordSink sink;
+        final RecordSinkTemplate sinkTemplate;
         try {
-            entityColumnFilter.of(projectionMetadata.getColumnCount());
-            sink = RecordSinkFactory.getInstance(configuration, asm, projectionMetadata, entityColumnFilter, null);
+            sinkTemplate = newAsyncWindowSinkTemplate(projectionMetadata);
         } catch (IllegalArgumentException e) {
             return null;
         }
         final RecordMetadata baseMetadata = async.getMetadata();
+        // The rows a task's head chain captures: the step's input, which the Async Window's own
+        // sinks already copy, so no column type here fails. Each copy of the step, one per slot,
+        // copies them in through a sink of its own, see AsyncWindowGroupByStage.setHeadLayout().
+        final GenericRecordMetadata headTypes = GenericRecordMetadata.copyOf(baseMetadata);
+        final RecordSinkTemplate headSinkTemplate = newAsyncWindowSinkTemplate(headTypes);
         final int valueCount = valueTypes.getColumnCount();
         final int copyCount = async.getWorkerSlotCount();
         final Class<? extends GroupByFunctionsUpdater> updaterClass = GroupByFunctionsUpdaterFactory.getInstanceClass(asm, groupByFunctions.size());
@@ -15968,6 +15980,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final AsyncWindowGroupByStage copy = new AsyncWindowGroupByStage(copyProjection, copyAggregates, keyColumns, keyColumnTypes, copyValueTypes.getColumnCount());
                 copies.add(copy);
                 copy.setUpdaterClass(updaterClass);
+                copy.setHeadLayout(headTypes, headSinkTemplate.newInstance());
                 if (copyValueTypes.getColumnCount() != valueCount || copyAggregates.size() != groupByFunctions.size()
                         || copyProjection.size() != projection.size()) {
                     Misc.freeObjListAndClear(copies);
@@ -16022,23 +16035,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // sum of bounded whole numbers, see classifyKeySplit()
                 groupColumn > -1 && groupColumn < nonNegative.length && nonNegative[groupColumn] && isGroupKeyNonNull
         );
-        final RecordSink headSink;
-        try {
-            entityColumnFilter.of(baseMetadata.getColumnCount());
-            headSink = RecordSinkFactory.getInstance(configuration, asm, baseMetadata, entityColumnFilter, null);
-        } catch (IllegalArgumentException e) {
-            Misc.freeObjListAndClear(copies);
-            return null;
-        }
         final long taskRows = Math.max(1, configuration.getSqlParallelWindowTaskRows());
         final AsyncWindowGroupByStage ownerStage = new AsyncWindowGroupByStage(projection, groupByFunctions, keyColumns, keyColumnTypes, valueCount);
-        ownerStage.setHeadLayout(GenericRecordMetadata.copyOf(baseMetadata), headSink);
+        ownerStage.setHeadLayout(headTypes, headSinkTemplate.newInstance());
         ownerStage.setUpdaterClass(updaterClass);
         final AsyncWindowRecordCursorFactory next = async.withStage(
                 ownerStage,
                 copies,
                 projectionMetadata,
-                sink,
+                sinkTemplate,
                 split.toPlan(taskRows),
                 split.getCarryStage()
         );
@@ -16133,10 +16138,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
         }
-        final RecordSink recordSink;
+        final RecordSinkTemplate sinkTemplate;
         try {
-            entityColumnFilter.of(factoryMetadata.getColumnCount());
-            recordSink = RecordSinkFactory.getInstance(configuration, asm, factoryMetadata, entityColumnFilter, null);
+            sinkTemplate = newAsyncWindowSinkTemplate(factoryMetadata);
         } catch (IllegalArgumentException e) {
             return null;
         }
@@ -16197,7 +16201,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     windowMapStates,
                     perWorkerFunctions,
                     perWorkerMapStates,
-                    recordSink,
+                    sinkTemplate,
                     splitPlan,
                     -1,
                     false,
@@ -16373,10 +16377,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
         }
-        final RecordSink recordSink;
+        final RecordSinkTemplate sinkTemplate;
         try {
-            entityColumnFilter.of(factoryMetadata.getColumnCount());
-            recordSink = RecordSinkFactory.getInstance(configuration, asm, factoryMetadata, entityColumnFilter, null);
+            sinkTemplate = newAsyncWindowSinkTemplate(factoryMetadata);
         } catch (IllegalArgumentException e) {
             // an output column type a task's row buffer cannot hold
             return null;
@@ -16431,7 +16434,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 windowMapStates,
                 perWorkerFunctions,
                 perWorkerMapStates,
-                recordSink,
+                sinkTemplate,
                 splitPlan,
                 keyColumnIndex,
                 !shardMode && partitionedByKeyOnly && configuration.isSqlParallelWindowKeyRunsEnabled(),

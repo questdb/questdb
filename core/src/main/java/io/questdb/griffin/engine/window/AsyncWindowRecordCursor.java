@@ -155,7 +155,6 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     private final long maxKeyRows;
     private final long minRows;
     private final SelectedRecord record;
-    private final RecordSink recordSink;
     private final long roundRows;
     private final Round[] rounds;
     // whether the workers may compute the chain's rows column-wise, see AsyncWindowRowKernel
@@ -247,13 +246,11 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             @NotNull AsyncWindowAtom atom,
             @NotNull ObjList<UnorderedPageFrameSequence<RoundAtom>> sequences,
             @NotNull ColumnTypes columnTypes,
-            @NotNull RecordSink recordSink,
             @NotNull AsyncWindowSplitPlan splitPlan,
             int workerCount
     ) {
         this.atom = atom;
         this.columnTypes = columnTypes;
-        this.recordSink = recordSink;
         this.splitPlan = splitPlan;
         this.splitsKeys = splitPlan.getMode() != AsyncWindowSplitPlan.MODE_NONE;
         this.carry = new long[splitPlan.getPrefixCount()];
@@ -1220,9 +1217,12 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     }
 
     private Task newTask() {
+        // No sink of its own: whichever slot computes the task copies its rows in through the
+        // slot's sink, see AsyncWindowAtom.setOutputSinks(). A sink stages DECIMAL128 and
+        // DECIMAL256 values in fields of its own, and the tasks of a round compute at once.
         final RecordChain chain = new RecordChain(
                 columnTypes,
-                recordSink,
+                null,
                 chainPageSize,
                 (int) Math.min(chainMaxPages, Integer.MAX_VALUE),
                 PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath()
@@ -1237,9 +1237,10 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             if (groupSplit) {
                 try {
                     final AsyncWindowGroupByStage stage = atom.getSlot(-1).getGroupStage();
+                    // the slot's copy of the GROUP BY step copies the head rows in, see setHeadLayout()
                     final RecordChain headChain = new RecordChain(
                             stage.getHeadTypes(),
-                            stage.getHeadSink(),
+                            null,
                             chainPageSize,
                             (int) Math.min(chainMaxPages, Integer.MAX_VALUE),
                             PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath()
@@ -1508,7 +1509,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             ownerGroupTask = newTask();
         }
         ownerGroupTask.chain.clear();
-        ownerGroupTask.chain.put(stage.getOutputRecord(), -1);
+        // the query's thread copies through its own slot's sink
+        ownerGroupTask.chain.put(stage.getOutputRecord(), -1, atom.getSlot(-1).getOutputSink());
         beginEmitting(ownerGroupTask);
         return true;
     }
@@ -1537,12 +1539,14 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             ownerGroupTask = newTask();
         }
         final RecordChain groups = ownerGroupTask.chain;
+        // the query's thread copies through its own slot's sink
+        final RecordSink sink = atom.getSlot(-1).getOutputSink();
         groups.clear();
         long prevOffset = -1;
         final boolean carries = carry.length > 0;
         if (!gs.continuesKey && stage.closeOpenGroup()) {
             // the key the walk stopped in had no rows left: its open group is complete
-            prevOffset = groups.put(stage.getOutputRecord(), prevOffset);
+            prevOffset = groups.put(stage.getOutputRecord(), prevOffset, sink);
         }
         if (gs.continuesKey) {
             if (carries) {
@@ -1554,11 +1558,11 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             long rowId = gs.walkBase;
             while (head.hasNext()) {
                 if (stage.replay(head.getRecord(), rowId++)) {
-                    prevOffset = groups.put(stage.getOutputRecord(), prevOffset);
+                    prevOffset = groups.put(stage.getOutputRecord(), prevOffset, sink);
                 }
             }
             if (gs.headClosed && stage.closeOpenGroup()) {
-                prevOffset = groups.put(stage.getOutputRecord(), prevOffset);
+                prevOffset = groups.put(stage.getOutputRecord(), prevOffset, sink);
             }
         }
         if (gs.lastKeyContinues) {

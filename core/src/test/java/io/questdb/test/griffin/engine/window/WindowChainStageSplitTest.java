@@ -28,10 +28,9 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
-import io.questdb.cairo.RecordSink;
-import io.questdb.cairo.RecordSinkSPI;
+import io.questdb.cairo.ListColumnFilter;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
@@ -43,6 +42,7 @@ import io.questdb.griffin.engine.window.AsyncWindowRecordCursorFactory;
 import io.questdb.griffin.engine.window.AsyncWindowSplitPlan;
 import io.questdb.griffin.engine.window.AsyncWindowStage;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -107,7 +107,7 @@ public class WindowChainStageSplitTest extends AbstractCairoTest {
                 }
                 final AsyncWindowStage ownerStage = AsyncWindowStage.window(columns(metadata.getColumnCount()), null);
                 try {
-                    async.withStage(ownerStage, workerStages, metadata, NO_SINK, AsyncWindowSplitPlan.NONE, -1);
+                    async.withStage(ownerStage, workerStages, metadata, sinkTemplate(metadata), AsyncWindowSplitPlan.NONE, -1);
                     Assert.fail("a stand-in without its fold");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "internal error: a fold stand-in without its fold");
@@ -127,7 +127,7 @@ public class WindowChainStageSplitTest extends AbstractCairoTest {
                     workerStages.add(AsyncWindowStage.window(standIns(metadata.getColumnCount()), null));
                 }
                 try {
-                    async.withStage(AsyncWindowStage.window(columns(metadata.getColumnCount()), null), workerStages, metadata, NO_SINK, fold, -1);
+                    async.withStage(AsyncWindowStage.window(columns(metadata.getColumnCount()), null), workerStages, metadata, sinkTemplate(metadata), fold, -1);
                     Assert.fail("a stand-in folded at another stage");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "internal error: a fold stand-in without its fold [column=0]");
@@ -396,17 +396,6 @@ public class WindowChainStageSplitTest extends AbstractCairoTest {
         });
     }
 
-    private static final RecordSink NO_SINK = new RecordSink() {
-        @Override
-        public void copy(Record r, RecordSinkSPI w) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public void setFunctions(ObjList<Function> keyFunctions) {
-        }
-    };
-
     private static void assertMatchesSerial(String query) throws Exception {
         WindowChainProofTest.assertMatchesSerial(engine, sqlExecutionContext, query);
     }
@@ -478,6 +467,15 @@ public class WindowChainStageSplitTest extends AbstractCairoTest {
         } finally {
             sqlExecutionContext.setParallelWindowEnabled(false);
         }
+    }
+
+    // withStage() refuses the step before it builds the slots' sinks from it
+    private static RecordSinkTemplate sinkTemplate(GenericRecordMetadata metadata) {
+        final ListColumnFilter columns = new ListColumnFilter();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            columns.add(i + 1);
+        }
+        return new RecordSinkTemplate(configuration, new BytecodeAssembler(), metadata, columns, null, null, null);
     }
 
     private static void smallConfig() {

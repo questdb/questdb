@@ -30,6 +30,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordChain;
+import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.RecordSinkTemplate;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -296,6 +298,31 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
 
     int getSlotCount() {
         return slots.size();
+    }
+
+    /**
+     * One sink per slot, each an instance of the template's class, for {@link #setOutputSinks}:
+     * the sink that copies the output into a task's row buffer stages DECIMAL128 and DECIMAL256
+     * values in fields of its own, which two threads must not share. Builds them without
+     * changing anything, so that a caller may fail before anything changes hands.
+     */
+    ObjList<RecordSink> newOutputSinks(RecordSinkTemplate template) {
+        final ObjList<RecordSink> sinks = new ObjList<>(slots.size());
+        for (int i = 0, n = slots.size(); i < n; i++) {
+            sinks.add(template.newInstance());
+        }
+        return sinks;
+    }
+
+    /**
+     * Gives each slot one of {@link #newOutputSinks}, the sinks of the output's current layout:
+     * the window's, or the last stage's once {@link #addStage} appended one.
+     */
+    void setOutputSinks(ObjList<RecordSink> sinks) {
+        assert sinks.size() == slots.size();
+        for (int i = 0, n = slots.size(); i < n; i++) {
+            slots.getQuick(i).outputSink = sinks.getQuick(i);
+        }
     }
 
     /**
@@ -570,6 +597,8 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         private final int mapStatesCount;
         // the record a row is output from: the last stage's, or the window's own
         private Record outputRecord;
+        // copies outputRecord into a task's row buffer; this slot's own, see setOutputSinks()
+        private RecordSink outputSink;
         // the symbol tables of the output record's columns
         private SymbolTableSource outputSymbols;
         // per output column: how a key run writes it, OUT_*, and where in the chain's record
@@ -975,7 +1004,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                         }
                     }
                     if (computeNext(functionInput) && index >= emitFrom) {
-                        prevOffset = chain.put(outputRecord, prevOffset);
+                        prevOffset = chain.put(outputRecord, prevOffset, outputSink);
                         // a group closed by the second key's first row is the first key's last
                         if (groupSplit != null && index <= secondKeyStart) {
                             groupSplit.firstKeyGroupRows++;
@@ -988,7 +1017,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             }
             // a GROUP BY step outputs the task's last group now; keys never span tasks then
             if (flush()) {
-                prevOffset = chain.put(outputRecord, prevOffset);
+                prevOffset = chain.put(outputRecord, prevOffset, outputSink);
             }
             return prevOffset;
         }
@@ -1104,7 +1133,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                         input.setRow(j);
                         final long index = i + j;
                         if (stage.computeNext() && index >= emitFrom) {
-                            prevOffset = chain.put(outputRecord, prevOffset);
+                            prevOffset = chain.put(outputRecord, prevOffset, outputSink);
                             // a group closed by the second key's first row is the first key's last
                             if (groupSplit != null && index <= secondKeyStart) {
                                 groupSplit.firstKeyGroupRows++;
@@ -1119,7 +1148,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 }
                 // a GROUP BY step outputs the task's last group now; keys never span tasks then
                 if (flush()) {
-                    prevOffset = chain.put(outputRecord, prevOffset);
+                    prevOffset = chain.put(outputRecord, prevOffset, outputSink);
                 }
                 return prevOffset;
             } finally {
@@ -1178,7 +1207,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                     groupSplit.hasTail = stage.exportOpenGroup(groupSplit.tailValue, groupSplit.tailKeys);
                 }
             } else if (!capturing && stage.closeOpenGroup()) {
-                prevOffset = chain.put(outputRecord, prevOffset);
+                prevOffset = chain.put(outputRecord, prevOffset, outputSink);
                 if (singleKeyTask) {
                     groupSplit.firstKeyGroupRows++;
                 }
@@ -1229,7 +1258,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                     }
                     record.setRowIndex(row);
                     if ((prefilter == null || prefilter.getBool(functionInput)) && computeNext(functionInput)) {
-                        prevOffset = chain.put(outputRecord, prevOffset);
+                        prevOffset = chain.put(outputRecord, prevOffset, outputSink);
                     }
                 }
             }
@@ -1277,7 +1306,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 }
                 record.setRowIndex(row);
                 if ((prefilter == null || prefilter.getBool(functionInput)) && computeNext(functionInput)) {
-                    prevOffset = chain.put(outputRecord, prevOffset);
+                    prevOffset = chain.put(outputRecord, prevOffset, outputSink);
                     rowCount++;
                 }
             }
@@ -1359,7 +1388,7 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                     }
                     record.setRowIndex(rowLo + prefilterRows.get(i));
                     if (computeNext(functionInput)) {
-                        prevOffset = chain.put(outputRecord, prevOffset);
+                        prevOffset = chain.put(outputRecord, prevOffset, outputSink);
                         rowCount++;
                     }
                 }
@@ -1616,6 +1645,11 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
 
         Record getOutputRecord() {
             return outputRecord;
+        }
+
+        // the sink of whoever holds this slot, see setOutputSinks()
+        RecordSink getOutputSink() {
+            return outputSink;
         }
 
         /**
