@@ -3659,6 +3659,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (isCompletionDeferred) {
             engine.getTableSequencerAPI().getTxnTracker(tableToken).setDurableEpochCompletionRequired(true);
         }
+        // Before the commit, like the flag: a reader below its txn reads the native base with no catalog pin.
+        engine.getTableSequencerAPI().getTxnTracker(tableToken).setDeltaCatalogInitTxn(txWriter.getTxn() + 1);
         deltaWriter.initialize(this, partitionIndex);
         txWriter.setPartitionHasDelta(partitionIndex, true);
         txWriter.bumpPartitionTableVersion();

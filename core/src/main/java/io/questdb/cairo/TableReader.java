@@ -833,18 +833,12 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txFile.hasAnyDelta();
     }
 
+    /**
+     * Returns whether any partition may be Parquet. A Delta partition counts as possibly
+     * Parquet, because resolving its base format needs catalog I/O that a compile must not pay.
+     */
     public boolean hasParquetPartitions() {
-        if (hasParquetPartitions) {
-            return true;
-        }
-        if (hasAnyDelta()) {
-            for (int i = 0; i < partitionCount; i++) {
-                if (txFile.getPartitionHasDelta(i) && getPartitionFormatFromMetadata(i) == PartitionFormat.PARQUET) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        return hasParquetPartitions || hasAnyDelta();
     }
 
     public boolean isActive() {
