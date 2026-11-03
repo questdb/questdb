@@ -437,6 +437,148 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Each producer cycles its rows through three tables, so its flushes carry rows of
+     * several tables and its frames interleave them, and the server batches their
+     * commits across tables. The server bounces mid-stream: the client replays from
+     * its acked watermark, and a batch that committed some of its tables before a
+     * failure sends their rows again, which the tables' DEDUP keys absorb. Every
+     * table must end up holding exactly its rows.
+     */
+    @Test
+    public void testOracleMultiTableTortureUnderServerBounces() throws Exception {
+        assertMemoryLeak(() -> {
+            Rnd master = TestUtils.generateRandom(LOG);
+            final String[] tableNames = {TABLE_NAME + "_a", TABLE_NAME + "_b", TABLE_NAME + "_c"};
+            final QwpTable[] oracles = new QwpTable[tableNames.length];
+            for (int t = 0; t < tableNames.length; t++) {
+                createTargetTable(tableNames[t]);
+                oracles[t] = new QwpTable(tableNames[t]);
+            }
+            int port = RestartableQwpServer.pickFreePort();
+
+            int producerCount = 2 + master.nextInt(2);              // 2..3
+            int rowsPerProducer = 900 + master.nextInt(1_200);      // 900..2099
+            int bounces = 2 + master.nextInt(3);                    // 2..4
+            long sfMaxSegmentBytes = pickSfMaxSegmentBytes(master);
+            LOG.info().$("multi-table test sf_max_segment_bytes=").$(sfMaxSegmentBytes).$();
+
+            // Row r of every producer goes to table (r + producer) % 3, so the tables
+            // interleave within every flush. ids and timestamps are globally unique.
+            long baseTsMicros = 1_700_000_000_000_000L;
+            QwpRow[][] perProducerRows = new QwpRow[producerCount][rowsPerProducer];
+            int[] batchSizes = new int[producerCount];
+            int[] autoFlushRows = new int[producerCount];
+            for (int p = 0; p < producerCount; p++) {
+                batchSizes[p] = 1 + master.nextInt(40);
+                autoFlushRows[p] = 1 + master.nextInt(100);
+            }
+            Rnd bouncerRnd = new Rnd(master.nextLong(), master.nextLong());
+            long globalIdx = 0;
+            for (int p = 0; p < producerCount; p++) {
+                Rnd genRnd = new Rnd(master.nextLong(), master.nextLong());
+                for (int r = 0; r < rowsPerProducer; r++) {
+                    QwpRow row = generateRow(genRnd, globalIdx, baseTsMicros + globalIdx);
+                    perProducerRows[p][r] = row;
+                    oracles[(r + p) % tableNames.length].addRow(row);
+                    globalIdx++;
+                }
+            }
+
+            String[] sfDirs = new String[producerCount];
+            for (int p = 0; p < producerCount; p++) {
+                sfDirs[p] = freshSfDir("oracle-multi-table-p" + p);
+            }
+
+            try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
+                server.start();
+
+                AtomicReferenceArray<Throwable> producerErrors = new AtomicReferenceArray<>(producerCount);
+                CountDownLatch producersDone = new CountDownLatch(producerCount);
+                AtomicReference<Throwable> bouncerError = new AtomicReference<>();
+                CountDownLatch bouncerDone = new CountDownLatch(1);
+
+                Thread[] producers = new Thread[producerCount];
+                for (int p = 0; p < producerCount; p++) {
+                    final int pp = p;
+                    final QwpRow[] myRows = perProducerRows[pp];
+                    final String mySfDir = sfDirs[pp];
+                    final int batchSize = batchSizes[pp];
+                    final int autoFlush = autoFlushRows[pp];
+                    producers[p] = new Thread(() -> {
+                        try {
+                            String connect = "ws::addr=localhost:" + port + ";sf_dir=" + mySfDir
+                                    + ";initial_connect_retry=async"
+                                    + ";reconnect_max_duration_millis=120000"
+                                    + ";close_flush_timeout_millis=120000"
+                                    + ";sf_max_segment_bytes=" + sfMaxSegmentBytes
+                                    + ";auto_flush_rows=" + autoFlush + ";";
+                            try (Sender sender = Sender.fromConfig(connect)) {
+                                int written = 0;
+                                while (written < myRows.length) {
+                                    int end = Math.min(written + batchSize, myRows.length);
+                                    for (int i = written; i < end; i++) {
+                                        myRows[i].publishTo(sender, tableNames[(i + pp) % tableNames.length], ID_COLUMN);
+                                    }
+                                    sender.flush();
+                                    written = end;
+                                }
+                            }
+                        } catch (Throwable t) {
+                            producerErrors.set(pp, t);
+                        } finally {
+                            producersDone.countDown();
+                            Path.clearThreadLocals();
+                        }
+                    }, "qwp-oracle-multi-table-producer-" + pp);
+                }
+
+                Thread bouncer = new Thread(() -> {
+                    try {
+                        Os.sleep(150); // let producers warm up
+                        for (int i = 0; i < bounces; i++) {
+                            LOG.info().$("oracle multi-table bounce ").$(i + 1).$('/').$(bounces).$();
+                            server.stop();
+                            Os.sleep(40 + bouncerRnd.nextInt(60));
+                            server.start();
+                            Os.sleep(150 + bouncerRnd.nextInt(250));
+                        }
+                    } catch (Throwable t) {
+                        bouncerError.set(t);
+                    } finally {
+                        bouncerDone.countDown();
+                    }
+                }, "qwp-oracle-multi-table-bouncer");
+
+                for (Thread t : producers) t.start();
+                bouncer.start();
+
+                if (!bouncerDone.await(120, TimeUnit.SECONDS)) {
+                    throw new AssertionError("bouncer timed out");
+                }
+                if (bouncerError.get() != null) {
+                    throw new AssertionError("bouncer failed", bouncerError.get());
+                }
+                if (!producersDone.await(240, TimeUnit.SECONDS)) {
+                    throw new AssertionError("producers timed out");
+                }
+                for (int p = 0; p < producerCount; p++) {
+                    Throwable t = producerErrors.get(p);
+                    if (t != null) {
+                        throw new AssertionError("producer " + p + " failed", t);
+                    }
+                }
+
+                drainWalQueue();
+                for (int t = 0; t < tableNames.length; t++) {
+                    engine.awaitTable(tableNames[t], 60, TimeUnit.SECONDS);
+                    assertOracle(oracles[t]);
+                }
+                assertSlotsPurged(sfDirs, slotCapFor(sfMaxSegmentBytes));
+            }
+        });
+    }
+
     @Test
     public void testOraclePoisonRowsFailFastAsTerminal() throws Exception {
         // Pin down the per-frame error contract under NACK policy v2 (there
@@ -1530,9 +1672,13 @@ public class QwpIngressOracleFuzzTest extends AbstractCairoTest {
     }
 
     private void createTargetTable() {
+        createTargetTable(TABLE_NAME);
+    }
+
+    private void createTargetTable(String tableName) {
         try {
             execute(
-                    "CREATE TABLE " + TABLE_NAME + " ("
+                    "CREATE TABLE " + tableName + " ("
                             + "id LONG, "
                             + "b BOOLEAN, "
                             + "b8 BYTE, "

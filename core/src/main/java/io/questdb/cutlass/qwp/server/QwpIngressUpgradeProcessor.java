@@ -1680,6 +1680,8 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         boolean isBatched = false;
         // True when this frame appended rows next to the batch's and then failed or
         // could not join: the batch and this frame are redone one frame at a time.
+        boolean isRedoNeeded = false;
+        // Set once the redo is prepared, after the last statement that may throw.
         boolean isRedo = false;
         boolean isRedoFrameFailed = false;
         boolean redoFrameRoleChangeClose = false;
@@ -1713,7 +1715,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     isBatched = true;
                 } else if (joinResult == QwpIngressProcessorState.COMMIT_BATCH_REDO) {
                     isNormalPath = false;
-                    isRedo = true;
+                    isRedoNeeded = true;
                 } else {
                     // A boundary: commit the batch before this frame goes on, so that the
                     // frame is answered as it would be without a batch. If the commit
@@ -1754,17 +1756,19 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
                     // Nothing but this frame is uncommitted: the redo rolls back its rows
                     // and takes it the normal way, or answers its failure.
                     isNormalPath = false;
-                    isRedo = true;
+                    isRedoNeeded = true;
                 }
             }
 
-            if (isRedo) {
+            if (isRedoNeeded) {
                 // The frames to redo, before the finally's clear() forgets the batch.
                 state.copyCommitBatchFrames(redoFrames);
                 isRedoFrameFailed = !state.isOk();
                 redoFrameRoleChangeClose = state.isRoleChangeClosePending();
                 redoFrameError = state.getErrorText();
                 redoFrameStatus = responseStatusOf(state);
+                // Last: a throwable before it leaves the catch's answer in charge.
+                isRedo = true;
             }
 
             if (isNormalPath) {
@@ -1830,7 +1834,6 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             errorMessage = e.getMessage();
             roleChangeClose = false;
             isBatched = false;
-            isRedo = false;
             if (state.isCommitBatchPending()) {
                 // Nothing of the batch can be vouched for: refuse it from its first frame.
                 responseSeq = state.getFirstCommitBatchSequence();

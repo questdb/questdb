@@ -208,11 +208,12 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
      * <ul>
      * <li>I1: every row of every frame at or below A is committed;</li>
      * <li>I2: no row is committed twice, and no row of a frame above A is committed
-     * (the client replays from A + 1) -- unless a batch commit failed on one table
-     * after others committed. Then frame A + 1 is the failed table's first frame, it
-     * is NACKed or the connection closed, and no row of that table from frame A + 1
-     * on is committed; rows of tables that committed may be, and the replay sends
-     * them again.</li>
+     * (the client replays from A + 1) -- unless a commit of several tables, a batch's
+     * or a multi-table frame's, failed on one table after others committed. Then the
+     * client gets a NACK above A or a CLOSE, the first frame with rows above A is the
+     * failed table's first frame, and no row of that table from that frame on is
+     * committed; rows of tables that committed may be, and the replay sends them
+     * again.</li>
      * </ul>
      * Iterations whose only faults are the frames' own data errors also check I3:
      * the frames before the first bad frame are committed and acked, and the bad
@@ -754,6 +755,47 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
     @Test
     public void testFragmentedFrameCommitsAndAcksTheBatchBeforeClosing() throws Exception {
         assertBatchCommittedBeforeFatalClose(createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(300L, 3_000_000L), false));
+    }
+
+    /**
+     * The first frame of a receive pass passes the live read-only gate at its
+     * preparation and meets a demote at the gate's second check, before it opens a
+     * batch: it touches no writer, nothing commits, and the connection gets the
+     * reconnect-eligible CLOSE without an error response.
+     */
+    @Test
+    public void testGateRefusalBeforeOpeningBatchClosesWithoutCommit() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger readOnlyChecks = new AtomicInteger();
+            final HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            execute("CREATE TABLE tab (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            try (CairoEngine demotableEngine = new CairoEngine(new DefaultTestCairoConfiguration(root)) {
+                @Override
+                public boolean isReadOnlyMode() {
+                    // 1: the frame's preparation; 2: the check before it opens the batch.
+                    return readOnlyChecks.incrementAndGet() >= 2;
+                }
+            }) {
+                final ObjList<byte[]> sent = new ObjList<>();
+                try {
+                    ingestInOnePass(
+                            demotableEngine,
+                            new QwpIngressUpgradeProcessor(demotableEngine, httpConfig),
+                            httpConfig,
+                            AllowAllSecurityContext.INSTANCE,
+                            false,
+                            sent,
+                            createMaskedFrame(WebSocketOpcode.BINARY, oneRowMessage(100L, 1_000_000L))
+                    );
+                } catch (ServerDisconnectException ignore) {
+                    // the role-change CLOSE tells the dispatcher to drop the fd
+                }
+                Assert.assertTrue("the refusal must close the connection", indexOfCloseFrame(sent) >= 0);
+                Assert.assertFalse("a role-change refusal sends no error response", hasErrorResponseForSeq(sent, 0));
+                Assert.assertEquals(-1, maxCumulativeOkAck(sent));
+                assertTableEmpty(demotableEngine);
+            }
+        });
     }
 
     /**
@@ -2599,11 +2641,24 @@ public class QwpIngressCommitBatchTest extends AbstractCairoTest {
                     + ", acked=" + acked + "]", value / 10 <= acked || isCommitFaulty);
         }
         if (hasCommittedAboveAck) {
-            // Only a batch commit that failed on one table after others committed.
-            final int replayFrom = (int) acked + 1;
+            // Only a commit of several tables that failed on one after others committed:
+            // a batch commit, or a multi-table frame's own commit. The client must learn
+            // to replay: a NACK above the ack, or a CLOSE.
+            boolean isTold = indexOfCloseFrame(sent) >= 0;
+            for (int s = (int) acked + 1; s <= lastSeq && !isTold; s++) {
+                isTold = hasErrorResponseForSeq(sent, s);
+            }
             Assert.assertTrue("I2: rows above the ack are committed, but the client is not told to replay ["
-                            + context + ", acked=" + acked + "]",
-                    hasErrorResponseForSeq(sent, replayFrom) || indexOfCloseFrame(sent) >= 0);
+                    + context + ", acked=" + acked + "]", isTold);
+            // The replay's first frame with rows names the failed table: none of its rows
+            // from that frame on are committed. Rowless frames, such as a deferred group's
+            // dictionary frame that holds the ack below them, come before it.
+            int replayFrom = (int) acked + 1;
+            while (replayFrom <= lastSeq && frameValues.getQuick(replayFrom).size() == 0) {
+                replayFrom++;
+            }
+            Assert.assertTrue("I2: rows above the ack are committed, but no frame above it has rows ["
+                    + context + ", acked=" + acked + "]", replayFrom <= lastSeq);
             final IntList replayTables = frameValueTables.getQuick(replayFrom);
             boolean hasFailedTable = false;
             for (int i = 0, n = replayTables.size(); i < n; i++) {

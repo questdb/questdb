@@ -444,10 +444,7 @@ public class QwpTableBlockCursor implements Mutable {
         long bytes = 0;
         final ObjList<Utf8String> tableNames = schemaCache.keys();
         for (int i = 0, n = tableNames.size(); i < n; i++) {
-            final SchemaCacheEntry entry = schemaCache.get(tableNames.getQuick(i));
-            if (entry.schema != null) {
-                bytes += entry.bytes.length;
-            }
+            bytes += schemaCache.get(tableNames.getQuick(i)).bytes.length;
         }
         for (int i = 0, n = columnCursors.size(); i < n; i++) {
             QwpColumnCursor cursor = columnCursors.getQuick(i);
