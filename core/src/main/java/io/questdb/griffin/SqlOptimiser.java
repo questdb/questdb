@@ -202,6 +202,13 @@ public class SqlOptimiser implements Mutable {
     // we've to use it because group by is likely to contain rewritten/aliased expressions that make matching input expressions by pure AST unreliable
     private final ObjList<CharSequence> groupByAliases = new ObjList<>();
     private final ObjList<ExpressionNode> groupByNodes = new ObjList<>();
+    // Scratch state of rejectDuplicateGroupingSets()
+    private final ObjList<CharSequence> groupingSetBareKeyQualifiedForms = new ObjList<>();
+    private final CharSequenceHashSet groupingSetCanonicalForms = new CharSequenceHashSet();
+    private final IntList groupingSetClassIds = new IntList();
+    private final LowerCaseCharSequenceIntHashMap groupingSetKeyClassMap = new LowerCaseCharSequenceIntHashMap();
+    private final IntList groupingSetKeyClasses = new IntList();
+    private final StringSink groupingSetSink = new StringSink();
     // Window literals that use an alias naming the column only in the inner virtual model, paired with
     // the translating model name of the same column. See rewriteSelectClause0().
     private final ObjList<CharSequence> innerAliasWindowLiteralNames = new ObjList<>();
@@ -441,6 +448,12 @@ public class SqlOptimiser implements Mutable {
         tableFactoryModelsInFlight.clear();
         groupByAliases.clear();
         groupByNodes.clear();
+        groupingSetBareKeyQualifiedForms.clear();
+        groupingSetCanonicalForms.clear();
+        groupingSetClassIds.clear();
+        groupingSetKeyClassMap.clear();
+        groupingSetKeyClasses.clear();
+        groupingSetSink.clear();
         innerAliasWindowLiteralNames.clear();
         innerAliasWindowLiterals.clear();
         innerWindowModels.clear();
@@ -813,28 +826,6 @@ public class SqlOptimiser implements Mutable {
         return viewNameExpr != null && TableUtils.getTableFunctionView(viewNameExpr, executionContext).isDependency(tableToken);
     }
 
-    private static boolean isSameGroupingSetKey(IQueryModel selectModel, CharSequence left, CharSequence right) {
-        // A key may name a SELECT alias, as in "a x ... GROUPING SETS ((a), (x))", so compare the
-        // columns the aliases stand for.
-        final QueryColumn leftColumn = selectModel.getAliasToColumnMap().get(left);
-        if (leftColumn != null && leftColumn.getAst().type == LITERAL) {
-            left = leftColumn.getAst().token;
-        }
-        final QueryColumn rightColumn = selectModel.getAliasToColumnMap().get(right);
-        if (rightColumn != null && rightColumn.getAst().type == LITERAL) {
-            right = rightColumn.getAst().token;
-        }
-        if (Chars.equalsIgnoreCase(left, right)) {
-            return true;
-        }
-        int dotPos = Chars.indexOfLastUnquoted(left, '.');
-        if (dotPos >= 0 && Chars.equalsIgnoreCase(right, left, dotPos + 1, left.length())) {
-            return true;
-        }
-        dotPos = Chars.indexOfLastUnquoted(right, '.');
-        return dotPos >= 0 && Chars.equalsIgnoreCase(left, right, dotPos + 1, right.length());
-    }
-
     /**
      * Reports whether every bound in a timestamp predicate is known at parse time, so that
      * analyzeAndOffset() can bake the calendar offset into the interval bounds. A bind variable or a
@@ -1181,6 +1172,17 @@ public class SqlOptimiser implements Mutable {
         if ((nestedModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(nestedModel)) && !rowCountChanges) {
             nestedModel.setLimitAdvice(model.getLimitLo(), model.getLimitHi());
         }
+    }
+
+    // Returns the column a grouping set key names: the column behind a SELECT alias, as in
+    // "a x ... GROUPING SETS ((x))", or the key itself. Returns null for the alias of an
+    // expression, which names no column.
+    private static @Nullable CharSequence resolveGroupingSetKeyColumn(IQueryModel selectModel, CharSequence key) {
+        final QueryColumn column = selectModel.getAliasToColumnMap().get(key);
+        if (column == null) {
+            return key;
+        }
+        return column.getAst().type == LITERAL ? column.getAst().token : null;
     }
 
     /**
@@ -9032,6 +9034,79 @@ public class SqlOptimiser implements Mutable {
         list.add(column);
     }
 
+    // SAMPLE BY FILL cannot tell apart the rows of two grouping sets that hold the same keys, so it
+    // rejects them. Two keys are the same when they name one column. SqlParser drops repeated key
+    // tokens and rejects "t.a" next to "a", so two keys name one column only through a SELECT alias,
+    // as in "a x ... GROUPING SETS ((a), (x))" or "t.a x ... GROUPING SETS ((a), (x))". This method
+    // gives each key a class id, shared by the keys that name one column, and compares the sets by
+    // their sorted, distinct class ids in a hash set. A 12-key CUBE thus checks 4,096 short strings
+    // rather than 8 million pairs of sets.
+    private void rejectDuplicateGroupingSets(IQueryModel selectModel, IQueryModel model, int fillPosition) throws SqlException {
+        final ObjList<ExpressionNode> groupBy = model.getGroupBy();
+        final int keyCount = groupBy.size();
+        groupingSetKeyClassMap.clear();
+        // A bare column name is the same key as every qualified form of it, so its class comes first.
+        for (int i = 0; i < keyCount; i++) {
+            final CharSequence column = resolveGroupingSetKeyColumn(selectModel, groupBy.getQuick(i).token);
+            if (column != null && Chars.indexOfLastUnquoted(column, '.') < 0) {
+                groupingSetKeyClassMap.putIfAbsent(column, groupingSetKeyClassMap.size());
+            }
+        }
+        groupingSetBareKeyQualifiedForms.clear();
+        groupingSetKeyClasses.clear();
+        for (int i = 0; i < keyCount; i++) {
+            final CharSequence column = resolveGroupingSetKeyColumn(selectModel, groupBy.getQuick(i).token);
+            if (column == null) {
+                // The alias of an expression is a key of its own. Class ids from the map stay
+                // below keyCount, so this one is distinct from all of them.
+                groupingSetKeyClasses.add(keyCount + i);
+                continue;
+            }
+            final int dotPos = Chars.indexOfLastUnquoted(column, '.');
+            if (dotPos >= 0) {
+                final int bareIndex = groupingSetKeyClassMap.keyIndex(column, dotPos + 1, column.length());
+                if (bareIndex < 0) {
+                    final int classId = groupingSetKeyClassMap.valueAt(bareIndex);
+                    final CharSequence qualifiedForm = groupingSetBareKeyQualifiedForms.getQuiet(classId);
+                    if (qualifiedForm == null) {
+                        groupingSetBareKeyQualifiedForms.extendAndSet(classId, column);
+                    } else if (!Chars.equalsIgnoreCase(qualifiedForm, column)) {
+                        // A table has one name in a query, so "p.a" and "q.a" name two tables. Then
+                        // "a" is ambiguous, or one of the qualified names is invalid, and the query
+                        // fails when the optimiser resolves its columns. Leave the error to that.
+                        return;
+                    }
+                    groupingSetKeyClasses.add(classId);
+                    continue;
+                }
+                groupingSetKeyClassMap.putIfAbsent(column, groupingSetKeyClassMap.size());
+            }
+            groupingSetKeyClasses.add(groupingSetKeyClassMap.get(column));
+        }
+
+        final ObjList<IntList> groupingSets = model.getGroupingSets();
+        groupingSetCanonicalForms.clear();
+        for (int i = 0, n = groupingSets.size(); i < n; i++) {
+            final IntList set = groupingSets.getQuick(i);
+            groupingSetClassIds.clear();
+            for (int k = 0, m = set.size(); k < m; k++) {
+                groupingSetClassIds.add(groupingSetKeyClasses.getQuick(set.getQuick(k)));
+            }
+            groupingSetClassIds.sortGroups(1);
+            groupingSetSink.clear();
+            for (int k = 0, m = groupingSetClassIds.size(); k < m; k++) {
+                final int classId = groupingSetClassIds.getQuick(k);
+                // A key listed twice in a set, as in "(a, a)", leaves the set unchanged.
+                if (k == 0 || classId != groupingSetClassIds.getQuick(k - 1)) {
+                    groupingSetSink.put(classId).put(',');
+                }
+            }
+            if (!groupingSetCanonicalForms.add(groupingSetSink)) {
+                throw SqlException.$(fillPosition, "SAMPLE BY FILL is not supported with duplicate grouping sets");
+            }
+        }
+    }
+
     /**
      * Identify joined tables without join clause and try to find other reversible join clauses
      * that may be applied to it. For example when these tables joined
@@ -10992,45 +11067,7 @@ public class SqlOptimiser implements Mutable {
                 }
             }
             if (sampleBy != null && nested.hasGroupingSets() && !isFillNone) {
-                final ObjList<IntList> groupingSets = nested.getGroupingSets();
-                final ObjList<ExpressionNode> groupBy = nested.getGroupBy();
-                for (int i = 0, n = groupingSets.size(); i < n; i++) {
-                    final IntList left = groupingSets.getQuick(i);
-                    for (int j = i + 1; j < n; j++) {
-                        final IntList right = groupingSets.getQuick(j);
-                        boolean isDuplicate = true;
-                        for (int k = 0, m = left.size(); k < m; k++) {
-                            final CharSequence leftKey = groupBy.getQuick(left.getQuick(k)).token;
-                            boolean hasMatch = false;
-                            for (int l = 0, r = right.size(); l < r; l++) {
-                                if (isSameGroupingSetKey(model, leftKey, groupBy.getQuick(right.getQuick(l)).token)) {
-                                    hasMatch = true;
-                                    break;
-                                }
-                            }
-                            if (!hasMatch) {
-                                isDuplicate = false;
-                                break;
-                            }
-                        }
-                        for (int k = 0, m = right.size(); isDuplicate && k < m; k++) {
-                            final CharSequence rightKey = groupBy.getQuick(right.getQuick(k)).token;
-                            boolean hasMatch = false;
-                            for (int l = 0, r = left.size(); l < r; l++) {
-                                if (isSameGroupingSetKey(model, rightKey, groupBy.getQuick(left.getQuick(l)).token)) {
-                                    hasMatch = true;
-                                    break;
-                                }
-                            }
-                            if (!hasMatch) {
-                                isDuplicate = false;
-                            }
-                        }
-                        if (isDuplicate) {
-                            throw SqlException.$(sampleByFill.getQuick(0).position, "SAMPLE BY FILL is not supported with duplicate grouping sets");
-                        }
-                    }
-                }
+                rejectDuplicateGroupingSets(model, nested, sampleByFill.getQuick(0).position);
             }
 
             if (sampleBy != null && nested.getGroupByPosition() > 0) {

@@ -3527,6 +3527,10 @@ public class GroupingSetsTest extends AbstractCairoTest {
                         // A qualified column behind the alias names the same key as the bare column.
                         "SELECT ts, t.a x, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((x), (a)) FILL(0)",
                         "SELECT ts, t.a x, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a), (x)) FILL(0)",
+                        // No bare "a" among the keys: the qualified forms still name one key.
+                        "SELECT ts, t.a x, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((t.a), (x)) FILL(0)",
+                        // Two aliases of one qualified column next to the bare column.
+                        "SELECT ts, t.a x, t.a y, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a), (x, y)) FILL(0)",
                         "SELECT ts, a, b, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((a, b), (b, a)) FILL(0)",
                         "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d ROLLUP(a, a) FILL(0)",
                         "SELECT ts, a, COUNT(*) FROM t SAMPLE BY 1d CUBE(a, a) FILL(NULL)"
@@ -3551,6 +3555,46 @@ public class GroupingSetsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByFillDuplicateGroupingSetsAcrossJoin() throws Exception {
+        // "a" next to "p.a" and "q.a" is ambiguous. The duplicate check must not report
+        // (x, b) and (y, b) as equal sets in place of the ambiguous column.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE q (a INT, c INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO p VALUES (1, 2, '2024-01-01T00:00:00.000000Z')");
+            execute("INSERT INTO q VALUES (1, 5, '2024-01-01T00:00:00.000000Z')");
+            for (String fill : new String[]{"NONE", "NULL", "0"}) {
+                String query = "SELECT p.ts, p.a x, q.a y, COUNT(*) FROM p JOIN q ON p.a = q.a SAMPLE BY 1d " +
+                        "GROUPING SETS ((x, b), (y, b), (a, c)) FILL(" + fill + ")";
+                assertQuery(query).fails(query.indexOf("(a, c)") + 1, "Ambiguous column [name=a]");
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByFillDuplicateGroupingSetsOfLargeCube() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE w (k1 INT, k2 INT, k3 INT, k4 INT, k5 INT, k6 INT, k7 INT, k8 INT, k9 INT, k10 INT, k11 INT, k12 INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO w VALUES (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, '2024-01-01T00:00:00.000000Z')");
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                // One row in one bucket gives one row per grouping set: 2^12 of them.
+                assertQuery(
+                        "SELECT count() FROM (SELECT ts, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10, k11, k12, COUNT(*) FROM w " +
+                                "SAMPLE BY 1d CUBE(k1, k2, k3, k4, k5, k6, k7, k8, k9, k10, k11, k12) FILL(NULL))"
+                ).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns("count\n4096\n");
+
+                // x names k1, so every set with k1 and without x equals one with x and without k1.
+                String duplicateQuery = "SELECT ts, k1, k2, k3, k4, k5, k6, k7, k8, k9, k10, k11, k1 x, COUNT(*) FROM w " +
+                        "SAMPLE BY 1d CUBE(k1, k2, k3, k4, k5, k6, k7, k8, k9, k10, k11, x) FILL(NULL)";
+                assertQuery(duplicateQuery)
+                        .withContext(sqlExecutionContext)
+                        .fails(duplicateQuery.indexOf("FILL(") + "FILL(".length(), "SAMPLE BY FILL is not supported with duplicate grouping sets");
+            }
+        });
+    }
+
+    @Test
     public void testSampleByFillDuplicateGroupingSetsWithUnequalDistinctKeys() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, b INT, v INT, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -3562,6 +3606,43 @@ public class GroupingSetsTest extends AbstractCairoTest {
             for (int i = 0; i < 2; i++) {
                 sqlExecutionContext.setParallelGroupByEnabled(i == 1);
                 assertQuery(query).withContext(sqlExecutionContext).inferTimestamp().returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testSampleByFillExpressionAliasKey() throws Exception {
+        // The key "a" is the alias of b + 10, not the column a behind x, so (x, a) and (a)
+        // are different sets.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 2, '2024-01-01T00:00:00.000000Z'), (2, 2, '2024-01-03T00:00:00.000000Z')");
+            for (int i = 0; i < 2; i++) {
+                sqlExecutionContext.setParallelGroupByEnabled(i == 1);
+                assertQuery("SELECT ts, a x, b + 10 a, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((x, a), (a)) FILL(NULL) ORDER BY ts, x")
+                        .withContext(sqlExecutionContext)
+                        .inferTimestamp()
+                        .returns("""
+                                ts\tx\ta\tCOUNT
+                                2024-01-01T00:00:00.000000Z\tnull\t12\t1
+                                2024-01-01T00:00:00.000000Z\t1\t12\t1
+                                2024-01-01T00:00:00.000000Z\t2\t12\tnull
+                                2024-01-02T00:00:00.000000Z\tnull\t12\tnull
+                                2024-01-02T00:00:00.000000Z\t1\t12\tnull
+                                2024-01-02T00:00:00.000000Z\t2\t12\tnull
+                                2024-01-03T00:00:00.000000Z\tnull\t12\t1
+                                2024-01-03T00:00:00.000000Z\t1\t12\tnull
+                                2024-01-03T00:00:00.000000Z\t2\t12\t1
+                                """);
+
+                // An expression key missing from a set fails as an expression key, as it does with
+                // FILL(NONE), not as a duplicate of the set (x).
+                for (String fill : new String[]{"NONE", "NULL", "0"}) {
+                    String query = "SELECT ts, a x, b + 10 a, COUNT(*) FROM t SAMPLE BY 1d GROUPING SETS ((x), (a)) FILL(" + fill + ")";
+                    assertQuery(query)
+                            .withContext(sqlExecutionContext)
+                            .fails(query.indexOf("(a)") + 1, "expression keys in ROLLUP, CUBE and GROUPING SETS must be computed in a subquery");
+                }
             }
         });
     }
