@@ -26,14 +26,18 @@ package io.questdb.test.cairo;
 
 import io.questdb.MessageBus;
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PostingSealPurgeJob;
+import io.questdb.cairo.PostingSealPurgeOperator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
+import io.questdb.cairo.idx.PostingIndexKeyFileView;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RecordCursor;
@@ -56,10 +60,12 @@ import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static org.junit.Assert.*;
@@ -404,6 +410,98 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPurgeAbandonsGenerationVisibleAboveItsWindow() throws Exception {
+        // A reader pinned at txn t sees the first generation for 10 <= t < 20. The scoreboard check of a purge whose
+        // window ends at 19 covers no reader at 19, which still sees it.
+        assertPurgeWithReaderWindowEndingAt(19, true);
+    }
+
+    @Test
+    public void testPurgeProceedsWhenKeyFileCannotBeOpened() throws Exception {
+        // As when a REINDEX or a drop of the index removed the .pk under the task: a .pk that cannot be read proves
+        // nothing, and the purge goes on
+        assertPurgeProceedsWhenKeyFileUnreadable(hook -> hook::failOpen, -1);
+    }
+
+    @Test
+    public void testPurgeProceedsWhenKeyFileHeaderIsUnreadable() throws Exception {
+        assertPurgeProceedsWhenKeyFileUnreadable(hook -> hook::breakHeaderSeqlock, -1);
+    }
+
+    @Test
+    public void testPurgeProceedsWhenKeyFileIsShorterThanItsHeader() throws Exception {
+        assertPurgeProceedsWhenKeyFileUnreadable(
+                hook -> () -> hook.truncateKeyFile(PostingIndexUtils.KEY_FILE_RESERVED / 2),
+                PostingIndexUtils.KEY_FILE_RESERVED / 2
+        );
+    }
+
+    @Test
+    public void testPurgeRemovesGenerationNotVisibleAboveItsWindow() throws Exception {
+        // As testPurgeAbandonsGenerationVisibleAboveItsWindow, with a window that ends at 20: from there on readers
+        // see the second generation
+        assertPurgeWithReaderWindowEndingAt(20, false);
+    }
+
+    @Test
+    public void testPurgeRetriesWhenKeyFileWindowCannotBeAllocated() throws Exception {
+        // The visibility check allocates the read window of its .pk view at the first entry below the head entry.
+        // When the RSS limit refuses the allocation, the purge fails loudly with nothing left open, keeps the files,
+        // and the next attempt completes.
+        final VisibilityCheckFf hook = new VisibilityCheckFf(VisibilityCheckFf.AT_ENTRY_READ);
+        ff = hook;
+        assertMemoryLeak(ff, () -> {
+            TableToken tok = createPostingTable("ps_purge_pk_window_oom");
+            FilesFacade runtimeFf = configuration.getFilesFacade();
+            try (Path partitionPath = partitionPathFor(tok);
+                 PostingSealPurgeOperator operator = new PostingSealPurgeOperator(engine)) {
+                String col = "c_pk_window_oom";
+                long sealTxn = writeAndSeal(partitionPath, col);
+                int pLen = partitionPath.size();
+                PostingIndexUtils.keyFileName(partitionPath, col, COLUMN_NAME_TXN_NONE);
+                hook.arm(partitionPath.toString(), () -> Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 1024));
+                partitionPath.trimTo(pLen);
+                PostingSealPurgeTask task = newPostingSealPurgeTask(tok, col, sealTxn, 1L);
+                try {
+                    operator.purge(task, false);
+                    fail("the window allocation must fail");
+                } catch (CairoException e) {
+                    assertTrue(e.isOutOfMemory());
+                    TestUtils.assertContains(e.getFlyweightMessage(),
+                            "size=" + PostingIndexKeyFileView.WINDOW_SIZE + ", memoryTag=" + MemoryTag.NATIVE_INDEX_READER);
+                } finally {
+                    Unsafe.setRssMemLimit(0);
+                }
+                assertEquals(1, hook.actionRuns);
+                assertTrue("the failed attempt must keep the superseded .pv",
+                        runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath, col, COLUMN_NAME_TXN_NONE, sealTxn)));
+                partitionPath.trimTo(pLen);
+
+                assertTrue(operator.purge(task, false));
+                assertFalse("the next attempt must remove the superseded .pv",
+                        runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath, col, COLUMN_NAME_TXN_NONE, sealTxn)));
+                partitionPath.trimTo(pLen);
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeSurvivesKeyFileShrinkAtHeadEntry() throws Exception {
+        // The first commit after TRUNCATE TABLE on a non-partitioned table shrinks the .pk in place
+        // (PostingIndexWriter.truncate() -> initKeyMemory), and the purge job holds no lock against the writer.
+        // Here the .pk shrinks to its header pages when the visibility check first reads past them: the head entry
+        // that the header names is gone.
+        assertPurgeSurvivesKeyFileShrink(VisibilityCheckFf.AT_ENTRY_READ);
+    }
+
+    @Test
+    public void testPurgeSurvivesKeyFileShrinkAtWindowRead() throws Exception {
+        // As testPurgeSurvivesKeyFileShrinkAtHeadEntry, once the check has read the head entry and fills its window
+        // with the entries below it
+        assertPurgeSurvivesKeyFileShrink(VisibilityCheckFf.AT_WINDOW_READ);
+    }
+
+    @Test
     public void testPublishPendingPurgesDropsLiveHeadEntry() throws Exception {
         // publishPendingPurges' head-guard must drop an outbox entry whose
         // sealTxn equals the current chain head (the live generation) rather than
@@ -658,6 +756,92 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 assertFalse("the live .pc0 must have been unlinked by the bypassed guard", runtimeFf.exists(
                         PostingIndexUtils.coverDataFileName(
                                 partitionPath.trimTo(pLen), col, 0, postingColumnNameTxn, COLUMN_NAME_TXN_NONE, liveHead)));
+                partitionPath.trimTo(pLen);
+            }
+        });
+    }
+
+    private void assertPurgeProceedsWhenKeyFileUnreadable(
+            Function<VisibilityCheckFf, Runnable> action,
+            long keyFileLength
+    ) throws Exception {
+        final VisibilityCheckFf hook = new VisibilityCheckFf(VisibilityCheckFf.AT_OPEN);
+        ff = hook;
+        assertMemoryLeak(ff, () -> {
+            TableToken tok = createPostingTable("ps_purge_pk_unreadable");
+            FilesFacade runtimeFf = configuration.getFilesFacade();
+            try (Path partitionPath = partitionPathFor(tok);
+                 PostingSealPurgeOperator operator = new PostingSealPurgeOperator(engine)) {
+                String col = "c_pk_unreadable";
+                long sealTxn = writeAndSeal(partitionPath, col);
+                int pLen = partitionPath.size();
+                PostingIndexUtils.keyFileName(partitionPath, col, COLUMN_NAME_TXN_NONE);
+                hook.arm(partitionPath.toString(), action.apply(hook));
+                partitionPath.trimTo(pLen);
+
+                assertTrue(operator.purge(newPostingSealPurgeTask(tok, col, sealTxn, 1L), false));
+                assertEquals(1, hook.actionRuns);
+                if (keyFileLength > -1) {
+                    assertEquals(keyFileLength, runtimeFf.length(PostingIndexUtils.keyFileName(partitionPath, col, COLUMN_NAME_TXN_NONE)));
+                    partitionPath.trimTo(pLen);
+                }
+                assertFalse("the superseded .pv must be removed",
+                        runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath, col, COLUMN_NAME_TXN_NONE, sealTxn)));
+                partitionPath.trimTo(pLen);
+            }
+        });
+    }
+
+    private void assertPurgeSurvivesKeyFileShrink(int trigger) throws Exception {
+        final VisibilityCheckFf hook = new VisibilityCheckFf(trigger);
+        ff = hook;
+        assertMemoryLeak(ff, () -> {
+            TableToken tok = createPostingTable("ps_purge_pk_shrink");
+            FilesFacade runtimeFf = configuration.getFilesFacade();
+            try (Path partitionPath = partitionPathFor(tok);
+                 PostingSealPurgeOperator operator = new PostingSealPurgeOperator(engine)) {
+                String col = "c_pk_shrink";
+                long sealTxn = writeAndSeal(partitionPath, col);
+                int pLen = partitionPath.size();
+                assertTrue("the .pk must hold entries past its header pages",
+                        runtimeFf.length(PostingIndexUtils.keyFileName(partitionPath, col, COLUMN_NAME_TXN_NONE)) > PostingIndexUtils.KEY_FILE_RESERVED);
+                hook.arm(partitionPath.toString(), () -> hook.truncateKeyFile(PostingIndexUtils.KEY_FILE_RESERVED));
+                partitionPath.trimTo(pLen);
+
+                // A .pk that cannot be read proves nothing: the purge goes on and removes the superseded files
+                assertTrue(operator.purge(newPostingSealPurgeTask(tok, col, sealTxn, 1L), false));
+                assertEquals("the .pk must shrink during the visibility check", 1, hook.actionRuns);
+                assertEquals(PostingIndexUtils.KEY_FILE_RESERVED,
+                        runtimeFf.length(PostingIndexUtils.keyFileName(partitionPath, col, COLUMN_NAME_TXN_NONE)));
+                partitionPath.trimTo(pLen);
+                assertFalse("the superseded .pv must be removed",
+                        runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath, col, COLUMN_NAME_TXN_NONE, sealTxn)));
+                partitionPath.trimTo(pLen);
+            }
+        });
+    }
+
+    private void assertPurgeWithReaderWindowEndingAt(long toTableTxn, boolean isVisibleAboveWindow) throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tok = createPostingTable("ps_purge_visible_" + toTableTxn);
+            FilesFacade runtimeFf = configuration.getFilesFacade();
+            LogCapture capture = new LogCapture();
+            try (Path partitionPath = partitionPathFor(tok);
+                 PostingSealPurgeOperator operator = new PostingSealPurgeOperator(engine)) {
+                String col = "c_visible";
+                long sealTxn = writeAndSeal(partitionPath, col, 10L, 20L);
+                int pLen = partitionPath.size();
+                capture.start();
+                try {
+                    assertTrue(operator.purge(newPostingSealPurgeTask(tok, col, sealTxn, toTableTxn), false));
+                    if (isVisibleAboveWindow) {
+                        capture.waitFor("can see the target sealTxn, abandoning purge to avoid deleting a live file");
+                    }
+                } finally {
+                    capture.stop();
+                }
+                assertEquals("the .pv of the first generation", isVisibleAboveWindow,
+                        runtimeFf.exists(PostingIndexUtils.valueFileName(partitionPath, col, COLUMN_NAME_TXN_NONE, sealTxn)));
                 partitionPath.trimTo(pLen);
             }
         });
@@ -1364,6 +1548,38 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
     }
 
     /**
+     * {@link #writeAndSeal(Path, String)} with the txnAtSeal of each generation, so that readers pinned at different
+     * txns see different generations.
+     */
+    private long writeAndSeal(Path partitionPath, String colName, long firstTxnAtSeal, long secondTxnAtSeal) {
+        FilesFacade ff = configuration.getFilesFacade();
+        int pLen = partitionPath.size();
+        long supersededSealTxn;
+        try (PostingIndexWriter writer = new PostingIndexWriter(
+                configuration, partitionPath, colName, COLUMN_NAME_TXN_NONE)) {
+            for (int i = 0; i < 8; i++) {
+                writer.add(i % BATCH_KEYS, i);
+            }
+            writer.setMaxValue(8 - 1);
+            writer.commit();
+            writer.setNextTxnAtSeal(firstTxnAtSeal);
+            writer.seal();
+            supersededSealTxn = PostingIndexUtils.readSealTxnFromKeyFile(
+                    ff, PostingIndexUtils.keyFileName(partitionPath.trimTo(pLen), colName, COLUMN_NAME_TXN_NONE));
+            partitionPath.trimTo(pLen);
+            for (int i = 8; i < 16; i++) {
+                writer.add(i % BATCH_KEYS, i);
+            }
+            writer.setMaxValue(16 - 1);
+            writer.commit();
+            writer.setNextTxnAtSeal(secondTxnAtSeal);
+            writer.seal();
+        }
+        partitionPath.trimTo(pLen);
+        return supersededSealTxn;
+    }
+
+    /**
      * Writes data and seals TWICE, returning the SUPERSEDED first sealTxn (its
      * .pv is purge-eligible) while the chain head advances to a newer, live
      * sealTxn. PostingSealPurgeOperator refuses to delete the live head -- it
@@ -1449,4 +1665,120 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         return supersededSealTxn;
     }
 
+    /**
+     * Runs an action once, when the visibility check of {@link PostingSealPurgeOperator} opens or reads the .pk. The
+     * first open of the .pk in purge() re-reads the head sealTxn; the second is the visibility check.
+     */
+    private static final class VisibilityCheckFf extends TestFilesFacadeImpl {
+        // at the first read past the header pages, by mapping or by pread
+        static final int AT_ENTRY_READ = 1;
+        // before the visibility check opens the .pk
+        static final int AT_OPEN = 0;
+        // at the first window fill
+        static final int AT_WINDOW_READ = 2;
+        private final int trigger;
+        private Runnable action;
+        private int actionRuns;
+        private boolean isOpenFailing;
+        private String keyFile;
+        private int keyFileOpens;
+        private long visibilityCheckFd = -1;
+
+        VisibilityCheckFf(int trigger) {
+            this.trigger = trigger;
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            final long address = super.mmap(fd, len, offset, flags, memoryTag);
+            if (trigger == AT_ENTRY_READ && fd == visibilityCheckFd) {
+                runAction();
+            }
+            return address;
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (keyFile == null || !Utf8s.equalsAscii(keyFile, name) || ++keyFileOpens != 2) {
+                return super.openRO(name);
+            }
+            if (trigger == AT_OPEN) {
+                runAction();
+                if (isOpenFailing) {
+                    return -1;
+                }
+            }
+            visibilityCheckFd = super.openRO(name);
+            return visibilityCheckFd;
+        }
+
+        @Override
+        public long read(long fd, long buf, long size, long offset) {
+            if (fd == visibilityCheckFd && (trigger == AT_WINDOW_READ
+                    || (trigger == AT_ENTRY_READ && offset + size > PostingIndexUtils.KEY_FILE_RESERVED))) {
+                runAction();
+            }
+            return super.read(fd, buf, size, offset);
+        }
+
+        @Override
+        public int readNonNegativeInt(long fd, long offset) {
+            if (trigger == AT_ENTRY_READ && fd == visibilityCheckFd && offset + Integer.BYTES > PostingIndexUtils.KEY_FILE_RESERVED) {
+                runAction();
+            }
+            return super.readNonNegativeInt(fd, offset);
+        }
+
+        @Override
+        public long readNonNegativeLong(long fd, long offset) {
+            if (trigger == AT_ENTRY_READ && fd == visibilityCheckFd && offset + Long.BYTES > PostingIndexUtils.KEY_FILE_RESERVED) {
+                runAction();
+            }
+            return super.readNonNegativeLong(fd, offset);
+        }
+
+        void arm(String keyFile, Runnable action) {
+            this.keyFile = keyFile;
+            this.action = action;
+        }
+
+        // An odd sequence marks a header page that a publish is still writing, so neither page reads as stable
+        void breakHeaderSeqlock() {
+            try (Path p = new Path()) {
+                final long fd = super.openRW(p.of(keyFile).$(), CairoConfiguration.O_NONE);
+                final long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().putLong(buf, 3L);
+                    assertEquals(Long.BYTES, super.write(fd, buf, Long.BYTES,
+                            PostingIndexUtils.PAGE_A_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START));
+                    assertEquals(Long.BYTES, super.write(fd, buf, Long.BYTES,
+                            PostingIndexUtils.PAGE_B_OFFSET + PostingIndexUtils.V2_HEADER_OFFSET_SEQUENCE_START));
+                } finally {
+                    Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                    super.close(fd);
+                }
+            }
+        }
+
+        void failOpen() {
+            isOpenFailing = true;
+        }
+
+        // Truncated to its header pages, the .pk is in the state the writer leaves for a reader that read the header
+        // before PostingIndexWriter.truncate() shrank the file: the header names entries past the end of the file
+        void truncateKeyFile(long size) {
+            try (Path p = new Path()) {
+                final long fd = super.openRW(p.of(keyFile).$(), CairoConfiguration.O_NONE);
+                assertTrue(super.truncate(fd, size));
+                super.close(fd);
+            }
+        }
+
+        private void runAction() {
+            if (actionRuns == 0) {
+                actionRuns++;
+                action.run();
+            }
+        }
+    }
 }

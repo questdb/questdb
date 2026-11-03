@@ -80,14 +80,29 @@ public final class PostingIndexChainPicker {
         if (!PostingIndexChainHeader.readUnderSeqlock(keyMem, headerScratch)) {
             return RESULT_HEADER_UNREADABLE;
         }
-        if (headerScratch.isEmpty()) {
+        return findVisibleBySealTxn(keyMem, headerScratch, sealTxn, minPinnedTableTxn, into);
+    }
+
+    /**
+     * {@link #findVisibleBySealTxn(MemoryR, long, long, PostingIndexChainHeader.Snapshot, PostingIndexChainEntry.Snapshot)}
+     * from a header that the caller read with {@link PostingIndexChainHeader#readUnderSeqlock}, for a caller that
+     * needs the header before the walk, as {@link PostingIndexKeyFileView} does.
+     */
+    public static int findVisibleBySealTxn(
+            MemoryR keyMem,
+            PostingIndexChainHeader.Snapshot header,
+            long sealTxn,
+            long minPinnedTableTxn,
+            PostingIndexChainEntry.Snapshot into
+    ) {
+        if (header.isEmpty()) {
             return RESULT_EMPTY_CHAIN;
         }
 
-        long entryOffset = headerScratch.headEntryOffset;
-        final long regionBase = headerScratch.regionBase;
-        final long regionLimit = headerScratch.regionLimit;
-        final long entryCount = headerScratch.entryCount;
+        long entryOffset = header.headEntryOffset;
+        final long regionBase = header.regionBase;
+        final long regionLimit = header.regionLimit;
+        final long entryCount = header.entryCount;
         final long mappedLimit = keyMem.size();
         long visited = 0;
         // The first pinned txn at which pick() returns an entry the walk has visited
