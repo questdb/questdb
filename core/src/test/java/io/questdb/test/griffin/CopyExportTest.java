@@ -41,7 +41,9 @@ import io.questdb.cutlass.parquet.CopyExportRequestJob;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
+import io.questdb.griffin.engine.table.parquet.ParquetEncoding;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.PartitionDescriptor;
 import io.questdb.griffin.engine.table.parquet.PartitionEncoder;
@@ -81,6 +83,18 @@ import static org.junit.Assert.assertTrue;
 
 public class CopyExportTest extends AbstractCairoTest {
 
+    // metric, c, total and ts of the tables createTableWithParquetSettings*() create
+    private static final String PARQUET_SETTINGS_TABLE_ROWS = """
+            (10, 1, 1000, '2024-01-01T00:00:00.000000Z'),
+            (20, 2, 2000, '2024-01-01T08:00:00.000000Z'),
+            (NULL, 3, NULL, '2024-01-01T16:00:00.000000Z'),
+            (10, 4, 1000, '2024-01-02T00:00:00.000000Z'),
+            (30, 5, 3000, '2024-01-02T08:00:00.000000Z'),
+            (NULL, 6, NULL, '2024-01-02T16:00:00.000000Z'),
+            (20, 7, 2000, '2024-01-03T00:00:00.000000Z'),
+            (40, 8, 4000, '2024-01-03T08:00:00.000000Z'),
+            (NULL, 9, NULL, '2024-01-03T16:00:00.000000Z')
+            """;
     static HashSet<Class<?>> exceptionTypesToCatch = new HashSet<>();
 
     @BeforeClass
@@ -620,6 +634,49 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetExportBinaryColumnKeepsParquetEncodings() throws Exception {
+        // A BINARY column in a select without page frames routes COPY through a temp table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE bt (metric INT PARQUET(RLE_DICTIONARY), bin BINARY PARQUET(PLAIN), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO bt VALUES
+                        (10, rnd_bin(2, 2, 0), '2024-01-01T00:00:00.000000Z'),
+                        (10, rnd_bin(2, 2, 0), '2024-01-01T01:00:00.000000Z'),
+                        (20, rnd_bin(2, 2, 0), '2024-01-02T00:00:00.000000Z'),
+                        (NULL, NULL, '2024-01-02T01:00:00.000000Z')
+                    """);
+            final String query = "SELECT * FROM bt ORDER BY metric, ts";
+            assertExportMode(query, ParquetExportMode.TEMP_TABLE);
+
+            copyToParquet("COPY (" + query + ") TO 'binary_settings' WITH FORMAT PARQUET");
+            final String parquetPath = parquetPath("binary_settings");
+            assertParquetMatchesQuery(query, parquetPath);
+            final FilesFacade ff = configuration.getFilesFacade();
+            ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath, ff, 0);
+            // BINARY defaults to DELTA_LENGTH_BYTE_ARRAY
+            ParquetTestUtils.assertColumnsUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_PLAIN, 1);
+            ParquetTestUtils.assertColumnsDoNotUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_DELTA_LENGTH_BYTE_ARRAY, 1);
+        });
+    }
+
+    @Test
+    public void testCopyParquetExportCompositeTableKeepsParquetEncodings() throws Exception {
+        // COPY <table> materializes a table with a composite partition through a temp table.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            createTableNeedingQuotes();
+            execute("ALTER TABLE \"src ct\" ALTER COLUMN i SET PARQUET(RLE_DICTIONARY)");
+            drainWalQueue();
+            makeFirstPartitionComposite();
+
+            copyToParquet("COPY \"src ct\" TO 'composite_settings' WITH FORMAT PARQUET");
+            assertCompositeExportKeepsParquetSetting("composite_settings");
+        });
+    }
+
+    @Test
     public void testCopyParquetExportFixedToVarConvertedColumn() throws Exception {
         // fixed->var lazy conversion (INT->STRING) over a parquet partition, exported via the
         // DIRECT_PAGE_FRAME path. The exported file must hold the formatted strings, not the
@@ -667,6 +724,77 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetExportOfConvertedColumnKeepsParquetEncodings() throws Exception {
+        // A column retyped since its partition went Parquet routes COPY through a temp table, whether the select
+        // reaches the table directly or through a view, and whether it reads the Parquet partition or not.
+        assertMemoryLeak(() -> {
+            final String[] filters = {"", " WHERE ts >= '2024-01-02'"};
+            final String[] expectedRows = {
+                    """
+                    metric\tc\ttotal\tts
+                    10\t1\t1000\t2024-01-01T00:00:00.000000Z
+                    20\t2\t2000\t2024-01-01T08:00:00.000000Z
+                    null\t3\tnull\t2024-01-01T16:00:00.000000Z
+                    10\t4\t1000\t2024-01-02T00:00:00.000000Z
+                    30\t5\t3000\t2024-01-02T08:00:00.000000Z
+                    null\t6\tnull\t2024-01-02T16:00:00.000000Z
+                    20\t7\t2000\t2024-01-03T00:00:00.000000Z
+                    40\t8\t4000\t2024-01-03T08:00:00.000000Z
+                    null\t9\tnull\t2024-01-03T16:00:00.000000Z
+                    """,
+                    """
+                    metric\tc\ttotal\tts
+                    10\t4\t1000\t2024-01-02T00:00:00.000000Z
+                    30\t5\t3000\t2024-01-02T08:00:00.000000Z
+                    null\t6\tnull\t2024-01-02T16:00:00.000000Z
+                    20\t7\t2000\t2024-01-03T00:00:00.000000Z
+                    40\t8\t4000\t2024-01-03T08:00:00.000000Z
+                    null\t9\tnull\t2024-01-03T16:00:00.000000Z
+                    """
+            };
+            for (boolean isWal : new boolean[]{true, false}) {
+                for (ConvertedColumnExportSource source : ConvertedColumnExportSource.values()) {
+                    final String tableName = (isWal ? "converted_wal_" : "converted_") + source.ordinal();
+                    createTableWithParquetSettingsAndConvertedColumn(tableName, isWal, source);
+                    final String from = source == ConvertedColumnExportSource.TABLE ? tableName : tableName + "_v";
+                    for (int i = 0; i < filters.length; i++) {
+                        final String query = "SELECT * FROM " + from + filters[i];
+                        assertExportMode(query, ParquetExportMode.TEMP_TABLE);
+
+                        final String fileName = tableName + "_" + i;
+                        copyToParquet("COPY (" + query + ") TO '" + fileName + "' WITH FORMAT PARQUET");
+                        assertQuery("SELECT * FROM read_parquet('" + parquetPath(fileName) + "')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns(expectedRows[i]);
+                        assertParquetSettingsKept(parquetPath(fileName));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCopyParquetExportPartitionByKeepsParquetEncodings() throws Exception {
+        // Re-partitioning materializes through a temp table, for a SELECT and for a table alike.
+        assertMemoryLeak(() -> {
+            createTableWithParquetSettings("repartitioned");
+
+            copyToParquet("COPY (SELECT * FROM repartitioned) TO 'by_day' WITH FORMAT PARQUET PARTITION_BY DAY");
+            for (String day : new String[]{"2024-01-01", "2024-01-02", "2024-01-03"}) {
+                final String parquetPath = exportRoot + File.separator + "by_day" + File.separator + day + ".parquet";
+                assertParquetMatchesQuery("SELECT * FROM repartitioned WHERE ts IN '" + day + "'", parquetPath);
+                assertParquetSettingsKept(parquetPath);
+            }
+
+            copyToParquet("COPY repartitioned TO 'by_month' WITH FORMAT PARQUET PARTITION_BY MONTH");
+            assertParquetMatchesQuery("SELECT * FROM repartitioned", parquetPath("by_month"));
+            assertParquetSettingsKept(parquetPath("by_month"));
+        });
+    }
+
+    @Test
     public void testCopyParquetExportSymbolToFixedConvertedColumn() throws Exception {
         // symbol->fixed lazy conversion (SYMBOL->LONG; parquet stores the symbol as a UTF-8
         // BYTE_ARRAY decoded as VARCHAR_SLICE) over a parquet partition, exported via the
@@ -696,6 +824,190 @@ public class CopyExportTest extends AbstractCairoTest {
                 15\t2024-01-01T00:40:00.000000Z
                 18\t2024-01-01T00:50:00.000000Z
                 """, ConvertedColumnExportSource.VIEW_CREATED_AFTER_TYPE_CHANGE));
+    }
+
+    @Test
+    public void testCopyParquetExportTableTurnedCompositeAfterEnqueueKeepsParquetEncodings() throws Exception {
+        // When a table turns composite after COPY was queued, the export worker materializes it through a temp table
+        // of its own.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            createTableNeedingQuotes();
+            execute("ALTER TABLE \"src ct\" ALTER COLUMN i SET PARQUET(RLE_DICTIONARY)");
+            drainWalQueue();
+
+            // No export job runs yet, so the export, queued as a direct table read, waits until the table turns
+            // composite.
+            runAndFetchCopyExportID("COPY \"src ct\" TO 'turned_composite_settings' WITH FORMAT PARQUET", sqlExecutionContext);
+            makeFirstPartitionComposite();
+            try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+                Assert.assertTrue("the queued export must be picked up", job.run());
+            }
+            assertExportFinished();
+            assertCompositeExportKeepsParquetSetting("turned_composite_settings");
+        });
+    }
+
+    @Test
+    public void testCopyParquetExportTempTableEdgeShapesKeepParquetEncodings() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithParquetSettingsAndConvertedColumn("converted", true, ConvertedColumnExportSource.VIEW_CREATED_AFTER_TYPE_CHANGE);
+            createTableWithParquetSettings("streamed");
+            final FilesFacade ff = configuration.getFilesFacade();
+
+            // An empty result still writes a file, one without row groups.
+            final String emptyQuery = "SELECT * FROM converted_v WHERE ts < '2000-01-01'";
+            assertExportMode(emptyQuery, ParquetExportMode.TEMP_TABLE);
+            copyToParquet("COPY (" + emptyQuery + ") TO 'empty' WITH FORMAT PARQUET");
+            assertQuery("SELECT * FROM read_parquet('" + parquetPath("empty") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("metric\tc\ttotal\tts\n");
+
+            // How the encoder writes a lone row or a column of NULLs is not specified, so the export of the same
+            // query that streams is the oracle.
+            assertCopyThroughTempTableEncodesLikeStreaming("SELECT * FROM %s WHERE ts = '2024-01-02T08:00:00.000000Z'", "", "single_row");
+            assertCopyThroughTempTableEncodesLikeStreaming("SELECT * FROM %s WHERE metric IS NULL", "", "null_metric");
+            assertQuery("SELECT metric, total FROM read_parquet('" + parquetPath("null_metric") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            metric\ttotal
+                            null\tnull
+                            null\tnull
+                            null\tnull
+                            """);
+
+            // Every row group keeps the setting.
+            execute("CREATE TABLE row_groups (metric INT PARQUET(RLE_DICTIONARY), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO row_groups SELECT (x % 7)::INT, timestamp_sequence('2024-01-01', 1_000_000L) FROM long_sequence(5_000)");
+            copyToParquet("COPY (SELECT * FROM row_groups) TO 'row_groups' WITH FORMAT PARQUET PARTITION_BY YEAR ROW_GROUP_SIZE 1000");
+            assertParquetMatchesQuery("SELECT * FROM row_groups", parquetPath("row_groups"));
+            ParquetTestUtils.assertRowGroupCount(parquetPath("row_groups"), ff, 5);
+            ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath("row_groups"), ff, 0);
+
+            // A column added after data exists holds NULL above its column top.
+            execute("ALTER TABLE converted ADD COLUMN extra INT");
+            drainWalAndViewQueues();
+            execute("INSERT INTO converted VALUES (50, 10, 5000, '2024-01-04T00:00:00.000000Z', 7), (50, 11, 5000, '2024-01-04T08:00:00.000000Z', 7)");
+            drainWalAndViewQueues();
+            final String addedColumnQuery = "SELECT * FROM converted";
+            assertExportMode(addedColumnQuery, ParquetExportMode.TEMP_TABLE);
+            copyToParquet("COPY (" + addedColumnQuery + ") TO 'added_column' WITH FORMAT PARQUET");
+            assertQuery("SELECT * FROM read_parquet('" + parquetPath("added_column") + "')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            metric\tc\ttotal\tts\textra
+                            10\t1\t1000\t2024-01-01T00:00:00.000000Z\tnull
+                            20\t2\t2000\t2024-01-01T08:00:00.000000Z\tnull
+                            null\t3\tnull\t2024-01-01T16:00:00.000000Z\tnull
+                            10\t4\t1000\t2024-01-02T00:00:00.000000Z\tnull
+                            30\t5\t3000\t2024-01-02T08:00:00.000000Z\tnull
+                            null\t6\tnull\t2024-01-02T16:00:00.000000Z\tnull
+                            20\t7\t2000\t2024-01-03T00:00:00.000000Z\tnull
+                            40\t8\t4000\t2024-01-03T08:00:00.000000Z\tnull
+                            null\t9\tnull\t2024-01-03T16:00:00.000000Z\tnull
+                            50\t10\t5000\t2024-01-04T00:00:00.000000Z\t7
+                            50\t11\t5000\t2024-01-04T08:00:00.000000Z\t7
+                            """);
+            assertParquetSettingsKept(parquetPath("added_column"));
+            // extra has no setting, so it keeps the INT default, PLAIN
+            ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath("added_column"), ff, 4);
+            ParquetTestUtils.assertColumnsDoNotUseEncoding(parquetPath("added_column"), ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 4);
+        });
+    }
+
+    @Test
+    public void testCopyParquetExportTempTableKeepsParquetCompression() throws Exception {
+        // COMPRESSION_CODEC sets the codec of the file and a column's PARQUET(..., ZSTD(3)) setting overrides it.
+        // 100_000 LONG values take 800_000 bytes as uncompressed PLAIN, so only a compressed v fits a smaller file.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE compressed (v LONG PARQUET(default, ZSTD(3)), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO compressed SELECT 7, timestamp_sequence('2024-01-01', 100_000) FROM long_sequence(100_000)");
+            execute("CREATE TABLE uncompressed (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO uncompressed SELECT v, ts FROM compressed");
+
+            for (String tableName : new String[]{"compressed", "uncompressed"}) {
+                copyToParquet("COPY (SELECT * FROM " + tableName + ") TO '" + tableName + "' WITH FORMAT PARQUET COMPRESSION_CODEC UNCOMPRESSED PARTITION_BY YEAR");
+                assertQuery("SELECT count(), sum(v), min(ts), max(ts) FROM read_parquet('" + parquetPath(tableName) + "')")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count\tsum\tmin\tmax
+                                100000\t700000\t2024-01-01T00:00:00.000000Z\t2024-01-01T02:46:39.900000Z
+                                """);
+            }
+            final long compressedSize = parquetFileSize("compressed");
+            Assert.assertTrue("v must be compressed, file size: " + compressedSize, compressedSize < 800_000);
+            final long uncompressedSize = parquetFileSize("uncompressed");
+            Assert.assertTrue("v without a setting must not be compressed, file size: " + uncompressedSize, uncompressedSize >= 800_000);
+        });
+    }
+
+    @Test
+    public void testCopyParquetExportTempTableKeepsParquetEncodingsOfEveryType() throws Exception {
+        // COPY <table> encodes the table partition by partition and applies its PARQUET(...) settings, so its file
+        // is the reference for the temp table that PARTITION_BY materializes.
+        assertMemoryLeak(() -> {
+            ParquetTestUtils.createTableWithParquetSettingPerType(engine, sqlExecutionContext, "ty");
+            copyToParquet("COPY ty TO 'ty_reference' WITH FORMAT PARQUET");
+            copyToParquet("COPY (SELECT * FROM ty) TO 'ty_temp_table' WITH FORMAT PARQUET PARTITION_BY YEAR");
+
+            final String parquetPath = parquetPath("ty_temp_table");
+            final FilesFacade ff = configuration.getFilesFacade();
+            assertParquetMatchesQuery("SELECT * FROM ty", parquetPath);
+            ParquetTestUtils.assertColumnsUseParquetSettingPerType(parquetPath, ff);
+            ParquetTestUtils.assertColumnEncodingsMatch(parquetPath("ty_reference"), parquetPath, ff);
+
+            // An export writes bloom filters for the columns BLOOM_FILTER_COLUMNS names, as the streaming paths do,
+            // and ignores the BLOOM_FILTER setting of bf.
+            assertBloomFilterOnBf(parquetPath, false);
+            copyToParquet("COPY (SELECT * FROM ty) TO 'ty_bloom_filter' WITH FORMAT PARQUET PARTITION_BY YEAR BLOOM_FILTER_COLUMNS 'bf'");
+            assertBloomFilterOnBf(parquetPath("ty_bloom_filter"), true);
+        });
+    }
+
+    @Test
+    public void testCopyParquetExportTempTableQueryShapesKeepParquetEncodings() throws Exception {
+        assertMemoryLeak(() -> {
+            createTableWithParquetSettingsAndConvertedColumn("converted", true, ConvertedColumnExportSource.VIEW_CREATED_AFTER_TYPE_CHANGE);
+            bindVariableService.clear();
+            bindVariableService.setTimestamp(0, 1_704_153_600_000_000L); // 2024-01-02T00:00:00Z
+
+            // A column the select passes through keeps its setting under any name, and a computed one takes its
+            // type's default. A query over the retyped column reaches the temp table without PARTITION_BY, but a
+            // join does not see the retyped column, so PARTITION_BY routes it there.
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT metric AS m, ts FROM converted_v", "", "alias", true);
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT metric + 1 AS mp, ts FROM converted_v", "", "computed", false);
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT * FROM (SELECT * FROM converted_v)", "", "subquery", true);
+            assertCopyThroughTempTableEncodesFirstColumn("WITH w AS (SELECT * FROM converted_v) SELECT * FROM w", "", "cte", true);
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT converted_v.* FROM converted_v CROSS JOIN long_sequence(1)", " PARTITION_BY YEAR", "cross_join", true);
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT * FROM converted_v ORDER BY ts DESC LIMIT 5", "", "order_by_desc_limit", true);
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT * FROM converted_v LIMIT -3", "", "negative_limit", true);
+            assertCopyThroughTempTableEncodesFirstColumn("SELECT * FROM converted_v WHERE ts >= $1", "", "bind_variable", true);
+
+            // The select metadata decides which columns of these shapes carry a setting, and the streaming paths
+            // read the same metadata, so the export of the same query that streams is the oracle. The set
+            // operations do not see the retyped column, so PARTITION_BY routes them to the temp table.
+            createTableWithParquetSettings("streamed");
+            assertCopyThroughTempTableEncodesLikeStreaming("SELECT metric, count() FROM %s ORDER BY metric", "", "group_by");
+            assertCopyThroughTempTableEncodesLikeStreaming("SELECT ts, last(metric) lm, sum(total) st FROM %s SAMPLE BY 1d", "", "sample_by");
+            assertCopyThroughTempTableEncodesLikeStreaming("SELECT * FROM %s LATEST ON ts PARTITION BY metric", "", "latest_on");
+            assertCopyThroughTempTableEncodesLikeStreaming("SELECT metric, total, ts, row_number() OVER (PARTITION BY metric ORDER BY ts) rn FROM %s", "", "window");
+            assertCopyThroughTempTableEncodesLikeStreaming(
+                    "SELECT * FROM (SELECT * FROM %s WHERE ts < '2024-01-02' UNION ALL SELECT * FROM %s WHERE ts >= '2024-01-02') TIMESTAMP(ts)",
+                    " PARTITION_BY YEAR",
+                    "union_all"
+            );
+            assertCopyThroughTempTableEncodesLikeStreaming("SELECT * FROM %s INTERSECT SELECT * FROM %s WHERE ts >= '2024-01-02'", " PARTITION_BY YEAR", "intersect");
+            assertCopyThroughTempTableEncodesLikeStreaming("SELECT * FROM %s EXCEPT SELECT * FROM %s WHERE ts < '2024-01-02'", " PARTITION_BY YEAR", "except");
+        });
     }
 
     @Test
@@ -4510,6 +4822,28 @@ public class CopyExportTest extends AbstractCairoTest {
         testCopyExport(statement, test, true, 1);
     }
 
+    // bf holds 0 and 2, so its min and max cannot rule out bf = 1, and only a bloom filter lets read_parquet() skip
+    // the row group.
+    private void assertBloomFilterOnBf(String parquetPath, boolean hasBloomFilter) throws Exception {
+        ParquetRowGroupFilter.resetRowGroupsSkipped();
+        assertQuery("SELECT bf FROM read_parquet('" + parquetPath + "') WHERE bf = 1")
+                .noLeakCheck()
+                .returns("bf\n");
+        if (hasBloomFilter) {
+            Assert.assertTrue("a bloom filter on bf must skip the row group", ParquetRowGroupFilter.getRowGroupsSkipped() > 0);
+        } else {
+            Assert.assertEquals("no bloom filter on bf, no row group to skip", 0, ParquetRowGroupFilter.getRowGroupsSkipped());
+        }
+    }
+
+    private void assertCompositeExportKeepsParquetSetting(String exportDirName) throws Exception {
+        for (String day : new String[]{"2024-01-01", "2024-01-03"}) {
+            final String parquetPath = exportRoot + File.separator + exportDirName + File.separator + day + ".parquet";
+            assertParquetMatchesQuery("SELECT * FROM \"src ct\" WHERE ts IN '" + day + "'", parquetPath);
+            ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath, configuration.getFilesFacade(), 0);
+        }
+    }
+
     private void assertCopyOfFusedJoinGroupByAfterBuildTableGrowth(
             String keyType,
             String keyExpr,
@@ -4562,8 +4896,65 @@ public class CopyExportTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
+    // The first column of the query passes metric of the converted_v view through, or computes from it.
+    private void assertCopyThroughTempTableEncodesFirstColumn(
+            String query,
+            String copyOptions,
+            String fileName,
+            boolean isDictionaryEncodingExpected
+    ) throws Exception {
+        if (copyOptions.isEmpty()) {
+            assertExportMode(query, ParquetExportMode.TEMP_TABLE);
+        }
+        copyToParquet("COPY (" + query + ") TO '" + fileName + "' WITH FORMAT PARQUET" + copyOptions);
+        final String parquetPath = parquetPath(fileName);
+        assertParquetMatchesQuery(query, parquetPath);
+        if (isDictionaryEncodingExpected) {
+            ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath, configuration.getFilesFacade(), 0);
+        } else {
+            ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath, configuration.getFilesFacade(), 0);
+        }
+    }
+
+    /**
+     * Exports the query with %s naming the converted_v view through a temp table, and the query with %s naming the
+     * streamed_v view, whose table has the same settings and rows but neither a Parquet partition nor a retype, on a
+     * streaming path. Both files must encode their columns alike.
+     */
+    private void assertCopyThroughTempTableEncodesLikeStreaming(String queryTemplate, String copyOptions, String fileName) throws Exception {
+        final String query = queryTemplate.replace("%s", "converted_v");
+        final String streamedQuery = queryTemplate.replace("%s", "streamed_v");
+        if (copyOptions.isEmpty()) {
+            assertExportMode(query, ParquetExportMode.TEMP_TABLE);
+        }
+        try (RecordCursorFactory factory = select(streamedQuery)) {
+            Assert.assertNotEquals(
+                    streamedQuery,
+                    ParquetExportMode.TEMP_TABLE,
+                    ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext)
+            );
+        }
+        copyToParquet("COPY (" + query + ") TO '" + fileName + "' WITH FORMAT PARQUET" + copyOptions);
+        copyToParquet("COPY (" + streamedQuery + ") TO '" + fileName + "_streamed' WITH FORMAT PARQUET");
+        assertParquetMatchesQuery(query, parquetPath(fileName));
+        ParquetTestUtils.assertColumnEncodingsMatch(parquetPath(fileName + "_streamed"), parquetPath(fileName), configuration.getFilesFacade());
+    }
+
     private void assertEventually(TestUtils.EventualCode assertion) throws Exception {
         TestUtils.assertEventually(assertion, 5, exceptionTypesToCatch);
+    }
+
+    private void assertExportFinished() throws Exception {
+        assertQuery("SELECT status FROM \"" + configuration.getSystemTableNamePrefix() + "copy_export_log\" LIMIT -1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("status\nfinished\n");
+    }
+
+    private void assertExportMode(String query, ParquetExportMode expectedMode) throws Exception {
+        try (RecordCursorFactory factory = select(query)) {
+            Assert.assertEquals(query, expectedMode, ParquetExportMode.determineExportMode(factory, false, sqlExecutionContext));
+        }
     }
 
     private void assertParquetExportOfConvertedColumn(String srcType, String srcValueExpr, String dstType, String expectedReadback) throws Exception {
@@ -4653,6 +5044,26 @@ public class CopyExportTest extends AbstractCairoTest {
         testCopyExport(stmt, test);
     }
 
+    // metric, c and total are the first three columns of an export of a table that createTableWithParquetSettings*()
+    // creates.
+    private void assertParquetSettingsKept(String parquetPath) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        ParquetTestUtils.assertColumnsUseDictionaryEncoding(parquetPath, ff, 0);
+        ParquetTestUtils.assertColumnsUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 2);
+        // c has no setting, so it keeps the LONG default, PLAIN
+        ParquetTestUtils.assertColumnsDoNotUseDictionaryEncoding(parquetPath, ff, 1);
+        ParquetTestUtils.assertColumnsDoNotUseEncoding(parquetPath, ff, ParquetEncoding.ENCODING_DELTA_BINARY_PACKED, 1);
+    }
+
+    // Runs the COPY on this thread to its end.
+    private void copyToParquet(String copySql) throws Exception {
+        runAndFetchCopyExportID(copySql, sqlExecutionContext);
+        try (CopyExportRequestJob job = new CopyExportRequestJob(engine)) {
+            Assert.assertTrue("the queued export must be picked up", job.run());
+        }
+        assertExportFinished();
+    }
+
     /**
      * A table {@code src}, which an unquoted {@code src ct} select text resolves to - the export that takes
      * that text reports success over THIS table's rows. Its columns differ from {@code "src ct"}'s, so the
@@ -4668,6 +5079,49 @@ public class CopyExportTest extends AbstractCairoTest {
         createDecoyTable();
         createTableNeedingQuotes();
         makeFirstPartitionComposite();
+    }
+
+    /**
+     * Creates the table {@code tableName}, and the view {@code <tableName>_v} over it, with the columns, PARQUET(...)
+     * settings and rows of {@link #createTableWithParquetSettingsAndConvertedColumn} but without a Parquet partition
+     * or a retype, so that its exports without PARTITION_BY stream.
+     */
+    private void createTableWithParquetSettings(String tableName) throws Exception {
+        execute("CREATE TABLE " + tableName + " (metric INT PARQUET(RLE_DICTIONARY), c LONG, total LONG PARQUET(DELTA_BINARY_PACKED, ZSTD(3)), ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO " + tableName + " VALUES " + PARQUET_SETTINGS_TABLE_ROWS);
+        drainWalQueue();
+        execute("CREATE VIEW " + tableName + "_v AS (SELECT * FROM " + tableName + ")");
+        drainWalAndViewQueues();
+    }
+
+    /**
+     * Creates the table {@code tableName} with PARQUET(...) settings on metric and total, converts its first day to
+     * Parquet and retypes c from INT to LONG after that. The Parquet partition then holds a lazily converted column,
+     * so that an export of the table, or of the view {@code <tableName>_v} that {@code source} asks for,
+     * materializes through a temp table.
+     */
+    private void createTableWithParquetSettingsAndConvertedColumn(
+            String tableName,
+            boolean isWal,
+            ConvertedColumnExportSource source
+    ) throws Exception {
+        execute("CREATE TABLE " + tableName + " (metric INT PARQUET(RLE_DICTIONARY), c INT, total LONG PARQUET(DELTA_BINARY_PACKED, ZSTD(3)), ts TIMESTAMP)" +
+                " TIMESTAMP(ts) PARTITION BY DAY " + (isWal ? "WAL" : "BYPASS WAL"));
+        execute("INSERT INTO " + tableName + " VALUES " + PARQUET_SETTINGS_TABLE_ROWS);
+        drainWalQueue();
+        if (source == ConvertedColumnExportSource.VIEW_CREATED_BEFORE_TYPE_CHANGE) {
+            execute("CREATE VIEW " + tableName + "_v AS (SELECT * FROM " + tableName + ")");
+            drainWalAndViewQueues();
+        }
+        execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+        drainWalQueue();
+        execute("ALTER TABLE " + tableName + " ALTER COLUMN c TYPE LONG");
+        drainWalAndViewQueues();
+        if (source == ConvertedColumnExportSource.VIEW_CREATED_AFTER_TYPE_CHANGE) {
+            execute("CREATE VIEW " + tableName + "_v AS (SELECT * FROM " + tableName + ")");
+            drainWalAndViewQueues();
+        }
     }
 
     private void createTableNeedingQuotes() throws Exception {
@@ -4697,6 +5151,17 @@ public class CopyExportTest extends AbstractCairoTest {
         TestUtils.printSql(engine, sqlExecutionContext, query, expectedSink);
         TestUtils.printSql(engine, sqlExecutionContext, "SELECT * FROM read_parquet('" + parquetPath + "')", actualSink);
         TestUtils.assertEquals(expectedSink, actualSink);
+    }
+
+    private long parquetFileSize(String fileName) {
+        try (Path path = new Path()) {
+            path.of(parquetPath(fileName)).$();
+            return configuration.getFilesFacade().length(path.$());
+        }
+    }
+
+    private String parquetPath(String fileName) {
+        return exportRoot + File.separator + fileName + ".parquet";
     }
 
     private boolean exportFileExists(String fileName) {

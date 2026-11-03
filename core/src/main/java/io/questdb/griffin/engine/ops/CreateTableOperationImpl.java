@@ -764,7 +764,12 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 indexType = IndexType.NONE;
                 isDedupKey = false;
                 indexBlockCapacity = 0;
-                parquetEncodingConfig = 0;
+                // A Parquet export encodes its temp table, so the table keeps the PARQUET(...) config the select
+                // carries for each column, which the streaming export paths apply too. A user's CREATE TABLE AS
+                // SELECT starts every column from the defaults.
+                parquetEncodingConfig = tableKind == TableUtils.TABLE_KIND_TEMP_PARQUET_EXPORT
+                        ? metadata.getColumnMetadata(i).getParquetEncodingConfig()
+                        : 0;
             }
 
             if (!ColumnType.isSymbol(columnType) && IndexType.isIndexed(indexType)) {
