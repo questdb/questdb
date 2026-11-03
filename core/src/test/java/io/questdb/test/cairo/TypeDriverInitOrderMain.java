@@ -31,21 +31,27 @@ import io.questdb.cairo.IntTypeDriver;
 /**
  * Entry point for {@code TypeDriverTest.testClassInitOrder}: a fresh JVM initialises the
  * type classes in the order given by the arguments, then checks that they agree. Exit code 0
- * means they do; any other output or exit code is the failure message.
+ * means they do; any other output or exit code is the failure message. The steps other than
+ * {@code tag}, {@code leaf} and {@code type} are {@link TypeDriverConcurrentInitMain}'s starts,
+ * and an argument {@code lookups=<hash>} is checked as there.
  */
 public final class TypeDriverInitOrderMain {
 
     private TypeDriverInitOrderMain() {
     }
 
-    public static void main(String[] args) throws Exception {
+    public static void main(String[] args) {
+        String expectedLookups = null;
         for (String step : args) {
+            if (step.startsWith(TypeDriverConcurrentInitMain.LOOKUPS_ARG)) {
+                expectedLookups = step.substring(TypeDriverConcurrentInitMain.LOOKUPS_ARG.length());
+                continue;
+            }
             switch (step) {
                 case "tag" -> ColumnTypeTag.of(5);
                 case "leaf" -> IntTypeDriver.INSTANCE.getMovement();
-                case "drivers" -> Class.forName("io.questdb.cairo.TypeDrivers");
                 case "type" -> ColumnType.nameOf(5);
-                default -> throw new IllegalArgumentException(step);
+                default -> TypeDriverConcurrentInitMain.touch(step);
             }
         }
         check(ColumnTypeTag.of(ColumnType.INT) == ColumnTypeTag.INT, "tag lookup");
@@ -53,6 +59,7 @@ public final class TypeDriverInitOrderMain {
         check(ColumnType.getTypeDriver(ColumnType.INT) == IntTypeDriver.INSTANCE, "int driver");
         check(ColumnType.getTypeDriver(ColumnType.VARCHAR) == ColumnType.getDriver(ColumnType.VARCHAR), "varchar driver");
         check(ColumnType.getTypeDriver(ColumnType.TIMESTAMP_NANO).getTag() == ColumnTypeTag.TIMESTAMP, "encoded type");
+        TypeDriverConcurrentInitMain.checkLookups(expectedLookups);
         System.out.println("OK " + String.join(",", args));
     }
 

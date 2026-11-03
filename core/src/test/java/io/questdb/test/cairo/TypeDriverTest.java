@@ -121,6 +121,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.List;
@@ -136,26 +137,37 @@ public class TypeDriverTest {
     );
     @Rule
     public TemporaryFolder temp = new TemporaryFolder();
+    private int freshJvmRuns;
 
     @Test
     public void testClassInitOrder() throws Exception {
-        // ColumnTypeTag, the leaves, TypeDrivers and ColumnType must agree whichever initialises first
+        // ColumnTypeTag, the leaves, the type drivers, ColumnType and the tables filled on first use
+        // must agree whichever initialises first
         final String[][] orders = {
                 {"type", "tag", "drivers", "leaf"},
                 {"leaf", "type", "tag", "drivers"},
                 {"drivers", "leaf", "tag", "type"},
                 {"tag", "leaf", "drivers", "type"},
+                // each table filled on first use, first
+                {"relations", "type", "tag", "leaf", "drivers"},
+                {"opcodes", "type", "tag", "leaf", "drivers"},
+                {"kinds", "type", "tag", "leaf", "drivers"},
+                // a type driver first, then the tables
+                {"driver:DECIMAL64", "relations", "opcodes", "kinds"},
+                {"driver:ARRAY", "kinds", "opcodes", "relations"},
         };
+        final String lookups = lookupsArg();
         for (String[] order : orders) {
-            runInFreshJvm(TypeDriverInitOrderMain.class, order);
+            runInFreshJvm(TypeDriverInitOrderMain.class, withArg(order, lookups));
         }
     }
 
     @Test
     public void testConcurrentClassInit() throws Exception {
         // several threads start first use at different ends at once: ColumnType, ColumnTypeTag,
-        // TypeDrivers, a plain leaf and ArrayTypeDriver, whose static initialiser calls back into
-        // ColumnType; a class-initialisation cycle would deadlock and time out
+        // every type driver through the lookup by tag, a plain leaf and ArrayTypeDriver, whose
+        // static initialiser calls back into ColumnType; a class-initialisation cycle would
+        // deadlock and time out
         final String[][] starts = {
                 {"type", "tag", "drivers", "leaf", "array"},
                 {"array", "leaf", "drivers", "tag", "type"},
@@ -163,8 +175,22 @@ public class TypeDriverTest {
                 {"tag", "leaf", "array", "type", "drivers"},
                 {"type", "array", "type", "array", "drivers", "leaf"},
         };
+        final String lookups = lookupsArg();
         for (String[] start : starts) {
-            runInFreshJvm(TypeDriverConcurrentInitMain.class, start);
+            runInFreshJvm(TypeDriverConcurrentInitMain.class, withArg(start, lookups));
+        }
+        // each table filled on first use starts at once with the first use of every type driver:
+        // the fill reads every driver, so a driver whose static initialiser reads the table
+        // deadlocks against it, in most runs rather than all, hence three runs per table
+        final List<String> drivers = TypeDriverConcurrentInitMain.driverStarts();
+        for (String table : new String[]{"relations", "opcodes", "kinds"}) {
+            final List<String> args = new ArrayList<>();
+            args.add(table);
+            args.addAll(drivers);
+            args.add(lookups);
+            for (int run = 0; run < 3; run++) {
+                runInFreshJvm(TypeDriverConcurrentInitMain.class, args.toArray(new String[0]));
+            }
         }
     }
 
@@ -1297,6 +1323,17 @@ public class TypeDriverTest {
         return mismatches.toString();
     }
 
+    // the hash of the tables filled on first use, as this JVM's normal start fills them
+    private static String lookupsArg() {
+        return TypeDriverConcurrentInitMain.LOOKUPS_ARG + TypeDriverConcurrentInitMain.hashOf(TypeDriverConcurrentInitMain.lookups());
+    }
+
+    private static String[] withArg(String[] args, String arg) {
+        final String[] all = Arrays.copyOf(args, args.length + 1);
+        all[args.length] = arg;
+        return all;
+    }
+
     private void runInFreshJvm(Class<?> mainClass, String[] args) throws Exception {
         File javaExecutable = new File(new File(System.getProperty("java.home"), "bin"), "java");
         if (!javaExecutable.exists()) {
@@ -1307,7 +1344,7 @@ public class TypeDriverTest {
         ) + File.pathSeparator + Paths.get(
                 ColumnType.class.getProtectionDomain().getCodeSource().getLocation().toURI()
         );
-        final File outputFile = temp.newFile(mainClass.getSimpleName() + "-" + String.join("-", args) + ".out");
+        final File outputFile = temp.newFile(mainClass.getSimpleName() + "-" + (++freshJvmRuns) + ".out");
         final List<String> command = new ArrayList<>();
         command.add(javaExecutable.getAbsolutePath());
         command.add("-ea");
