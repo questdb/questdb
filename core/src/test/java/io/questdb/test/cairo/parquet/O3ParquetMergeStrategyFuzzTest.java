@@ -44,6 +44,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
+
 import static io.questdb.std.datetime.microtime.Micros.DAY_MICROS;
 
 /**
@@ -63,6 +65,7 @@ import static io.questdb.std.datetime.microtime.Micros.DAY_MICROS;
  * it back to Parquet after every round, so every round starts on Parquet.
  */
 public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
+    private static final int MAX_ADDED_IO_FAILURE_ROUNDS = 10;
 
     @Test
     public void testMultiRoundO3OnAllParquetPartitions() throws Exception {
@@ -119,28 +122,24 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testO3MergeWithIoFailures() throws Exception {
-        Rnd rnd = generateRandom(LOG);
+        runO3MergeWithIoFailures(Integer.MAX_VALUE, MAX_ADDED_IO_FAILURE_ROUNDS);
+    }
 
-        // Data-only fuzz: no schema changes, drops, or truncations.
-        setFuzzProbabilities(
-                0,      // cancelRow
-                0,      // notSet
-                0,      // null
-                0,      // rollback
-                0,      // colAdd
-                0,      // colRemove
-                0,      // colRename
-                0,      // colTypeChange
-                1.0,    // dataAdd
-                0.5,    // equalTs
-                0,      // partitionDrop
-                0,      // truncate
-                0,      // tableDrop
-                0,      // setTtl
-                0.3,    // replace: may delete initial and earlier-round rows (see class javadoc)
-                0       // symbolAccess
-        );
-        runMultiRoundFuzz(rnd, true, true);
+    @Test
+    public void testO3MergeWithIoFailuresInAddedRounds() throws Exception {
+        // Round 0 is the only drawn round and only measures, so every failure fires in a round
+        // that the run adds.
+        runO3MergeWithIoFailures(1, MAX_ADDED_IO_FAILURE_ROUNDS);
+    }
+
+    @Test
+    public void testO3MergeWithIoFailuresStopsAtMaxAddedRounds() throws Exception {
+        // No added round is allowed, so the run stops after round 0, which only measures, and
+        // fails the assertion that a failure fired.
+        final AssertionError e = Assert.assertThrows(AssertionError.class, () -> runO3MergeWithIoFailures(1, 0));
+        Assert.assertEquals("no IO failure fired on WAL apply", e.getMessage());
+        // assertMemoryLeak attaches a leak it finds after a failure to the failure as suppressed
+        Assert.assertEquals("[]", Arrays.toString(e.getSuppressed()));
     }
 
     @Test
@@ -489,13 +488,26 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    private void runMultiRoundFuzz(Rnd rnd, boolean hasSentinel, boolean hasWalIoFailures) throws Exception {
+        runMultiRoundFuzz(rnd, hasSentinel, hasWalIoFailures, Integer.MAX_VALUE, MAX_ADDED_IO_FAILURE_ROUNDS);
+    }
+
     /**
      * Applies the same random rounds of O3 and replace commits on 2022-02-24 to a WAL table,
      * where that day is Parquet, and to a non-WAL oracle. With hasSentinel, rows on 2022-02-26
-     * keep 2022-02-24 from being the last partition. With hasWalIoFailures, the WAL apply of
-     * every round after the first fails at a random file system call, then resumes.
+     * keep 2022-02-24 from being the last partition. The run draws its round count and caps it
+     * at maxDrawnRounds. With hasWalIoFailures, the first round measures its WAL apply, and the
+     * WAL apply of every later round fails at a random file system call when it reaches that
+     * call, then resumes. While no failure has fired, the run adds up to maxAddedIoFailureRounds
+     * rounds after the drawn ones.
      */
-    private void runMultiRoundFuzz(Rnd rnd, boolean hasSentinel, boolean hasWalIoFailures) throws Exception {
+    private void runMultiRoundFuzz(
+            Rnd rnd,
+            boolean hasSentinel,
+            boolean hasWalIoFailures,
+            int maxDrawnRounds,
+            int maxAddedIoFailureRounds
+    ) throws Exception {
         // Randomize the row group size so the test is likely to produce
         // multiple row groups across runs.
         int rowGroupSize = 500 + rnd.nextInt(2000);
@@ -565,6 +577,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
 
             // fewer rounds on slow CI runners (Mac, Windows)
             int rounds = Os.isLinux() ? 3 + rnd.nextInt(8) : 3 + rnd.nextInt(2);
+            rounds = Math.min(rounds, maxDrawnRounds);
             LOG.info()
                     .$("starting fuzz: initialRowCount=").$(initialRowCount)
                     .$(", rounds=").$(rounds)
@@ -580,10 +593,18 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             final O3ParquetPathCounts counts = new O3ParquetPathCounts();
             int reconversions = 0;
             int parquetRounds = 0;
-            // The most file system calls a round's WAL apply made: the next failure fires at
-            // a call drawn from the first half of that, so it almost always fires.
+            // The most and the fewest file system calls a round's WAL apply made. A drawn round
+            // fails at a call from the first half of the most, which a smaller apply may never
+            // reach: a round whose last commit replaces the whole day makes about 20 calls, one
+            // that rebuilds the partition natively 1000+. So while no failure has fired, the run
+            // adds rounds that fail at a call within the fewest. Every earlier round missed, so
+            // each count is a whole apply, and an added round misses only when its apply is
+            // smaller than all of them.
             long walApplyCallsMax = 0;
-            for (int round = 0; round < rounds; round++) {
+            long walApplyCallsMin = Long.MAX_VALUE;
+            int addedRounds = 0;
+            final int maxRounds = hasWalIoFailures ? rounds + maxAddedIoFailureRounds : rounds;
+            for (int round = 0; round < rounds || (round < maxRounds && fuzzer.getIoFailuresObserved() == 0); round++) {
                 // A replace can remove every row of the day and leave no partition to convert
                 // back, so the next round's rows build a native partition instead.
                 if (isParquetPartition(walTable, partitionTs)) {
@@ -645,10 +666,18 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     // Apply to WAL table (writes via WalWriter, then drains WAL queue
                     // which triggers O3 merge with the Parquet partition).
                     if (hasWalIoFailures) {
-                        final int failAfterCalls = walApplyCallsMax == 0
-                                ? Integer.MAX_VALUE // first round: measure only
-                                : 1 + rnd.nextInt((int) Math.min(Integer.MAX_VALUE - 1, Math.max(1, walApplyCallsMax / 2)));
-                        walApplyCallsMax = Math.max(walApplyCallsMax, fuzzer.applyWalWithIoFailure(transactions, walTable, rnd, failAfterCalls));
+                        final int failAfterCalls;
+                        if (walApplyCallsMax == 0) {
+                            failAfterCalls = Integer.MAX_VALUE; // first round: measure only
+                        } else if (round < rounds) {
+                            failAfterCalls = 1 + rnd.nextInt((int) Math.min(Integer.MAX_VALUE - 1, Math.max(1, walApplyCallsMax / 2)));
+                        } else {
+                            addedRounds++;
+                            failAfterCalls = 1 + rnd.nextInt((int) Math.min(Integer.MAX_VALUE - 1, Math.max(1, walApplyCallsMin)));
+                        }
+                        final long calls = fuzzer.applyWalWithIoFailure(transactions, walTable, rnd, failAfterCalls);
+                        walApplyCallsMax = Math.max(walApplyCallsMax, calls);
+                        walApplyCallsMin = Math.min(walApplyCallsMin, calls);
                     } else {
                         fuzzer.applyWal(transactions, walTable, 1, rnd);
                     }
@@ -665,6 +694,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             counts.log(LOG, getTestName());
             LOG.info().$("parquet partition re-conversions: ").$(reconversions)
                     .$(", walIoFailures=").$(fuzzer.getIoFailuresObserved())
+                    .$(", addedRounds=").$(addedRounds)
                     .$();
             // Every round that starts with 2022-02-24 in Parquet writes into it. That takes at
             // least one parquet O3 task: a write, a replace no-op or a replace that removes it.
@@ -689,5 +719,30 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             assertRowGroupSizes(walTable, rowGroupSize);
             assertParquetMetaInvariants(walTable);
         });
+    }
+
+    private void runO3MergeWithIoFailures(int maxDrawnRounds, int maxAddedIoFailureRounds) throws Exception {
+        Rnd rnd = generateRandom(LOG);
+
+        // Data-only fuzz: no schema changes, drops, or truncations.
+        setFuzzProbabilities(
+                0,      // cancelRow
+                0,      // notSet
+                0,      // null
+                0,      // rollback
+                0,      // colAdd
+                0,      // colRemove
+                0,      // colRename
+                0,      // colTypeChange
+                1.0,    // dataAdd
+                0.5,    // equalTs
+                0,      // partitionDrop
+                0,      // truncate
+                0,      // tableDrop
+                0,      // setTtl
+                0.3,    // replace: may delete initial and earlier-round rows (see class javadoc)
+                0       // symbolAccess
+        );
+        runMultiRoundFuzz(rnd, true, true, maxDrawnRounds, maxAddedIoFailureRounds);
     }
 }
