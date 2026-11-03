@@ -260,9 +260,9 @@ final class ScanFactoryGenerator {
         return frames;
     }
 
-    private static int requestedDirection(ScanPlan scan) {
+    private static SortDirection requestedDirection(ScanPlan scan) {
         final SortKeys requestedOrder = scan.getRequestedOrder();
-        return SqlCodeGenerator.queryModelDirection(requestedOrder.isEmpty() ? SortDirection.ASCENDING : requestedOrder.getDirections().getQuick(0));
+        return requestedOrder.isEmpty() ? SortDirection.ASCENDING : requestedOrder.getDirections().getQuick(0);
     }
 
     private static Record.CharSequenceFunction subqueryKeyGetter(int type) {
@@ -1019,7 +1019,7 @@ final class ScanFactoryGenerator {
             int keyIndex,
             @Nullable Function filter,
             ScanPlan.IndexOrder indexOrder,
-            int orderDirection,
+            SortDirection orderDirection,
             int indexDirection,
             IntList columnIndexes,
             IntList columnSizeShifts,

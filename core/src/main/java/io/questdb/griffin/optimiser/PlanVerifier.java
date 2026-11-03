@@ -846,7 +846,7 @@ public final class PlanVerifier {
         final JoinKind type = step.getJoinType();
         if (type == JoinKind.OUTER_CROSS) {
             final JoinKind outerType = position > 0 ? steps.getQuick(position - 1).getJoinType() : null;
-            if (outerType != JoinKind.RIGHT_OUTER && outerType != JoinKind.FULL_OUTER || step.getKeys().size() > 0
+            if (outerType != JoinKind.RIGHT_OUTER && outerType != JoinKind.FULL_OUTER || step.isKeyed()
                     || step.getOnResidual() != null) {
                 fail(JOIN_OUTER_CROSS);
             }

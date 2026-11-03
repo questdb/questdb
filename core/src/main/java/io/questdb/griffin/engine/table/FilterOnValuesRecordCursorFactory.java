@@ -35,8 +35,8 @@ import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -54,7 +54,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     private final int[] cursorFactoriesIdx;
     private final boolean followedOrderByAdvice;
     private final boolean isTableOrder;
-    private final int orderDirection;
+    private final SortDirection orderDirection;
     private PageFrameRecordCursorImpl cursor;
     private ObjList<FunctionBasedRowCursorFactory> cursorFactories;
     private Function filter;
@@ -67,7 +67,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
             int columnIndex,
             @Nullable Function filter,
             @NotNull ScanPlan.IndexOrder indexOrder,
-            int orderDirection,
+            SortDirection orderDirection,
             int indexDirection,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts
@@ -128,7 +128,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnValues");
         if (!isTableOrder) { // sorting symbols makes no sense for a table-order scan
-            sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
+            sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == SortDirection.ASCENDING ? "asc" : "desc");
         }
         sink.child(cursor.getRowCursorFactory());
         sink.child(partitionFrameCursorFactory);
@@ -219,7 +219,7 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
 
         // sort values to facilitate duplicate removal (even for heap row cursor)
         // sorting here can produce order of cursorFactories different from one shown by explain command       
-        if (followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING) {
+        if (followedOrderByAdvice && orderDirection == SortDirection.ASCENDING) {
             cursorFactories.sort(COMPARATOR);
         } else {
             cursorFactories.sort(COMPARATOR_DESC);

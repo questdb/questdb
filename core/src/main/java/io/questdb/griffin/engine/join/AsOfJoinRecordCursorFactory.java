@@ -78,13 +78,13 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             int columnSplit,
             RecordValueSink slaveValueSink,
             IntList columnIndex, // this column index will be used to retrieve symbol tables from underlying slave
-            Plannable joinContext,
+            Plannable joinCondition,
             ColumnFilter masterTableKeyColumns,
             long toleranceInterval,
             int slaveValueTimestampIndex,
             @Nullable Function keyCheck
     ) {
-        super(metadata, joinContext, masterFactory, slaveFactory);
+        super(metadata, joinCondition, masterFactory, slaveFactory);
         Map joinKeyMapA = null;
         Map joinKeyMapB = null;
         boolean isCursorOwningMaps = false;
@@ -163,7 +163,7 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join");
-        sink.attr("condition").val(joinContext);
+        sink.attr("condition").val(joinCondition);
         sink.optAttr("keyCheck", keyCheck, masterFactory);
         sink.child(masterFactory);
         sink.child(slaveFactory);

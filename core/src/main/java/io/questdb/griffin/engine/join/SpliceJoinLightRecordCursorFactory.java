@@ -79,9 +79,9 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
             RecordSink masterSink,
             RecordSink slaveSink,
             int columnSplit,
-            Plannable joinContext
+            Plannable joinCondition
     ) {
-        super(metadata, joinContext, masterFactory, slaveFactory);
+        super(metadata, joinCondition, masterFactory, slaveFactory);
         Map joinKeyMap = null;
         try {
             this.masterKeySink = masterSink;
@@ -147,7 +147,7 @@ public class SpliceJoinLightRecordCursorFactory extends AbstractJoinRecordCursor
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Splice Join");
-        sink.optAttr("condition", joinContext);
+        sink.optAttr("condition", joinCondition);
         sink.child(masterFactory);
         sink.child(slaveFactory);
     }

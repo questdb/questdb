@@ -908,7 +908,7 @@ final class ScalarCompensation implements Mutable {
         if (!(input.getInput() instanceof ProjectPlan project) || !(project.getChild() instanceof AggregatePlan aggregate)
                 || !isImplicitlyKeyedByOuterColumns(aggregate) || input.getPostJoinFilter() != null
                 || input.getJoinType() != JoinKind.CROSS && (input.getJoinType() != JoinKind.INNER && input.getJoinType() != JoinKind.LEFT_OUTER
-                || input.getKeys().size() > 0 || !isTrue(input.getOnResidual()))) {
+                || input.isKeyed() || !isTrue(input.getOnResidual()))) {
             return null;
         }
         boolean hasCount = false;

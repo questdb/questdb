@@ -67,11 +67,11 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             RecordSink slaveKeySink,
             RecordSink slaveChainSink,
             int columnSplit,
-            Plannable joinContext,
+            Plannable joinCondition,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
-        super(metadata, joinContext, masterFactory, slaveFactory);
+        super(metadata, joinCondition, masterFactory, slaveFactory);
         Map joinKeyMap = null;
         RecordChain slaveChain = null;
         try {
@@ -140,7 +140,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Hash Join");
-        sink.attr("condition").val(joinContext);
+        sink.attr("condition").val(joinCondition);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }

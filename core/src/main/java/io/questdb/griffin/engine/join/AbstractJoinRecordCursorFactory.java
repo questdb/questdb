@@ -34,13 +34,13 @@ import java.util.function.UnaryOperator;
 
 public abstract class AbstractJoinRecordCursorFactory extends AbstractRecordCursorFactory {
 
-    protected final Plannable joinContext;
+    protected final Plannable joinCondition;
     protected RecordCursorFactory masterFactory;
     protected RecordCursorFactory slaveFactory;
 
-    public AbstractJoinRecordCursorFactory(RecordMetadata metadata, Plannable joinContext, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
+    public AbstractJoinRecordCursorFactory(RecordMetadata metadata, Plannable joinCondition, RecordCursorFactory masterFactory, RecordCursorFactory slaveFactory) {
         super(metadata);
-        this.joinContext = joinContext;
+        this.joinCondition = joinCondition;
         this.masterFactory = masterFactory;
         this.slaveFactory = slaveFactory;
     }

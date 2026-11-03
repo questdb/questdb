@@ -60,6 +60,13 @@ public class QueryColumn implements Mutable, Sinkable {
         return aliasPosition;
     }
 
+    /**
+     * True when the parser made up the column's alias, which the query does not spell.
+     */
+    public boolean isAliasSynthesized() {
+        return aliasPosition == SYNTHESIZED_ALIAS_POSITION;
+    }
+
     public ExpressionNode getAst() {
         return ast;
     }

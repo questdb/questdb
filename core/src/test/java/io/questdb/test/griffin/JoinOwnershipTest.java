@@ -39,8 +39,8 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredRecordCursorFactory;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -89,10 +89,10 @@ public class JoinOwnershipTest {
             // The configuration throws before either constructor uses its record sinks.
             if (factoryKind == 1) {
                 new HashOuterJoinFilteredLightRecordCursorFactory(configuration, metadata, master, slave,
-                        keyTypes, valueTypes, null, null, 1, filter, null, QueryModel.JOIN_LEFT_OUTER, null, null, JoinInput.NullExtension.BY_KEYS, null, null, null);
+                        keyTypes, valueTypes, null, null, 1, filter, null, JoinKind.LEFT_OUTER, null, null, JoinInput.NullExtension.BY_KEYS, null, null, null);
             } else {
                 new HashOuterJoinFilteredRecordCursorFactory(configuration, metadata, master, slave,
-                        keyTypes, valueTypes, null, null, null, 1, filter, null, QueryModel.JOIN_LEFT_OUTER, null, null, JoinInput.NullExtension.BY_KEYS, null, null);
+                        keyTypes, valueTypes, null, null, null, 1, filter, null, JoinKind.LEFT_OUTER, null, null, JoinInput.NullExtension.BY_KEYS, null, null);
             }
         });
         Assert.assertSame(failure, actual);

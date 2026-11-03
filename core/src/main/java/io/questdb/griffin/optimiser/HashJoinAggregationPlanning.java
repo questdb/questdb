@@ -550,7 +550,7 @@ final class HashJoinAggregationPlanning implements Mutable {
         final JoinInput second = join.getOrderedInputs().getQuick(1);
         final JoinKind kind = second.getJoinType();
         if (kind != JoinKind.INNER && kind != JoinKind.LEFT_OUTER && kind != JoinKind.RIGHT_OUTER
-                || second.getKeys().size() == 0 || first.isDependent() || second.isDependent()
+                || !second.isKeyed() || first.isDependent() || second.isDependent()
                 || PlanToFactoryRules.isSlaveEmptied(second) || PlanToFactoryRules.isMasterEmptied(second)) {
             return null;
         }

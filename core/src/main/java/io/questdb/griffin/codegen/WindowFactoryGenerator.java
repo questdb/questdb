@@ -61,6 +61,7 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowMapSpec;
 import io.questdb.griffin.engine.window.WindowMapState;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -486,7 +487,8 @@ final class WindowFactoryGenerator {
                     }
                     final SortDirection direction = spec.getOrderByDirections().getQuick(k);
                     order.add(direction == SortDirection.ASCENDING ? index + 1 : -index - 1);
-                    directions.add(SqlCodeGenerator.queryModelDirection(direction));
+                    directions.add(direction == SortDirection.DESCENDING
+                            ? QueryModel.ORDER_DIRECTION_DESCENDING : QueryModel.ORDER_DIRECTION_ASCENDING);
                     orderNames.add(Chars.toString(spec.getOrderByNames().getQuick(k)));
                 }
                 final boolean isOrderDismissed = spec.isOrderDelivered();

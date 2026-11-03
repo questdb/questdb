@@ -69,12 +69,12 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordSink masterSink,
             RecordSink slaveKeySink,
             int columnSplit,
-            Plannable joinContext,
+            Plannable joinCondition,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
             JoinInput.BuildSide buildSide
     ) {
-        super(metadata, joinContext, masterFactory, slaveFactory);
+        super(metadata, joinCondition, masterFactory, slaveFactory);
         assert buildSide != JoinInput.BuildSide.SMALLER || masterFactory.recordCursorSupportsRandomAccess() : "hashed master lacks random access";
         this.buildSide = buildSide;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
@@ -146,7 +146,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Hash Join Light");
-        sink.attr("condition").val(joinContext);
+        sink.attr("condition").val(joinCondition);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }

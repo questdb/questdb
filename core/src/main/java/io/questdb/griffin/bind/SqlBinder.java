@@ -1622,7 +1622,7 @@ public final class SqlBinder implements Mutable {
         final int dot = FunctionBinder.qualifierEnd(expression, bindingScope);
         final boolean isSourceAliasReusable = dot < 0 || Chars.equalsIgnoreCase(name, expression.token, dot + 1, expression.token.length());
         if (translating != null) {
-            name = column.getAliasPosition() == QueryColumn.SYNTHESIZED_ALIAS_POSITION
+            name = column.isAliasSynthesized()
                     ? translating.add(output.getColumnId(index), name, ctx.characterStore) : translating.addExplicit(name);
         }
         final boolean isTranslatingCopy = !isSourceAliasReusable && source.getJoinModels().size() == 1

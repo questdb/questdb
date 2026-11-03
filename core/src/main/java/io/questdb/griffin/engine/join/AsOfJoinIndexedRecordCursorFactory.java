@@ -66,11 +66,11 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
             int columnSplit,
             int slaveSymbolColumnIndex,
             SymbolJoinKeyMapping symbolJoinKeyMapping,
-            Plannable joinContext,
+            Plannable joinCondition,
             long toleranceInterval,
             @Nullable Function keyCheck
     ) {
-        super(metadata, joinContext, masterFactory, slaveFactory);
+        super(metadata, joinCondition, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.keyCheck = keyCheck;
         this.symbolJoinKeyMapping = symbolJoinKeyMapping;
@@ -133,7 +133,7 @@ public final class AsOfJoinIndexedRecordCursorFactory extends AbstractJoinRecord
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Indexed Scan");
-        sink.attr("condition").val(joinContext);
+        sink.attr("condition").val(joinCondition);
         sink.optAttr("keyCheck", keyCheck, masterFactory);
         sink.child(masterFactory);
         sink.child(slaveFactory);

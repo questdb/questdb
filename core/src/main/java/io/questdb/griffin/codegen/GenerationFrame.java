@@ -39,7 +39,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.join.DomainKeepingEmptyRecordCursorFactory;
 import io.questdb.griffin.engine.join.SharedRecordCursorFactory;
-import io.questdb.griffin.engine.table.MasterSuffixLimitFunction;
+import io.questdb.griffin.engine.table.MasterSuffixRows;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowMapSpec;
 import io.questdb.griffin.plan.logical.AggregatePlan;
@@ -127,10 +127,10 @@ final class GenerationFrame implements Closeable, Mutable {
      */
     private final ObjList<LogicalPlan> sharedPlans = new ObjList<>();
     /**
-     * The LIMIT count the parallel filter of {@link #masterSuffixScan} applies, which the LIMIT over the scan's join
-     * sets.
+     * The rows of the parallel filter of {@link #masterSuffixScan}, which the LIMIT over the join controls; null until
+     * the generator builds that filter, and when the scan has none.
      */
-    MasterSuffixLimitFunction masterSuffixLimit;
+    MasterSuffixRows masterSuffixRows;
     /**
      * The master scan of the join a MASTER_SUFFIX LIMIT is generated over, matched by its output schema.
      */
@@ -174,7 +174,7 @@ final class GenerationFrame implements Closeable, Mutable {
         functions.clear();
         symbolAsString.clear();
         joinKeys.clear();
-        masterSuffixLimit = null;
+        masterSuffixRows = null;
         masterSuffixScan = null;
         expressions.clear();
         schema.clear();

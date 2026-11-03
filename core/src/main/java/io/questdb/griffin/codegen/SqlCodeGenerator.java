@@ -54,10 +54,9 @@ import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.LimitBounds;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
-import io.questdb.griffin.engine.table.MasterSuffixLimitFunction;
+import io.questdb.griffin.engine.table.MasterSuffixRows;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.model.ExecutionModel;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
@@ -66,7 +65,6 @@ import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
-import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
@@ -78,7 +76,6 @@ import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
-import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
@@ -369,19 +366,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateMasterSuffixLimit(GenerationFrame frame, LimitPlan limit, SqlExecutionContext executionContext)
             throws SqlException {
         final ScanPlan outerScan = frame.masterSuffixScan;
-        final MasterSuffixLimitFunction outerSuffixLimit = frame.masterSuffixLimit;
+        final MasterSuffixRows outerSuffixRows = frame.masterSuffixRows;
         frame.masterSuffixScan = PlanToFactoryRules.masterSuffixScan(limit);
-        frame.masterSuffixLimit = null;
+        frame.masterSuffixRows = null;
         final RecordCursorFactory base;
-        final MasterSuffixLimitFunction masterSuffixLimit;
+        final MasterSuffixRows masterSuffixRows;
         try {
             base = generate(frame, limit.getChild(), executionContext);
-            masterSuffixLimit = frame.masterSuffixLimit;
+            masterSuffixRows = frame.masterSuffixRows;
         } finally {
             frame.masterSuffixScan = outerScan;
-            frame.masterSuffixLimit = outerSuffixLimit;
+            frame.masterSuffixRows = outerSuffixRows;
         }
-        return new LimitRecordCursorFactory(base, instantiateLimit(limit, base, executionContext), masterSuffixLimit);
+        return new LimitRecordCursorFactory(base, instantiateLimit(limit, base, executionContext), masterSuffixRows);
     }
 
     /**
@@ -490,25 +487,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw th;
         }
         return factory;
-    }
-
-    static int queryModelDirection(SortDirection direction) {
-        return direction == SortDirection.DESCENDING ? QueryModel.ORDER_DIRECTION_DESCENDING : QueryModel.ORDER_DIRECTION_ASCENDING;
-    }
-
-    static int queryModelJoinType(JoinKind kind) {
-        return switch (kind) {
-            case CROSS -> QueryModel.JOIN_CROSS;
-            case INNER -> QueryModel.JOIN_INNER;
-            case LEFT_OUTER -> QueryModel.JOIN_LEFT_OUTER;
-            case RIGHT_OUTER -> QueryModel.JOIN_RIGHT_OUTER;
-            case FULL_OUTER -> QueryModel.JOIN_FULL_OUTER;
-            case ASOF -> QueryModel.JOIN_ASOF;
-            case LT -> QueryModel.JOIN_LT;
-            case SPLICE -> QueryModel.JOIN_SPLICE;
-            case UNNEST -> QueryModel.JOIN_UNNEST;
-            case OUTER_CROSS -> throw new IllegalStateException("OUTER CROSS join has a join key");
-        };
     }
 
     RecordCursorFactory generate(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext) throws SqlException {

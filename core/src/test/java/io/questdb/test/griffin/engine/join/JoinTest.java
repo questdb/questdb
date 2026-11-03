@@ -1972,7 +1972,7 @@ public class JoinTest extends AbstractCairoTest {
     public void testColumnEqColumnReorderedFilterStaysPostJoin() throws Exception {
         // Companion to testColumnEqColumnMasterFilterStaysPostJoin: there the col=col WHERE sits on the
         // directly NULL-extended master; here it sits on an INNER-joined table (c) after a non-equi
-        // RIGHT/FULL OUTER. That join carries no JoinContext and homogenizes to a CROSS variant, which
+        // RIGHT/FULL OUTER. That join carries no join keys and homogenizes to a CROSS variant, which
         // JoinOrderSolver used to append after c, NULL-extending c; pushing c.c1 = c.c2 into c then emptied
         // c (7 != 8) and leaked (null,50,null,null) -- 1 row for 0. JoinBinder.constrainNullingJoinConsumers
         // keeps the outer join before c, so c is never NULL-extended and the exec-order-aware
@@ -3492,7 +3492,7 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinContextIsolationInIntersect() throws Exception {
+    public void testJoinConditionIsolationInIntersect() throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     """
@@ -3535,7 +3535,7 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinContextIsolationInLambdaConstCondition() throws Exception {
+    public void testJoinConditionIsolationInLambdaConstCondition() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
             execute("CREATE TABLE tb2 (akey SYMBOL INDEX, bv STRING)");
@@ -3571,7 +3571,7 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinContextIsolationInLambdaPushedPredicate() throws Exception {
+    public void testJoinConditionIsolationInLambdaPushedPredicate() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
             execute("CREATE TABLE tb2 (akey SYMBOL INDEX, bv STRING)");
@@ -3609,7 +3609,7 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinContextIsolationInUnion() throws Exception {
+    public void testJoinConditionIsolationInUnion() throws Exception {
         assertMemoryLeak(() -> {
             execute(
                     """
@@ -3655,7 +3655,7 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinContextIsolationInUnionWithFactTokens() throws Exception {
+    public void testJoinConditionIsolationInUnionWithFactTokens() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE s1a (k INT, x STRING)");
             execute("INSERT INTO s1a VALUES (1, 'seed')");
@@ -3690,7 +3690,7 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinContextIsolationInUnionWithModelOnOrigins() throws Exception {
+    public void testJoinConditionIsolationInUnionWithModelOnOrigins() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE u1a (k INT, v INT)");
             execute("INSERT INTO u1a VALUES (1, 1)");
@@ -8582,7 +8582,7 @@ public class JoinTest extends AbstractCairoTest {
         // Covers the hasNonEquiNullingJoin arm of the two-table equality deferral;
         // testMultiTableEqualityMasterFilterStaysPostJoin covers the FilterPushdown.hasMasterNullingJoin arm.
         // The WHERE equality (c.c1 = d.d1) is across two INNER-joined tables whose NULL-extension
-        // comes from a lower-model-index non-equi RIGHT/FULL OUTER. That join carries no JoinContext,
+        // comes from a lower-model-index non-equi RIGHT/FULL OUTER. That join carries no join keys,
         // so JoinBinder rewrites it to a CROSS variant JoinOrderSolver appends last -- after
         // c and d join -- and NULL-extends them. JoinBinder.bindJoinConditions therefore defers the
         // equality (hasNonEquiNullingJoin) to the exec-order-aware FilterPushdown.pushJoinFilters,
@@ -8707,7 +8707,7 @@ public class JoinTest extends AbstractCairoTest {
 
     @Test
     public void testNonEquiOuterJoinMasterFilterStaysPostJoin() throws Exception {
-        // A RIGHT/FULL OUTER join with a NON-equi ON clause carries no JoinContext, so
+        // A RIGHT/FULL OUTER join with a NON-equi ON clause carries no join keys, so
         // JoinBinder (which runs before FilterPushdown.pushJoinFilters) rewrites it to
         // JOIN_CROSS_RIGHT/JOIN_CROSS_FULL. Those CROSS variants still NULL-extend the
         // master (NestedLoopRight/FullJoin), so a master-only WHERE must stay a post-join
@@ -8741,7 +8741,7 @@ public class JoinTest extends AbstractCairoTest {
     public void testNonEquiOuterJoinReorderedFilterStaysPostJoin() throws Exception {
         // Companion to testNonEquiOuterJoinMasterFilterStaysPostJoin, which filters the directly
         // NULL-extended master. Here the WHERE predicate (c.v = 1) is on an INNER-joined table after a
-        // non-equi RIGHT/FULL OUTER. That join carries no JoinContext and homogenizes to
+        // non-equi RIGHT/FULL OUTER. That join carries no join keys and homogenizes to
         // JOIN_CROSS_RIGHT/JOIN_CROSS_FULL, which JoinOrderSolver used to append after c, NULL-extending
         // c; pushing c.v = 1 into c then leaked the (null,100,null) row -- 2 rows for 1.
         // JoinBinder.constrainNullingJoinConsumers keeps the outer join before c, whose INNER join drops
@@ -8849,7 +8849,7 @@ public class JoinTest extends AbstractCairoTest {
         // RIGHT/FULL OUTER join. The outer join NULL-extends a for the unmatched b.y = 100; that row's
         // a.k is NULL, so it matches no c row and the INNER join must drop it. The FULL join's
         // unmatched master row (a.x = 1) keeps a.k = 2, matches c, and must survive. The non-equi join
-        // carries no JoinContext, so it homogenizes to a CROSS variant that JoinOrderSolver used to append
+        // carries no join keys, so it homogenizes to a CROSS variant that JoinOrderSolver used to append
         // after c; that plan NULL-extended the already joined c and leaked a (null,100,) row. The
         // parenthesised spelling means the same join order, and the t0 variant puts two tables before
         // the outer join.

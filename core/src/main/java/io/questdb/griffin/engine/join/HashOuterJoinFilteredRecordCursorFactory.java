@@ -46,8 +46,8 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -62,7 +62,7 @@ import static io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCur
 public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final int columnSplit;
     private final JoinSymbolTableSource filterSymbolTableSource;
-    private final int joinType;
+    private final JoinKind joinType;
     private final RecordSink masterSink;
     private final JoinInput.NullExtension nullExtension;
     private final @Nullable JoinInput.NullKeyMatch nullKeyMatch;
@@ -87,15 +87,15 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
             RecordSink slaveChainSink,
             int columnSplit,
             @NotNull Function filter,
-            Plannable joinContext,
-            int joinType,
+            Plannable joinCondition,
+            JoinKind joinType,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
             JoinInput.NullExtension nullExtension,
             @Nullable Function nullKeyCheck,
             @Nullable JoinInput.NullKeyMatch nullKeyMatch
     ) {
-        super(metadata, joinContext, masterFactory, slaveFactory);
+        super(metadata, joinCondition, masterFactory, slaveFactory);
         this.filter = filter;
         this.nullExtension = nullExtension;
         this.nullKeyCheck = nullKeyCheck;
@@ -111,7 +111,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                     configuration.getSqlHashJoinValueMaxPages());
             this.columnSplit = columnSplit;
             this.joinType = joinType;
-            if (joinType != QueryModel.JOIN_LEFT_OUTER) {
+            if (joinType != JoinKind.LEFT_OUTER) {
                 matchIdsMap = MapFactory.createUnorderedMap(configuration, RecordIdSink.RECORD_ID_COLUMN_TYPE, ArrayColumnTypes.EMPTY, false, false);
             }
             this.filterSymbolTableSource = new JoinSymbolTableSource(columnSplit);
@@ -126,14 +126,14 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
 
     @Override
     public boolean followedOrderByAdvice() {
-        return joinType == QueryModel.JOIN_LEFT_OUTER && masterFactory.followedOrderByAdvice();
+        return joinType == JoinKind.LEFT_OUTER && masterFactory.followedOrderByAdvice();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (cursor == null) {
             switch (joinType) {
-                case QueryModel.JOIN_LEFT_OUTER:
+                case LEFT_OUTER:
                     cursor = new HashLeftOuterJoinFilteredRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(slaveFactory.getMetadata()),
@@ -141,7 +141,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                             slaveChain
                     );
                     break;
-                case QueryModel.JOIN_RIGHT_OUTER:
+                case RIGHT_OUTER:
                     cursor = new HashRightOuterJoinFilteredRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
@@ -150,7 +150,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
                             slaveChain
                     );
                     break;
-                case QueryModel.JOIN_FULL_OUTER:
+                case FULL_OUTER:
                     cursor = new HashFullOuterJoinFilteredRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
@@ -187,7 +187,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
 
     @Override
     public int getScanDirection() {
-        return joinType == QueryModel.JOIN_LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
+        return joinType == JoinKind.LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
     }
 
     @Override
@@ -198,7 +198,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Hash ").val(outerJoinTypeToString(joinType)).val(" Outer Join");
-        sink.optAttr("condition", joinContext);
+        sink.optAttr("condition", joinCondition);
         sink.attr("filter").val(filter);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);

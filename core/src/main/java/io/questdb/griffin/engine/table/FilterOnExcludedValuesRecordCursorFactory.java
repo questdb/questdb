@@ -37,8 +37,8 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
@@ -63,7 +63,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     private final boolean isKeyFiltered;
     private final boolean isTableOrder;
     private final int maxSymbolNotEqualsCount;
-    private final int orderDirection;
+    private final SortDirection orderDirection;
     private PageFrameRecordCursorImpl cursor;
     private Function filter;
     private ObjList<Function> keyExcludedValueFunctions = new ObjList<>();
@@ -77,7 +77,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             int columnIndex,
             @Nullable Function filter,
             @NotNull ScanPlan.IndexOrder indexOrder,
-            int orderDirection,
+            SortDirection orderDirection,
             int indexDirection,
             @NotNull IntList columnIndexes,
             @NotNull IntList columnSizeShifts,
@@ -151,7 +151,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
             // sorting values makes no sense for a table-order scan
             if (!isTableOrder) {
                 // sorting here can produce order of cursorFactories different from one shown by explain command
-                if (followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING) {
+                if (followedOrderByAdvice && orderDirection == SortDirection.ASCENDING) {
                     cursorFactories.sort(0, cursorFactoriesIdx[0], comparator);
                 } else {
                     cursorFactories.sort(0, cursorFactoriesIdx[0], comparatorDesc);
@@ -171,7 +171,7 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     public void toPlan(PlanSink sink) {
         sink.type("FilterOnExcludedValues");
         if (!isTableOrder) { // sorting symbols makes no sense for a table-order scan
-            sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == QueryModel.ORDER_DIRECTION_ASCENDING ? "asc" : "desc");
+            sink.meta("symbolOrder").val(followedOrderByAdvice && orderDirection == SortDirection.ASCENDING ? "asc" : "desc");
         }
         sink.attr("symbolFilter").putBaseColumnName(columnIndex).val(" not in ").val(keyExcludedValueFunctions);
         if (isKeyFiltered) {

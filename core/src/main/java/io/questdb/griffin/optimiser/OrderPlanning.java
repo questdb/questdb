@@ -182,13 +182,6 @@ final class OrderPlanning implements OptimiserPass {
         return true;
     }
 
-    /**
-     * True when the step reads its master again for each slave row: a RIGHT join without keys.
-     */
-    private static boolean isMasterRewound(JoinInput step) {
-        return step.getJoinType() == JoinKind.RIGHT_OUTER && step.getKeys().size() == 0;
-    }
-
     private static boolean isSingleRow(LogicalPlan plan) {
         plan = LogicalPlans.skipProjectsAndFilters(plan);
         return plan instanceof AggregatePlan aggregate && aggregate.getGroupingExpressions().size() == 0;
@@ -205,14 +198,6 @@ final class OrderPlanning implements OptimiserPass {
             case ASOF, LT -> PlanToFactoryRules.fullFatTemporalRejectedColumn(step) >= 0;
             default -> false;
         };
-    }
-
-    /**
-     * True when the step reads its slave again for each master row: a relational join without keys, other than a RIGHT
-     * join, which reads its master again instead.
-     */
-    private static boolean isSlaveRewound(JoinInput step) {
-        return step.getJoinType().isRelational() && step.getKeys().size() == 0 && step.getJoinType() != JoinKind.RIGHT_OUTER;
     }
 
     /**
@@ -577,7 +562,7 @@ final class OrderPlanning implements OptimiserPass {
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
         int rewoundMasterHi = 0;
         for (int i = ordered.size() - 1; i > 0 && rewoundMasterHi == 0; i--) {
-            if (isMasterRewound(ordered.getQuick(i))) {
+            if (ordered.getQuick(i).isMasterRewound()) {
                 rewoundMasterHi = i;
             }
         }
@@ -607,7 +592,7 @@ final class OrderPlanning implements OptimiserPass {
                 final boolean isLimited = !isOrdered && limit != null && i == n - 1 && joinType == JoinKind.CROSS
                         && step.getPostJoinFilter() == null && limit.getLo() instanceof ConstantExpression;
                 require(step.getInput(), requirements.next().inputOf(requirement).joinSlave(isSlaveRandomAccessRequired(step))
-                        .rewound(i < rewoundMasterHi || isSlaveRewound(step))
+                        .rewound(i < rewoundMasterHi || step.isSlaveRewound())
                         .limit(isLimited ? limit : null).rowOrderRequired(joinType.isTemporal() || requirement.isRowOrderRequired()));
             }
         }

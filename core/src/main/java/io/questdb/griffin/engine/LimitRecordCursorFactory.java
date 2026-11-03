@@ -36,7 +36,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.table.MasterSuffixLimitFunction;
+import io.questdb.griffin.engine.table.MasterSuffixRows;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.MemoryTag;
@@ -51,8 +51,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     private final LimitRecordCursor cursor;
 
     /**
-     * {@code masterSuffixLimit}: the LIMIT count of the master filter of the join the base runs, which the base factory
-     * owns. When the join emits fewer rows than a negative LIMIT selects over the last master rows, the cursor rewinds
+     * {@code masterSuffixRows}: the rows of the master filter of the join the base runs, which the base factory owns. When the join emits fewer rows than a negative LIMIT selects over the last master rows, the cursor rewinds
      * the join, which keeps its slave side, over older master rows only, until the join emits as many rows as the
      * LIMIT selects or reads all master rows. The rows of each master row come out together and in master order, so
      * the last rows of the join are those of the master rows it emitted them for, and the cursor rewinds the join over
@@ -61,12 +60,12 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     public LimitRecordCursorFactory(
             RecordCursorFactory base,
             LimitBounds bounds,
-            @Nullable MasterSuffixLimitFunction masterSuffixLimit
+            @Nullable MasterSuffixRows masterSuffixRows
     ) {
         super(base.getMetadata());
         this.base = base;
         this.bounds = bounds;
-        this.cursor = new LimitRecordCursor(bounds, masterSuffixLimit);
+        this.cursor = new LimitRecordCursor(bounds, masterSuffixRows);
     }
 
     @Override
@@ -180,7 +179,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
     public static class LimitRecordCursor implements RecordCursor {
         private final LimitBounds bounds;
         private final RecordCursor.Counter counter = new Counter();
-        private final MasterSuffixLimitFunction masterSuffixLimit;
+        private final MasterSuffixRows masterSuffixRows;
         private RecordCursor base;
         private long baseRowsToSkip;
         private long baseRowsToTake;
@@ -203,9 +202,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         // The joined rows the last read of older master rows walked one by one, see remainingMasterRowCount().
         private long walkedRowCount;
 
-        public LimitRecordCursor(LimitBounds bounds, @Nullable MasterSuffixLimitFunction masterSuffixLimit) {
+        public LimitRecordCursor(LimitBounds bounds, @Nullable MasterSuffixRows masterSuffixRows) {
             this.bounds = bounds;
-            this.masterSuffixLimit = masterSuffixLimit;
+            this.masterSuffixRows = masterSuffixRows;
         }
 
         @Override
@@ -352,13 +351,13 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             if (!areBoundsResolved()) {
                 final long lo = bounds.getValues().getLo();
                 final long lastRowCount = bounds.getValues().getLastRowCount();
-                if (masterSuffixLimit == null && lastRowCount > -1) {
+                if (masterSuffixRows == null && lastRowCount > -1) {
                     base.expectLastRows(lastRowCount);
                 }
                 // If baseSize was cheap to get, bounds would already have been sorted out in of().
                 // Now it's time to use the heavy-handed approach to getting baseSize.
                 calculateBaseSize();
-                if (masterSuffixLimit != null && masterSuffixLimit.isReadingLastRows(lo) && baseSize < -lo) {
+                if (masterSuffixRows != null && masterSuffixRows.isReadingLastRows(lo) && baseSize < -lo) {
                     readOlderMasterRows();
                 }
                 // If both LIMIT args were non-negative, we would have resolved the bounds without
@@ -404,7 +403,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             walkedRowCount = 0;
             long keptRowCount = 0;
             long missingRowCount = rowCount;
-            boolean hasRows = baseSize > 0 || masterSuffixLimit.readOlderRows();
+            boolean hasRows = baseSize > 0 || masterSuffixRows.readOlderRows();
             while (hasRows) {
                 isBaseAtFirstRow = false;
                 base.toTop();
@@ -417,7 +416,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                 boolean hasNext;
                 do {
                     hasNext = base.hasNext();
-                    final long nextRowId = hasNext ? masterSuffixLimit.getRowId() : -1;
+                    final long nextRowId = hasNext ? masterSuffixRows.getRowId() : -1;
                     if (nextRowId != rowId) {
                         circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         keepMasterRow(rowId, rowIdCount, missingRowCount);
@@ -444,9 +443,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
                     break;
                 }
                 missingRowCount -= ringRowCount;
-                hasRows = masterSuffixLimit.readOlderRows();
+                hasRows = masterSuffixRows.readOlderRows();
             }
-            masterSuffixLimit.readRows(masterRows);
+            masterSuffixRows.readRows(masterRows);
             baseSize = keptRowCount;
         }
 
@@ -542,7 +541,7 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             counter.clear();
             final long lo = bounds.getValues().getLo();
             // A negative LIMIT over a master suffix resolves its bounds once the join runs.
-            if (masterSuffixLimit == null || lo >= 0) {
+            if (masterSuffixRows == null || lo >= 0) {
                 resolveBoundsCheap();
             }
             if (lo >= 0 && bounds.getValues().getHi() > lo) {

@@ -54,11 +54,11 @@ public final class AsOfJoinDenseSingleSymbolRecordCursorFactory extends AsOfJoin
             int columnSplit,
             int slaveSymbolColumnIndex,
             SymbolJoinKeyMapping joinKeyMapping,
-            Plannable joinContext,
+            Plannable joinCondition,
             long toleranceInterval,
             @Nullable Function keyCheck
     ) {
-        super(metadata, masterFactory, slaveFactory, joinContext, toleranceInterval, keyCheck);
+        super(metadata, masterFactory, slaveFactory, joinCondition, toleranceInterval, keyCheck);
         this.joinKeyMapping = joinKeyMapping;
         this.slaveSymbolColumnIndex = slaveSymbolColumnIndex;
         Map fwdScanKeyToRowId = null;

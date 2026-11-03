@@ -65,13 +65,13 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
             RecordSink slaveKeySink,
             int columnSplit,
             SymbolShortCircuit symbolShortCircuit,
-            Plannable joinContext,
+            Plannable joinCondition,
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
             @Nullable Function keyCheck
     ) {
-        super(metadata, joinContext, masterFactory, slaveFactory);
+        super(metadata, joinCondition, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.keyCheck = keyCheck;
         this.masterKeySink = masterKeySink;
@@ -144,7 +144,7 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Fast");
-        sink.attr("condition").val(joinContext);
+        sink.attr("condition").val(joinCondition);
         sink.optAttr("keyCheck", keyCheck, masterFactory);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);

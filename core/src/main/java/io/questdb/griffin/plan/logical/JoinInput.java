@@ -289,6 +289,35 @@ public final class JoinInput implements PlanFactSource {
     }
 
     /**
+     * True when the step joins its input on keys.
+     */
+    public boolean isKeyed() {
+        return keys.size() > 0;
+    }
+
+    /**
+     * True when the step reads its master again for each slave row: a RIGHT nested loop.
+     */
+    public boolean isMasterRewound() {
+        return isNestedLoop() && joinType == JoinKind.RIGHT_OUTER;
+    }
+
+    /**
+     * True when the step reads one input again for each row of the other: a relational join without keys.
+     */
+    public boolean isNestedLoop() {
+        return joinType.isRelational() && !isKeyed();
+    }
+
+    /**
+     * True when the step reads its slave again for each master row: every nested loop but a RIGHT join's. A slave that
+     * {@link Algorithm#MATERIALIZED_NESTED_LOOP} caches counts too, since the caching depends on facts decided later.
+     */
+    public boolean isSlaveRewound() {
+        return isNestedLoop() && joinType != JoinKind.RIGHT_OUTER;
+    }
+
+    /**
      * True when the input reads columns of the inputs before it through {@link OuterColumnExpression}s, as a
      * LATERAL body does; decorrelation rewrites the step into an ordinary one before optimisation.
      */

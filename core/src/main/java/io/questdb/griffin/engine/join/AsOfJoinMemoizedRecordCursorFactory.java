@@ -100,12 +100,12 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
             int columnSplit,
             int slaveSymbolColumnIndex,
             SymbolJoinKeyMapping symbolJoinKeyMapping,
-            Plannable joinContext,
+            Plannable joinCondition,
             long toleranceInterval,
             boolean driveByCaching,
             @Nullable Function keyCheck
     ) {
-        super(metadata, joinContext, masterFactory, slaveFactory);
+        super(metadata, joinCondition, masterFactory, slaveFactory);
         assert slaveFactory.supportsTimeFrameCursor();
         this.keyCheck = keyCheck;
         this.symbolJoinKeyMapping = symbolJoinKeyMapping;
@@ -168,7 +168,7 @@ public final class AsOfJoinMemoizedRecordCursorFactory extends AbstractJoinRecor
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Memoized Scan");
-        sink.attr("condition").val(joinContext);
+        sink.attr("condition").val(joinCondition);
         sink.optAttr("keyCheck", keyCheck, masterFactory);
         sink.attr("driveByCache").val(driveByCaching);
         sink.child(masterFactory);

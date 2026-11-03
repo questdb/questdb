@@ -73,8 +73,8 @@ public final class CompilerTemporaries implements Mutable {
     public final UniqueColumnNames uniqueNames = new UniqueColumnNames();
     public final IntList values = new IntList();
 
-    public CompilerTemporaries(int minRetainedJoinContexts) {
-        this.joinChildrenPool = new ObjectPool<>(IntHashSet::new, 4, minRetainedJoinContexts);
+    public CompilerTemporaries(int minRetainedJoinNodes) {
+        this.joinChildrenPool = new ObjectPool<>(IntHashSet::new, 4, minRetainedJoinNodes);
     }
 
     /**

@@ -897,7 +897,7 @@ final class OperatorPlanning implements Mutable {
                 && PhysicalProperties.isLongSequence(slave) == PhysicalProperties.Capability.YES
                 && isAscendingMasterRead(join, inputIndex)) {
             step.setAlgorithm(JoinInput.Algorithm.MARKOUT);
-        } else if (step.getKeys().size() == 0) {
+        } else if (!step.isKeyed()) {
             step.setAlgorithm(isSlaveMaterialized(join, step) ? JoinInput.Algorithm.MATERIALIZED_NESTED_LOOP : JoinInput.Algorithm.NESTED_LOOP);
         } else {
             final boolean isSlaveRandomAccess = PlanToFactoryRules.isSlaveEmptied(step) || isRandomAccess(slave);

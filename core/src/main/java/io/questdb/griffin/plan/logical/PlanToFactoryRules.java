@@ -712,7 +712,7 @@ public final class PlanToFactoryRules {
     }
 
     private static boolean isNeverMatchingKeyedStep(JoinInput step) {
-        return step.getKeys().size() > 0 && LogicalPlans.constantTruth(step.getOnResidual()) == 0;
+        return step.isKeyed() && LogicalPlans.constantTruth(step.getOnResidual()) == 0;
     }
 
     /**

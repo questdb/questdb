@@ -44,8 +44,8 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
@@ -56,7 +56,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
 
     private final JoinInput.BuildSide buildSide;
     private final int columnSplit;
-    private final int joinType;
+    private final JoinKind joinType;
     private final RecordSink masterKeySink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final RecordSink slaveKeySink;
@@ -77,13 +77,13 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
             RecordSink slaveKeySink,
             int columnSplit,
             Plannable context,
-            int joinType,
+            JoinKind joinType,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
             @Nullable JoinInput.BuildSide buildSide
     ) {
         super(metadata, context, masterFactory, slaveFactory);
-        assert buildSide != JoinInput.BuildSide.SMALLER || joinType == QueryModel.JOIN_FULL_OUTER && masterFactory.recordCursorSupportsRandomAccess()
+        assert buildSide != JoinInput.BuildSide.SMALLER || joinType == JoinKind.FULL_OUTER && masterFactory.recordCursorSupportsRandomAccess()
                 : "hashed master lacks random access";
         this.buildSide = buildSide;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
@@ -110,14 +110,14 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     public boolean followedOrderByAdvice() {
-        return joinType == QueryModel.JOIN_LEFT_OUTER && masterFactory.followedOrderByAdvice();
+        return joinType == JoinKind.LEFT_OUTER && masterFactory.followedOrderByAdvice();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (cursor == null) {
             switch (joinType) {
-                case QueryModel.JOIN_LEFT_OUTER:
+                case LEFT_OUTER:
                     cursor = new HashLeftOuterJoinLightRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(slaveFactory.getMetadata()),
@@ -125,7 +125,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                             slaveChain
                     );
                     break;
-                case QueryModel.JOIN_RIGHT_OUTER:
+                case RIGHT_OUTER:
                     cursor = new HashRightOuterJoinLightRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
@@ -133,7 +133,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
                             slaveChain
                     );
                     break;
-                case QueryModel.JOIN_FULL_OUTER:
+                case FULL_OUTER:
                     cursor = new HashFullOuterJoinLightRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
@@ -177,7 +177,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     public int getScanDirection() {
-        return joinType == QueryModel.JOIN_LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
+        return joinType == JoinKind.LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
     }
 
     @Override
@@ -188,7 +188,7 @@ public class HashOuterJoinLightRecordCursorFactory extends AbstractJoinRecordCur
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Hash ").val(outerJoinTypeToString(joinType)).val(" Outer Join Light");
-        sink.optAttr("condition", joinContext);
+        sink.optAttr("condition", joinCondition);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }

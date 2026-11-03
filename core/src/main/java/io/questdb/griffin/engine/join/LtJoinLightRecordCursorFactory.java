@@ -72,13 +72,13 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
             RecordSink masterKeySink,
             RecordSink slaveKeySink,
             int columnSplit,
-            Plannable joinContext,
+            Plannable joinCondition,
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
             @Nullable Function keyCheck
     ) {
-        super(metadata, joinContext, masterFactory, slaveFactory);
+        super(metadata, joinCondition, masterFactory, slaveFactory);
         this.keyCheck = keyCheck;
         Map joinKeyMap = null;
         try {
@@ -141,7 +141,7 @@ public class LtJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFact
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Lt Join Light");
-        sink.attr("condition").val(joinContext);
+        sink.attr("condition").val(joinCondition);
         sink.optAttr("keyCheck", keyCheck, masterFactory);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);

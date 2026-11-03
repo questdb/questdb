@@ -103,7 +103,7 @@ public final class PlanNodePools implements Mutable {
     public final ObjectPool<LatestByPlan> latestByPlans;
     public final ObjectPool<LimitPlan> limits;
     public final int minRetainedExpressions;
-    public final int minRetainedJoinContexts;
+    public final int minRetainedJoinNodes;
     public final ObjectPool<OuterColumnExpression> outerColumns;
     public final ObjectPool<BindVariableExpression> parameters;
     public final ObjectPool<ProjectPlan> projects;
@@ -131,7 +131,7 @@ public final class PlanNodePools implements Mutable {
         final int expressionCapacity = configuration.getSqlExpressionPoolCapacity();
         final int planCapacity = configuration.getSqlModelPoolCapacity();
         this.minRetainedExpressions = expressionCapacity;
-        this.minRetainedJoinContexts = configuration.getSqlJoinContextPoolCapacity();
+        this.minRetainedJoinNodes = configuration.getSqlJoinContextPoolCapacity();
         this.aggregates = new ObjectPool<>(AggregatePlan.FACTORY, 4, planCapacity);
         this.columns = new ObjectPool<>(ColumnExpression.FACTORY, 16, expressionCapacity);
         this.constants = new ObjectPool<>(ConstantExpression.FACTORY, 4, expressionCapacity);
@@ -145,8 +145,8 @@ public final class PlanNodePools implements Mutable {
         this.hashJoinAggregations = new ObjectPool<>(HashJoinAggregation.FACTORY, 2, planCapacity);
         this.horizonJoinPlans = new ObjectPool<>(HorizonJoinPlan.FACTORY, 2, planCapacity);
         this.horizonJoinSlaves = new ObjectPool<>(HorizonJoinSlave.FACTORY, 2, planCapacity);
-        this.joinDependencies = new ObjectPool<>(JoinDependency.FACTORY, 8, minRetainedJoinContexts);
-        this.joinEqualities = new ObjectPool<>(JoinEquality.FACTORY, 8, minRetainedJoinContexts);
+        this.joinDependencies = new ObjectPool<>(JoinDependency.FACTORY, 8, minRetainedJoinNodes);
+        this.joinEqualities = new ObjectPool<>(JoinEquality.FACTORY, 8, minRetainedJoinNodes);
         this.joinGraphs = new ObjectPool<>(JoinGraph.FACTORY, 2, planCapacity);
         this.joinInputs = new ObjectPool<>(JoinInput.FACTORY, 4, planCapacity);
         this.joins = new ObjectPool<>(JoinPlan.FACTORY, 2, planCapacity);

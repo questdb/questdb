@@ -92,11 +92,11 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
             RecordMetadata metadata,
             RecordCursorFactory masterFactory,
             RecordCursorFactory slaveFactory,
-            Plannable joinContext,
+            Plannable joinCondition,
             long toleranceInterval,
             @Nullable Function keyCheck
     ) {
-        super(metadata, joinContext, masterFactory, slaveFactory);
+        super(metadata, joinCondition, masterFactory, slaveFactory);
         this.keyCheck = keyCheck;
         this.toleranceInterval = toleranceInterval;
     }
@@ -141,7 +141,7 @@ public abstract class AsOfJoinDenseRecordCursorFactoryBase extends AbstractJoinR
     @Override
     public void toPlan(PlanSink sink) {
         putFactoryType(sink);
-        sink.attr("condition").val(joinContext);
+        sink.attr("condition").val(joinCondition);
         sink.optAttr("keyCheck", keyCheck, masterFactory);
         sink.child(masterFactory);
         sink.child(slaveFactory);

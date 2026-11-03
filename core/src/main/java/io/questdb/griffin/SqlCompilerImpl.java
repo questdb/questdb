@@ -264,7 +264,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final int modelPoolCapacity = configuration.getSqlModelPoolCapacity();
             this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, modelPoolCapacity, modelPoolCapacity);
             this.planNodePools = new PlanNodePools(configuration);
-            this.temporaries = new CompilerTemporaries(planNodePools.minRetainedJoinContexts);
+            this.temporaries = new CompilerTemporaries(planNodePools.minRetainedJoinNodes);
             this.updateTarget = new UpdateTarget(temporaries.names);
             final int windowColumnPoolCapacity = configuration.getWindowColumnPoolCapacity();
             ObjectPool<WindowExpression> windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, windowColumnPoolCapacity, columnPoolCapacity);

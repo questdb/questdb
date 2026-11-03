@@ -35,7 +35,6 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.HorizonJoinContext;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.InsertModel;
-import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.PivotForColumn;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.RenameTableModel;
@@ -182,24 +181,6 @@ public class MutableModelsTest {
 
         model.clear();
         assertFieldsEqual(InsertModel.FACTORY.newInstance(), model);
-    }
-
-    @Test
-    public void testJoinContextClear() {
-        JoinContext ctx = JoinContext.FACTORY.newInstance();
-        ctx.aIndexes.add(1);
-        ctx.aNames.add("aName");
-        ctx.aNodes.add(newExpressionNode());
-        ctx.bIndexes.add(2);
-        ctx.bNames.add("bName");
-        ctx.bNodes.add(newExpressionNode());
-        ctx.parents.add(3);
-        ctx.inCount = 5;
-        ctx.slaveIndex = 10;
-        assertDifferentFromFresh(ctx, JoinContext.FACTORY.newInstance());
-
-        ctx.clear();
-        assertFieldsEqual(JoinContext.FACTORY.newInstance(), ctx);
     }
 
     @Test

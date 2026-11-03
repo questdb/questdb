@@ -78,7 +78,6 @@ import io.questdb.griffin.engine.table.PageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.union.UnionAllRecordCursorFactory;
-import io.questdb.griffin.model.JoinContext;
 import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
@@ -491,7 +490,8 @@ public class FactoryCloseContractTest extends AbstractCairoTest {
                         null,
                         null,
                         0,
-                        new JoinContext(),
+                        sink -> {
+                        },
                         new int[]{0},
                         new int[]{0}
                 );

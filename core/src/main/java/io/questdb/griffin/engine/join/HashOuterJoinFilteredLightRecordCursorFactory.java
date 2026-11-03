@@ -48,8 +48,8 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
@@ -64,7 +64,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
     private final JoinInput.BuildSide buildSide;
     private final int columnSplit;
     private final JoinSymbolTableSource filterSymbolTableSource;
-    private final int joinType;
+    private final JoinKind joinType;
     private final RecordSink masterKeySink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final JoinInput.NullExtension nullExtension;
@@ -90,8 +90,8 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             RecordSink slaveKeySink,
             int columnSplit,
             @NotNull Function filter,
-            Plannable joinContext,
-            int joinType,
+            Plannable joinCondition,
+            JoinKind joinType,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
             JoinInput.NullExtension nullExtension,
@@ -99,8 +99,8 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             @Nullable JoinInput.NullKeyMatch nullKeyMatch,
             @Nullable JoinInput.BuildSide buildSide
     ) {
-        super(metadata, joinContext, masterFactory, slaveFactory);
-        assert buildSide != JoinInput.BuildSide.SMALLER || joinType == QueryModel.JOIN_FULL_OUTER && nullExtension == JoinInput.NullExtension.BY_KEYS
+        super(metadata, joinCondition, masterFactory, slaveFactory);
+        assert buildSide != JoinInput.BuildSide.SMALLER || joinType == JoinKind.FULL_OUTER && nullExtension == JoinInput.NullExtension.BY_KEYS
                 && masterFactory.recordCursorSupportsRandomAccess() : "hashed master lacks random access or NULL-extends by its ON residual";
         this.buildSide = buildSide;
         this.filter = filter;
@@ -123,7 +123,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
             this.slaveChain = new LongChain(configuration.getSqlHashJoinLightValuePageSize(), configuration.getSqlHashJoinLightValueMaxPages(), true);
             this.columnSplit = columnSplit;
             this.joinType = joinType;
-            if (joinType != QueryModel.JOIN_LEFT_OUTER) {
+            if (joinType != JoinKind.LEFT_OUTER) {
                 matchIdsMap = MapFactory.createUnorderedMap(configuration, RecordIdSink.RECORD_ID_COLUMN_TYPE, ArrayColumnTypes.EMPTY, false, false);
             }
             this.filterSymbolTableSource = new JoinSymbolTableSource(columnSplit);
@@ -135,14 +135,14 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
     @Override
     public boolean followedOrderByAdvice() {
-        return joinType == QueryModel.JOIN_LEFT_OUTER && masterFactory.followedOrderByAdvice();
+        return joinType == JoinKind.LEFT_OUTER && masterFactory.followedOrderByAdvice();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (cursor == null) {
             switch (joinType) {
-                case QueryModel.JOIN_LEFT_OUTER:
+                case LEFT_OUTER:
                     cursor = new HashLeftOuterJoinLightRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(slaveFactory.getMetadata()),
@@ -150,7 +150,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                             slaveChain
                     );
                     break;
-                case QueryModel.JOIN_RIGHT_OUTER:
+                case RIGHT_OUTER:
                     cursor = new HashRightOuterJoinLightRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
@@ -159,7 +159,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
                             slaveChain
                     );
                     break;
-                case QueryModel.JOIN_FULL_OUTER:
+                case FULL_OUTER:
                     cursor = new HashFullOuterJoinLightRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
@@ -205,7 +205,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
 
     @Override
     public int getScanDirection() {
-        return joinType == QueryModel.JOIN_LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
+        return joinType == JoinKind.LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
     }
 
     @Override
@@ -216,7 +216,7 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Hash ").val(outerJoinTypeToString(joinType)).val(" Outer Join Light");
-        sink.optAttr("condition", joinContext);
+        sink.optAttr("condition", joinCondition);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }
@@ -225,11 +225,11 @@ public class HashOuterJoinFilteredLightRecordCursorFactory extends AbstractJoinR
         sink.child("Hash", slaveFactory);
     }
 
-    protected static CharSequence outerJoinTypeToString(int joinType) {
+    protected static CharSequence outerJoinTypeToString(JoinKind joinType) {
         return switch (joinType) {
-            case QueryModel.JOIN_LEFT_OUTER -> "Left";
-            case QueryModel.JOIN_RIGHT_OUTER -> "Right";
-            case QueryModel.JOIN_FULL_OUTER -> "Full";
+            case LEFT_OUTER -> "Left";
+            case RIGHT_OUTER -> "Right";
+            case FULL_OUTER -> "Full";
             default -> "Unknown";
         };
     }

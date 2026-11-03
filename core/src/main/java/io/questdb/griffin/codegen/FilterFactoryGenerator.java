@@ -53,6 +53,7 @@ import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByCompiledFilter;
 import io.questdb.griffin.engine.table.MasterSuffixLimitFunction;
+import io.questdb.griffin.engine.table.MasterSuffixRows;
 import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -514,7 +515,8 @@ final class FilterFactoryGenerator {
         if (frame.masterSuffixScan == null || frame.masterSuffixScan.getOutput() != input) {
             return limit;
         }
-        return frame.masterSuffixLimit = new MasterSuffixLimitFunction(limit, configuration.getSqlMaxNegativeLimit());
+        frame.masterSuffixRows = new MasterSuffixRows(configuration.getSqlMaxNegativeLimit());
+        return new MasterSuffixLimitFunction(limit, frame.masterSuffixRows);
     }
 
     /**

@@ -138,7 +138,7 @@ public abstract class AbstractAsyncFilteredRecordCursorFactory<T extends AsyncFi
         this.scanOrder = base.getScanDirection() == SCAN_DIRECTION_BACKWARD ? ORDER_DESC : ORDER_ASC;
         this.workerCount = workerCount;
         if (limitLoFunction instanceof MasterSuffixLimitFunction masterSuffixLimit) {
-            masterSuffixLimit.of(negativeLimitCursor);
+            masterSuffixLimit.getRows().of(negativeLimitCursor);
         }
     }
 

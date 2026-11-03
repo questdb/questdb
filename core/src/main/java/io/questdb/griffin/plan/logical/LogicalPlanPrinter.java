@@ -459,7 +459,7 @@ public final class LogicalPlanPrinter {
                 sink.put(' ').put(input.getBindingAlias());
             }
             sink.put('\n');
-            if (input.getKeys().size() > 0) {
+            if (input.isKeyed()) {
                 attribute(depth + 1, "keys");
                 keyPairs(input.getKeys());
                 sink.put('\n');

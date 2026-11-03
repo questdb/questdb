@@ -8513,7 +8513,7 @@ public class SqlParser {
                     }
 
                     if (!Chars.equals(column.getName(), '*') && !TableUtils.isValidColumnName(column.getName(), configuration.getMaxFileNameLength())) {
-                        if (column.getAliasPosition() == QueryColumn.SYNTHESIZED_ALIAS_POSITION) {
+                        if (column.isAliasSynthesized()) {
                             throw SqlException
                                     .position(column.getAst().position)
                                     .put("column '").put(column.getName()).put("' requires an explicit alias. Use: ")

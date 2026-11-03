@@ -64,13 +64,13 @@ public final class AsOfJoinDenseRecordCursorFactory extends AsOfJoinDenseRecordC
             RecordSink slaveKeyCopier,
             int columnSplit,
             @Transient ColumnTypes keyTypes,
-            Plannable joinContext,
+            Plannable joinCondition,
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
             @Nullable Function keyCheck
     ) {
-        super(metadata, masterFactory, slaveFactory, joinContext, toleranceInterval, keyCheck);
+        super(metadata, masterFactory, slaveFactory, joinCondition, toleranceInterval, keyCheck);
         this.masterKeyCopier = masterKeyCopier;
         this.slaveKeyCopier = slaveKeyCopier;
         Map fwdScanKeyToRowId = null;

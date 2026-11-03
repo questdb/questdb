@@ -43,7 +43,7 @@ import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.SymbolTranslatingRecord;
-import io.questdb.griffin.model.QueryModel;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
@@ -52,7 +52,7 @@ import static io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCur
 
 public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
     private final int columnSplit;
-    private final int joinType;
+    private final JoinKind joinType;
     private final RecordSink masterSink;
     private final RecordSink slaveKeySink;
     private AbstractHashOuterJoinRecordCursor cursor;
@@ -71,12 +71,12 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordSink slaveKeySink,
             RecordSink slaveChainSink,
             int columnSplit,
-            Plannable joinContext,
-            int joinType,
+            Plannable joinCondition,
+            JoinKind joinType,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices
     ) {
-        super(metadata, joinContext, masterFactory, slaveFactory);
+        super(metadata, joinCondition, masterFactory, slaveFactory);
         try {
             this.masterSink = masterSink;
             this.slaveKeySink = slaveKeySink;
@@ -104,14 +104,14 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public boolean followedOrderByAdvice() {
-        return joinType == QueryModel.JOIN_LEFT_OUTER && masterFactory.followedOrderByAdvice();
+        return joinType == JoinKind.LEFT_OUTER && masterFactory.followedOrderByAdvice();
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (cursor == null) {
             switch (joinType) {
-                case QueryModel.JOIN_LEFT_OUTER:
+                case LEFT_OUTER:
                     cursor = new HashLeftOuterJoinFilteredRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(slaveFactory.getMetadata()),
@@ -119,7 +119,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                             slaveChain
                     );
                     break;
-                case QueryModel.JOIN_RIGHT_OUTER:
+                case RIGHT_OUTER:
                     cursor = new HashRightOuterJoinFilteredRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
@@ -127,7 +127,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
                             slaveChain
                     );
                     break;
-                case QueryModel.JOIN_FULL_OUTER:
+                case FULL_OUTER:
                     cursor = new HashFullOuterJoinFilteredRecordCursor(
                             columnSplit,
                             NullRecordFactory.getInstance(masterFactory.getMetadata()),
@@ -161,7 +161,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
 
     @Override
     public int getScanDirection() {
-        return joinType == QueryModel.JOIN_LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
+        return joinType == JoinKind.LEFT_OUTER ? masterFactory.getScanDirection() : SCAN_DIRECTION_OTHER;
     }
 
     @Override
@@ -172,7 +172,7 @@ public class HashOuterJoinRecordCursorFactory extends AbstractJoinRecordCursorFa
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Hash ").val(outerJoinTypeToString(joinType)).val(" Outer Join");
-        sink.optAttr("condition", joinContext);
+        sink.optAttr("condition", joinCondition);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);
         }

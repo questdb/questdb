@@ -75,13 +75,13 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             RecordSink slaveKeyCopier,
             @Nullable SymbolJoinKeyMapping symbolJoinKeyMapping,
             int columnSplit,
-            Plannable joinContext,
+            Plannable joinCondition,
             long toleranceInterval,
             int @Nullable [] masterSymbolKeyColumnIndices,
             int @Nullable [] slaveSymbolKeyColumnIndices,
             @Nullable Function keyCheck
     ) {
-        super(metadata, joinContext, masterFactory, slaveFactory);
+        super(metadata, joinCondition, masterFactory, slaveFactory);
         this.keyCheck = keyCheck;
         this.symbolJoinKeyMapping = symbolJoinKeyMapping;
         Map joinKeyMap = null;
@@ -147,7 +147,7 @@ public class AsOfJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("AsOf Join Light");
-        sink.attr("condition").val(joinContext);
+        sink.attr("condition").val(joinCondition);
         sink.optAttr("keyCheck", keyCheck, masterFactory);
         if (symbolTranslatingRecord != null) {
             sink.attr("symbolKeyJoin").val(true);

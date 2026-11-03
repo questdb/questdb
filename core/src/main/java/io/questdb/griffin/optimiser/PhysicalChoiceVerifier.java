@@ -645,11 +645,11 @@ final class PhysicalChoiceVerifier {
             case SPLICE -> joinType == JoinKind.SPLICE;
             case MARKOUT -> joinType.isRelational() && step.getMarkoutTimestampColumnId() >= 0 && position > 0
                     && PhysicalProperties.masterScanDirection(join, position) == PhysicalProperties.ScanDirection.FORWARD;
-            case NESTED_LOOP -> joinType.isRelational() && step.getKeys().size() == 0;
+            case NESTED_LOOP -> step.isNestedLoop();
             case MATERIALIZED_NESTED_LOOP ->
                     join.isLeadingCrossJoinFixed() && joinType.isRelational() && joinType != JoinKind.RIGHT_OUTER && joinType != JoinKind.FULL_OUTER
-                            && step.getKeys().size() == 0 && step.getInput() instanceof JoinPlan;
-            case HASH, LIGHT_HASH -> joinType.isRelational() && step.getKeys().size() > 0;
+                            && !step.isKeyed() && step.getInput() instanceof JoinPlan;
+            case HASH, LIGHT_HASH -> joinType.isRelational() && step.isKeyed();
         };
         if (!isValid) {
             return PlanVerifier.JOIN_ALGORITHM;

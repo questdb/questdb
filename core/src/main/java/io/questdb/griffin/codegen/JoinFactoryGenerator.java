@@ -360,7 +360,7 @@ final class JoinFactoryGenerator {
             RecordMetadata slaveMetadata,
             CharSequence slaveAlias,
             FullFatJoinGenerator generator,
-            Plannable joinContext,
+            Plannable joinCondition,
             long toleranceInterval,
             @Nullable Function keyCheck
     ) throws SqlException {
@@ -491,7 +491,7 @@ final class JoinFactoryGenerator {
                     masterMetadata.getColumnCount(),
                     slaveValueSink,
                     columnIndex,
-                    joinContext,
+                    joinCondition,
                     masterTableKeyColumns,
                     toleranceInterval,
                     slaveValueTimestampIndex,
@@ -793,7 +793,7 @@ final class JoinFactoryGenerator {
             final int[] slaveSymbolKeyCols = joinKeys.slaveSymbolKeys;
             assert step.getNullExtension() == JoinInput.NullExtension.BY_KEYS || filter != null : "outer join NULL-extended by its ON residual has none";
 
-            final int modelJoinType = SqlCodeGenerator.queryModelJoinType(joinType);
+            assert joinType != JoinKind.OUTER_CROSS : "OUTER CROSS join has a join key";
             if (step.getAlgorithm() == JoinInput.Algorithm.LIGHT_HASH) {
                 valueTypes.clear();
                 valueTypes.add(INT); // chain tail offset
@@ -837,7 +837,7 @@ final class JoinFactoryGenerator {
                             masterMetadata.getColumnCount(),
                             filter,
                             context,
-                            modelJoinType,
+                            joinType,
                             masterSymbolKeyCols,
                             slaveSymbolKeyCols,
                             step.getNullExtension(),
@@ -859,7 +859,7 @@ final class JoinFactoryGenerator {
                         slaveKeyCopier,
                         masterMetadata.getColumnCount(),
                         context,
-                        modelJoinType,
+                        joinType,
                         masterSymbolKeyCols,
                         slaveSymbolKeyCols,
                         step.getBuildSide()
@@ -911,7 +911,7 @@ final class JoinFactoryGenerator {
                         masterMetadata.getColumnCount(),
                         filter,
                         context,
-                        modelJoinType,
+                        joinType,
                         masterSymbolKeyCols,
                         slaveSymbolKeyCols,
                         step.getNullExtension(),
@@ -933,7 +933,7 @@ final class JoinFactoryGenerator {
                     slaveSink,
                     masterMetadata.getColumnCount(),
                     context,
-                    modelJoinType,
+                    joinType,
                     masterSymbolKeyCols,
                     slaveSymbolKeyCols
             );
@@ -2189,7 +2189,7 @@ final class JoinFactoryGenerator {
                 int columnSplit,
                 RecordValueSink slaveValueSink,
                 IntList columnIndex,
-                Plannable joinContext,
+                Plannable joinCondition,
                 ColumnFilter masterTableKeyColumns,
                 long toleranceInterval,
                 int slaveValueTimestampIndex,

@@ -662,7 +662,7 @@ public final class PhysicalProperties {
                 final Capability isMarkout = markout(step);
                 final boolean isMasterNullExtended = joinType.isMasterNulling();
                 final boolean isSwappable = step.isSmallerDriven();
-                final boolean isKeyed = step.getKeys().size() > 0;
+                final boolean isKeyed = step.isKeyed();
                 final Capability isJoinFollowingAdvice = isSwappable ? Capability.NO : isKeyed ? (isMasterNullExtended ? Capability.NO : isFollowingAdvice)
                                                                                        : isMasterNullExtended ? capability(derive(step.getInput(), null), ORDER_ADVICE) : isFollowingAdvice;
                 properties = joined(choose(isMarkout, Capability.YES, isJoinFollowingAdvice),
