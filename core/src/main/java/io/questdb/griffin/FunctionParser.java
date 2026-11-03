@@ -166,6 +166,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntList undefinedVariables = new IntList();
     private boolean cursorFunctionInstantiated;
+    // Where the view metadata subquery check records requirements instead of rejecting them, or null, see
+    // deferViewMetadataChecks()
+    private SqlExecutionRequirements deferredViewMetadataRequirements;
     private int executionRequirementPosition = -1;
     private String lastFunctionFactorySignature;
     private RecordMetadata metadata;
@@ -254,7 +257,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         final int requirementPosition = executionRequirementPosition > -1 ? executionRequirementPosition : position;
         final SqlExecutionContext.TableFunctionView view = executionContext.getTableFunctionView();
         if (executionContext.isViewMetadataSubquery()) {
-            SqlExecutionRequirements.checkViewMetadataSubquery(requirements, requirementPosition, statement, true);
+            checkViewMetadataSubquery(requirements, requirementPosition, statement, true);
         }
         if (!executionContext.allowNonDeterministicFunctions()) {
             SqlExecutionRequirements.checkStoredView(
@@ -546,6 +549,20 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     /**
+     * Makes the functions and SHOW statements created from now on record their requirements in the given
+     * requirements when a PIVOT IN subquery that derives an ordinary view's metadata may not use them, see
+     * {@link SqlExecutionRequirements#checkViewMetadataSubquery(int, int, CharSequence, boolean)}, instead of
+     * rejecting them. Pass null to reject them again. The optimiser defers the check this way for the cursor
+     * factories of a sub-query nested in such a subquery, which runs only if the subquery's plan keeps it.
+     * Returns the requirements to pass back once the deferral ends.
+     */
+    @Nullable SqlExecutionRequirements deferViewMetadataChecks(@Nullable SqlExecutionRequirements requirements) {
+        final SqlExecutionRequirements previousRequirements = deferredViewMetadataRequirements;
+        deferredViewMetadataRequirements = requirements;
+        return previousRequirements;
+    }
+
+    /**
      * Makes the functions created from now on report their execution requirements at the given
      * position, the name of a view in the compiled SQL, while they are created from the definition
      * of that view. The outermost view keeps its position for the views nested in it. Returns the
@@ -777,11 +794,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         final int requirementPosition = executionRequirementPosition > -1 ? executionRequirementPosition : position;
         final SqlExecutionContext.TableFunctionView view = sqlExecutionContext.getTableFunctionView();
         if (factoryExecutionRequirements != SqlExecutionRequirements.NONE) {
-            // Check before creating the function: a rejected administrative function must not run,
-            // including when a PIVOT IN subquery derives an ordinary view's metadata.
+            // Check before creating the function, a rejected one must not run at all. A PIVOT IN subquery that
+            // derives an ordinary view's metadata rejects administrative functions, and a compile that stores
+            // what the function returns in a materialized or live view, at CREATE or at refresh, rejects
+            // administrative and catalogue functions alike.
             try {
                 if (sqlExecutionContext.isViewMetadataSubquery()) {
-                    SqlExecutionRequirements.checkViewMetadataSubquery(factoryExecutionRequirements, requirementPosition, node.token, false);
+                    checkViewMetadataSubquery(factoryExecutionRequirements, requirementPosition, node.token, false);
                 }
                 if (!sqlExecutionContext.allowNonDeterministicFunctions()) {
                     SqlExecutionRequirements.checkStoredView(
@@ -861,6 +880,19 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         }
         lastFunctionFactorySignature = factory.getSignature();
         return function;
+    }
+
+    private void checkViewMetadataSubquery(
+            int requirements,
+            int position,
+            CharSequence name,
+            boolean isStatement
+    ) throws SqlException {
+        if (deferredViewMetadataRequirements != null) {
+            deferredViewMetadataRequirements.add(requirements, position, name, isStatement, null);
+        } else {
+            SqlExecutionRequirements.checkViewMetadataSubquery(requirements, position, name, isStatement);
+        }
     }
 
     private Function createBindVariable0(int position, CharSequence name) throws SqlException {

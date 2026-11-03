@@ -43,7 +43,10 @@ import org.junit.Test;
 public class ShowExecutionRequirementsTest extends AbstractCairoTest {
     private static final String LIVE_VIEW_REJECTION = "administrative statement cannot be used in live view: SHOW TABLES";
     private static final String MAT_VIEW_REJECTION = "administrative statement cannot be used in materialized view: SHOW TABLES";
-    private static final String PIVOT_QUERY = "SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT table_name FROM (SHOW TABLES) WHERE table_name = 'data'))";
+    private static final String PIVOT_QUERY = """
+            SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                SELECT table_name FROM (SHOW TABLES) WHERE table_name = 'data'
+            ))""";
     private static final String VIEW_PIVOT_REJECTION = "administrative statement cannot be used in view PIVOT IN subquery: SHOW TABLES";
     private static volatile boolean isShowTablesAdministrative = true;
 
@@ -118,6 +121,34 @@ public class ShowExecutionRequirementsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testViewPivotAcceptsAdministrativeShowInUnreadColumn() throws Exception {
+        // a sub-query nested in a view's PIVOT IN subquery runs only if the subquery's plan keeps it, and one in a column
+        // that nothing reads never runs
+        assertMemoryLeak(() -> {
+            createData();
+            execute("""
+                    CREATE VIEW v_column AS (
+                        SELECT cat, CASE WHEN val > (SELECT count() FROM (SHOW TABLES)) THEN 1 ELSE 0 END n FROM data
+                    )""");
+            execute("""
+                    CREATE VIEW pv AS (
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN (SELECT cat FROM v_column))
+                    )""");
+            execute("COMPILE VIEW pv");
+            drainViewQueue();
+            assertViewStatus("pv", "valid", "");
+            assertQuery("SELECT * FROM pv")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            data\tother
+                            42\t7
+                            """);
+        });
+    }
+
+    @Test
     public void testViewPivotRejectsAdministrativeShow() throws Exception {
         assertMemoryLeak(() -> {
             createData();
@@ -141,6 +172,26 @@ public class ShowExecutionRequirementsTest extends AbstractCairoTest {
                             data
                             42
                             """);
+        });
+    }
+
+    @Test
+    public void testViewPivotRejectsAdministrativeShowInNestedSubquery() throws Exception {
+        // the optimiser creates a SHOW cursor in a sub-query nested in a view's PIVOT IN subquery before it knows whether
+        // the subquery's plan keeps the sub-query; this plan does, so the view rejects the statement
+        assertMemoryLeak(() -> {
+            createData();
+            final String create = """
+                    CREATE VIEW pv AS (
+                        SELECT * FROM data PIVOT (SUM(val) FOR cat IN (
+                            SELECT CASE WHEN (SELECT count() FROM (SHOW TABLES)) > 0 THEN 'data' ELSE 'other' END
+                            FROM long_sequence(1)
+                        ))
+                    )""";
+            assertQuery(create).noLeakCheck().fails(create.indexOf("SHOW"), VIEW_PIVOT_REJECTION);
+            Assert.assertNull(engine.getTableTokenIfExists("pv"));
+            Assert.assertFalse(sqlExecutionContext.isViewCompile());
+            Assert.assertFalse(sqlExecutionContext.isViewMetadataSubquery());
         });
     }
 

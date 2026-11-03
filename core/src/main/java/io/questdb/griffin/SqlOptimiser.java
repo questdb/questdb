@@ -194,6 +194,7 @@ public class SqlOptimiser implements Mutable {
     private final CharSequenceObjHashMap<ExpressionNode> constNameToNode = new CharSequenceObjHashMap<>();
     private final CharSequenceObjHashMap<CharSequence> constNameToToken = new CharSequenceObjHashMap<>();
     private final ObjectPool<JoinContext> contextPool;
+    private final ObjectPool<SqlExecutionRequirements> deferredRequirementsPool = new ObjectPool<>(SqlExecutionRequirements::new, 4);
     private final IntHashSet deletedContexts = new IntHashSet();
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final FunctionParser functionParser;
@@ -251,6 +252,9 @@ public class SqlOptimiser implements Mutable {
     // lazily to the deepest wrapper nesting seen and is never shrunk.
     private final ObjList<SubsampleNameScope> subsampleNameScopes = new ObjList<>();
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
+    // What the creation of each entry of tableFactoriesInFlight recorded instead of rejecting, at the same
+    // index, or null, see checkDeferredViewMetadataRequirements().
+    private final ObjList<SqlExecutionRequirements> tableFactoryDeferredRequirementsInFlight = new ObjList<>();
     // The model each entry of tableFactoriesInFlight hangs on, at the same index. A factory that is
     // still its model's table name function has no owner yet: code generation detaches the ones it
     // takes over.
@@ -294,6 +298,9 @@ public class SqlOptimiser implements Mutable {
     private boolean hasOptimiserAndOffsets;
     // True when the execution-order anchors are valid (ordered join models are a full permutation).
     private boolean isNullingExecOrderValid;
+    // Whether the optimiser optimises a sub-query nested in a PIVOT IN subquery that derives an ordinary
+    // view's metadata, see optimiseExpressionModels()
+    private boolean isViewMetadataCheckDeferred;
     private OperatorExpression opAnd;
     private OperatorExpression opGeq;
     private OperatorExpression opLt;
@@ -438,7 +445,9 @@ public class SqlOptimiser implements Mutable {
         tempCursorAliases.clear();
         tempCursorAliasSequenceMap.clear();
         tableFactoriesInFlight.clear();
+        tableFactoryDeferredRequirementsInFlight.clear();
         tableFactoryModelsInFlight.clear();
+        deferredRequirementsPool.clear();
         groupByAliases.clear();
         groupByNodes.clear();
         innerAliasWindowLiteralNames.clear();
@@ -2590,6 +2599,20 @@ public class SqlOptimiser implements Mutable {
             current = definition;
         }
         return current;
+    }
+
+    // The optimiser creates the cursor factories of a sub-query nested in a view's PIVOT IN subquery before it knows
+    // whether the subquery's plan keeps the sub-query, which it does not for one in a column that nothing reads. So
+    // it records what such a factory may not run instead of rejecting it, see optimiseExpressionModels(). Code
+    // generation detaches the factories it takes into the plan from their models, see tableFactoryModelsInFlight:
+    // once it has generated the subquery's plan, this rejects the ones the plan reads, before their cursors open.
+    private void checkDeferredViewMetadataRequirements() throws SqlException {
+        for (int i = 0, n = tableFactoryDeferredRequirementsInFlight.size(); i < n; i++) {
+            final SqlExecutionRequirements requirements = tableFactoryDeferredRequirementsInFlight.getQuick(i);
+            if (requirements != null && tableFactoryModelsInFlight.getQuick(i).getTableNameFunction() != tableFactoriesInFlight.getQuick(i)) {
+                requirements.checkViewMetadataSubquery();
+            }
+        }
     }
 
     private boolean checkForChildAggregates(ExpressionNode node) {
@@ -7622,10 +7645,16 @@ public class SqlOptimiser implements Mutable {
                     if (node.queryModel != null) {
                         node.tableFunctionView = executionContext.getTableFunctionView();
                         final boolean wasViewMetadataSubquery = executionContext.isViewMetadataSubquery();
-                        // Optimising instantiates functions too, before preparePivotForSelectSubquery
-                        // opens their cursors. Reject caller-dependent ones before either can run.
+                        final boolean wasViewMetadataCheckDeferred = isViewMetadataCheckDeferred;
                         if (executionContext.isViewCompile() && isPivotInSubquery(model, node)) {
+                            // Optimising instantiates functions too, before preparePivotForSelectSubquery
+                            // opens their cursors. Reject caller-dependent ones before either can run.
                             executionContext.setViewMetadataSubquery(true);
+                            isViewMetadataCheckDeferred = false;
+                        } else if (wasViewMetadataSubquery) {
+                            // A sub-query nested in the PIVOT IN subquery runs only if the subquery's plan
+                            // keeps it, see checkDeferredViewMetadataRequirements()
+                            isViewMetadataCheckDeferred = true;
                         }
                         try {
                             IQueryModel optimised = optimise(node.queryModel, executionContext, sqlParserCallback);
@@ -7634,6 +7663,7 @@ public class SqlOptimiser implements Mutable {
                             }
                         } finally {
                             executionContext.setViewMetadataSubquery(wasViewMetadataSubquery);
+                            isViewMetadataCheckDeferred = wasViewMetadataCheckDeferred;
                         }
                     }
                 }
@@ -7894,12 +7924,17 @@ public class SqlOptimiser implements Mutable {
         final int previousRequirementPosition = viewNameExpr != null
                 ? functionParser.enterExecutionRequirementPosition(viewNameExpr.position)
                 : -1;
+        // a factory created for a sub-query nested in a view's PIVOT IN subquery records what the subquery may not
+        // run, rather than rejecting it, see checkDeferredViewMetadataRequirements()
+        final SqlExecutionRequirements deferredRequirements = isViewMetadataCheckDeferred ? deferredRequirementsPool.next() : null;
+        final SqlExecutionRequirements previousDeferredRequirements = functionParser.deferViewMetadataChecks(deferredRequirements);
         try {
             if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_SHOW) {
                 final RecordCursorFactory showFactory = createShowFactory(functionParser, model, executionContext, sqlParserCallback, path);
                 model.setTableNameFunction(showFactory);
                 // like a table function's, owned by nothing until code generation takes it over
                 tableFactoriesInFlight.add(showFactory);
+                tableFactoryDeferredRequirementsInFlight.add(deferredRequirements);
                 tableFactoryModelsInFlight.add(model);
             } else {
                 // if we haven't initialised the model, initialise it
@@ -7907,10 +7942,12 @@ public class SqlOptimiser implements Mutable {
                     final RecordCursorFactory tableFactory = TableUtils.createCursorFunction(functionParser, model, executionContext).getRecordCursorFactory();
                     model.setTableNameFunction(tableFactory);
                     tableFactoriesInFlight.add(tableFactory);
+                    tableFactoryDeferredRequirementsInFlight.add(deferredRequirements);
                     tableFactoryModelsInFlight.add(model);
                 }
             }
         } finally {
+            functionParser.deferViewMetadataChecks(previousDeferredRequirements);
             if (viewNameExpr != null) {
                 functionParser.restoreExecutionRequirementPosition(previousRequirementPosition);
             }
@@ -8034,6 +8071,7 @@ public class SqlOptimiser implements Mutable {
                     // the sub-query reads goes out of date, the exception propagates to whatever
                     // compiles this statement, which holds the statement's text and can retry it.
                     try (RecordCursorFactory inListFactory = compiler.generateSelectWithoutRetries(subQueryNode.queryModel, sqlExecutionContext, true)) {
+                        checkDeferredViewMetadataRequirements();
                         final RecordMetadata inListMetadata = inListFactory.getMetadata();
                         final int columnCount = inListMetadata.getColumnCount();
                         if (columnCount != 1) {
@@ -15740,6 +15778,7 @@ public class SqlOptimiser implements Mutable {
             }
         }
         tableFactoriesInFlight.clear();
+        tableFactoryDeferredRequirementsInFlight.clear();
         tableFactoryModelsInFlight.clear();
         return failure;
     }

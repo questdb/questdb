@@ -55,7 +55,9 @@ public final class SqlExecutionRequirements implements Mutable {
      * and live views reject such a function or statement, at CREATE and at refresh alike. A SHOW
      * statement gets the requirement from {@link SqlParserCallback#getShowExecutionRequirements}.
      * Ordinary views also reject them in PIVOT IN subqueries, which execute while the detached view
-     * compiler derives metadata; the rest of an ordinary view's SELECT still runs as its caller.
+     * compiler derives metadata; the rest of an ordinary view's SELECT still runs as its caller. A
+     * sub-query nested in such a subquery runs only if the subquery's plan keeps it, so a table
+     * function or SHOW statement there counts only then, e.g. not in a column that nothing reads.
      */
     public static final int REQUIRES_ENTERPRISE_SECURITY_CONTEXT = 1 << 1;
     public static final int REQUIRES_LIVE_WAL_PROGRESS = 1;
@@ -184,6 +186,21 @@ public final class SqlExecutionRequirements implements Mutable {
                     disclosingViewName,
                     isDisclosingViewAlterable,
                     executionContext
+            );
+        }
+    }
+
+    /**
+     * Like {@link #checkViewMetadataSubquery(int, int, CharSequence, boolean)}, for the functions and SHOW
+     * statements recorded so far.
+     */
+    public void checkViewMetadataSubquery() throws SqlException {
+        if (enterpriseSecurityContextPosition > -1) {
+            checkViewMetadataSubquery(
+                    REQUIRES_ENTERPRISE_SECURITY_CONTEXT,
+                    enterpriseSecurityContextPosition,
+                    enterpriseSecurityContextName,
+                    isEnterpriseSecurityContextStatement
             );
         }
     }
