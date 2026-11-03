@@ -79,7 +79,7 @@ public class WindowJoinParquetMasterTest extends AbstractCairoTest {
                     "RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING";
             assertQuery(windowJoin + " LIMIT 3")
                     .timestamp("ts")
-                    .inferRandomAccess()
+                    .supportsRandomAccess(true)
                     .sizeMayVary()
                     .returns("""
                             v\tts\tc\tw

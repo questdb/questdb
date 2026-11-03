@@ -877,7 +877,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             " WINDOW JOIN cz_prices p1 ON (t.sym = p1.sym)" + range)
                             .noLeakCheck()
                             .timestamp("ts")
-                            .inferRandomAccess()
+                            .noRandomAccess()
                             .sizeMayVary()
                             .withPlanContaining(
                                     isConstantFalse ? "Window Fast Join\n" : null,
@@ -918,7 +918,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "HORIZON JOIN cz_prices q ON (m.sym = q.sym) LIST (0s) AS h " +
                             "ORDER BY m.sym")
                             .noLeakCheck()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .withPlanContaining("Horizon Join", "ExtraEmptyValueColumnRecord")
                             .withPlanNotContaining("Async Horizon Join", "Async JIT Horizon Join")
@@ -963,7 +963,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 "RANGE BETWEEN 2 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING")
                                 .noLeakCheck()
                                 .timestamp("ts")
-                                .inferRandomAccess()
+                                .noRandomAccess()
                                 .sizeMayVary()
                                 .withPlanContaining("Window Fast Join", "ExtraEmptyValueColumnRecord")
                                 .withPlanNotContaining("Async")
@@ -981,7 +981,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 "RANGE BETWEEN 2 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING")
                                 .noLeakCheck()
                                 .timestamp("ts")
-                                .inferRandomAccess()
+                                .noRandomAccess()
                                 .sizeMayVary()
                                 .withPlanContaining("Window Join", "ExtraEmptyValueColumnRecord")
                                 .withPlanNotContaining("Async")
@@ -996,7 +996,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         assertQuery("SELECT count(q.c) n, sum(q.c) sc, sum(q.s2) ss FROM cz_trades t " +
                                 "HORIZON JOIN " + slave + " q ON (t.sym = q.sym) LIST (0s) AS h")
                                 .noLeakCheck()
-                                .inferRandomAccess()
+                                .noRandomAccess()
                                 .sizeMayVary()
                                 .withPlanContaining("Horizon Join", "ExtraEmptyValueColumnRecord")
                                 .withPlanNotContaining("Async")
@@ -1011,7 +1011,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 "HORIZON JOIN " + slave + " q ON (t.sym = q.sym) " +
                                 "HORIZON JOIN cz_prices r ON (t.sym = r.sym) LIST (0s) AS h")
                                 .noLeakCheck()
-                                .inferRandomAccess()
+                                .noRandomAccess()
                                 .sizeMayVary()
                                 .withPlanContaining("Multi Horizon Join", "ExtraEmptyValueColumnRecord")
                                 .withPlanNotContaining("Async")
@@ -1026,7 +1026,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 "HORIZON JOIN " + slave + " q ON (t.sym = q.sym) LIST (0s) AS h")
                                 .noLeakCheck()
                                 .timestamp("ts")
-                                .inferRandomAccess()
+                                .noRandomAccess()
                                 .sizeMayVary()
                                 .withPlanContaining("Horizon Join Projection", "ExtraEmptyValueColumnRecord")
                                 .withPlanNotContaining("Async")
@@ -1070,7 +1070,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "RANGE BETWEEN 2 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING")
                             .noLeakCheck()
                             .timestamp("ts")
-                            .inferRandomAccess()
+                            .noRandomAccess()
                             .sizeMayVary()
                             .withPlanContaining("Window Fast Join", "ExtraEmptyValueColumnRecord")
                             .returns(replaceTimestampSuffix("""
@@ -1083,7 +1083,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     assertQuery("SELECT count(q.c) n, sum(q.c) sc, sum(q.s2) ss FROM cz_trades t " +
                             "HORIZON JOIN " + slave + " q ON (t.sym = q.sym) LIST (0s) AS h")
                             .noLeakCheck()
-                            .inferRandomAccess()
+                            .noRandomAccess()
                             .sizeMayVary()
                             .withPlanContaining("Horizon Join", "ExtraEmptyValueColumnRecord")
                             .returns("""
@@ -1094,7 +1094,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     assertQuery("SELECT t.ts, q.c, q.s2 FROM cz_trades t ASOF JOIN " + slave + " q ON (sym)")
                             .noLeakCheck()
                             .timestamp("ts")
-                            .inferRandomAccess()
+                            .noRandomAccess()
                             .sizeMayVary()
                             .withPlanContaining("AsOf Join Fast", "ExtraEmptyValueColumnRecord")
                             .returns(replaceTimestampSuffix("""
@@ -1134,7 +1134,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 "WINDOW JOIN cz_prices p1 ON (t.sym = p1.sym) " + range)
                                 .noLeakCheck()
                                 .timestamp("ts")
-                                .inferRandomAccess()
+                                .noRandomAccess()
                                 .sizeMayVary()
                                 .withPlanContaining("Window Fast Join\n", "ExtraEmptyValueColumnRecord")
                                 .returns(replaceTimestampSuffix(isInclude
@@ -1157,7 +1157,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 "WINDOW JOIN cz_prices p1 ON (" + condition.replace("p.", "p1.") + ") " + range)
                                 .noLeakCheck()
                                 .timestamp("ts")
-                                .inferRandomAccess()
+                                .noRandomAccess()
                                 .sizeMayVary()
                                 .withPlanContaining("ExtraEmptyValueColumnRecord")
                                 .returns(replaceTimestampSuffix(isInclude
@@ -1242,7 +1242,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                 assertQuery("SELECT * FROM (" + windowJoin + ") WHERE c = 0")
                         .noLeakCheck()
                         .timestamp("ts")
-                        .inferRandomAccess()
+                        .supportsRandomAccess(true)
                         .sizeMayVary()
                         .withPlanContaining("Filter filter: c=0\n", "ExtraEmptyValueColumnRecord")
                         .returns(replaceTimestampSuffix("""
@@ -1255,7 +1255,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                 assertQuery("SELECT * FROM (" + windowJoin + ") ORDER BY ts DESC LIMIT 2")
                         .noLeakCheck()
                         .timestampDesc("ts")
-                        .inferRandomAccess()
+                        .supportsRandomAccess(true)
                         .sizeMayVary()
                         .withPlanContaining("Encode sort light", "ExtraEmptyValueColumnRecord")
                         .returns(replaceTimestampSuffix("""
@@ -1312,7 +1312,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "WINDOW JOIN cz_prices p ON (" + condition + ") RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW) " +
                             "ORDER BY sym DESC, c, ts")
                             .noLeakCheck()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .withPlan(plan)
                             .returns(replaceTimestampSuffix("""
@@ -1387,7 +1387,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     final String windowJoin = " FROM " + groupByMaster + " WINDOW JOIN cz_prices p ON (" + condition + ")" + range;
                     assertQuery("SELECT t.*, count() n" + windowJoin + " ORDER BY mk DESC LIMIT 2")
                             .noLeakCheck()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .withPlanContaining(isConstantFalse ? """
                                     Long Top K lo: 2
@@ -1402,7 +1402,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
                     assertQuery("SELECT t.*, max(p.ts) mx" + windowJoin + " ORDER BY mk DESC LIMIT 2")
                             .noLeakCheck()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .withPlanContaining(isConstantFalse ? """
                                     Long Top K lo: 2
@@ -1419,7 +1419,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     // index, which maps it to the master column.
                     assertQuery("SELECT t.mk, count() n, t.ts" + windowJoin + " ORDER BY mk DESC LIMIT 2")
                             .noLeakCheck()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .withPlanContaining(isConstantFalse ? """
                                     Long Top K lo: 2
@@ -1439,7 +1439,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     final String windowJoin = " FROM cz_trades t WINDOW JOIN cz_prices p ON (" + condition + ")" + range;
                     assertQuery("SELECT t.ts, count() n" + windowJoin + " ORDER BY n DESC LIMIT 2")
                             .noLeakCheck()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .withPlanContaining(isConstantFalse ? "Encode sort light lo: 2\n" : null, isConstantFalse ? "ExtraEmptyValueColumnRecord\n" : null)
                             .withPlanNotContaining("Long Top K")
@@ -1452,7 +1452,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     assertQuery("SELECT t.ts, max(p.ts) mx" + windowJoin + " ORDER BY mx DESC LIMIT 2")
                             .noLeakCheck()
                             .timestampDesc("mx")
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .withPlanContaining(isConstantFalse ? "Async Top K lo: 2 " : null, isConstantFalse ? "ExtraNullColumnRecord\n" : null)
                             .withPlanNotContaining("Long Top K")
@@ -1496,7 +1496,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 "RANGE BETWEEN 2 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING")
                                 .noLeakCheck()
                                 .timestamp("ts")
-                                .inferRandomAccess()
+                                .noRandomAccess()
                                 .sizeMayVary()
                                 .withPlanContaining("Window Fast Join", "ExtraNullColumnRecord")
                                 .withPlanNotContaining("Async")
@@ -1511,7 +1511,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         assertQuery("SELECT count(q.c) n, sum(q.c) sc, sum(q.s2) ss FROM cz_trades t " +
                                 "HORIZON JOIN " + slave + " q ON (t.sym = q.sym) LIST (0s) AS h")
                                 .noLeakCheck()
-                                .inferRandomAccess()
+                                .noRandomAccess()
                                 .sizeMayVary()
                                 .withPlanContaining("Horizon Join", "ExtraNullColumnRecord")
                                 .withPlanNotContaining("Async")
@@ -1622,8 +1622,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     // parallel Top K over them, with and without a SelectedRecord above it.
                     assertQuery("SELECT t.sym, t.k, t.ts2, t.ts, bool_or(false) b" + windowJoin + " ORDER BY b, ts DESC LIMIT 2")
                             .noLeakCheck()
-                            .inferTimestamp()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .withPlan("""
                                     Async Top K lo: 2 workers: 1
@@ -1642,8 +1641,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
                     assertQuery("SELECT t.ts, bool_or(false) b, t.sym" + windowJoin + " ORDER BY b, ts DESC LIMIT 2")
                             .noLeakCheck()
-                            .inferTimestamp()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .withPlan("""
                                     SelectedRecord
@@ -1665,7 +1663,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             " WINDOW JOIN cz_prices p1 ON (t.sym = p1.sym)" + range)
                             .noLeakCheck()
                             .timestamp("ts")
-                            .inferRandomAccess()
+                            .noRandomAccess()
                             .sizeMayVary()
                             .withPlanContaining("ExtraNullColumnRecord")
                             .returns(replaceTimestampSuffix("""
@@ -1720,7 +1718,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "WHERE fd IS NULL AND sd IS NULL AND fs IS NULL AND fv IS NULL AND fl IS NULL")
                             .noLeakCheck()
                             .timestamp("ts")
-                            .inferRandomAccess()
+                            .supportsRandomAccess(isConstantFalse)
                             .sizeMayVary()
                             .returns(replaceTimestampSuffix("""
                                     ts\tc
@@ -2069,8 +2067,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     // projection metadata, and no SelectedRecord sits above it.
                     assertQuery("SELECT t.sym, t.k, t.ts2, t.ts, first(p.sym) f" + windowJoin + " ORDER BY f, ts DESC LIMIT 2")
                             .noLeakCheck()
-                            .inferTimestamp()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .withPlan(isConstantFalse
                                     ? """
@@ -2095,8 +2092,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     // A master column under an alias that no other column takes keeps its name.
                     assertQuery("SELECT t.ts, t.k kk, sum(p.price) s" + windowJoin + " ORDER BY kk DESC, ts LIMIT 2")
                             .noLeakCheck()
-                            .inferTimestamp()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .withPlan(isConstantFalse
                                     ? """
@@ -2118,8 +2114,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
                     assertQuery("SELECT t.ts, first(p.sym) f, t.sym" + windowJoin + " ORDER BY f, ts DESC LIMIT 2")
                             .noLeakCheck()
-                            .inferTimestamp()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .withPlan(isConstantFalse
                                     ? """
@@ -2143,8 +2138,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     // ON clause reads.
                     assertQuery("SELECT t.ts, first(p.sym) sym, t.k" + windowJoin + " ORDER BY sym, ts DESC LIMIT 2")
                             .noLeakCheck()
-                            .inferTimestamp()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .withPlan(isConstantFalse
                                     ? """
@@ -2169,8 +2163,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     // projection renames to s.
                     assertQuery("SELECT t.ts, t.sym s, first(p.price) sym" + windowJoin + " ORDER BY s DESC, sym, ts DESC LIMIT 2")
                             .noLeakCheck()
-                            .inferTimestamp()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .withPlanContaining(isConstantFalse ? "keys: [s desc, sym, ts desc]" : null)
                             .withPlanNotContaining("sym_1")
@@ -2183,8 +2176,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     // Each master column takes the name of the other one.
                     assertQuery("SELECT t.ts, t.k sym, t.sym k, first(p.price) s" + windowJoin + " ORDER BY sym DESC, k LIMIT 2")
                             .noLeakCheck()
-                            .inferTimestamp()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .withPlanContaining(isConstantFalse ? "keys: [sym desc, k]" : null)
                             .returns(replaceTimestampSuffix("""
@@ -2197,8 +2189,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     // to ts2.
                     assertQuery("SELECT t.ts, t.ts2 k, t.k kk, sum(p.price) s" + windowJoin + " ORDER BY kk LIMIT 2")
                             .noLeakCheck()
-                            .inferTimestamp()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .withPlanContaining(isConstantFalse ? "keys: [kk]" : null)
                             .returns("""
@@ -2314,7 +2305,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     final String windowJoinQuery = "SELECT t.ts, first(p.sym) f, t.sym" + windowJoin;
                     assertQuery("SELECT f, count() n FROM (" + windowJoinQuery + ")")
                             .noLeakCheck()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .returns("""
                                     f\tn
@@ -2323,7 +2314,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
                     assertQuery("SELECT DISTINCT f FROM (" + windowJoinQuery + ")")
                             .noLeakCheck()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .returns("""
                                     f
@@ -2332,8 +2323,7 @@ public class WindowJoinTest extends AbstractCairoTest {
 
                     assertQuery("SELECT * FROM (" + windowJoinQuery + ") ORDER BY f, ts DESC")
                             .noLeakCheck()
-                            .inferTimestamp()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .returns(replaceTimestampSuffix("""
                                     ts\tf\tsym
@@ -2348,7 +2338,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         assertQuery("SELECT ts, sym FROM (" + windowJoinQuery + ") WHERE f IS NULL")
                                 .noLeakCheck()
                                 .timestamp("ts")
-                                .inferRandomAccess()
+                                .supportsRandomAccess(isConstantFalse)
                                 .sizeMayVary()
                                 .returns(replaceTimestampSuffix("""
                                         ts\tsym
@@ -2360,7 +2350,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         assertQuery("SELECT ts, sym FROM (" + windowJoinQuery + ") WHERE f = 'a'")
                                 .noLeakCheck()
                                 .timestamp("ts")
-                                .inferRandomAccess()
+                                .supportsRandomAccess(isConstantFalse)
                                 .sizeMayVary()
                                 .returns("ts\tsym\n");
                     }
@@ -2368,8 +2358,8 @@ public class WindowJoinTest extends AbstractCairoTest {
 
                     assertQuery("SELECT x.ts, x.f, y.k FROM (" + windowJoinQuery + ") x LEFT JOIN cz_trades y ON (x.f = y.sym)")
                             .noLeakCheck()
-                            .inferTimestamp()
-                            .inferRandomAccess()
+                            .timestamp("ts")
+                            .noRandomAccess()
                             .sizeMayVary()
                             .returns(replaceTimestampSuffix("""
                                     ts\tf\tk
@@ -2381,7 +2371,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     assertQuery("SELECT ts, f, f::STRING s FROM (" + windowJoinQuery + ")")
                             .noLeakCheck()
                             .timestamp("ts")
-                            .inferRandomAccess()
+                            .supportsRandomAccess(isConstantFalse)
                             .sizeMayVary()
                             .returns(replaceTimestampSuffix("""
                                     ts\tf\ts
@@ -2394,7 +2384,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     // lists every master column in table order down to a reordering one.
                     assertQuery("SELECT f, count() n FROM (SELECT t.sym, t.k, t.ts2, t.ts, first(p.sym) f" + windowJoin + ")")
                             .noLeakCheck()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .returns("""
                                     f\tn
@@ -2456,7 +2446,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     // The outer query resolves sym and k to the aggregates, not to the master columns.
                     assertQuery("SELECT sym, k, count() n FROM (SELECT t.ts, first(p.price) sym, count() k" + windowJoin + ")")
                             .noLeakCheck()
-                            .inferRandomAccess()
+                            .supportsRandomAccess(true)
                             .sizeMayVary()
                             .returns("""
                                     sym\tk\tn
@@ -2582,7 +2572,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         "RANGE BETWEEN 2 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING")
                         .noLeakCheck()
                         .timestamp("ts")
-                        .inferRandomAccess()
+                        .noRandomAccess()
                         .sizeMayVary()
                         .withPlanContaining("Window Join", "ExtraEmptyValueColumnRecord")
                         .returns(replaceTimestampSuffix("""
@@ -2597,7 +2587,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         "RANGE BETWEEN t.k MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING")
                         .noLeakCheck()
                         .timestamp("ts")
-                        .inferRandomAccess()
+                        .noRandomAccess()
                         .sizeMayVary()
                         .withPlanContaining("Window Join", "ExtraEmptyValueColumnRecord")
                         .returns(replaceTimestampSuffix("""
@@ -2717,7 +2707,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         // offer them once it reports a non-NULL empty value.
                         assertQuery("SELECT count() n, sum(hd) shd FROM (" + reordered + ") WHERE ol AND oi")
                                 .noLeakCheck()
-                                .inferRandomAccess()
+                                .noRandomAccess()
                                 .sizeMayVary()
                                 .withPlanContaining(isConstantFalse ? "ExtraEmptyValueColumnRecord" : null)
                                 .returns("""
@@ -2730,8 +2720,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         assertQuery("SELECT t.sym, t.k, t.ts2, t.ts, isOrdered(p.l) ol, haversine_dist_deg(p.lat, p.lon, p.ts) hd" +
                                 windowJoin + " ORDER BY hd DESC, ts LIMIT 2")
                                 .noLeakCheck()
-                                .inferTimestamp()
-                                .inferRandomAccess()
+                                .supportsRandomAccess(true)
                                 .sizeMayVary()
                                 .withPlanContaining(isConstantFalse ? "ExtraEmptyValueColumnRecord" : null)
                                 .returns("""
@@ -2769,7 +2758,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             " WINDOW JOIN cz_prices p1 ON (t.sym = p1.sym)" + range)
                             .noLeakCheck()
                             .timestamp("ts")
-                            .inferRandomAccess()
+                            .noRandomAccess()
                             .sizeMayVary()
                             .withPlanContaining(isConstantFalse ? "ExtraEmptyValueColumnRecord" : null)
                             .returns(replaceTimestampSuffix("""
@@ -2792,7 +2781,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "ON (t.sym = q.sym AND q.ol) RANGE BETWEEN 2 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING")
                             .noLeakCheck()
                             .timestamp("ts")
-                            .inferRandomAccess()
+                            .noRandomAccess()
                             .sizeMayVary()
                             .withPlanContaining("ExtraEmptyValueColumnRecord")
                             .returns(replaceTimestampSuffix("""
@@ -2886,7 +2875,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     assertQuery("SELECT x.ts, q.* FROM cz_trades x LT JOIN (SELECT t.*, count() n" + filteredWindowJoin + ") q")
                             .noLeakCheck()
                             .timestamp("ts")
-                            .inferRandomAccess()
+                            .noRandomAccess()
                             .sizeMayVary()
                             .withPlanContaining(isConstantFalse ? "ExtraEmptyValueColumnRecord\n" : null)
                             .returns(replaceTimestampSuffix("""
@@ -6693,7 +6682,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             "RANGE BETWEEN 2 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING")
                             .noLeakCheck()
                             .timestamp("ts")
-                            .inferRandomAccess()
+                            .noRandomAccess()
                             .sizeMayVary()
                             .withPlanContaining("Async Window Fast Join")
                             .returns(replaceTimestampSuffix("""
@@ -6707,7 +6696,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                     assertQuery("SELECT count(q.price) n, sum(q.price) sp FROM cz_trades t " +
                             "HORIZON JOIN " + slave + " q ON (t.sym = q.sym) LIST (0s) AS h")
                             .noLeakCheck()
-                            .inferRandomAccess()
+                            .noRandomAccess()
                             .sizeMayVary()
                             .withPlanContaining("Async Horizon Join")
                             .returns("""
@@ -6792,7 +6781,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                             " WHERE t.ts2 IN '2024-01-06#workday'")
                             .noLeakCheck()
                             .timestamp("ts")
-                            .inferRandomAccess()
+                            .noRandomAccess()
                             .sizeMayVary()
                             .returns("ts\tc\tcp\ts\n");
                 }
@@ -6963,7 +6952,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         "RANGE BETWEEN 2 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING")
                         .noLeakCheck()
                         .timestamp("ts")
-                        .inferRandomAccess()
+                        .noRandomAccess()
                         .sizeMayVary()
                         .withPlanContaining(isParallel ? "Async Window Fast Join" : "Window Fast Join")
                         .withPlanNotContaining(absentPlanFragments)
@@ -6978,7 +6967,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         "RANGE BETWEEN 2 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING")
                         .noLeakCheck()
                         .timestamp("ts")
-                        .inferRandomAccess()
+                        .noRandomAccess()
                         .sizeMayVary()
                         .withPlanContaining(isParallel ? "Async Window Join" : "Window Join")
                         .withPlanNotContaining(absentPlanFragments)
@@ -6993,7 +6982,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                         "RANGE BETWEEN 2 MINUTE PRECEDING AND CURRENT ROW EXCLUDE PREVAILING")
                         .noLeakCheck()
                         .timestamp("ts")
-                        .inferRandomAccess()
+                        .noRandomAccess()
                         .sizeMayVary()
                         .withPlanContaining(isParallel ? "Async Window Fast Join" : "Window Fast Join")
                         .withPlanNotContaining(absentPlanFragments)
