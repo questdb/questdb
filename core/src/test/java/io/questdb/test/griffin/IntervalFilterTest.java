@@ -32,7 +32,6 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.RecordCursorFactory;
-import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
@@ -1858,8 +1857,8 @@ public class IntervalFilterTest extends AbstractCairoTest {
                 final String tick = randomTickString(rnd, tickSink, true);
                 expected.clear();
                 actual.clear();
-                IntervalUtils.parseTickExpr(timestampDriver, unmergedConfiguration, tick, 0, tick.length(), 0, expected, IntervalOperation.INTERSECT, sink, true);
-                IntervalUtils.parseTickExpr(timestampDriver, configuration, tick, 0, tick.length(), 0, actual, IntervalOperation.INTERSECT, sink, true);
+                IntervalUtils.parseTickExpr(timestampDriver, unmergedConfiguration, tick, 0, tick.length(), 0, expected, sink);
+                IntervalUtils.parseTickExpr(timestampDriver, configuration, tick, 0, tick.length(), 0, actual, sink);
                 Assert.assertEquals(tick, expected, actual);
             }
         });
@@ -2350,7 +2349,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
                 }
                 intervals.clear();
                 listSizeConfiguration.maxListIntervalCount = 0;
-                IntervalUtils.parseTickExpr(timestampDriver, listSizeConfiguration, tick, 0, tick.length(), 0, intervals, IntervalOperation.INTERSECT, sink, true);
+                IntervalUtils.parseTickExpr(timestampDriver, listSizeConfiguration, tick, 0, tick.length(), 0, intervals, sink);
                 if (listSizeConfiguration.maxListIntervalCount > maxIntervals) {
                     if (tick.startsWith("[2024-[01..02]")) {
                         hasLargerFirstOverCap = true;

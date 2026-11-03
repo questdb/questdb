@@ -33,7 +33,6 @@ import io.questdb.cairo.TickCalendarServiceFactory;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.model.CompiledTickExpression;
-import io.questdb.griffin.model.IntervalOperation;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.LongList;
 import io.questdb.std.datetime.microtime.Micros;
@@ -442,6 +441,20 @@ public class TickCalendarTest {
     }
 
     @Test
+    public void testDateVariableRangeWithPerElementExchangeFilterAndDayFilter() throws SqlException {
+        // An element's own exchange filter replaces the list's day filter for that element, as in the
+        // date list below: #Mon keeps Tuesday 2025-01-28 too. The 420 minutes of each day reach the
+        // incremental merge threshold (256), and that merge must not apply the day filter either.
+        // XNYS trades 14:30-21:00 UTC on both days, and the time list covers 14:00-20:59.
+        // now = 2025-01-27 (Monday)
+        final long nowTimestamp = Micros.toMicros(2025, 1, 27, 12, 0);
+        final String expected = "[{lo=2025-01-27T14:30:00.000000Z, hi=2025-01-27T20:59:59.999999Z}," +
+                "{lo=2025-01-28T14:30:00.000000Z, hi=2025-01-28T20:59:59.999999Z}]";
+        assertTickIntervalWithNow(expected, "[$today..$today+1d#XNYS]T[14..20]:[00..59]#Mon", nowTimestamp);
+        assertTickInterval(expected, "[2025-01-27#XNYS,2025-01-28#XNYS]T[14..20]:[00..59]#Mon");
+    }
+
+    @Test
     public void testDateVariableWithExchangeFilter() throws SqlException {
         // $today with exchange filter, now = 2025-01-24 (Friday, trading day)
         // Should return XNYS trading hours for Jan 24
@@ -558,7 +571,7 @@ public class TickCalendarTest {
         // 2025-03#XNYS - March 2025, XNYS trading days only
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseTickExpr(driver, configuration, "2025-03#XNYS", 0, 12, 0, out, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, "2025-03#XNYS", 0, 12, 0, out, sink);
 
         // Should have an even number of elements (pairs)
         Assert.assertEquals("Should have interval pairs", 0, out.size() % 2);
@@ -587,7 +600,7 @@ public class TickCalendarTest {
         // 2025-03#XHKG
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseTickExpr(driver, configuration, "2025-03#XHKG", 0, 12, 0, out, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, "2025-03#XHKG", 0, 12, 0, out, sink);
 
         // Each trading day produces 2 intervals (morning + afternoon due to lunch break)
         Assert.assertEquals("Should have interval pairs", 0, out.size() % 2);
@@ -614,7 +627,7 @@ public class TickCalendarTest {
         // 2025#XNYS - all trading days in 2025
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseTickExpr(driver, configuration, "2025#XNYS", 0, 9, 0, out, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, "2025#XNYS", 0, 9, 0, out, sink);
 
         // Should have interval pairs
         Assert.assertEquals("Should have interval pairs", 0, out.size() % 2);
@@ -1238,8 +1251,8 @@ public class TickCalendarTest {
         String expr1 = "2025-01-[02..8,10..19,21..31]T09:30@America/New_York#workday;6h30m";
         String expr2 = "2025-01-[01..31]#XNYS";
 
-        IntervalUtils.parseTickExpr(driver, configuration, expr1, 0, expr1.length(), 0, out1, IntervalOperation.INTERSECT, sink, true);
-        IntervalUtils.parseTickExpr(driver, configuration, expr2, 0, expr2.length(), 0, out2, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, expr1, 0, expr1.length(), 0, out1, sink);
+        IntervalUtils.parseTickExpr(driver, configuration, expr2, 0, expr2.length(), 0, out2, sink);
 
         Assert.assertEquals(intervalToString(driver, out1), intervalToString(driver, out2));
     }
@@ -1266,21 +1279,21 @@ public class TickCalendarTest {
     private void assertTickInterval(String expected, String interval) throws SqlException {
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, sink);
         Assert.assertEquals(expected, intervalToString(driver, out));
     }
 
     private void assertTickIntervalNanos(String expected, String interval) throws SqlException {
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP_NANO);
-        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, sink, true);
+        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, sink);
         Assert.assertEquals(expected, intervalToString(driver, out));
     }
 
     private void assertTickIntervalWithNow(String expected, String interval, long nowTimestamp) throws SqlException {
         LongList out = new LongList();
         TimestampDriver driver = ColumnType.getTimestampDriver(ColumnType.TIMESTAMP);
-        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, IntervalOperation.INTERSECT, sink, true, nowTimestamp);
+        IntervalUtils.parseTickExpr(driver, configuration, interval, 0, interval.length(), 0, out, sink, nowTimestamp);
         Assert.assertEquals(expected, intervalToString(driver, out));
     }
 }

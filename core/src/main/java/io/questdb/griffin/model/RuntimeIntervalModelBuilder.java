@@ -239,7 +239,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         final int size = staticIntervals.size();
         try {
             parsedIntervals.clear();
-            parseStaticTickExpr(seq, lo, lim, position, IntervalOperation.INTERSECT);
+            parseStaticTickExpr(seq, lo, lim, position);
             if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
@@ -614,7 +614,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         final int size = staticIntervals.size();
         try {
             parsedIntervals.clear();
-            parseStaticTickExpr(seq, lo, lim, position, IntervalOperation.SUBTRACT);
+            parseStaticTickExpr(seq, lo, lim, position);
             if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 IntervalUtils.invert(staticIntervals, size);
@@ -690,7 +690,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         final int size = staticIntervals.size();
         try {
             parsedIntervals.clear();
-            parseStaticTickExpr(seq, lo, lim, position, IntervalOperation.UNION);
+            parseStaticTickExpr(seq, lo, lim, position);
             if (dynamicRangeList.size() == 0) {
                 staticIntervals.add(parsedIntervals);
                 if (intervalApplied) {
@@ -979,13 +979,10 @@ public class RuntimeIntervalModelBuilder implements Mutable {
      * Resolves a tick string without date variables into plain [lo, hi] pairs in parsedIntervals,
      * also when a run-time interval precedes it. The callers then combine the whole list with the
      * preceding expression in one step, so the result does not depend on the order of the AND or
-     * OR operands. The encoded form of the string would apply its first value with the operation
-     * and union the rest into the result, which computes (X AND a) OR b instead of X AND (a OR b),
-     * and it would store a day filter as a mask that the evaluator checks against the first day
-     * of each value only.
+     * OR operands.
      */
-    private void parseStaticTickExpr(CharSequence seq, int lo, int lim, int position, short operation) throws SqlException {
-        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, operation, sink, true);
+    private void parseStaticTickExpr(CharSequence seq, int lo, int lim, int position) throws SqlException {
+        IntervalUtils.parseTickExpr(timestampDriver, configuration, seq, lo, lim, position, parsedIntervals, sink);
     }
 
     /**

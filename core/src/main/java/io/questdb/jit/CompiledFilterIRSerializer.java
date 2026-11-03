@@ -4989,8 +4989,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 intervalEx,
                 intervals,
                 position,
-                sink,
-                true
+                sink
         );
 
         final int intervalCount = intervals.size() / 2;
