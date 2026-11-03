@@ -2430,7 +2430,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
     // A tick string over the days of January 2024, in one case also of February, that both the
     // interval scan and the row filter resolve: lists, ranges, times, durations, repetitions,
     // fixed offsets and day filters.
-    private static String randomTickString(Rnd rnd, StringSink sink, boolean canHaveDayFilter) {
+    private static String randomTickString(Rnd rnd, StringSink sink, boolean isDayFilterAllowed) {
         sink.clear();
         final int day = 1 + rnd.nextInt(20);
         boolean hasTime = rnd.nextBoolean();
@@ -2492,7 +2492,7 @@ public class IntervalFilterTest extends AbstractCairoTest {
             default -> {
             }
         }
-        if (canHaveDayFilter) {
+        if (isDayFilterAllowed) {
             switch (rnd.nextInt(5)) {
                 case 0 -> sink.put("#workday");
                 case 1 -> sink.put("#mon,wed");
