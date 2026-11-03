@@ -3529,6 +3529,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
 
             driveRefreshToQuiescence(job);
+            // The oracle over the main loop. The restart that ends departNewestRows can rebuild the
+            // view from the base, which erases a ghost row or restores a missing row the main loop
+            // left, so the check after that restart does not stand in for this one.
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
             final long repairsOffTheResume = countRepairsOffTheResume(job);
             if (departNewestRows(rnd, job, engine.verifyTableName("base"), null, symCount, withWhere)) {
                 // An anchored run draws repair knobs that can take the departure off the chained
@@ -5382,6 +5386,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             driveRefreshToQuiescence(job);
+            // The oracle over the main loop. The restart that ends departNewestRows can rebuild the
+            // view from the base, which erases a ghost row or restores a missing row the main loop
+            // left, so the check after that restart does not stand in for this one.
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
             final long repairsOffTheResume = countRepairsOffTheResume(job);
             if (departNewestRows(rnd, job, baseToken, usedTs, symCount, withWhere)) {
                 final boolean isTimelineKept = isRepairedByTheResume(job, repairsOffTheResume);
@@ -5389,6 +5397,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     rowsBeforeTheDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
                 }
                 coverage.absorb(job);
+                // The restart below registers a fresh instance whose fault count starts at zero,
+                // so only this check sees the faults this instance healed, the departure
+                // episode's included.
+                assertNoRefreshFaults("lv");
                 job = Misc.free(job);
                 engine.getLiveViewRegistry().clear();
                 engine.buildViewGraphs();
