@@ -152,6 +152,41 @@ public class CompositeColumnMappingTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The last partition is a split sibling, so its timestamp differs from the logical partition converted to
+     * parquet. The squash before the conversion makes the logical partition last, and the writer must close
+     * columns[] on it: a later ALTER COLUMN TYPE adds the new column closed, which left columns[] partially open.
+     */
+    @Test
+    public void testConvertSplitLastPartitionToParquetKeepsWriterColumnsClosed() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "8K");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v LONG, w LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t SELECT x, x, timestamp_sequence('2024-01-01', 1_000_000L) FROM long_sequence(10_000)");
+            drainWalQueue();
+            execute("INSERT INTO t SELECT x, x, timestamp_sequence('2024-01-01T02:00:00.5', 1_000_000L) FROM long_sequence(10)");
+            drainWalQueue();
+            Assert.assertEquals("fixture: the O3 insert must split the day", 2,
+                    scalar("SELECT count() FROM table_partitions('t') WHERE name LIKE '2024-01-01%'"));
+            final long violationsBefore = WriterInvariantChecker.getViolationCount();
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE t ALTER COLUMN v TYPE INT");
+            drainWalQueue();
+            execute("INSERT INTO t SELECT x, x, timestamp_sequence('2024-01-01T01:00:00.5', 1_000_000L) FROM long_sequence(10)");
+            drainWalQueue();
+            assertNotSuspended("t");
+
+            assertNoWriterInvariantViolations(violationsBefore);
+            assertQuery("SELECT count() c, sum(v) sv, sum(w) sw FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("c\tsv\tsw\n10020\t50005110\t50005110\n");
+        });
+    }
+
     @Test
     public void testFailedMergeAppendFirstActionKeepsIndexFiles() throws Exception {
         checkFailedMergeAppendThenWriterClose(1, false);
