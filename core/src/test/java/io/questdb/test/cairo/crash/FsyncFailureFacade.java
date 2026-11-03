@@ -32,7 +32,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
  * or asynchronous {@code msync} when {@code isMsync}, selected by {@code isAsyncMsync}. Fails the first after
  * {@code skipCount} such calls with a genuine data-sync failure, then behaves normally.
  */
-public final class FsyncFailureFacade extends TestFilesFacadeImpl {
+public class FsyncFailureFacade extends TestFilesFacadeImpl {
     public int failureCount;
     public boolean isArmed;
     private final String caller;
@@ -84,9 +84,13 @@ public final class FsyncFailureFacade extends TestFilesFacadeImpl {
     @Override
     public void msync(long addr, long len, boolean async) {
         if (isMsync && async == isAsyncMsync && isFailureDue()) {
-            throw CairoException.dataSyncFailure(this, 5, "msync", "injected msync failure");
+            throw msyncFailure();
         }
         super.msync(addr, len, async);
+    }
+
+    CairoException msyncFailure() {
+        return CairoException.dataSyncFailure(this, 5, "msync", "injected msync failure");
     }
 
     private boolean isFailureDue() {

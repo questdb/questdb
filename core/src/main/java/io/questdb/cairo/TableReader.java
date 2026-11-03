@@ -785,8 +785,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public boolean reload() {
+        final boolean wasActive = txnAcquired;
         if (acquireTxn()) {
             return false;
+        }
+        if (wasActive && partitionOverwriteControl != null) {
+            // readTxnSlow() releases the old txn in the scoreboard; drop the old partition sizes first,
+            // or the control flags a writer that legitimately appends once the scoreboard allows it
+            partitionOverwriteControl.releasePartitions(this);
         }
         try {
             reloadSlow(true);
@@ -799,6 +805,9 @@ public class TableReader implements Closeable, SymbolTableSource {
             txPartitionVersion = txFile.getPartitionTableVersion();
             txColumnVersion = txFile.getColumnVersion();
             txTruncateVersion = txFile.getTruncateVersion();
+            if (wasActive && partitionOverwriteControl != null) {
+                partitionOverwriteControl.acquirePartitions(this);
+            }
 
             // Useful for debugging
             // assert DebugUtils.reconcileColumnTops(PARTITIONS_SLOT_SIZE, openPartitionInfo, columnVersionReader, this);
@@ -1347,6 +1356,16 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void freeIndexCache() {
         Misc.freeObjList(indexes);
+    }
+
+    /**
+     * Frees the index readers of a column and empties their slots, so that the next index lookup creates them
+     * afresh for the column's current index type.
+     */
+    private void freeIndexReaders(int base, int columnIndex) {
+        final int index = getPrimaryColumnIndex(base, columnIndex);
+        Misc.free(indexes.getAndSetQuick(index, null));
+        Misc.free(indexes.getAndSetQuick(index + 1, null));
     }
 
     private void freeParquetPartitions() {
@@ -2406,7 +2425,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                             } else if (copyFrom > -1) {
                                 copyColumns(base, copyFrom, columns, columnTops, indexes, base, i);
                             } else if (copyFrom != Integer.MIN_VALUE) {
-                                // new instance
+                                // New instance. The slot's index readers belong to the column that held it before,
+                                // which may have had another index type: reloadColumnAt() would reopen them for this
+                                // column with the wrong kind of reader.
+                                freeIndexReaders(base, i);
                                 reloadColumnAt(
                                         partitionIndex,
                                         path,
