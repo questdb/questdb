@@ -18370,13 +18370,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         final int walPathLen = walPath.size();
+        // A replica replaces WAL files outside the fd cache's knowledge, a cached fd could read a stale file
+        final boolean bypassFdCache = configuration.getBypassWalFdCache();
         long size = 0;
         try {
             for (int i = 0; i < columnCount; i++) {
                 final int columnType = metadata.getColumnType(i);
                 if (columnType > 0) {
                     if (ColumnType.isVarSize(columnType)) {
-                        final long auxFd = ff.openRO(iFile(walPath.trimTo(walPathLen), metadata.getColumnName(i)));
+                        final LPSZ auxFile = iFile(walPath.trimTo(walPathLen), metadata.getColumnName(i));
+                        final long auxFd = bypassFdCache ? ff.openRONoCache(auxFile) : ff.openRO(auxFile);
                         if (auxFd < 0) {
                             final int errno = ff.errno();
                             LOG.info().$("could not sample WAL record size [table=").$(tableToken)
