@@ -71,6 +71,8 @@ import java.util.zip.CRC32;
 
 public class Mig1011Test extends AbstractCairoTest {
     private static final int MIG1011_VERSION = 431;
+    private static final long PARQUET_GENERATED_MASK = 1L << 60;
+    private static final long PARQUET_REMOTE_MASK = 1L << 63;
     private static final String[] PARQUET_DAYS = {"2024-01-01", "2024-01-02", "2024-01-03"};
     private static final String[] PREDICATES = {"NOT (d < 4901.0)", "NOT (f < 4901.0)"};
     private static final LogCapture capture = new LogCapture();
@@ -239,6 +241,69 @@ public class Mig1011Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testMigrationCountsMissingParquetMetaAsUnchanged() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            createConvertedTable("x");
+            final String parquetMetaPath = parquetMetaPath("x");
+            clearWrittenByQuestDB(parquetMetaPath);
+            final java.nio.file.Path parquetMeta = Paths.get(parquetMetaPath);
+            final byte[] parquetMetaBytes = Files.readAllBytes(parquetMeta);
+            Files.delete(parquetMeta);
+            assertMigrationCounts(0, 1, 0);
+            Assert.assertFalse("the migration must not create a _pm", Files.exists(parquetMeta));
+
+            Files.write(parquetMeta, parquetMetaBytes);
+            assertMigrationCounts(1, 0, 0);
+            for (String predicate : PREDICATES) {
+                Assert.assertEquals(predicate, 49, prunedCount(predicate, "count\n100\n"));
+            }
+        });
+    }
+
+    @Test
+    public void testMigrationCountsUnreadableParquetAsFailed() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            createConvertedTable("x");
+            final String parquetMetaPath = parquetMetaPath("x");
+            clearWrittenByQuestDB(parquetMetaPath);
+            final java.nio.file.Path parquetMeta = Paths.get(parquetMetaPath);
+            final byte[] parquetMetaBytes = Files.readAllBytes(parquetMeta);
+            final java.nio.file.Path parquet = parquetMeta.resolveSibling(TableUtils.PARQUET_PARTITION_NAME);
+            final byte[] parquetBytes = Files.readAllBytes(parquet);
+
+            final byte[] oversize = parquetMetaBytes.clone();
+            ByteBuffer.wrap(oversize).order(ByteOrder.LITTLE_ENDIAN).putLong(0, oversize.length + 1L);
+            assertMarkFails(parquetMeta, oversize, parquetMetaBytes, "exceeds file size");
+
+            final byte[] undersize = parquetMetaBytes.clone();
+            ByteBuffer.wrap(undersize).order(ByteOrder.LITTLE_ENDIAN).putLong(0, Long.BYTES);
+            assertMarkFails(parquetMeta, undersize, parquetMetaBytes, "file too small for header");
+
+            final byte[] flippedHeader = parquetMetaBytes.clone();
+            flippedHeader[Long.BYTES] ^= 1;
+            assertMarkFails(parquetMeta, flippedHeader, parquetMetaBytes, "bloom filter header section");
+
+            // the CRC of the footer, 8 bytes from the end of the file
+            final byte[] flippedCrc = parquetMetaBytes.clone();
+            flippedCrc[flippedCrc.length - Long.BYTES] ^= 1;
+            assertMarkFails(parquetMeta, flippedCrc, parquetMetaBytes, "checksum mismatch");
+
+            assertMarkFails(parquetMeta, new byte[0], parquetMetaBytes, "failed to fill whole buffer");
+
+            final byte[] noMagic = parquetBytes.clone();
+            noMagic[noMagic.length - 1] ^= 1;
+            assertMarkFails(parquet, noMagic, parquetBytes, "could not read parquet metadata");
+
+            assertMigrationCounts(1, 0, 0);
+            for (String predicate : PREDICATES) {
+                Assert.assertEquals(predicate, 49, prunedCount(predicate, "count\n100\n"));
+            }
+        });
+    }
+
+    @Test
     public void testMigrationCountsUnreadableParquetFileAsFailed() throws Exception {
         final ParquetOpenFailingFilesFacade ff = new ParquetOpenFailingFilesFacade();
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
@@ -260,6 +325,33 @@ public class Mig1011Test extends AbstractCairoTest {
 
             // the partition left unrecorded gains the record on a rerun
             runMig1011();
+            for (String predicate : PREDICATES) {
+                Assert.assertEquals(predicate, 49, prunedCount(predicate, "count\n100\n"));
+            }
+        });
+    }
+
+    @Test
+    public void testMigrationCountsUnwritableParquetMetaAsFailed() throws Exception {
+        final ParquetOpenFailingFilesFacade ff = new ParquetOpenFailingFilesFacade();
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(ff, () -> {
+            createConvertedTable("x");
+            final String parquetMetaPath = parquetMetaPath("x");
+            clearWrittenByQuestDB(parquetMetaPath);
+            final long size = Files.size(Paths.get(parquetMetaPath));
+            ff.isParquetMetaOpenFailing = true;
+            try {
+                assertMigrationCounts(0, 0, 1);
+            } finally {
+                ff.isParquetMetaOpenFailing = false;
+            }
+            Assert.assertEquals(size, Files.size(Paths.get(parquetMetaPath)));
+            capture.assertOnlyOnce("could not open parquet metadata file \\[path=\\S+" + TableUtils.PARQUET_METADATA_FILE_NAME + ", errno=");
+            capture.assertNotLogged("could not record parquet writer in _pm");
+
+            // the partition left unrecorded gains the record on a rerun
+            assertMigrationCounts(1, 0, 0);
             for (String predicate : PREDICATES) {
                 Assert.assertEquals(predicate, 49, prunedCount(predicate, "count\n100\n"));
             }
@@ -292,6 +384,85 @@ public class Mig1011Test extends AbstractCairoTest {
     }
 
     @Test
+    public void testMigrationLeavesTableWithCorruptPartitionTable() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            createConvertedTable("x");
+            final String parquetMetaPath = parquetMetaPath("x");
+            clearWrittenByQuestDB(parquetMetaPath);
+            final long parquetMetaSize = Files.size(Paths.get(parquetMetaPath));
+            final java.nio.file.Path txnPath = txnPath("x");
+            final byte[] txn = Files.readAllBytes(txnPath);
+            final ByteBuffer buffer = ByteBuffer.wrap(txn).order(ByteOrder.LITTLE_ENDIAN);
+            final int baseSlot = (int) ((buffer.getLong((int) TableUtils.TX_BASE_OFFSET_VERSION_64) & 1) == 0
+                    ? TableUtils.TX_BASE_OFFSET_A_32 : TableUtils.TX_BASE_OFFSET_B_32);
+            final int base = buffer.getInt(baseSlot);
+            final int symbolCountOffset = base + (int) TableUtils.TX_OFFSET_MAP_WRITER_COUNT_32;
+            Assert.assertEquals("the table has no symbol column", 0, buffer.getInt(symbolCountOffset));
+            final int tableSizeOffset = base + (int) TableUtils.getPartitionTableSizeOffset(0);
+            // the first partition table that no longer fits the file
+            final int overflowCount = (txn.length - tableSizeOffset - Integer.BYTES) / (4 * Long.BYTES) + 1;
+            // the slot to overwrite, its value, and the base offset, symbol count and partition count the migration reads
+            final int[][] corruptions = {
+                    {baseSlot, -1, -1, -1, -1},
+                    {baseSlot, txn.length, txn.length, -1, -1},
+                    {symbolCountOffset, -1, base, -1, -1},
+                    {symbolCountOffset, 1_000_000, base, 1_000_000, -1},
+                    {tableSizeOffset, -4 * Long.BYTES, base, 0, -1},
+                    {tableSizeOffset, overflowCount * 4 * Long.BYTES, base, 0, overflowCount},
+            };
+            for (int[] corruption : corruptions) {
+                final byte[] corrupt = txn.clone();
+                ByteBuffer.wrap(corrupt).order(ByteOrder.LITTLE_ENDIAN).putInt(corruption[0], corruption[1]);
+                Files.write(txnPath, corrupt);
+                capture.start();
+                runMig1011();
+                capture.drain();
+                capture.assertOnlyOnce("skipping table, corrupt _txn partition table \\[path=\\S+" + TableUtils.TXN_FILE_NAME
+                        + ", baseOffset=" + corruption[2]
+                        + ", symbolColumnCount=" + corruption[3]
+                        + ", partitionCount=" + corruption[4]
+                        + ", size=" + txn.length + "\\]");
+                capture.assertNotLogged("recorded parquet writer in _pm files");
+                Assert.assertEquals(parquetMetaSize, Files.size(Paths.get(parquetMetaPath)));
+            }
+
+            Files.write(txnPath, txn);
+            assertMigrationCounts(1, 0, 0);
+            for (String predicate : PREDICATES) {
+                Assert.assertEquals(predicate, 49, prunedCount(predicate, "count\n100\n"));
+            }
+        });
+    }
+
+    @Test
+    public void testMigrationLeavesTableWithoutTxn() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            createConvertedTable("x");
+            final String parquetMetaPath = parquetMetaPath("x");
+            clearWrittenByQuestDB(parquetMetaPath);
+            final long parquetMetaSize = Files.size(Paths.get(parquetMetaPath));
+            final java.nio.file.Path txnPath = txnPath("x");
+            final byte[] txn = Files.readAllBytes(txnPath);
+            Files.delete(txnPath);
+            capture.start();
+            runMig1011();
+            capture.drain();
+            capture.assertNotLogged("skipping table");
+            capture.assertNotLogged("recorded parquet writer in _pm files");
+            Assert.assertEquals(parquetMetaSize, Files.size(Paths.get(parquetMetaPath)));
+            Assert.assertFalse("the migration must not create a _txn", Files.exists(txnPath));
+
+            Files.write(txnPath, txn);
+            assertMigrationCounts(1, 0, 0);
+            for (String predicate : PREDICATES) {
+                Assert.assertEquals(predicate, 49, prunedCount(predicate, "count\n100\n"));
+            }
+        });
+    }
+
+    @Test
     public void testMigrationRecordsQuestDBWriterOnce() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
@@ -314,6 +485,55 @@ public class Mig1011Test extends AbstractCairoTest {
             }
             runMig1011();
             Assert.assertEquals(markedSize, Files.size(Paths.get(parquetMetaPath)));
+        });
+    }
+
+    @Test
+    public void testMigrationRecordsRemotePartitionOnlyWhenGenerated() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            createConvertedTable("x");
+            final String parquetMetaPath = parquetMetaPath("x");
+            clearWrittenByQuestDB(parquetMetaPath);
+            final long parquetMetaSize = Files.size(Paths.get(parquetMetaPath));
+            final java.nio.file.Path txnPath = txnPath("x");
+            final byte[] txn = Files.readAllBytes(txnPath);
+            final ByteBuffer buffer = ByteBuffer.wrap(txn).order(ByteOrder.LITTLE_ENDIAN);
+            final int baseOffset = buffer.getInt((int) ((buffer.getLong((int) TableUtils.TX_BASE_OFFSET_VERSION_64) & 1) == 0
+                    ? TableUtils.TX_BASE_OFFSET_A_32 : TableUtils.TX_BASE_OFFSET_B_32));
+            final int entry = baseOffset + (int) TableUtils.getPartitionTableSizeOffset(buffer.getInt(baseOffset + (int) TableUtils.TX_OFFSET_MAP_WRITER_COUNT_32)) + Integer.BYTES;
+            final int maskedSizeOffset = entry + Long.BYTES;
+            final int parquetSizeOffset = entry + 3 * Long.BYTES;
+            final long parquetSize = buffer.getLong(parquetSizeOffset);
+            Assert.assertEquals(Files.size(Paths.get(parquetMetaPath).resolveSibling(TableUtils.PARQUET_PARTITION_NAME)), parquetSize);
+            final long maskedSize = buffer.getLong(maskedSizeOffset);
+            Assert.assertNotEquals("the conversion generates the parquet file", 0, maskedSize & PARQUET_GENERATED_MASK);
+
+            // no parquet file size: nothing to compare the _pm with
+            final byte[] unsized = txn.clone();
+            ByteBuffer.wrap(unsized).order(ByteOrder.LITTLE_ENDIAN).putLong(parquetSizeOffset, -1L);
+            Files.write(txnPath, unsized);
+            assertMigrationCounts(0, 0, 0);
+            Assert.assertEquals(parquetMetaSize, Files.size(Paths.get(parquetMetaPath)));
+
+            // a remote partition whose parquet file exists only in object storage
+            final byte[] remote = txn.clone();
+            final ByteBuffer remoteBuffer = ByteBuffer.wrap(remote).order(ByteOrder.LITTLE_ENDIAN);
+            remoteBuffer.putLong(parquetSizeOffset, parquetSize | PARQUET_REMOTE_MASK);
+            remoteBuffer.putLong(maskedSizeOffset, maskedSize & ~PARQUET_GENERATED_MASK);
+            Files.write(txnPath, remote);
+            assertMigrationCounts(0, 0, 0);
+            Assert.assertEquals(parquetMetaSize, Files.size(Paths.get(parquetMetaPath)));
+
+            // a remote partition whose parquet file QuestDB generated locally
+            remoteBuffer.putLong(maskedSizeOffset, maskedSize);
+            Files.write(txnPath, remote);
+            assertMigrationCounts(1, 0, 0);
+
+            Files.write(txnPath, txn);
+            for (String predicate : PREDICATES) {
+                Assert.assertEquals(predicate, 49, prunedCount(predicate, "count\n100\n"));
+            }
         });
     }
 
@@ -398,6 +618,22 @@ public class Mig1011Test extends AbstractCairoTest {
                         2024-01-03T00:00:00.000000Z\t5000\t2500.5\t1.0\t5000.0
                         2024-01-04T00:00:00.000000Z\t1\t1.0\t1.0\t1.0
                         """);
+    }
+
+    // A file the native record of the writer cannot read fails the partition and is left as it is.
+    private static void assertMarkFails(java.nio.file.Path file, byte[] corrupt, byte[] original, String message) throws Exception {
+        Files.write(file, corrupt);
+        assertMigrationCounts(0, 0, 1);
+        capture.assertOnlyOnce("could not record parquet writer in _pm \\[path=\\S+" + TableUtils.PARQUET_METADATA_FILE_NAME + ", msg=.*" + message);
+        Assert.assertArrayEquals(corrupt, Files.readAllBytes(file));
+        Files.write(file, original);
+    }
+
+    private static void assertMigrationCounts(int marked, int unchanged, int failed) {
+        capture.start();
+        runMig1011();
+        capture.drain();
+        capture.assertOnlyOnce("recorded parquet writer in _pm files \\[path=\\S+, marked=" + marked + ", unchanged=" + unchanged + ", failed=" + failed + "\\]");
     }
 
     private static void assertSingleRecordedFooter(String parquetMetaPath, byte[] snapshot) throws Exception {
@@ -561,10 +797,16 @@ public class Mig1011Test extends AbstractCairoTest {
         ) {
             final MigrationContext context = new MigrationContext(engine, tempMem, 1024, tempVirtualMem, rwMem);
             context.of(tablePath, tablePath2, -1);
+            final String tablePathText = tablePath.toString();
             Mig1011.migrate(context);
+            Assert.assertEquals("the migration must leave the path of the table as it found it", tablePathText, tablePath.toString());
         } finally {
             Unsafe.free(tempMem, 1024, MemoryTag.NATIVE_MIG_MMAP);
         }
+    }
+
+    private static java.nio.file.Path txnPath(String tableName) {
+        return Paths.get(configuration.getDbRoot().toString(), engine.verifyTableName(tableName).getDirName(), TableUtils.TXN_FILE_NAME);
     }
 
     private static void writeCommittedSize(String parquetMetaPath, long committedSize) throws Exception {
@@ -633,6 +875,7 @@ public class Mig1011Test extends AbstractCairoTest {
     }
 
     private static class ParquetOpenFailingFilesFacade extends TestFilesFacadeImpl {
+        private boolean isParquetMetaOpenFailing;
         private boolean isParquetOpenFailing;
 
         @Override
@@ -641,6 +884,14 @@ public class Mig1011Test extends AbstractCairoTest {
                 return -1;
             }
             return super.openRO(name);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (isParquetMetaOpenFailing && Utf8s.endsWithAscii(name, TableUtils.PARQUET_METADATA_FILE_NAME)) {
+                return -1;
+            }
+            return super.openRW(name, opts);
         }
     }
 }

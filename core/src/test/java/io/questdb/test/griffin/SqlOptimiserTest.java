@@ -26,8 +26,12 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.griffin.codegen.SqlCodeGenerator;
+import io.questdb.std.Chars;
 import io.questdb.std.Misc;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.griffin.engine.groupby.SampleByTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -4351,22 +4355,25 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               Aggregate
                                 keys: []
                                 values: [first(ts) AS FIRST]
-                                Filter
-                                  predicate: x = 3
-                                  Scan
-                                    table: y
-                                    columns: [ts, x]
+                                Limit
+                                  lo: 1
+                                  Filter
+                                    predicate: x = 3
+                                    Scan
+                                      table: y
+                                      columns: [ts, x]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Async JIT Group By workers: 1
-                              vectorized: false
-                              values: [first(ts)]
-                              filter: x=3
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: y
+                            Timestamp Endpoint
+                              value: first(ts)
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
                             """);
         });
     }
@@ -4384,22 +4391,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               Aggregate
                                 keys: []
                                 values: [last(ts) AS LAST]
-                                Filter
-                                  predicate: x = 3
-                                  Scan
-                                    table: y
-                                    columns: [ts, x]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Filter
+                                      predicate: x = 3
+                                      Scan
+                                        table: y
+                                        columns: [ts, x]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Async JIT Group By workers: 1
-                              vectorized: false
-                              values: [last(ts)]
-                              filter: x=3
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: y
+                            Timestamp Endpoint
+                              value: last(ts)
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: y
                             """);
         });
     }
@@ -4417,22 +4429,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               Aggregate
                                 keys: []
                                 values: [max(ts) AS MAX]
-                                Filter
-                                  predicate: x = 3
-                                  Scan
-                                    table: y
-                                    columns: [ts, x]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Filter
+                                      predicate: x = 3
+                                      Scan
+                                        table: y
+                                        columns: [ts, x]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Async JIT Group By workers: 1
-                              vectorized: false
-                              values: [max_designated(ts)]
-                              filter: x=3
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: y
+                            Timestamp Endpoint
+                              value: max(ts)
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: y
                             """);
         });
     }
@@ -4450,22 +4467,25 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               Aggregate
                                 keys: []
                                 values: [min(ts) AS MIN]
-                                Filter
-                                  predicate: x = 3
-                                  Scan
-                                    table: y
-                                    columns: [ts, x]
+                                Limit
+                                  lo: 1
+                                  Filter
+                                    predicate: x = 3
+                                    Scan
+                                      table: y
+                                      columns: [ts, x]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Async JIT Group By workers: 1
-                              vectorized: false
-                              values: [min_designated(ts)]
-                              filter: x=3
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: y
+                            Timestamp Endpoint
+                              value: min(ts)
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
                             """);
         });
     }
@@ -4523,26 +4543,23 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                   lo: 1
                                   Sort
                                     keys: [ts desc]
-                                    Project
-                                      columns: [ts]
-                                      Filter
-                                        predicate: x = 3
-                                        Scan
-                                          table: y
-                                          columns: [x, ts]
+                                    Filter
+                                      predicate: x = 3
+                                      Scan
+                                        table: y
+                                        columns: [x, ts]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
                             Timestamp Endpoint
                               value: last(ts)
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      limit: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: y
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: y
                             """);
         });
     }
@@ -4564,26 +4581,23 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                   lo: 1
                                   Sort
                                     keys: [ts desc]
-                                    Project
-                                      columns: [ts]
-                                      Filter
-                                        predicate: x = 3
-                                        Scan
-                                          table: y
-                                          columns: [x, ts]
+                                    Filter
+                                      predicate: x = 3
+                                      Scan
+                                        table: y
+                                        columns: [x, ts]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
                             Timestamp Endpoint
                               value: max(ts)
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      limit: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: y
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: y
                             """);
         });
     }
@@ -7351,6 +7365,50 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testTimestampEndpointOverSubQueryMatchesTheTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE y AS (SELECT x::INT x, timestamp_sequence('2024-01-01', 3_600_000_000L) ts FROM long_sequence(100)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE VIEW v AS (SELECT * FROM y)");
+            execute("CREATE VIEW vf AS (SELECT * FROM y WHERE x > 10)");
+            for (String f : new String[]{"min", "max", "first", "last"}) {
+                final String[][] cases = {
+                        {f + "(ts) FROM y WHERE x > 10", f + "(ts) FROM (SELECT * FROM y WHERE x > 10)"},
+                        {f + "(ts) FROM y WHERE x > 10", f + "(ts) FROM (SELECT * FROM (SELECT * FROM y) WHERE x > 10)"},
+                        {f + "(ts) FROM y WHERE x > 10 AND x < 20", f + "(ts) FROM (SELECT * FROM (SELECT * FROM y WHERE x > 10) WHERE x < 20)"},
+                        {f + "(ts) FROM y WHERE x > 10", f + "(ts) FROM vf"},
+                        {f + "(ts) FROM y WHERE x > 10", f + "(ts) FROM v WHERE x > 10"},
+                        {f + "(ts) FROM y", f + "(ts) FROM (SELECT * FROM y)"},
+                        {f + "(ts) FROM y", f + "(ts) FROM v"},
+                        {f + "(ts) FROM y WHERE x = -1", f + "(ts) FROM (SELECT * FROM y WHERE x = -1)"},
+                };
+                for (String[] c : cases) {
+                    assertSqlCursors("SELECT " + c[0], "SELECT " + c[1]);
+                    final StringSink plan = new StringSink();
+                    printSql("EXPLAIN SELECT " + c[1], plan);
+                    Assert.assertTrue(plan.toString(), Chars.contains(plan, "Timestamp Endpoint"));
+                }
+                assertSqlCursors("SELECT " + f + "(ts) FROM y WHERE x > 10", "WITH c AS (SELECT * FROM y WHERE x > 10) SELECT " + f + "(ts) FROM c");
+            }
+            // the row each aggregate reads, from the 100 hours of the table
+            final String[][] values = {
+                    {"SELECT first(ts) FROM (SELECT * FROM y ORDER BY x DESC)", "first\n2024-01-05T03:00:00.000000Z\n"},
+                    {"SELECT last(ts) FROM (SELECT * FROM y ORDER BY x DESC)", "last\n2024-01-01T00:00:00.000000Z\n"},
+                    {"SELECT last(ts) FROM (SELECT * FROM y LIMIT 5)", "last\n2024-01-01T04:00:00.000000Z\n"},
+                    {"SELECT max(ts) FROM (SELECT * FROM y LIMIT 5)", "max\n2024-01-01T04:00:00.000000Z\n"},
+                    {"SELECT min(ts) FROM (SELECT * FROM y LIMIT -5)", "min\n2024-01-04T23:00:00.000000Z\n"},
+                    {"SELECT max(ts) FROM (SELECT dateadd('d', 1, ts) ts FROM y)", "max\n2024-01-06T03:00:00.000000Z\n"},
+                    {"SELECT max(ts) FROM (SELECT * FROM y WHERE x = -1)", "max\n\n"},
+                    {"SELECT max(t) FROM (SELECT ts t FROM y WHERE x < 3)", "max\n2024-01-01T01:00:00.000000Z\n"},
+            };
+            final StringSink sink = new StringSink();
+            for (String[] c : values) {
+                printSql(c[0], sink);
+                TestUtils.assertEquals(c[0], c[1], sink);
+            }
+        });
+    }
+
+    @Test
     public void testTimestampOffsetRewriteModelBasic() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
@@ -7943,22 +8001,25 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               Aggregate
                                 keys: []
                                 values: [first(ts) AS FIRST]
-                                Filter
-                                  predicate: x = 3
-                                  Scan
-                                    table: y
-                                    columns: [ts, x]
+                                Limit
+                                  lo: 1
+                                  Filter
+                                    predicate: x = 3
+                                    Scan
+                                      table: y
+                                      columns: [ts, x]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Async JIT Group By workers: 1
-                              vectorized: false
-                              values: [first(ts)]
-                              filter: x=3
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: y
+                            Timestamp Endpoint
+                              value: first(ts)
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
                             """);
         });
     }
@@ -7976,22 +8037,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               Aggregate
                                 keys: []
                                 values: [last(ts) AS LAST]
-                                Filter
-                                  predicate: x = 3
-                                  Scan
-                                    table: y
-                                    columns: [ts, x]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Filter
+                                      predicate: x = 3
+                                      Scan
+                                        table: y
+                                        columns: [ts, x]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Async JIT Group By workers: 1
-                              vectorized: false
-                              values: [last(ts)]
-                              filter: x=3
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: y
+                            Timestamp Endpoint
+                              value: last(ts)
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: y
                             """);
         });
     }
@@ -8009,22 +8075,27 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               Aggregate
                                 keys: []
                                 values: [max(ts) AS MAX]
-                                Filter
-                                  predicate: x = 3
-                                  Scan
-                                    table: y
-                                    columns: [ts, x]
+                                Limit
+                                  lo: 1
+                                  Sort
+                                    keys: [ts desc]
+                                    Filter
+                                      predicate: x = 3
+                                      Scan
+                                        table: y
+                                        columns: [ts, x]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Async JIT Group By workers: 1
-                              vectorized: false
-                              values: [max_designated(ts)]
-                              filter: x=3
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: y
+                            Timestamp Endpoint
+                              value: max(ts)
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: y
                             """);
         });
     }
@@ -8042,22 +8113,25 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                               Aggregate
                                 keys: []
                                 values: [min(ts) AS MIN]
-                                Filter
-                                  predicate: x = 3
-                                  Scan
-                                    table: y
-                                    columns: [ts, x]
+                                Limit
+                                  lo: 1
+                                  Filter
+                                    predicate: x = 3
+                                    Scan
+                                      table: y
+                                      columns: [ts, x]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            Async JIT Group By workers: 1
-                              vectorized: false
-                              values: [min_designated(ts)]
-                              filter: x=3
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: y
+                            Timestamp Endpoint
+                              value: min(ts)
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: y
                             """);
         });
     }
@@ -8115,26 +8189,23 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                   lo: 1
                                   Sort
                                     keys: [ts desc]
-                                    Project
-                                      columns: [ts]
-                                      Filter
-                                        predicate: x = 3
-                                        Scan
-                                          table: y
-                                          columns: [x, ts]
+                                    Filter
+                                      predicate: x = 3
+                                      Scan
+                                        table: y
+                                        columns: [x, ts]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
                             Timestamp Endpoint
                               value: last(ts)
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      limit: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: y
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: y
                             """);
         });
     }
@@ -8156,26 +8227,23 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                   lo: 1
                                   Sort
                                     keys: [ts desc]
-                                    Project
-                                      columns: [ts]
-                                      Filter
-                                        predicate: x = 3
-                                        Scan
-                                          table: y
-                                          columns: [x, ts]
+                                    Filter
+                                      predicate: x = 3
+                                      Scan
+                                        table: y
+                                        columns: [x, ts]
                             """);
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
                             Timestamp Endpoint
                               value: max(ts)
-                                SelectedRecord
-                                    Async JIT Filter workers: 1
-                                      limit: 1
-                                      filter: x=3
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: y
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: x=3
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: y
                             """);
         });
     }

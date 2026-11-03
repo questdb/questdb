@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.DelegatingRecord;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -60,6 +61,7 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     // the memory a sort of the 8_000 rows of the table w takes: an entry of 16 bytes for each, and the 256 KiB decode
     // cache that it reads their payloads back through
+    private static final String PROBE_INTERVALS = "(ts IN '2024-01-01T00' OR ts IN '2024-01-01T05' OR ts IN '2024-01-01T10' OR ts IN '2024-01-01T15' OR ts IN '2024-01-01T20')";
     private static final long SORT_BYTES = 8_000 * 16 + 256 * 1024;
     // one-byte payloads, then wider ones in steps, the last far wider than the windows of the steps before it expect
     private static final String STAIRCASE_PAYLOAD = """
@@ -1278,6 +1280,193 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstKeyAbsentFromFirstIntervalProbesLaterIntervals() throws Exception {
+        assertMemoryLeak(() -> {
+            createProbeTable("s SYMBOL INDEX");
+            // the rows of a lie in the fourth of the five intervals and between the second and the third, those of c in
+            // the second: each reads the interval the scan starts at, then the interval the index finds and those the
+            // scan reaches after it, where the five intervals of each of the three keys would make 15 reads
+            final String keys = "id, s FROM p WHERE " + PROBE_INTERVALS + " AND s IN ('a', 'b', 'c') ORDER BY ";
+            assertProbes(keys + "s, ts", "6\ta\n8\ta\n1\tb\n3\tb\n5\tb\n7\tb\n9\tb\n2\tc\n", 13);
+            assertProbes(keys + "s, ts DESC", "8\ta\n6\ta\n9\tb\n7\tb\n5\tb\n3\tb\n1\tb\n2\tc\n", 13);
+            assertProbes(keys + "s DESC, ts", "2\tc\n1\tb\n3\tb\n5\tb\n7\tb\n9\tb\n6\ta\n8\ta\n", 13);
+            assertProbes(keys + "s DESC, ts DESC", "2\tc\n9\tb\n7\tb\n5\tb\n3\tb\n1\tb\n8\ta\n6\ta\n", 13);
+            // NULL leads the keys of the column and holds no row, so that it reads one interval and probes the others
+            assertProbes("id, s FROM p WHERE " + PROBE_INTERVALS + " ORDER BY s, ts", "6\ta\n8\ta\n1\tb\n3\tb\n5\tb\n7\tb\n9\tb\n2\tc\n", 14);
+            // the first three intervals hold no row of a: its pass reads one and finds no row in the two it probes, where
+            // the three intervals of each of the two keys would make 6 reads
+            final String first = "id, s FROM p WHERE (ts IN '2024-01-01T00' OR ts IN '2024-01-01T05' OR ts IN '2024-01-01T10') AND s IN ('a', 'b') ORDER BY ";
+            assertProbes(first + "s, ts", "1\tb\n3\tb\n5\tb\n", 4);
+            assertProbes(first + "s DESC, ts DESC", "5\tb\n3\tb\n1\tb\n", 4);
+        });
+    }
+
+    @Test
+    public void testFirstKeyAbsentFromFirstIntervalProbesLaterIntervalsOfPostingIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            createProbeTable("s SYMBOL INDEX TYPE POSTING");
+            // the posting index counts no rows, so that the read goes on at the first interval it probes, whose rows the
+            // probe must not take for none: every key reads every interval it reaches
+            final String keys = "id, s FROM p WHERE " + PROBE_INTERVALS + " AND s IN ('a', 'b', 'c') ORDER BY ";
+            assertProbes(keys + "s, ts", "6\ta\n8\ta\n1\tb\n3\tb\n5\tb\n7\tb\n9\tb\n2\tc\n", 15);
+            assertProbes(keys + "s, ts DESC", "8\ta\n6\ta\n9\tb\n7\tb\n5\tb\n3\tb\n1\tb\n2\tc\n", 15);
+            assertProbes(keys + "s DESC, ts", "2\tc\n1\tb\n3\tb\n5\tb\n7\tb\n9\tb\n6\ta\n8\ta\n", 15);
+        });
+    }
+
+    @Test
+    public void testFirstKeyAbsentFromFirstIntervalProbesRowGroupsOfParquetPartition() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 8);
+        assertMemoryLeak(() -> {
+            // four intervals over five row groups of eight rows, the second interval over two of them: the row of a lies
+            // in its later row group and the row of c in its earlier one
+            execute("""
+                    CREATE TABLE p AS (
+                        SELECT x id, (CASE WHEN x = 21 THEN 'a' WHEN x = 12 THEN 'c' ELSE 'b' END)::SYMBOL s,
+                            ((CASE WHEN x <= 8 THEN 0 WHEN x <= 24 THEN 5 WHEN x <= 32 THEN 10 ELSE 15 END) * 3_600_000_000L + x * 1_000_000L)::TIMESTAMP ts
+                        FROM long_sequence(40)
+                    ), INDEX(s) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            execute("INSERT INTO p VALUES (41, 'b', '1970-01-02')");
+            execute("ALTER TABLE p CONVERT PARTITION TO PARQUET WHERE ts < '1970-01-02'");
+            final String intervals = "(ts IN '1970-01-01T00' OR ts IN '1970-01-01T05' OR ts IN '1970-01-01T10' OR ts IN '1970-01-01T15')";
+            final StringSink forward = new StringSink();
+            final StringSink backward = new StringSink();
+            forward.put("21\ta\n");
+            backward.put("12\tc\n");
+            for (int i = 1; i <= 40; i++) {
+                if (i != 12 && i != 21) {
+                    forward.put(i).put("\tb\n");
+                }
+                final int id = 41 - i;
+                if (id != 12 && id != 21) {
+                    backward.put(id).put("\tb\n");
+                }
+            }
+            // the first row group of the scan holds no row of a, which then reads its own row group, not the one before
+            // it in the interval, and the two after; b reads all five
+            assertProbes("id, s FROM p WHERE " + intervals + " AND s IN ('a', 'b') ORDER BY s, ts", forward.toString(), 9);
+            // backward, c reads its own row group, not the one after it in the interval, and the one before; b all five
+            assertProbes("id, s FROM p WHERE " + intervals + " AND s IN ('b', 'c') ORDER BY s DESC, ts DESC", backward.toString(), 8);
+        });
+    }
+
+    @Test
+    public void testFirstKeyAbsentFromFirstIntervalProbesWhenCancelled() throws Exception {
+        assertMemoryLeak(() -> {
+            createProbeTable("s SYMBOL INDEX");
+            execute("INSERT INTO p VALUES (10, 'e', '2024-01-01T23:00:00.000000Z'), (11, 'f', '2024-01-01T23:30:00.000000Z')");
+            final long[] checks = {0, Long.MAX_VALUE};
+            final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine) {
+                @Override
+                public void statefulThrowExceptionIfTrippedTimeThrottledOrYield() {
+                    if (++checks[0] == checks[1]) {
+                        cancel();
+                    }
+                    super.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                }
+            };
+            // the five intervals hold no row of either key: the read asks the breaker once for the interval each key opens,
+            // so that only the probes of the four intervals after it reach the fourth check
+            try (RecordCursorFactory factory = select("SELECT id, s FROM p WHERE " + PROBE_INTERVALS + " AND s IN ('e', 'f') ORDER BY s, ts")) {
+                final SqlExecutionCircuitBreaker originalBreaker = sqlExecutionContext.getCircuitBreaker();
+                ((SqlExecutionContextImpl) sqlExecutionContext).with(breaker);
+                try (RecordCursor cursor = factory.getBaseFactory().getCursor(sqlExecutionContext)) {
+                    checks[0] = 0;
+                    checks[1] = 4;
+                    try {
+                        cursor.hasNext();
+                        Assert.fail("expected cancellation inside the probes of the intervals");
+                    } catch (CairoException e) {
+                        Assert.assertTrue(e.isCancellation());
+                        Assert.assertEquals(4, checks[0]);
+                    }
+                } finally {
+                    ((SqlExecutionContextImpl) sqlExecutionContext).with(originalBreaker);
+                }
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertFalse(cursor.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFirstKeyAbsentFromFirstSplitOfDayProbesLaterSplits() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 1000);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 1000);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (i INT, s SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO x
+                    SELECT x::INT, 'b', timestamp_sequence('2024-01-01', 1_000_000L)
+                    FROM long_sequence(20_000)
+                    """);
+            drainWalQueue();
+            splitDayAt("T05:00:00.500000Z");
+            // a lies only in the second part of the day, on both sides of the rows the composite part below merges, and c
+            // only in the third part
+            execute("""
+                    INSERT INTO x
+                    SELECT x::INT + 20_000,
+                        (CASE WHEN x <= 15_000 AND x % 1_000 = 0 THEN 'a' WHEN x > 19_000 AND x % 100 = 0 THEN 'c' ELSE 'b' END)::SYMBOL,
+                        timestamp_sequence('2024-01-01T05:33:21', 1_000_000L)
+                    FROM long_sequence(20_000)
+                    """);
+            drainWalQueue();
+            splitDayAt("T10:30:00.500000Z");
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                Assert.assertEquals(3, reader.getPartitionCount());
+                Assert.assertFalse(reader.getTxFile().isPartitionComposite(1));
+            }
+            final String tail = "i, s, ts FROM x WHERE ts IN '2024-01-01' AND s IN ('a', 'b', 'c') ORDER BY ";
+            final String[] orders = {"s, ts", "s, ts DESC", "s DESC, ts", "s DESC, ts DESC"};
+            // forward, a reads the first part and then the second and third, b all three, and c the first part and its own,
+            // where the three parts of each of the three keys would make 9 reads; backward, a probes the second part right
+            // after the third it starts at, and c holds rows in that third part, so that every key reads all three
+            final long[] readFrames = {8, 9, 8, 9};
+            final StringSink expected = new StringSink();
+            for (int i = 0; i < orders.length; i++) {
+                printSql("SELECT /*+ no_index(x) */ " + tail + orders[i], expected);
+                assertQuery("SELECT " + tail + orders[i]).noLeakCheck().sizeMayVary().inferTimestamp().withPlanContaining("symbolOrder:").returns(expected);
+                assertReadFrames("SELECT " + tail + orders[i], readFrames[i]);
+            }
+
+            // the second part of the day turns composite, whose rows the index cannot count: the probe of the part goes on
+            // at its first row in the direction of the read, so that the rows of a on both sides of the merged rows come
+            // back, and so do those of d, which only the merged rows hold, past the rows the part reads as live
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            for (String batchStart : new String[]{"T07:00:00.250000Z", "T07:00:00.750000Z"}) {
+                execute("INSERT INTO x SELECT x::INT + 300_000, 'd', timestamp_sequence('2024-01-01" + batchStart + "', 1_000_000L) FROM long_sequence(200)");
+                drainWalQueue();
+            }
+            try (TableReader reader = engine.getReader(engine.verifyTableName("x"))) {
+                Assert.assertEquals(3, reader.getPartitionCount());
+                Assert.assertFalse(reader.getTxFile().isPartitionComposite(0));
+                Assert.assertTrue(reader.getTxFile().isPartitionComposite(1));
+                Assert.assertFalse(reader.getTxFile().isPartitionComposite(2));
+            }
+            final String compositeTail = "i, s, ts FROM x WHERE ts IN '2024-01-01' AND s IN ('a', 'b', 'c', 'd') ORDER BY ";
+            for (String order : orders) {
+                printSql("SELECT /*+ no_index(x) */ " + compositeTail + order, expected);
+                assertQuery("SELECT " + compositeTail + order).noLeakCheck().sizeMayVary().inferTimestamp().withPlanContaining("symbolOrder:").returns(expected);
+            }
+            assertQuery("SELECT s, count() FROM x WHERE ts IN '2024-01-01' AND s IN ('a', 'c', 'd') ORDER BY s")
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .returns("""
+                            s\tcount
+                            a\t15
+                            c\t10
+                            d\t400
+                            """);
+        });
+    }
+
+    @Test
     public void testGatherOfEveryKeyReservesItsRowsWithoutGrowth() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
@@ -2356,6 +2545,39 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
         TestUtils.assertEquals(expected, actual);
     }
 
+    private static void assertReadFrames(String query, long readFrames) throws Exception {
+        PageFrameRecordCursorImpl.testReadFrames.set(0);
+        PageFrameRecordCursorImpl.isWalkCounterEnabled = true;
+        try {
+            printSql(query, new StringSink());
+        } finally {
+            PageFrameRecordCursorImpl.isWalkCounterEnabled = false;
+        }
+        Assert.assertEquals(query, readFrames, PageFrameRecordCursorImpl.testReadFrames.get());
+    }
+
+    private static void createProbeTable(String symbolColumn) throws Exception {
+        execute("CREATE TABLE p (id LONG, " + symbolColumn + ", ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO p VALUES
+                    (1, 'b', '2024-01-01T00:00:00.000000Z'),
+                    (2, 'c', '2024-01-01T05:00:00.000000Z'),
+                    (3, 'b', '2024-01-01T05:30:00.000000Z'),
+                    (4, 'a', '2024-01-01T07:00:00.000000Z'),
+                    (5, 'b', '2024-01-01T10:00:00.000000Z'),
+                    (6, 'a', '2024-01-01T15:00:00.000000Z'),
+                    (7, 'b', '2024-01-01T15:10:00.000000Z'),
+                    (8, 'a', '2024-01-01T15:20:00.000000Z'),
+                    (9, 'b', '2024-01-01T20:00:00.000000Z')
+                """);
+    }
+
+    private static void splitDayAt(String timeOfDay) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        execute("INSERT INTO x SELECT x::INT + 200_000, 'b', timestamp_sequence('2024-01-01" + timeOfDay + "', 1_000L) FROM long_sequence(200)");
+        drainWalQueue();
+    }
+
     private static void createGatherTable() throws Exception {
         execute("""
                 CREATE TABLE t AS (
@@ -2463,6 +2685,12 @@ public class KeyOrderedPageFrameRecordCursorTest extends AbstractCairoTest {
             keys.put(i > 0 ? ", 'k" : "'k").put(i / 10).put(i % 10).put('\'');
         }
         return keys.toString();
+    }
+
+    private void assertProbes(String tail, String expectedRows, long readFrames) throws Exception {
+        final String query = "SELECT " + tail;
+        assertQuery(query).noLeakCheck().sizeMayVary().withPlanContaining("symbolOrder:").returns("id\ts\n" + expectedRows);
+        assertReadFrames(query, readFrames);
     }
 
     /**

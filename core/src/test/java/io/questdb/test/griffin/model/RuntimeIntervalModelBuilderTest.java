@@ -24,26 +24,41 @@
 
 package io.questdb.test.griffin.model;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.IntervalBoundSource;
+import io.questdb.griffin.IntervalExtractor;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.griffin.engine.functions.bind.IndexedParameterLinkFunction;
+import io.questdb.griffin.engine.functions.bool.BetweenTimestampFunctionFactory;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.griffin.model.RuntimeIntervalModelBuilder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.model.TimestampMonotonicInverter;
+import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.CursorExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.std.IntList;
+import io.questdb.std.Interval;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -56,6 +71,7 @@ import org.junit.Test;
  * itself on rollback/no-op paths that never adopt the function.
  */
 public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
+    private static final int TIMESTAMP_COLUMN_ID = 7;
 
     @Test
     public void testBetweenDynamicAdoptionIsAtomicUnderAllocationFailure() {
@@ -844,6 +860,38 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExtractorClosesBetweenBoundTheBuilderDidNotConsume() throws Exception {
+        assertMemoryLeak(() -> {
+            // the failure comes before the builder adopts the bound, whose close failure joins it as suppressed
+            final ThrowingTypeFunction afterConstant = new ThrowingTypeFunction(2);
+            final RuntimeException afterConstantFailure = extractBetweenFailure(timestampConstant(0), runtimeBound(), afterConstant);
+            Assert.assertSame(afterConstant.typeFailure, afterConstantFailure);
+            Assert.assertEquals(1, afterConstant.closeCount);
+            Assert.assertSame(afterConstant.closeFailure, afterConstantFailure.getSuppressed()[0]);
+
+            // the same with a function at the other end, which the rollback of the parsing closes
+            final CloseCountingFunction pending = new CloseCountingFunction();
+            final ThrowingTypeFunction afterFunction = new ThrowingTypeFunction(2);
+            final RuntimeException afterFunctionFailure = extractBetweenFailure(runtimeBound(), runtimeBound(), pending, afterFunction);
+            Assert.assertSame(afterFunction.typeFailure, afterFunctionFailure);
+            Assert.assertEquals(1, afterFunction.closeCount);
+            Assert.assertEquals(1, pending.closeCount);
+        });
+    }
+
+    @Test
+    public void testExtractorDoesNotCloseBetweenBoundTheBuilderConsumed() throws Exception {
+        assertMemoryLeak(() -> {
+            // the NULL end consumes the other one, which fails to close: a second close would run on a released function
+            final ThrowingCloseFunction function = new ThrowingCloseFunction("close");
+            final RuntimeException failure = extractBetweenFailure(new ConstantExpression().ofNull(0), runtimeBound(), function);
+            Assert.assertSame(function.failure, failure);
+            Assert.assertEquals(1, function.closeCount);
+            Assert.assertEquals(0, failure.getSuppressed().length);
+        });
+    }
+
+    @Test
     public void testFreeAndClearClosesPendingFunctionOnce() {
         RuntimeIntervalModelBuilder builder = newBuilder();
         CloseCountingFunction lo = new CloseCountingFunction();
@@ -1095,6 +1143,27 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         return builder;
     }
 
+    // ts BETWEEN lo AND hi over the functions the bounds hand out in turn, which must fail the extraction; the extractor
+    // then extracts a constant range as if nothing had happened.
+    private static RuntimeException extractBetweenFailure(BoundExpression lo, BoundExpression hi, Function... functions) throws Exception {
+        final OutputSchema input = new OutputSchema().add(TIMESTAMP_COLUMN_ID, "ts", ColumnType.TIMESTAMP, true);
+        final FunctionsBoundSource bounds = new FunctionsBoundSource(functions);
+        final IntervalExtractor extractor = new IntervalExtractor(configuration, new StringSink(), new LongList());
+        RuntimeException failure = null;
+        try {
+            extractor.extract(timestampBetween(lo, hi), TIMESTAMP_COLUMN_ID, input, bounds, null, 0, sqlExecutionContext);
+        } catch (RuntimeException e) {
+            failure = e;
+        }
+        Assert.assertNotNull("expected the extraction to fail", failure);
+        Assert.assertNull(extractor.extract(timestampBetween(timestampConstant(10), timestampConstant(20)), TIMESTAMP_COLUMN_ID, input, bounds, null, 0, sqlExecutionContext));
+        final LongList intervals = extractor.getStaticIntervals();
+        Assert.assertEquals(2, intervals.size());
+        Assert.assertEquals(10, intervals.getQuick(0));
+        Assert.assertEquals(20, intervals.getQuick(1));
+        return failure;
+    }
+
     private static RuntimeIntervalModelBuilder newBuilder() {
         RuntimeIntervalModelBuilder builder = new RuntimeIntervalModelBuilder();
         builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, null);
@@ -1111,6 +1180,27 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
         ReservationFailingBuilder builder = new ReservationFailingBuilder();
         builder.of(ColumnType.TIMESTAMP, PartitionBy.DAY, new DefaultCairoConfiguration("."));
         return builder;
+    }
+
+    private static BoundExpression runtimeBound() throws Exception {
+        final FunctionFactoryDescriptor overload = new FunctionFactoryDescriptor(new BetweenTimestampFunctionFactory());
+        return new FunctionExpression().of(overload, new ObjList<>(), new IntList(), ColumnType.TIMESTAMP, BoundExpression.RUNTIME_CONSTANT, 0);
+    }
+
+    private static FunctionExpression timestampBetween(BoundExpression lo, BoundExpression hi) throws Exception {
+        final ObjList<BoundExpression> arguments = new ObjList<>();
+        arguments.add(new ColumnExpression().of(TIMESTAMP_COLUMN_ID, ColumnType.TIMESTAMP, 0));
+        arguments.add(lo);
+        arguments.add(hi);
+        final IntList positions = new IntList();
+        positions.add(0);
+        positions.add(0);
+        positions.add(0);
+        return new FunctionExpression().of(new FunctionFactoryDescriptor(new BetweenTimestampFunctionFactory()), arguments, positions, ColumnType.BOOLEAN, 0, 0);
+    }
+
+    private static BoundExpression timestampConstant(long value) {
+        return new ConstantExpression().ofTimestamp(value, ColumnType.TIMESTAMP, 0);
     }
 
     private static class BuildFailingBuilder extends RuntimeIntervalModelBuilder {
@@ -1203,6 +1293,60 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
     private static class CursorPositionsExposingBuilder extends RuntimeIntervalModelBuilder {
         IntList cursorFunctionPositionsCopy() {
             return copyCursorFunctionPositions();
+        }
+    }
+
+    /**
+     * Hands out the functions of the bounds of a predicate in turn; nothing else of the source runs for a BETWEEN over
+     * the designated timestamp itself.
+     */
+    private static class FunctionsBoundSource implements IntervalBoundSource {
+        private final Function[] functions;
+        private int nextFunction;
+
+        private FunctionsBoundSource(Function[] functions) {
+            this.functions = functions;
+        }
+
+        @Override
+        public Function compileTickExpr(TimestampDriver timestampDriver, CairoConfiguration configuration, CharSequence seq, int lo, int lim, int position) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Function instantiate(BoundExpression expression, OutputSchema input, SqlExecutionContext executionContext) {
+            return functions[nextFunction++];
+        }
+
+        @Override
+        public Function instantiateTimestampCursor(CursorExpression cursor, SqlExecutionContext executionContext) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int invertMonotonic(BoundExpression operand, Function head, Interval io) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public int monotonicColumnId(BoundExpression operand, Function head) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Function newMonotonicInverter(Function head, Function lo, short loAdjustment, long loValue, Function hi, short hiAdjustment,
+                                             long hiValue, boolean isBetween, boolean isNullBoundMatching, TimestampDriver timestampDriver) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public Function parkDeclinedBound(BoundExpression bound, Function function) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void publishScalarBound(BoundExpression bound, Function function) {
+            throw new UnsupportedOperationException();
         }
     }
 

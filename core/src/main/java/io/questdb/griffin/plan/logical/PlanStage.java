@@ -27,7 +27,7 @@ package io.questdb.griffin.plan.logical;
 /**
  * The stages a logical plan passes through, in order. Each stage states the invariants every node of the plan holds and
  * the facts it carries; {@code SqlOptimiser} advances a plan from one stage to the next by its passes, each of which
- * requires the stage before it and leaves the stage after it, and under
+ * requires a stage and leaves that stage or the next, and under
  * {@link io.questdb.ParanoiaState#PLAN_PARANOIA_MODE} it verifies the invariants of the stage a pass leaves and records
  * the stage on every node, see {@link LogicalPlan#getStage}.
  */

@@ -219,6 +219,11 @@ final class Decorrelation implements OptimiserPass {
     }
 
     @Override
+    public void record(LogicalPlan plan, PlanVerifier verifier) {
+        verifier.recordBarrierJoins(plan);
+    }
+
+    @Override
     public void verify(LogicalPlan plan, PlanVerifier verifier) {
         try {
             verifier.verifyDecorrelation(plan, getName(), verificationCarriers);

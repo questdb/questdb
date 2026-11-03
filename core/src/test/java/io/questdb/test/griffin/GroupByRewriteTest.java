@@ -395,8 +395,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     .withPlan("""
                             Encode sort
                               keys: [k]
-                                VirtualRecord
-                                  functions: [t1.k,l.__qdb_count_carrier__0+coalesce(l.__qdb_count_carrier__1,0)*1]
+                                SelectedRecord
                                     Hash Left Outer Join Light
                                       condition: l.__qdb_outer_ref__0_k=t1.k
                                       symbolKeyJoin: true
@@ -404,7 +403,8 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                                             Row forward scan
                                             Frame forward scan on: tab
                                         Hash
-                                            SelectedRecord
+                                            VirtualRecord
+                                              functions: [sum+COUNT*1,__qdb_outer_ref__0_k]
                                                 GroupBy vectorized: true workers: 1
                                                   keys: [k]
                                                   values: [sum(x),count(x)]

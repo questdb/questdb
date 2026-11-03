@@ -82,7 +82,9 @@ import org.jetbrains.annotations.TestOnly;
  * the buffer cap of the hint. Entries currently
  * bound to a record or to the frame-memory flyweight are skipped during
  * victim selection and trimming, so when every cached entry is pinned the
- * pool creates a new buffer and the budget is temporarily exceeded.
+ * pool creates a new buffer and the budget is temporarily exceeded. Under
+ * {@link ParquetDecodeHint#SCATTERED}, whose walk revisits its frames, a miss that would only pass the
+ * budget closes the victim instead of reusing it, as a peak it held would keep narrower frames out of the cache.
  * <p>
  * The access-pattern hint declared by the enclosing factory scales the
  * effective ceiling: {@link ParquetDecodeHint#MONOTONIC} cursors get a quarter
@@ -945,8 +947,16 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 continue;
             }
             // A decode the size of the victim's takes the cache past its budget, and the trim after it evicts this
-            // victim first, so the decode reuses the victim's memory rather than a buffer that the trim frees.
-            if (isFull || cachedBytes + victim.retainedBytes > effectiveBudgetBytes || getCachedNativeBytes() + victim.getNativeBytes() > maxNativeBytes) {
+            // victim first, so the decode reuses the victim's memory rather than a buffer that the trim frees. A walk that
+            // revisits its frames frees the victim instead: its memory stays at the peak of what it decoded, which would
+            // keep narrower frames out of the cache for the rest of the walk.
+            final boolean isOverBudget = cachedBytes + victim.retainedBytes > effectiveBudgetBytes
+                    || getCachedNativeBytes() + victim.getNativeBytes() > maxNativeBytes;
+            if (isOverBudget && !isFull && decodeHint == ParquetDecodeHint.SCATTERED) {
+                evictAndClose(victim);
+                break;
+            }
+            if (isFull || isOverBudget) {
                 // In-place reuse keeps the victim's native memory (and thus its
                 // retainedBytes accounting); only the logical state resets.
                 bindGeneration++;

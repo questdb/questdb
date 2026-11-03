@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.table.AbstractPageFrameRecordCursor;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorImpl;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRowCursorFactory;
 import io.questdb.griffin.plan.logical.ScanPlan;
+import io.questdb.std.Chars;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.str.StringSink;
@@ -52,6 +53,28 @@ import org.junit.Test;
 import static io.questdb.test.griffin.PlanShape.assertPlanned;
 
 public class OrderByAdviceTest extends AbstractCairoTest {
+    // A nested loop reads an input again for each row of its other input, which a sort over the input serves from the row
+    // ids it keeps. The key order of the index reads the index and the rows on each read, so such an input keeps its sort.
+    private static final String NESTED_LOOP_KEY_ORDER = "Cursor-order scan";
+    private static final String NESTED_LOOP_KEYS = "SELECT id, s, ts FROM t WHERE ts IN '2024-01-01' AND s IN ('a', 'b', 'c')";
+    private static final String[] NESTED_LOOP_INPUTS = {
+            NESTED_LOOP_KEYS + " ORDER BY s, ts",
+            NESTED_LOOP_KEYS + " ORDER BY s",
+            NESTED_LOOP_KEYS + " AND id % 2 = 0 ORDER BY s, ts",
+            "SELECT id, s, ts FROM t WHERE ts IN '2024-01-01' AND s = 'a' ORDER BY s, ts",
+            "SELECT id, s, ts FROM t WHERE ts IN '2024-01-01' AND s NOT IN ('a') ORDER BY s, ts",
+            "SELECT id, s, ts FROM t WHERE ts IN '2024-01-01' ORDER BY s, ts",
+            "SELECT id, s, ts FROM t WHERE ts IN '2024-01-01' ORDER BY s",
+            NESTED_LOOP_KEYS + " ORDER BY s, ts LIMIT 1, 4",
+            "SELECT id, s, ts FROM (" + NESTED_LOOP_KEYS + " ORDER BY s, ts)",
+            "SELECT id, s, ts FROM (" + NESTED_LOOP_KEYS + " ORDER BY s, ts) WHERE id > 1"
+    };
+    private static final String[] NESTED_LOOPS = {
+            "SELECT m.x, t.id, t.s FROM long_sequence(3) m CROSS JOIN (%s) t",
+            "SELECT m.x, t.id, t.s FROM long_sequence(3) m LEFT JOIN (%s) t ON m.x > 0",
+            "SELECT m.x, t.id, t.s FROM long_sequence(3) m FULL JOIN (%s) t ON m.x > 0",
+            "SELECT m.x, t.id, t.s FROM (%s) t RIGHT JOIN long_sequence(3) m ON m.x > 0"
+    };
 
     @Test
     public void testCreateDesignatedTimestampFromMultipleOrderBy() throws Exception {
@@ -343,6 +366,100 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                             1970-01-01T00:00:02.000000Z\t8.0
                             1970-01-01T00:00:01.000000Z\t3.0
                             """);
+        });
+    }
+
+    @Test
+    public void testNestedLoopInputKeepsItsSort() throws Exception {
+        assertMemoryLeak(() -> {
+            createNestedLoopTable(true);
+            assertNestedLoopInputs();
+        });
+    }
+
+    @Test
+    public void testNestedLoopInputKeepsItsSortNative() throws Exception {
+        assertMemoryLeak(() -> {
+            createNestedLoopTable(false);
+            assertNestedLoopInputs();
+        });
+    }
+
+    @Test
+    public void testNestedLoopInputsBeforeRightJoinKeepTheirSort() throws Exception {
+        assertMemoryLeak(() -> {
+            createNestedLoopTable(true);
+            final String sql = "SELECT a.id, b.id, m.x FROM (" + NESTED_LOOP_KEYS + " ORDER BY s, ts) a CROSS JOIN ("
+                    + NESTED_LOOP_KEYS + " ORDER BY s, ts) b RIGHT JOIN long_sequence(2) m ON m.x > 0";
+            assertNestedLoopSorted(sql, 2);
+            assertSqlCursors(nestedLoopReference(sql), sql);
+        });
+    }
+
+    @Test
+    public void testNestedLoopOverJoinInputKeepsItsSort() throws Exception {
+        assertMemoryLeak(() -> {
+            createNestedLoopTable(false);
+            final String sql = "SELECT n.x, j.id FROM long_sequence(2) n CROSS JOIN (SELECT a.id FROM (" + NESTED_LOOP_KEYS
+                    + " ORDER BY s, ts) a JOIN t b ON a.id = b.id) j";
+            assertNestedLoopSorted(sql, 1);
+            assertSqlCursors(nestedLoopReference(sql), sql);
+        });
+    }
+
+    @Test
+    public void testNestedLoopReadOnceInputReadsInKeyOrder() throws Exception {
+        assertMemoryLeak(() -> {
+            createNestedLoopTable(true);
+            final String input = NESTED_LOOP_KEYS + " ORDER BY s, ts";
+            final String[] queries = {
+                    input,
+                    "SELECT t.id, m.x FROM (" + input + ") t CROSS JOIN long_sequence(2) m",
+                    "SELECT t.id, m.x FROM long_sequence(2) m JOIN (" + input + ") t ON m.x = t.id",
+                    "SELECT t.id, m.x FROM (" + input + ") t RIGHT JOIN long_sequence(2) m ON m.x = t.id"
+            };
+            for (String sql : queries) {
+                final String plan = nestedLoopPlan(sql);
+                Assert.assertTrue(plan, Chars.contains(plan, NESTED_LOOP_KEY_ORDER));
+                Assert.assertFalse(plan, plan.toLowerCase().contains("sort"));
+                assertSqlCursors(nestedLoopReference(sql), sql);
+            }
+        });
+    }
+
+    @Test
+    public void testNestedLoopReturnsInputRowsForEveryRow() throws Exception {
+        assertMemoryLeak(() -> {
+            createNestedLoopTable(true);
+            // the rows of keys a, b and c of the table by key, then by timestamp; the second read of the cursor returns them again
+            assertQuery("SELECT m.x, t.id, t.s FROM long_sequence(2) m CROSS JOIN (" + NESTED_LOOP_KEYS + " ORDER BY s, ts) t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            x\tid\ts
+                            1\t1\ta
+                            1\t4\ta
+                            1\t2\tb
+                            1\t5\tb
+                            1\t3\tc
+                            1\t6\tc
+                            2\t1\ta
+                            2\t4\ta
+                            2\t2\tb
+                            2\t5\tb
+                            2\t3\tc
+                            2\t6\tc
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLoopSharedInputKeepsItsSort() throws Exception {
+        assertMemoryLeak(() -> {
+            createNestedLoopTable(true);
+            final String sql = "WITH c AS (" + NESTED_LOOP_KEYS + " ORDER BY s, ts) SELECT m.x, c.id FROM long_sequence(2) m CROSS JOIN c";
+            assertNestedLoopSorted(sql, 1);
+            assertSqlCursors(nestedLoopReference(sql), sql);
         });
     }
 
@@ -3555,5 +3672,51 @@ public class OrderByAdviceTest extends AbstractCairoTest {
             tracker.close();
             node1.setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0L);
         }
+    }
+
+    private static void assertNestedLoopInputs() throws Exception {
+        for (String loop : NESTED_LOOPS) {
+            for (String input : NESTED_LOOP_INPUTS) {
+                final String sql = String.format(loop, input);
+                assertNestedLoopSorted(sql, 1);
+                assertSqlCursors(nestedLoopReference(sql), sql);
+            }
+        }
+    }
+
+    private static void assertNestedLoopSorted(String sql, int sortCount) throws Exception {
+        final String plan = nestedLoopPlan(sql);
+        Assert.assertFalse(plan, Chars.contains(plan, NESTED_LOOP_KEY_ORDER));
+        Assert.assertFalse(plan, Chars.contains(plan, "SortedSymbolIndex"));
+        Assert.assertEquals(plan, sortCount, plan.toLowerCase().split("sort", -1).length - 1);
+    }
+
+    private static void createNestedLoopTable(boolean isParquet) throws Exception {
+        execute("CREATE TABLE t (id LONG, s SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t VALUES
+                    (1, 'a', '2024-01-01T00:00:00Z'),
+                    (2, 'b', '2024-01-01T01:00:00Z'),
+                    (3, 'c', '2024-01-01T02:00:00Z'),
+                    (4, 'a', '2024-01-01T03:00:00Z'),
+                    (5, 'b', '2024-01-01T04:00:00Z'),
+                    (6, 'c', '2024-01-01T05:00:00Z'),
+                    (7, 'd', '2024-01-01T06:00:00Z'),
+                    (8, 'a', '2024-01-02T00:00:00Z')
+                """);
+        if (isParquet) {
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+        }
+    }
+
+    private static String nestedLoopPlan(String sql) throws Exception {
+        final StringSink sink = new StringSink();
+        printSql("EXPLAIN " + sql, sink);
+        return sink.toString();
+    }
+
+    // The same query reads the table without its index, which leaves the order to the sort.
+    private static String nestedLoopReference(String sql) {
+        return sql.replace("SELECT id, s, ts FROM t", "SELECT /*+ no_index(t) */ id, s, ts FROM t");
     }
 }

@@ -631,7 +631,9 @@ class WalEventWriter implements Closeable {
             long replaceRangeHiTs,
             byte dedupMode
     ) {
-        validateReplaceRange(minTimestamp, maxTimestamp, replaceRangeLowTs, replaceRangeHiTs, dedupMode);
+        assert dedupMode != WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                || (replaceRangeLowTs < replaceRangeHiTs && replaceRangeLowTs <= minTimestamp && replaceRangeHiTs > maxTimestamp)
+                : "the commit validated this replace range when it appended the record";
         // Jump back to the start of the last event and write the -1 sentinel
         // so that appendData finds it at the expected position.
         // NB: if appendData() throws, the event file is left in a partially

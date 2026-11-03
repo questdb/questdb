@@ -67,6 +67,13 @@ interface OptimiserPass extends Mutable {
     }
 
     /**
+     * Records, under paranoia, the facts of the plan the pass rewrites that {@link #verify} compares the plan it
+     * returned with.
+     */
+    default void record(LogicalPlan plan, PlanVerifier verifier) {
+    }
+
+    /**
      * Checks, under paranoia, the invariants only the pass knows of the plan it returned, before the optimiser verifies
      * the invariants of the stage it produces.
      */

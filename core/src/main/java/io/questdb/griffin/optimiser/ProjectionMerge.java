@@ -316,8 +316,8 @@ final class ProjectionMerge implements OptimiserPass {
                 project.markTimestampDeclaration();
             }
             // Pruning already resolved duplicate timestamp aliases. Keep the outer
-            // schema exactly. Order-sensitive rules have finished, so a declaration
-            // boundary can now merge without changing its observable metadata.
+            // schema exactly. The rewrites a declaration boundary stops have run, so
+            // the boundary can now merge without changing its observable metadata.
             if (boundary == null) {
                 project.replaceInput(0, inner.getChild());
             } else {

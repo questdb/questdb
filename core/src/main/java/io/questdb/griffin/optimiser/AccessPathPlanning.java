@@ -279,7 +279,10 @@ final class AccessPathPlanning {
         ScanPlan.IndexOrder indexOrder = ScanPlan.IndexOrder.NONE;
         SortDirection indexDirection = keyCount == 1 ? scan.getScanDirection() : SortDirection.ASCENDING;
         boolean isTimestampDropped = false;
-        if (isSinglePartition && !isTimestampRequired && orderCount > 0 && orderCount < 3 && order.getColumnIds().getQuick(0) == keyId) {
+        // A sort keeps the row ids of a read that a nested loop repeats, where the key order of the index reads the index and
+        // the rows again each time.
+        if (isSinglePartition && !isTimestampRequired && !scan.isRewound() && orderCount > 0 && orderCount < 3
+                && order.getColumnIds().getQuick(0) == keyId) {
             isTimestampDropped = true;
             if (orderCount == 1) {
                 indexOrder = ScanPlan.IndexOrder.KEY;
@@ -676,7 +679,7 @@ final class AccessPathPlanning {
      */
     private int sortedSymbolIndexKey(ScanPlan scan, BoundExpression residual, boolean hasModel, boolean isTimestampRequired) {
         final SortKeys order = scan.getRequestedOrder();
-        if (residual != null || !hasModel || order.isEmpty() || isTimestampRequired || scan.hasHint(ScanPlan.HINT_NO_INDEX) || scan.isUpdate()
+        if (residual != null || !hasModel || order.isEmpty() || isTimestampRequired || scan.isRewound() || scan.hasHint(ScanPlan.HINT_NO_INDEX) || scan.isUpdate()
                 || !intervals.allIntervalsHitOnePartition(table.getPartitionedBy())) {
             return -1;
         }

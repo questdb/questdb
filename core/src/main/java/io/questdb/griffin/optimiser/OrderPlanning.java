@@ -182,6 +182,13 @@ final class OrderPlanning implements OptimiserPass {
         return true;
     }
 
+    /**
+     * True when the step reads its master again for each slave row: a RIGHT join without keys.
+     */
+    private static boolean isMasterRewound(JoinInput step) {
+        return step.getJoinType() == JoinKind.RIGHT_OUTER && step.getKeys().size() == 0;
+    }
+
     private static boolean isSingleRow(LogicalPlan plan) {
         plan = LogicalPlans.skipProjectsAndFilters(plan);
         return plan instanceof AggregatePlan aggregate && aggregate.getGroupingExpressions().size() == 0;
@@ -198,6 +205,14 @@ final class OrderPlanning implements OptimiserPass {
             case ASOF, LT -> PlanToFactoryRules.fullFatTemporalRejectedColumn(step) >= 0;
             default -> false;
         };
+    }
+
+    /**
+     * True when the step reads its slave again for each master row: a relational join without keys, other than a RIGHT
+     * join, which reads its master again instead.
+     */
+    private static boolean isSlaveRewound(JoinInput step) {
+        return step.getJoinType().isRelational() && step.getKeys().size() == 0 && step.getJoinType() != JoinKind.RIGHT_OUTER;
     }
 
     /**
@@ -555,17 +570,24 @@ final class OrderPlanning implements OptimiserPass {
      * the first or last {@code n} joined rows come from the first or last {@code n} master rows. A LIMIT that may be
      * negative reaches the master of the join under it that may emit no row for a master row, see
      * {@link PlanToFactoryRules#masterSuffixJoin}. A constant LIMIT reaches the last input of a CROSS join without a
-     * filter as well: the first or last {@code n} joined rows join the first or last {@code n} of its rows.
+     * filter as well: the first or last {@code n} joined rows join the first or last {@code n} of its rows. The inputs
+     * before a step that reads its master again are read again, as is the slave of a step that reads its slave again.
      */
     private void requireJoin(JoinPlan join, OrderRequirement requirement) {
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
+        int rewoundMasterHi = 0;
+        for (int i = ordered.size() - 1; i > 0 && rewoundMasterHi == 0; i--) {
+            if (isMasterRewound(ordered.getQuick(i))) {
+                rewoundMasterHi = i;
+            }
+        }
         final LogicalPlan master = ordered.getQuick(0).getInput();
         final boolean isMasterOrderPreserved = LogicalPlans.isMasterOrderPreserved(join);
         final OutputSchema masterOutput = master.getOutput();
         final int orderColumnId = requirement.getOrderColumnId();
         final LimitPlan limit = requirement.getLimit();
         final boolean isOrdered = !requirement.getOrder().isEmpty();
-        final OrderRequirement masterRequirement = requirements.next().inputOf(requirement);
+        final OrderRequirement masterRequirement = requirements.next().inputOf(requirement).rewound(rewoundMasterHi > 0);
         if (isMasterOrderPreserved && orderColumnId >= 0 && masterOutput.getColumnIndexById(orderColumnId) >= 0) {
             masterRequirement.orderBy(orderColumnId, requirement.getDirection()).order(requirement, masterOutput)
                     .rowOrderRequired(requirement.isRowOrderRequired());
@@ -585,6 +607,7 @@ final class OrderPlanning implements OptimiserPass {
                 final boolean isLimited = !isOrdered && limit != null && i == n - 1 && joinType == JoinKind.CROSS
                         && step.getPostJoinFilter() == null && limit.getLo() instanceof ConstantExpression;
                 require(step.getInput(), requirements.next().inputOf(requirement).joinSlave(isSlaveRandomAccessRequired(step))
+                        .rewound(i < rewoundMasterHi || isSlaveRewound(step))
                         .limit(isLimited ? limit : null).rowOrderRequired(joinType.isTemporal() || requirement.isRowOrderRequired()));
             }
         }
@@ -598,6 +621,7 @@ final class OrderPlanning implements OptimiserPass {
         final LimitPlan limit = requirement.getLimit();
         scan.setScanDirection(direction);
         scan.getRequestedOrder().copyFrom(requirement.getOrder());
+        scan.setRewound(requirement.isRewound());
         scan.setLimit(limit == null ? null : limit.getLo(), limit == null ? null : limit.getHi());
         if (requirement.isRowOrderRequired()) {
             scan.setRowOrder(ScanPlan.RowOrder.REQUIRED);

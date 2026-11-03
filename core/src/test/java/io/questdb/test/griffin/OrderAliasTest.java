@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.TextPlanSink;
@@ -37,6 +38,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class OrderAliasTest extends AbstractCairoTest {
+    // An alias keeps its name when an earlier expression reads a source column of that name, as in PostgreSQL. A column a
+    // joined query leaves unaliased takes the next free name when another column of that name is an argument of an earlier
+    // expression, which PostgreSQL does not do.
     @Test
     public void testAliasExpressionsKeepSourcePrecedenceAndHiddenDependencies() throws Exception {
         assertMemoryLeak(() -> {
@@ -48,6 +52,62 @@ public class OrderAliasTest extends AbstractCairoTest {
             assertRowsOnly("SELECT d+1.0 v FROM oa_u ORDER BY v-id", "v\n2.0\n3.0\n2.0\n4.0\n");
             assertRowsOnly("SELECT d+1.0 v FROM oa_u ORDER BY id+1.0,v+1.0", "v\n2.0\n4.0\n3.0\n2.0\n");
             assertRowsOnly("SELECT d+1.0 v,id FROM oa_u ORDER BY v+1.0,oa_u.id", "v\tid\n2.0\t1\n2.0\t4\n3.0\t3\n4.0\t2\n");
+        });
+    }
+
+    @Test
+    public void testAliasOfAnotherColumnDuplicateFails() throws Exception {
+        assertMemoryLeak(() -> {
+            createCollidingTables();
+            assertException("SELECT v1 + 1 x, v1 AS x FROM w", 20, "Duplicate column [name=x]");
+            assertException("SELECT t.v1 + 1 x, t.v2 AS v1, t.v1 AS v1 FROM w t CROSS JOIN u", 36, "Duplicate column [name=v1]");
+        });
+    }
+
+    @Test
+    public void testAliasOfAnotherColumnKeepsItsName() throws Exception {
+        assertMemoryLeak(() -> {
+            createCollidingTables();
+            final String[][] cases = {
+                    {"SELECT v1 + 1 x, v2 AS v1 FROM w", "x,v1"},
+                    {"SELECT abs(v1), v2 AS v1 FROM w", "abs,v1"},
+                    {"SELECT v1 + 1 AS v2, v2 AS x FROM w", "v2,x"},
+                    {"SELECT v2 * 2 v, avg(v) OVER (), v1 FROM w", "v,avg,v1"},
+                    {"SELECT v2 * 2 v, avg(v) OVER (), v2 AS v1 FROM w", "v,avg,v1"},
+                    {"SELECT v1 + 1 x, v2 AS v1, avg(v2) OVER () FROM w", "x,v1,avg"},
+                    {"SELECT ts, sum(v1) s, v2 AS v1 FROM w SAMPLE BY 1h", "ts,s,v1"},
+                    {"SELECT ts, sum(v1) s, v2 AS v1 FROM w GROUP BY ts, v2", "ts,s,v1"},
+                    {"SELECT t.v1 + 1 x, t.v2 AS v1 FROM w t CROSS JOIN u", "x,v1"},
+                    {"SELECT t.v1 + 1 x, u.v1 AS v1 FROM w t CROSS JOIN u", "x,v1"},
+                    {"SELECT t.v1 + 1 x, t.v2 AS v1, u.v1 FROM w t CROSS JOIN u", "x,v1,v11"},
+                    {"SELECT t.v1 + 1 x, t.v2 AS y, u.y FROM w t CROSS JOIN u", "x,y,y1"},
+            };
+            for (String[] c : cases) {
+                assertColumnNames(c[0], c[1]);
+            }
+        });
+    }
+
+    @Test
+    public void testAliasOfAnotherColumnReadsTheColumnItNames() throws Exception {
+        assertMemoryLeak(() -> {
+            createCollidingTables();
+            assertQuery("SELECT v1 + 1 x, v2 AS v1 FROM w").noLeakCheck().expectSize().returns("""
+                    x\tv1
+                    101.0\t1.0
+                    201.0\t3.0
+                    """);
+            assertQuery("SELECT t.v1 + 1 x, t.v2 AS v1 FROM w t CROSS JOIN u").noLeakCheck().noRandomAccess().expectSize().returns("""
+                    x\tv1
+                    101.0\t1.0
+                    201.0\t3.0
+                    """);
+            assertQuery("SELECT t.v1 + 1 x, u.v1 AS v1 FROM w t CROSS JOIN u").noLeakCheck().noRandomAccess().expectSize().returns("""
+                    x\tv1
+                    101.0\t7.0
+                    201.0\t7.0
+                    """);
+            assertSqlCursors("SELECT t.v1 + 1 x, t.v2 FROM w t CROSS JOIN u", "SELECT x, v1 v2 FROM (SELECT t.v1 + 1 x, t.v2 AS v1 FROM w t CROSS JOIN u)");
         });
     }
 
@@ -198,6 +258,51 @@ public class OrderAliasTest extends AbstractCairoTest {
             assertQuery("SELECT d+1.0 v FROM oa_u UNION ALL SELECT d+2.0 w FROM oa_u ORDER BY w+1.0").noLeakCheck().fails(69, "Invalid column: w");
             assertQuery("SELECT d+1.0 v FROM oa_u UNION ALL SELECT d+2.0 w FROM oa_u ORDER BY d+1.0").noLeakCheck().fails(69, "Invalid column: d");
         });
+    }
+
+    @Test
+    public void testUnaliasedColumnOfJoinTakesTheNextName() throws Exception {
+        assertMemoryLeak(() -> {
+            createCollidingTables();
+            assertColumnNames("SELECT t.v1 + 1 x, u.v1 FROM w t CROSS JOIN u", "x,v11");
+            assertColumnNames("SELECT t.v1 + 1 x, t.v1 FROM w t CROSS JOIN u", "x,v1");
+            assertColumnNames("SELECT t.v1, u.v1 FROM w t CROSS JOIN u", "v1,v11");
+        });
+    }
+
+    @Test
+    public void testViewPublishesAliasOfAnotherColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createCollidingTables();
+            execute("CREATE VIEW iv AS (SELECT v1 + 1 x, v2 AS v1 FROM w)");
+            execute("CREATE VIEW ov AS (SELECT v1 FROM iv)");
+            drainWalAndViewQueues();
+            assertColumnNames("iv", "x,v1");
+            assertQuery("SELECT v1 FROM ov").noLeakCheck().expectSize().returns("""
+                    v1
+                    1.0
+                    3.0
+                    """);
+            assertExceptionNoLeakCheck("SELECT v11 FROM iv", 7, "Invalid column: v11");
+        });
+    }
+
+    private static void assertColumnNames(String sql, String expected) throws Exception {
+        try (RecordCursorFactory factory = select(sql)) {
+            final RecordMetadata metadata = factory.getMetadata();
+            final StringBuilder names = new StringBuilder();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                names.append(i > 0 ? "," : "").append(metadata.getColumnName(i));
+            }
+            Assert.assertEquals(sql, expected, names.toString());
+        }
+    }
+
+    private static void createCollidingTables() throws Exception {
+        execute("CREATE TABLE w (v1 DOUBLE, v2 DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO w VALUES (100, 1, '2024-01-01T00:00:00Z'), (200, 3, '2024-01-01T01:00:00Z')");
+        execute("CREATE TABLE u (v1 DOUBLE, y DOUBLE)");
+        execute("INSERT INTO u VALUES (7, 8)");
     }
 
     private void assertPlan(String sql, String expected) throws Exception {

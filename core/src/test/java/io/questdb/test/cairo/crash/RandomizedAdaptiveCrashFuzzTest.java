@@ -64,8 +64,8 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     private final FuzzRunner fuzzer = new FuzzRunner();
 
     // testFullLibraryW0 sweeps the full op library and runs on the soak pipeline, with one fresh seed per run and the
-    // class re-run back to back, on a longer ceiling than the 20-minute default. PR CI covers this family via
-    // testConvertPartitionCrashSafeW0.
+    // class re-run back to back, on a longer ceiling than the 20-minute default. PR CI skips the sweeps of this
+    // class, see AbstractAdaptiveCrashSweepTest#assumeNightlySweep.
     private static final String NIGHTLY_PROP = "questdb.fuzz.nightly";
 
     @Rule
@@ -472,7 +472,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
 
     // Nightly only: even the minimal (inserts + O3) profile writes the full ~14-column fuzz schema. Sweeps a large
     // prefix to validate the machinery and W=0 monotonicity, without repeating testFullLibraryW0's full-history
-    // bar. CI validates the machinery with testConvertPartitionCrashSafeW0 instead.
+    // bar. testConvertPartitionCrashSafeW0 validates the machinery in seconds instead.
     @Test
     public void testSelfCheckW0MinimalProfile() throws Exception {
         Assume.assumeTrue("minimal-profile crash sweep is nightly-only; run with -D" + NIGHTLY_PROP + "=true",
@@ -623,7 +623,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         });
     }
 
-    // CI-fast guard for the events-before-sequencer order in applyNonStructural. Deterministic and tiny (2-column,
+    // Fast guard for the events-before-sequencer order in applyNonStructural. Deterministic and tiny (2-column,
     // 2-partition table and one CONVERT PARTITION), so N is small and the full untruncated sweep runs in seconds.
     // A crash between the convert's sequencer msync and its events.sync must not suspend the table (bar 2); every
     // crash point recovers the committed data.
@@ -645,7 +645,7 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
     // durable-ack bar (an acknowledged txn always survives) is covered by DurableFrontierTest.
     private static final int GROUP_WINDOW_WN_US = 50_000;
 
-    // CI-fast W>0 guard: the group-commit (W=50ms) counterpart of testConvertPartitionCrashSafeW0. The convert
+    // Fast W>0 guard: the group-commit (W=50ms) counterpart of testConvertPartitionCrashSafeW0. The convert
     // preserves data, so whether a crash lands before the batch fdatasync (convert lost, pre-convert rows) or after
     // it (convert applied), recovery lands on the same logical rows with no corruption or suspend. Exercises the
     // sweep and oracle through the deferred group-commit flush path.
@@ -743,7 +743,8 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
             // be consumed, because the conversion transaction and logical rows are already durable, and the oracle
             // still checks for no suspension or data change after reboot. The boundary is found by operation kind, so a
             // barrier added to or removed from either side does not move it; the assertion fails, printing the phase's
-            // ops, only if the order it relies on changes.
+            // ops, only if the order it relies on changes. Where syncfs is not filesystem-wide, the epoch tail flushes
+            // the Parquet files, the partition directory and the sequencer again, so the search stops at the boundary.
             final String ops = phaseDurabilityOps();
             final String[] lines = ops.split("\n");
             int lastWalOp = -1;
@@ -761,11 +762,16 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
                         txnLogOp = i + 1;
                     }
                 } else if (path.endsWith("/data.parquet")) {
+                    if (parquetMetaOp > 0) {
+                        // the epoch tail flushes the file again: Parquet production ended without its directory barrier
+                        break;
+                    }
                     parquetDataOp = i + 1;
                 } else if (path.endsWith("/_pm")) {
                     parquetMetaOp = i + 1;
-                } else if (partitionDirOp < 0 && parquetMetaOp > 0 && op[1].endsWith("-dir") && path.contains("/2024-01-01.")) {
+                } else if (parquetMetaOp > 0 && op[1].endsWith("-dir") && path.contains("/2024-01-01.")) {
                     partitionDirOp = i + 1;
+                    break;
                 }
             }
             Assert.assertEquals(ops, countedOps, lines.length);

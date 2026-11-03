@@ -65,14 +65,11 @@ import org.jetbrains.annotations.TestOnly;
 /**
  * Runs the semantics-preserving plan rewrites, each an {@link OptimiserPass}, in a fixed order that advances the plan
  * through the stages of {@link PlanStage}: {@link JoinOrdering} turns a {@link PlanStage#BOUND} plan into a
- * {@link PlanStage#JOINS_ORDERED} one, {@link Decorrelation} into a {@link PlanStage#DECORRELATED} one, the passes it
- * lists keep it decorrelated until {@link OrderPlanning} leaves it {@link PlanStage#REWRITTEN}, and
+ * {@link PlanStage#JOINS_ORDERED} one, {@link Decorrelation} into a {@link PlanStage#DECORRELATED} one, the passes after
+ * it keep it decorrelated until {@link OrderPlanning} leaves it {@link PlanStage#REWRITTEN}, and
  * {@link #planAccessPaths} makes it {@link PlanStage#PHYSICAL}. Under {@link ParanoiaState#PLAN_PARANOIA_MODE} the
  * optimiser checks that the plan is at the stage each step requires, records the stage each step produces on every
- * node of the plan and verifies the plan at it. The first two passes run outside the list because the optimiser records
- * between them the barrier joins that decorrelation's own check, see {@link Decorrelation#verify}, compares its output
- * with, while the carriers decorrelation records hold only until the next pass renames columns. The optimiser owns the
- * temporary lists the passes hold across expression rewrites and call bindings and the {@link OptimiserContext} of the
+ * node of the plan and verifies the plan at it. The optimiser owns the temporary lists the passes hold across expression rewrites and call bindings and the {@link OptimiserContext} of the
  * query level being rewritten, borrows the leaf members of the compiler's {@link CompilerTemporaries}, which the binder
  * and the generators use in windows no optimisation can run in, and hands them, with the statement binder's plan-node
  * pools, to each pass through its constructor.
@@ -82,12 +79,9 @@ public final class SqlOptimiser implements Mutable {
     private static final String BINDING = "SqlBinder.bind";
     private final AccessPathPlanning accessPathPlanning;
     private final AggregateInputOrder aggregateInputOrder;
-    private final AggregateRewrite aggregateRewrite;
     private final OptimiserContext context;
-    private final Decorrelation decorrelation;
-    private final JoinOrdering joinOrdering;
     private final OperatorPlanning operatorPlanning;
-    private final ObjList<OptimiserPass> passes = new ObjList<>(10);
+    private final ObjList<OptimiserPass> passes = new ObjList<>(12);
     private final ColumnExpression tmpColumn = new ColumnExpression();
     private final IntIntHashMap tmpColumnMap = new IntIntHashMap();
     private final ObjList<BoundExpression> tmpConjuncts = new ObjList<>();
@@ -141,21 +135,19 @@ public final class SqlOptimiser implements Mutable {
         final ObjectPool<LimitPlan> limits = planNodes.limits;
         final ObjectPool<ProjectPlan> projects = planNodes.projects;
         final ObjectPool<SortPlan> sorts = planNodes.sorts;
-        decorrelation = new Decorrelation(context, planNodes, characterStore, tmpConjuncts, tmpIndexes, tmpValues,
-                tmpKeys, tmpSlaveKeys, tmpOrder, tmpPending, tmpPairs, tmpPlans, tmpSchema, tmpSteps, substitution, tmpColumnMap, takenNames, planReadIds);
+        final ColumnReads columnReads = new ColumnReads();
+        passes.add(new JoinOrdering(context, columnReads, filters, new JoinOrderSolver(context, planNodes, columnIds, tmpIndexes, tmpValues, tmpSlaveKeys, tmpKeys,
+                tmpOrder, tmpPending, temporaries.readyInputs, temporaries.joinChildren, temporaries.joinChildrenPool, temporaries.joinTypes,
+                temporaries.joinDependencies, temporaries.longs), tmpConjuncts));
+        passes.add(new Decorrelation(context, planNodes, characterStore, tmpConjuncts, tmpIndexes, tmpValues,
+                tmpKeys, tmpSlaveKeys, tmpOrder, tmpPending, tmpPairs, tmpPlans, tmpSchema, tmpSteps, substitution, tmpColumnMap, takenNames, planReadIds));
         aggregateInputOrder = new AggregateInputOrder();
         final ProjectionMerge projectionMerge = new ProjectionMerge(context, columnIds);
-        // The endpoint LIMIT comes first so the later passes keep filters below it.
-        passes.add(new TimestampEndpointLimit(constants, limits, sorts));
-        aggregateRewrite = new AggregateRewrite(context, projectionMerge, characterStore, columns, takenNames, tmpProjection, tmpColumn,
-                tmpKeys, columnIds, substitution, tmpSlaveKeys, tmpIndexes, tmpValues);
-        passes.add(aggregateRewrite);
-        final ColumnReads columnReads = new ColumnReads();
-        joinOrdering = new JoinOrdering(context, columnReads, filters, new JoinOrderSolver(context, planNodes, columnIds, tmpIndexes, tmpValues, tmpSlaveKeys, tmpKeys,
-                tmpOrder, tmpPending, temporaries.readyInputs, temporaries.joinChildren, temporaries.joinChildrenPool, temporaries.joinTypes,
-                temporaries.joinDependencies, temporaries.longs), tmpConjuncts);
+        passes.add(new SumNormalisation(context, characterStore, columns, takenNames, tmpKeys, columnIds, substitution, tmpSlaveKeys, tmpIndexes, tmpValues));
+        passes.add(new AggregateRewrite(context, projectionMerge, tmpProjection, tmpColumn, tmpKeys));
         passes.add(new FilterPushdown(context, aggregateInputOrder, tmpExpressions, filters, columns, tmpColumnMap, tmpSlaveKeys, tmpValues,
                 tmpPairs, tmpConjuncts));
+        // Nesting comes before pruning, which fills the read sets of the join steps that nesting builds.
         passes.add(new JoinNesting(context, planNodes.joins, planNodes.joinInputs, filters));
         // Window calls merge before pruning drops the columns a merge leaves unread.
         windowCallMerge = new WindowCallMerge(context, tmpPlans, tmpPlanPath, tmpIndexes, substitution, tmpOrder, tmpPairs, tmpColumnMap);
@@ -163,6 +155,8 @@ public final class SqlOptimiser implements Mutable {
         passes.add(new ColumnPruning(aggregateInputOrder, projectionMerge, columnReads, tmpExpressions, columns, projects, tmpIndexes, tmpValues,
                 columnIds, tmpPlans, tmpPlanPath, tmpSchema));
         passes.add(projectionMerge);
+        // The endpoint LIMIT reads the input that the merge leaves, a table read through at most a filter.
+        passes.add(new TimestampEndpointLimit(constants, limits, sorts));
         passes.add(new NegativeLimitReversal(constants, sorts, tmpIndexes, tmpPlans));
         passes.add(new OrderPlanning(configuration, functionFactoryCache, columnIds));
         operatorPlanning = new OperatorPlanning(configuration, context, planNodes, tmpValues, tmpSteps);
@@ -186,8 +180,6 @@ public final class SqlOptimiser implements Mutable {
         tmpProjection.clear();
         tmpSteps.clear();
         aggregateInputOrder.clear();
-        joinOrdering.clear();
-        decorrelation.clear();
         Misc.clearObjList(passes);
     }
 
@@ -205,15 +197,10 @@ public final class SqlOptimiser implements Mutable {
     public LogicalPlan optimise(LogicalPlan root, SqlExecutionContext executionContext) throws SqlException {
         clear();
         context.of(executionContext);
-        LogicalPlan plan = aggregateRewrite.normaliseSums(root);
         if (verifier != null) {
-            reachStage(plan, PlanStage.BOUND, BINDING);
+            reachStage(root, PlanStage.BOUND, BINDING);
         }
-        plan = apply(joinOrdering, plan);
-        if (verifier != null) {
-            verifier.recordBarrierJoins(plan);
-        }
-        plan = apply(decorrelation, plan);
+        LogicalPlan plan = root;
         for (int i = 0, n = passes.size(); i < n; i++) {
             plan = apply(passes.getQuick(i), plan);
         }
@@ -256,15 +243,16 @@ public final class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Runs the pass over the plan; under paranoia, checks that the plan is at the stage the pass requires, checks the
-     * plan the pass returns by the pass's own checks, then records the stage the pass produces and verifies the plan at
-     * it.
+     * Runs the pass over the plan; under paranoia, checks that the plan is at the stage the pass requires, records the
+     * facts the pass compares its result with, checks the plan the pass returns by the pass's own checks, then records
+     * the stage the pass produces and verifies the plan at it.
      */
     private LogicalPlan apply(OptimiserPass pass, LogicalPlan plan) throws SqlException {
         if (verifier == null) {
             return pass.apply(plan);
         }
         verifier.requireStage(plan, pass.getRequiredStage(), pass.getName());
+        pass.record(plan, verifier);
         final LogicalPlan rewritten = pass.apply(plan);
         pass.verify(rewritten, verifier);
         reachStage(rewritten, pass.getProducedStage(), pass.getName());

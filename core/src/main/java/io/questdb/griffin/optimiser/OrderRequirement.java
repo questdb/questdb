@@ -42,7 +42,8 @@ import io.questdb.std.ObjectFactory;
  * What the consumer of a plan requires of the plan's rows, which {@link OrderPlanning} records on the plan and passes
  * on to its inputs: rows ordered by one column in one direction, an order of several keys an access path may deliver,
  * a LIMIT on the rows read and whether the row order matters at all, together with where the plan sits: under a join
- * slave, under a step that reads it by random access, or under an aggregate without keys.
+ * slave, under a step that reads it by random access, under a nested loop that reads it again and again, or under an
+ * aggregate without keys.
  */
 final class OrderRequirement implements Mutable {
     static final ObjectFactory<OrderRequirement> FACTORY = OrderRequirement::new;
@@ -50,6 +51,7 @@ final class OrderRequirement implements Mutable {
     private SortDirection direction;
     private boolean isJoinSlaveInput;
     private boolean isRandomAccessRequired;
+    private boolean isRewound;
     private boolean isRowOrderRequired = true;
     private boolean isSingleGroupInput;
     private LimitPlan limit;
@@ -62,6 +64,7 @@ final class OrderRequirement implements Mutable {
         direction = null;
         isJoinSlaveInput = false;
         isRandomAccessRequired = false;
+        isRewound = false;
         isRowOrderRequired = true;
         isSingleGroupInput = false;
         limit = null;
@@ -103,6 +106,7 @@ final class OrderRequirement implements Mutable {
     OrderRequirement inputOf(OrderRequirement consumer) {
         isJoinSlaveInput = consumer.isJoinSlaveInput;
         isRandomAccessRequired = consumer.isRandomAccessRequired;
+        isRewound = consumer.isRewound;
         isSingleGroupInput = consumer.isSingleGroupInput;
         return this;
     }
@@ -141,6 +145,13 @@ final class OrderRequirement implements Mutable {
      */
     boolean isRandomAccessRequired() {
         return isRandomAccessRequired;
+    }
+
+    /**
+     * True when a nested loop reads the rows of the plan again for each row of its other input.
+     */
+    boolean isRewound() {
+        return isRewound;
     }
 
     boolean isRowOrderRequired() {
@@ -230,6 +241,15 @@ final class OrderRequirement implements Mutable {
     void passTo(LogicalPlan plan) {
         isRandomAccessRequired &= plan instanceof ProjectPlan || plan instanceof FilterPlan || plan instanceof LimitPlan || plan instanceof SortPlan;
         isSingleGroupInput &= plan instanceof ProjectPlan || plan instanceof FilterPlan || plan instanceof ScanPlan;
+    }
+
+    /**
+     * Marks the plan as read again for each row of the other input of a nested loop when {@code isRewound}; a plan under
+     * a nested loop stays marked.
+     */
+    OrderRequirement rewound(boolean isRewound) {
+        this.isRewound |= isRewound;
+        return this;
     }
 
     OrderRequirement rowOrderRequired(boolean isRowOrderRequired) {

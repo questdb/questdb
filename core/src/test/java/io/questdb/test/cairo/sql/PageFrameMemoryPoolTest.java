@@ -353,6 +353,66 @@ public class PageFrameMemoryPoolTest extends AbstractCairoTest {
         Assert.assertEquals(3 * ROWS_PER_DAY, x);
     }
 
+    @Test
+    public void testScatteredWalkKeepsNarrowFramesAfterWiderOnes() throws Exception {
+        assertMemoryLeak(() -> {
+            // four narrow Parquet days, then two wide ones, a row group each
+            execute("CREATE TABLE w (p VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO w
+                    SELECT CASE WHEN x <= 4_000 THEN 'a' ELSE rpad(x::VARCHAR, 300, ' compressible log line') END, timestamp_sequence('2020-01-01', 86_400_000L)
+                    FROM long_sequence(7_000)
+                    """);
+            execute("ALTER TABLE w CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-07'");
+            try (RecordCursorFactory factory = select("w");
+                 PageFrameCursor frameCursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                 PageFrameAddressCache addressCache = new PageFrameAddressCache()) {
+                loadFrames(factory, frameCursor, addressCache);
+                final long wideBytes;
+                final long narrowBytes;
+                try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, Long.MAX_VALUE)) {
+                    pool.of(addressCache, ParquetDecodeHint.SCATTERED);
+                    pool.navigateTo(0);
+                    narrowBytes = pool.getCachedBytes();
+                    pool.navigateTo(4);
+                    wideBytes = pool.getCachedBytes() - narrowBytes;
+                }
+                Assert.assertTrue(wideBytes > 8 * narrowBytes);
+                final long budget = 2 * wideBytes + narrowBytes / 2;
+                try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, budget)) {
+                    pool.of(addressCache, ParquetDecodeHint.SCATTERED);
+                    pool.navigateTo(4);
+                    pool.navigateTo(5);
+                    Assert.assertEquals(2, pool.getCachedFrameCount());
+                    // the narrow days push the wide ones out, and all of them then fit the budget
+                    for (int frame = 0; frame < 4; frame++) {
+                        pool.navigateTo(frame);
+                        Assert.assertTrue(pool.getCachedBytes() <= budget);
+                    }
+                    Assert.assertEquals(4, pool.getCachedFrameCount());
+                    Assert.assertEquals(4 * narrowBytes, pool.getCachedBytes());
+                    final long decodeCount = pool.getDecodeCount();
+                    for (int pass = 0; pass < 3; pass++) {
+                        for (int frame = 3; frame >= 0; frame--) {
+                            pool.navigateTo(frame);
+                        }
+                    }
+                    Assert.assertEquals(decodeCount, pool.getDecodeCount());
+                    Assert.assertEquals(6, decodeCount);
+                }
+                // a walk that does not come back reuses the memory of the wide day, whose peak the narrow days then count at
+                try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, budget)) {
+                    pool.of(addressCache, ParquetDecodeHint.CYCLIC);
+                    pool.navigateTo(4);
+                    pool.navigateTo(5);
+                    pool.navigateTo(0);
+                    Assert.assertEquals(2, pool.getCachedFrameCount());
+                    Assert.assertEquals(2 * wideBytes, pool.getCachedBytes());
+                }
+            }
+        });
+    }
+
     private static IntHashSet columns(int... columnIndexes) {
         final IntHashSet set = new IntHashSet();
         for (int columnIndex : columnIndexes) {

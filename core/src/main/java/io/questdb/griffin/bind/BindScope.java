@@ -355,6 +355,14 @@ final class BindScope implements Mutable {
             return alias;
         }
 
+        /**
+         * Keeps the alias a query gives a column, which a later column that names itself takes no more.
+         */
+        CharSequence addExplicit(CharSequence alias) {
+            names.add(alias);
+            return alias;
+        }
+
         void addArguments(BoundExpression expression, OutputSchema input, CharacterStore store) {
             inputColumnIds.clear();
             LogicalPlans.collectInputColumnIds(expression, input, inputColumnIds);

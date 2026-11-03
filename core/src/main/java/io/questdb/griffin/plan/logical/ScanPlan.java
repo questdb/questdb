@@ -72,6 +72,7 @@ public final class ScanPlan extends LogicalPlan {
     private IntervalScan intervalScan = IntervalScan.NONE;
     private boolean isRandomAccess = true;
     private boolean isSequencedUpdate;
+    private boolean isRewound;
     private boolean isTimestampDropped;
     private boolean isUpdate;
     private WindowJoinStep joinIntervalStep;
@@ -116,6 +117,7 @@ public final class ScanPlan extends LogicalPlan {
         isUpdate = false;
         isSequencedUpdate = false;
         isRandomAccess = true;
+        isRewound = false;
         rowOrder = RowOrder.REQUIRED;
         scanDirection = SortDirection.ASCENDING;
         hints = 0;
@@ -545,6 +547,13 @@ public final class ScanPlan extends LogicalPlan {
      * key order.
      */
     /**
+     * True when a nested loop reads the rows of the scan again for each row of its other input.
+     */
+    public boolean isRewound() {
+        return isRewound;
+    }
+
+    /**
      * Whether the access path emits rows out of designated timestamp order, so its metadata declares no timestamp.
      */
     public boolean isTimestampDropped() {
@@ -681,6 +690,11 @@ public final class ScanPlan extends LogicalPlan {
         this.residualAlgorithm = residualAlgorithm;
     }
 
+    public void setRewound(boolean isRewound) {
+        checkRewritable("ScanPlan.setRewound");
+        this.isRewound = isRewound;
+    }
+
     public void setRowOrder(RowOrder rowOrder) {
         checkRewritable("ScanPlan.setRowOrder");
         this.rowOrder = rowOrder;
@@ -733,6 +747,7 @@ public final class ScanPlan extends LogicalPlan {
         visitor.fact("indexRead", indexRead);
         visitor.fact("intervalScan", intervalScan);
         visitor.fact("isRandomAccess", isRandomAccess);
+        visitor.fact("isRewound", isRewound);
         visitor.fact("isSequencedUpdate", isSequencedUpdate);
         visitor.fact("isTimestampDropped", isTimestampDropped);
         visitor.fact("isUpdate", isUpdate);

@@ -518,6 +518,61 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplaceRangeCommitKeepsItsRangeWhenConcurrentSymbolColumnRewritesItsRecord() throws Exception {
+        // A concurrent ADD COLUMN SYMBOL answers the commit with NO_TXN, and the commit rewrites its unsequenced record
+        // to carry the null flag of the column, with the range it validated when it appended the record.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                        (1, '2022-02-24T00:00:00.000000Z'),
+                        (2, '2022-02-24T00:30:00.000000Z'),
+                        (3, '2022-02-24T05:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("x");
+            final long rangeLo = MicrosTimestampDriver.floor("2022-02-24T00");
+            final long rangeHi = MicrosTimestampDriver.floor("2022-02-24T01");
+            try (WalWriter pooled = engine.getWalWriter(tableToken); WalWriter writer = engine.getWalWriter(tableToken)) {
+                Assert.assertNotEquals(pooled.getWalId(), writer.getWalId());
+                // the pending rows open the segment of the fresh writer, so that the column keeps them there
+                final TableWriter.Row row = writer.newRow(rangeLo + 10 * 60_000_000L);
+                row.putInt(0, 10);
+                row.append();
+                execute("ALTER TABLE x ADD COLUMN s SYMBOL");
+                writer.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+
+                // the rows of the commit before them move to a new segment first, and the record with them
+                final TableWriter.Row committed = writer.newRow(rangeHi + 3_600_000_000L);
+                committed.putInt(0, 20);
+                committed.append();
+                writer.commit();
+                final TableWriter.Row pending = writer.newRow(rangeLo + 20 * 60_000_000L);
+                pending.putInt(0, 21);
+                pending.append();
+                execute("ALTER TABLE x ADD COLUMN s2 SYMBOL");
+                writer.commitWithParams(rangeLo, rangeHi, WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT id, s, s2, ts FROM x ORDER BY ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            id\ts\ts2\tts
+                            21\t\t\t2022-02-24T00:20:00.000000Z
+                            20\t\t\t2022-02-24T02:00:00.000000Z
+                            3\t\t\t2022-02-24T05:00:00.000000Z
+                            """);
+            try (TableReader reader = getReader("x")) {
+                Assert.assertTrue(reader.getSymbolMapReader(reader.getMetadata().getColumnIndex("s")).containsNullValue());
+                Assert.assertTrue(reader.getSymbolMapReader(reader.getMetadata().getColumnIndex("s2")).containsNullValue());
+            }
+        });
+    }
+
+    @Test
     public void testReplaceRangeDeletesMidFirstPartition() throws Exception {
         testReplaceRangeCommit(null, "2022-02-24T18:30", "2022-02-24T20:59:31", false, false, false);
     }
