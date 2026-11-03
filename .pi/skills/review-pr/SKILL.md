@@ -27,10 +27,10 @@ neither is supplied, ask for one.
   `high`. Findings rated below it ship as Deferred, with a private issue.
 
 > Harness note: this skill runs inside **pi**. Use `bash` for read-only `gh`, `git`,
-> `rg`, `grep`, and `find` commands, `read` for files, and fresh-context `review-prober`
-> and `risk-assessor` agents through `subagent(...)`. Do not edit files or push. Build
-> and run tests only in the scratch worktree of Step 2.6, never in the user's working
-> tree.
+> `rg`, `grep`, and `find` commands, `read` for files, and fresh-context `reviewer`,
+> `review-prober` and `risk-assessor` agents through `subagent(...)`. Do not edit
+> files or push. Build and run tests only in the scratch worktree of Step 2.6, never
+> in the user's working tree.
 
 ## Review mindset
 
@@ -90,19 +90,22 @@ If it prints no model, write `model unknown`. If the level was defaulted, mentio
 
 ## Spawning review agents in pi
 
-Steps 3 and 3b use fresh-context `review-prober` agents through `subagent(...)`, one
-task per role or atomic falsification candidate, and Step 3c uses fresh-context
-`risk-assessor` agents (`.pi/agents/risk-assessor.md`), one per finding it rates.
-`review-prober` (`.pi/agents/review-prober.md`) is a read-only reviewer with a shell, so it can run
-the probes the evidence rules ask for; the builtin `reviewer` has no shell. Launch
-them as foreground calls (`async: false`; a parallel fanout still runs them at once)
-with `timeoutMs: 7200000`, since the 30-minute default cuts discovery short and the agents think at max. Each task
-is self-contained and read-only.
+Step 3 uses fresh-context builtin `reviewer` agents through `subagent(...)`, one task
+per role. Discovery reads code and runs nothing: the builtin `reviewer` has no shell,
+thinks at high, and keeps the 30-minute default timeout. Step 3b uses fresh-context
+`review-prober` agents (`.pi/agents/review-prober.md`), one per atomic candidate:
+read-only reviewers with a shell that run the probes the evidence rules ask for. Give
+each falsifier `timeoutMs: 3600000` and, in its task, a budget of about 30 minutes: a
+probe that needs longer reports what it has and marks the rest `unknown`. Step 3c uses
+fresh-context `risk-assessor` agents (`.pi/agents/risk-assessor.md`), one per finding
+it rates. Launch all of them as foreground calls (`async: false`; a parallel fanout
+still runs them at once). Each task is self-contained and read-only.
 Discovery tasks receive the diff, Step 2.4 provenance verdicts, the Step 2.5 surface
 map, the Step 2.6 coverage map, role instructions, and the candidate contract. Agents
 10 and 11 are deliberate reduced-context exceptions. Step 3b falsifiers receive only
 the neutral proposition, revision identities, relevant files, and raw artifact paths,
-and Step 3c risk assessors the same, plus the observed results at head and base.
+and Step 3c risk assessors the same, plus the observed results at head and base and
+the PR body.
 The parent owns role selection, the private ledger, admission, severity, risk, and
 output.
 
@@ -286,7 +289,7 @@ This sub-step runs at every level. Collect the items of earlier reviews of this 
 
 **An item a person pushed back on is settled.** A reply or later comment that declines it (won't fix, by design, accepted as is, out of scope, left for a follow-up) or disputes it with a reason settles it. Never re-test a settled item, and never raise it again in any section of the report, Title and description and Adjacent findings included, even when it still reproduces and you disagree with the reply. The same goes for a candidate that restates it: the same problem at the same place, however it is worded or found (Step 3b). Only a defect with another symptom, or one that a later commit makes worse than what the reply answered, is a new item. List settled items in the surface map under "Settled", each with a link to its reply.
 
-Give every other earlier finding one line in the surface map under "Earlier findings": its trigger, the symptom and size it claimed, and the commit that claims to fix it, if any. A claimed fix is a hypothesis, not evidence, so re-run every trigger at the reviewed revision and at the base. At level 1 and above, the Step 3 agent whose domain the finding touches re-runs it, such as Agent 3 for a slowdown and Agent 1 for wrong rows; at level 0, re-run it inline. A finding that still reproduces is a candidate like any other. One that no longer reproduces needs no line in the report.
+Give every other earlier finding one line in the surface map under "Earlier findings": its trigger, the symptom and size it claimed, and the commit that claims to fix it, if any. A claimed fix is a hypothesis, not evidence, so re-run every trigger at the reviewed revision and at the base. At level 1 and above, it goes to Step 3b as a candidate, and a falsifier re-runs it; at level 0, re-run it inline. A finding that still reproduces is a candidate like any other. One that no longer reproduces needs no line in the report.
 
 ## Step 2.6: Test coverage map (mandatory at every level)
 
@@ -355,11 +358,11 @@ A bug-fix label or zero test changes triggers this analysis; neither predetermin
 
 ## Step 3: Change-specific candidate discovery
 
-Run this step with the `subagent` tool using fresh-context `review-prober` agents. Select only roles whose domain is materially touched or that an earlier finding of 2.5f needs, obey the level's discovery cap, and launch those roles as fresh-context, read-only `review-prober` tasks. Agent count is never evidence and unused roles are skipped.
+Run this step with the `subagent` tool using fresh-context builtin `reviewer` agents. Select only roles whose domain is materially touched, obey the level's discovery cap, and launch those roles as fresh-context, read-only `reviewer` tasks. Agent count is never evidence and unused roles are skipped.
 
 Every selected agent receives:
 1. The PR or local-range diff
-2. The full change surface map from Step 2.5 (semantic deltas, callsite inventory, implicit contracts, cross-context exposure list, earlier findings, settled items), with the earlier findings it must re-test
+2. The full change surface map from Step 2.5 (semantic deltas, callsite inventory, implicit contracts, cross-context exposure list, earlier findings, settled items)
 3. The test coverage map from Step 2.6, with the path of its coverage report
 
 The diff plus surface map can be large — write them to a shared file (e.g., under a temp/chain dir) and point each task at it via its `reads`/task text, rather than pasting the whole payload into every task. Agents 10 and 11 are deliberate exceptions and receive reduced context (see their entries).
@@ -369,7 +372,7 @@ The diff plus surface map can be large — write them to a shared file (e.g., un
 - You are a **hypothesis generator**, not an authority to publish a finding. Output atomic propositions for independent falsification. Do not assign severity, propose fixes, write persuasive titles, or use “verified”, “proved”, or “confirmed”. Any role text below that mentions a finding or severity describes what to inspect, not what you may conclude.
 - For each candidate, cite the exact changed hunk or unchanged callsite contract allegedly broken. Out-of-diff impact is valuable only after the PR-caused contract delta is established.
 - Name the **supported-state producer**: the exact user operation, configuration, writer/version, event source, or code path that creates every required trigger condition. If you cannot locate it, write `producer: unknown`; do not invent a deployment or state. If the only producer you find is hostile input (Step 4, hostile-input rule), say so, say where you looked for a legitimate one, and say whether the input needs valid credentials.
-- Give the reachability chain, head observation, same-trigger merge-base observation, user-visible symptom, and raw evidence paths/commands. Mark anything not actually checked as `unknown`.
+- Give the reachability chain, the user-visible symptom, and the evidence in the code, with file and line. Discovery reads code and runs nothing: mark the head and same-trigger base observations `unknown` for Step 3b to run, and mark anything else not checked `unknown` too.
 - Actively seek disproof: unsupported/experimental status, absent format writer, omitted caller, retry, guard, lock, validation, downstream recovery, or unchanged/better base behavior. Record the strongest counterevidence.
 - Claims containing **never**, **only**, **exactly one**, **no retry**, or equivalent universal negatives require an exhaustive caller/event-source inventory, not one traced path.
 - A proposition with no independent consequence is evidence for its parent candidate, not a standalone candidate. If the parent falls, its dependent propositions fall with it.
@@ -418,9 +421,9 @@ For every new or changed loop, traversal, data structure, or computation:
    count, config-key count, once per query compilation, once at startup). Say plainly whether the cost is on a data path
    the user waits for, or off it. The parent uses this to assign severity: scaling-with-data costs block the merge,
    bounded off-path costs do not. A finding with no magnitude cannot be classified and will be dropped.
-10. **Stated slowdowns:** measure every slowdown or tradeoff the PR body states, at realistic scale, at the reviewed
-    revision and at the base. One the body states without a size, or one larger than the body states, is a candidate
-    like any other.
+10. **Stated slowdowns:** return every slowdown or tradeoff the PR body states as a candidate, with the size the body
+    gives, for a Step 3b falsifier to measure at realistic scale, at the reviewed revision and at the base. One the
+    body states without a size, or one larger than the body states, is a candidate like any other.
 
 For changed symbols now reachable from new contexts (per 2.5d), check whether any of those new contexts is a hot path
 that amplifies an otherwise-acceptable cost.
@@ -457,7 +460,7 @@ Select this role whenever changed symbols have meaningful out-of-diff callers. I
 
 - It receives ONLY the PR diff and the names of the changed files. It does NOT receive the change surface map from Step 2.5, the implicit contract list, the cross-context exposure list, or any of the review checklists below.
 - Its sole instruction: “generate a small set of falsifiable ways this code could be wrong, and try to disprove each before returning it.” No category list, failure-mode taxonomy, or QuestDB-specific style guide.
-- It is free to use `Read` and ripgrep (`rg`/`fd` via Bash) to explore the repository however it wants.
+- It is free to read and search the repository however it wants.
 - Each surviving output follows the candidate contract: atomic proposition, changed attribution, producer, reachability, head/base observations, symptom, counterevidence, and missing evidence. No severity or fix.
 
 The point is to escape the structured frame, not to create privileged findings. A unique hypothesis is not high signal by itself, and overlap is not corroboration unless it supplies an independent evidence type.
@@ -482,7 +485,7 @@ operates under different rules:
     - Work done unconditionally that is only needed conditionally
     - Intermediate collections built and then iterated once (build + iterate = two passes; a single streaming pass may
       suffice)
-- Use `Read` and ripgrep (`rg`/`fd` via Bash) freely. Read callers to understand actual input sizes and access patterns — an O(n) scan that
+- Read and search freely. Read callers to understand actual input sizes and access patterns — an O(n) scan that
   runs once at startup is different from one that runs per row.
 - Each finding states: what the code does now (with complexity), what the optimal approach is (with complexity), and why
   it matters (call frequency, data scale, or hot-path placement).
@@ -619,17 +622,19 @@ A real defect that few users will ever meet should not hold up the PR that carri
 
 Classify the admitted findings with the Step 4 severity rubric first. Then rate every Critical one, coverage gaps included, except those that block by rule: a compile error, a test that fails at the reviewed revision, a banned assertion of "SQL test assertions", a malformed LOG chain, and a violation of the store-and-forward invariants. Moderate and Minor findings never block, so they need no rating, and adjacent drafts are not findings against this PR.
 
-Launch one `risk-assessor` per finding, as a parallel foreground fanout with `timeoutMs: 3600000`, at every level. Like a falsifier, the assessor gets a neutral account and finds the population itself: the admitted proposition, the executed trigger with its artifact paths, the result observed at the reviewed revision and at `$BASE`, the relevant files, and the revision identities. Never send the severity, the Net impact line, the discovery narrative, the suggested fix or votes. Name an output file in the review's temporary directory.
+Launch one `risk-assessor` per finding, as a parallel foreground fanout with `timeoutMs: 3600000`, at every level. Like a falsifier, the assessor gets a neutral account and finds the population itself: the admitted proposition, the executed trigger with its artifact paths, the result observed at the reviewed revision and at `$BASE`, the relevant files, the PR body, and the revision identities. Never send the severity, the Net impact line, the discovery narrative, the suggested fix or votes. Name an output file in the review's temporary directory.
 
 Check each reply before using it:
 
+- the author's reply is the strongest the code allows, and the code or the artifacts back whether it holds;
+- the impact is the consequence the admission artifacts show, not a worse one that might follow;
 - each trigger condition has a tier and its evidence;
 - the trigger is rated no more common than its rarest condition;
 - the risk is the one the matrix in `.pi/agents/risk-assessor.md` gives for the impact and likelihood.
 
-When a reply lacks evidence for a condition, or the admission artifacts show a more common trigger or a worse consequence than the reply rates, use the more common likelihood or the worse impact, and look the risk up again. Never make a rating rarer or milder than the assessor's. A finding whose assessor fails twice is Blocking.
+Correct a rating by the evidence, in either direction, and look the risk up again. When a reply lacks evidence for a condition, or the artifacts show a more common trigger or a worse consequence than the reply rates, use the more common likelihood or the worse impact. When a reply rates a consequence or a trigger that neither the artifacts nor the code show, use the milder impact or the rarer likelihood that they do show. A finding whose assessor fails twice is Blocking.
 
-A finding rated at or above `--block-at` (default `high`) is **Blocking**; one rated below it is **Deferred**. The rating decides where a finding is reported and whether it blocks, never whether it is admitted.
+A finding whose author's reply holds is no defect of this PR: omit it, or keep what is left at the severity it earns, such as an avoidable cost that is no regression as a Minor note. Of the rest, a finding rated at or above `--block-at` (default `high`) is **Blocking**, and one rated below it is **Deferred**. The rating decides where a finding is reported and whether it blocks.
 
 ## Review checklists
 
@@ -978,7 +983,7 @@ If a behavioral candidate cannot name and execute a supported trigger with one o
 
 - **Merge mechanics.** The reviewed artifact is the code change, not the merge event. Submodule pin position, merge order between repos, branch existence, labels, and anything true only of the PR's in-flight state are properties of *how it lands*, not of *what it does*. A PR that bumps a vendored submodule pointer necessarily pins whatever commit it was built against — that is a property of the pointer, not a defect in the change.
 - **Tautologies.** Before filing, ask: *"would this finding appear on every PR of this shape?"* If yes, it describes the workflow, not this change. A finding that can never be absent is not a defect, and reporting it teaches the author to skim the report.
-- **Overridden project decisions.** When the project's own tooling explicitly permits something — a CI check that passes by design, a documented exception, a convention the PR body already names — that is a decision, not an oversight. Overriding it requires evidence the decision is *wrong*, not merely that it is permissive. "CI allows this but I would not" is not a finding. A slowdown or tradeoff the PR body states is such a decision only when the body gives its measured size: measure it again (Agent 3, item 10), and treat one stated without a size, or one larger than stated, like any other candidate. Never tell discovery agents to skip what the body states; give them its stated sizes to check.
+- **Overridden project decisions.** When the project's own tooling explicitly permits something — a CI check that passes by design, a documented exception, a convention the PR body already names — that is a decision, not an oversight. Overriding it requires evidence the decision is *wrong*, not merely that it is permissive. "CI allows this but I would not" is not a finding. A slowdown or tradeoff the PR body states is such a decision only when the body gives its measured size: have it measured again (Agent 3, item 10), and treat one stated without a size, or one larger than stated, like any other candidate. Never tell discovery agents to skip what the body states; give them its stated sizes to check.
 - **Upstream submodule content.** Anything inside a submodule whose pointer move Step 2.4 classified **UPSTREAM-SYNC**. That code already landed on the submodule's default branch; this PR did not write it, did not review it, and cannot be asked to fix it. A breaking change discovered there is upstream's, released independently, and belongs in an issue against that repository — never a Critical against this PR. The one exception is an integration defect at a callsite *inside this diff*, which is filed against that callsite with its own symptom and trigger.
 - **Settled items.** An item a person pushed back on, and any candidate that restates it (Step 2.5f). A probe that shows it still reproduces does not reopen it.
 
@@ -995,6 +1000,7 @@ Follow the opening line with the Step 2 result: the title, then the body and lab
 Findings that hold up this PR, introduced or exposed by it: the Critical findings that Step 3c rates at or above `--block-at`, and those that block by rule. Order them by risk, then by user impact, and number them B1, B2, ... Each must include:
 - The three summary lines (**Problem** / **Net impact** / **Evidence**) before anything else
 - **Risk:** the tier, impact and likelihood, and the rarest trigger condition with its evidence (Step 3c); or `blocks by rule: <rule>`
+- **Author's reply:** for a rated finding, the strongest reply Step 3c weighed and the evidence that answers it
 - The **net determination** from 3b.16(a): population, delta vs base, magnitude/frequency, offsets, and a net of **net-negative** — a Critical that is net-neutral or net-positive is mis-filed by definition
 - Exact file path and line numbers
 - The **symptom sentence** with its supported trigger: "user does X → sees Y". For a coverage-gap Critical: "user does X; if this changed path regressed as Y, the user would see Z"

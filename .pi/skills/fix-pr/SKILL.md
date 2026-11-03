@@ -95,11 +95,12 @@ inside a tool call, pi keeps its prompt cache warm; a session that ends its
 turn and is woken later by a background helper loses the cache and pays to
 rebuild it.
 
-Every agent of the run thinks at max. The builtin `worker` and `reviewer`
-default to high, and a launch overrides that only through the `:max` suffix of
-its model; `review-pr-runner`, `risk-assessor` and the review's
-`review-prober` agents set max in their definitions. The timeouts leave room
-for it.
+Every agent of the run thinks at max, except the review's discovery agents:
+review-pr runs them as the builtin `reviewer` at its default, high, because
+they only read code. The builtin `worker` and `reviewer` default to high, and
+a launch overrides that only through the `:max` suffix of its model;
+`review-pr-runner`, `risk-assessor` and the review's `review-prober`
+falsifiers set max in their definitions. The timeouts leave room for it.
 
 | Helper | Agent | Extra parameters |
 |---|---|---|
@@ -240,6 +241,8 @@ as `.pi/agents/risk-assessor.md` rates them. A bug rated at or above
   needs no rating (CLAUDE.md "Failure paths and misuse").
 - The user's own items, and findings the user asks to fix, are never rated.
 - A bug whose risk helper fails twice blocks.
+- A rating of `NONE` means the author's reply holds: drop the bug, and list it
+  for the user with that reply.
 
 ## Backstop review
 
