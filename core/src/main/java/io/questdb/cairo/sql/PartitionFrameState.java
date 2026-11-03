@@ -31,6 +31,7 @@ import io.questdb.std.Unsafe;
  * Stable Java view of the fixed ABI header in an opaque Rust partition-state handle.
  */
 public final class PartitionFrameState {
+    public static final long HEADER_BYTES = 11L * Long.BYTES;
     public static final int SUMMARY_BASE_ROWS = 0;
     public static final int SUMMARY_FLAGS = 3;
     public static final int SUMMARY_LOGICAL_ROWS = 2;

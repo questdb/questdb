@@ -6056,7 +6056,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     /**
      * Rejects, before WAL submission, CONVERT PARTITION or DETACH PARTITION of a delta-active
      * partition, and DETACH PARTITION of a read-only one, soft links included. TableWriter
-     * refuses them too, and WAL apply would skip the whole ALTER. A delta-active base already in
+     * refuses the delta-active ones too, and WAL apply would skip the whole ALTER. Read-only can
+     * be local, as a soft link's is, so the writer detaches it. A delta-active base already in
      * the target format stays the usual no-op. Checks the partitions that {@code filter}
      * selects, or else the one at {@code listedTimestamp}.
      */
@@ -6402,8 +6403,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             if (!isSemicolon(tok)) {
                 throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
             }
-            if (isSingleQueryMode && (tok = SqlUtil.fetchNext(lexer)) != null) {
-                throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+            if (isSingleQueryMode) {
+                // Skip repeated semicolons; anything else is trailing content.
+                while ((tok = SqlUtil.fetchNext(lexer)) != null) {
+                    if (!isSemicolon(tok)) {
+                        throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+                    }
+                }
             }
         }
     }

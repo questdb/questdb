@@ -1482,8 +1482,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
 
     @Test
     public void testCannotDetachReadOnlyPartition() throws Exception {
-        // Read-only is replicated, so DETACH refuses a sealed partition, served locally or remotely, at SQL time
-        // and in the writer.
+        // SQL refuses a read-only partition on the issuing node. The writer refuses only a remotely served one.
         assertMemoryLeak(() -> {
             String tableName = "tabDetachReadOnly";
             TableModel tab = new TableModel(configuration, tableName, PartitionBy.DAY);
@@ -1515,13 +1514,11 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
                         "ALTER TABLE " + tableName + " DETACH PARTITION LIST '" + partition + "'",
                         "cannot detach partition, partition is read-only [table=" + tableName + ", partition=" + partition + "]"
                 );
-                try (TableWriter writer = getWriter(tableName)) {
-                    Assert.assertEquals(DETACH_ERR_READ_ONLY, writer.detachPartition(timestampType.getDriver().parseFloorLiteral(partition)));
-                }
                 path.of(configuration.getDbRoot()).concat(tableToken).concat(partition).put(DETACHED_DIR_MARKER).$();
                 Assert.assertFalse(configuration.getFilesFacade().exists(path.$()));
             }
             try (TableWriter writer = getWriter(tableName)) {
+                Assert.assertEquals(DETACH_ERR_REMOTE, writer.detachPartition(timestampType.getDriver().parseFloorLiteral("2022-06-02")));
                 Assert.assertTrue(writer.getTxWriter().isPartitionReadOnly(0));
                 Assert.assertTrue(writer.getTxWriter().isPartitionRemotelyServed(1));
             }

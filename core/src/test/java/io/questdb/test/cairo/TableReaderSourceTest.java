@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.PartitionFrameStateFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -123,7 +124,7 @@ public class TableReaderSourceTest extends AbstractCairoTest {
             CairoConfiguration bindingConfiguration = new CairoConfigurationWrapper(configuration) {
                 @Override
                 public PartitionFrameStateFactory newPartitionFrameStateFactory(TableToken ignored) {
-                    return new SourceFactory(selected);
+                    return new SourceFactory(selected, configuration, token);
                 }
             };
             try (TableReader old = newOffPoolReader(bindingConfiguration, "source_a")) {
@@ -133,16 +134,18 @@ public class TableReaderSourceTest extends AbstractCairoTest {
                     Assert.assertEquals(isParquet ? PartitionFormat.PARQUET : PartitionFormat.NATIVE,
                             replacement.getPartitionFormatFromMetadata(0));
                     Assert.assertEquals(3, replacement.getPartitionRowCountFromMetadata(0));
-                    java.nio.file.Path directory = java.nio.file.Path.of(configuration.getDbRoot(), token.getDirName(), "1970-01-01.100");
-                    java.nio.file.Path payload = isParquet ? directory.resolve("data.parquet") : directory;
-                    java.nio.file.Path hidden = payload.resolveSibling("hidden");
-                    Files.move(payload, hidden);
-                    try {
-                        CairoException error = Assert.assertThrows(CairoException.class, () -> replacement.openPartition(0));
-                        TestUtils.assertContains(error.getFlyweightMessage(), payload.toString());
-                        Assert.assertEquals(-1, replacement.getPartitionRowCount(0));
-                    } finally {
-                        Files.move(hidden, payload);
+                    if (!isParquet) {
+                        java.nio.file.Path directory = java.nio.file.Path.of(configuration.getDbRoot(), token.getDirName(), "1970-01-01.100");
+                        java.nio.file.Path payload = directory;
+                        java.nio.file.Path hidden = payload.resolveSibling("hidden");
+                        Files.move(payload, hidden);
+                        try {
+                            CairoException error = Assert.assertThrows(CairoException.class, () -> replacement.openPartition(0));
+                            TestUtils.assertContains(error.getFlyweightMessage(), payload.toString());
+                            Assert.assertEquals(-1, replacement.getPartitionRowCount(0));
+                        } finally {
+                            Files.move(hidden, payload);
+                        }
                     }
                     assertValues(replacement, 11, 12, 13);
                     selected.set(c);
@@ -202,13 +205,16 @@ public class TableReaderSourceTest extends AbstractCairoTest {
     }
 
     private static class SourceFactory implements PartitionFrameStateFactory {
-        // The existing PartitionFrameState ABI has six longs; these tests use its row-count fields only.
-        private static final long HEADER_BYTES = 6L * Long.BYTES;
+        private static final String PARTITION_NAME = "1970-01-01.";
+        private final CairoConfiguration configuration;
         private final AtomicReference<Source> selected;
         private final Map<Long, Captured> states = new HashMap<>();
+        private final TableToken token;
 
-        private SourceFactory(AtomicReference<Source> selected) {
+        private SourceFactory(AtomicReference<Source> selected, CairoConfiguration configuration, TableToken token) {
             this.selected = selected;
+            this.configuration = configuration;
+            this.token = token;
         }
 
         @Override
@@ -226,10 +232,14 @@ public class TableReaderSourceTest extends AbstractCairoTest {
             Captured captured = states.remove(state);
             try {
                 Assert.assertNotNull(captured);
-                Assert.assertEquals("mappings must close before the source pin is released", -1,
-                        captured.reader.getPartitionRowCount(captured.partitionIndex));
+                if (captured.source.kind == PartitionFrameSource.NATIVE) {
+                    Assert.assertEquals("mappings must close before the source pin is released", -1,
+                            captured.reader.getPartitionRowCount(captured.partitionIndex));
+                }
             } finally {
-                Unsafe.free(state, HEADER_BYTES, MemoryTag.NATIVE_DEFAULT);
+                unmap(PartitionFrameState.getParquetMetadataAddr(state), PartitionFrameState.getParquetMetadataSize(state));
+                unmap(PartitionFrameState.getParquetAddr(state), PartitionFrameState.getParquetFileSize(state));
+                Unsafe.free(state, PartitionFrameState.HEADER_BYTES, MemoryTag.NATIVE_DEFAULT);
             }
         }
 
@@ -241,11 +251,52 @@ public class TableReaderSourceTest extends AbstractCairoTest {
         @Override
         public long open(TableReader reader, int partitionIndex, long readerSeqTxn) {
             Source source = selected.get();
-            long state = Unsafe.calloc(HEADER_BYTES, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.putLong(state + 2L * Long.BYTES, source.rows);
-            Unsafe.putLong(state + 5L * Long.BYTES, source.rows);
+            long state = Unsafe.calloc(PartitionFrameState.HEADER_BYTES, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.putLong(state + 2L * Long.BYTES, source.rows);
+                Unsafe.putLong(state + 5L * Long.BYTES, source.rows);
+                // Cell 6 is the base id; the Rust state also maps the selected _pm slot and data.parquet.
+                Unsafe.putLong(state + 6L * Long.BYTES, source.nameTxn);
+                if (source.kind == PartitionFrameSource.PARQUET) {
+                    mapParquet(state, source);
+                }
+            } catch (Throwable th) {
+                unmap(PartitionFrameState.getParquetMetadataAddr(state), PartitionFrameState.getParquetMetadataSize(state));
+                Unsafe.free(state, PartitionFrameState.HEADER_BYTES, MemoryTag.NATIVE_DEFAULT);
+                throw th;
+            }
             states.put(state, new Captured(source, reader, partitionIndex));
             return state;
+        }
+
+        private long mapFile(Path file, long size) {
+            final FilesFacade ff = configuration.getFilesFacade();
+            final long fd = ff.openRO(file.$());
+            Assert.assertTrue("cannot open " + file, fd > -1);
+            try {
+                return TableUtils.mapRO(ff, fd, size, 0, MemoryTag.MMAP_DEFAULT);
+            } finally {
+                ff.close(fd);
+            }
+        }
+
+        private void mapParquet(long state, Source source) {
+            try (Path path = new Path().of(configuration.getDbRoot()).concat(token).concat(PARTITION_NAME + source.nameTxn)) {
+                final int len = path.size();
+                path.concat(source.metadataSlot == 0 ? "_pm" : "_pm.b");
+                Unsafe.putLong(state + 7L * Long.BYTES, mapFile(path, source.metadataBytes));
+                Unsafe.putLong(state + 8L * Long.BYTES, source.metadataBytes);
+                path.trimTo(len).concat("data.parquet");
+                final long size = configuration.getFilesFacade().length(path.$());
+                Unsafe.putLong(state + 9L * Long.BYTES, mapFile(path, size));
+                Unsafe.putLong(state + 10L * Long.BYTES, size);
+            }
+        }
+
+        private void unmap(long addr, long size) {
+            if (addr != 0) {
+                configuration.getFilesFacade().munmap(addr, size, MemoryTag.MMAP_DEFAULT);
+            }
         }
 
         @Override
