@@ -24,10 +24,12 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Numbers;
@@ -65,6 +67,22 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
     @Before
     public void pinClockBelowTestData() {
         setCurrentMicros(0L);
+    }
+
+    @Test
+    public void testDepartedNewestBucketRestoresRetainedRowsUnderARangeFrame() throws Exception {
+        assertDepartedNewestBucketRestoresRetainedRows(
+                "sum(x) OVER (PARTITION BY sym ORDER BY ts RANGE BETWEEN '10' MINUTE PRECEDING AND CURRENT ROW)",
+                "9.0"
+        );
+    }
+
+    @Test
+    public void testDepartedNewestBucketRestoresRetainedRowsUnderARowsFrame() throws Exception {
+        assertDepartedNewestBucketRestoresRetainedRows(
+                "sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW)",
+                "8.5"
+        );
     }
 
     @Test
@@ -475,6 +493,111 @@ public class LiveViewBaseReplaceRangeTest extends AbstractLiveViewTest {
 
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    private void commitAndRefresh(LiveViewRefreshJob job, String values) throws Exception {
+        execute("INSERT INTO base VALUES " + values);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * The materialized-view shape of a departure: an incremental refresh replaces the newest
+     * bucket's range with nothing, which is how a bucket that stops passing the mat view's
+     * filter leaves. Its row was the newest the view held, above a root the base cannot
+     * rebuild: the day below it is dropped, and the view keeps its row. A late row then lands
+     * between the root below the departed row and the departed row. Each restart must
+     * restore from the timeline, since the rebuild it would fall back to is the one the
+     * restatement guard refuses over the dropped day.
+     *
+     * @param window         the view's window over {@code x}
+     * @param forwardS       the window's value at the forward row committed after the first restart
+     */
+    private void assertDepartedNewestBucketRestoresRetainedRows(String window, String forwardS) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS SELECT ts, sym, x, "
+                    + window + " s FROM base WHERE x > 0");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                commitAndRefresh(job, "('2025-12-31T23:55:00.000000Z', 'a', 0.5)");
+                execute("ALTER TABLE base DROP PARTITION LIST '2025-12-31'");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                commitAndRefresh(job, "('2026-01-01T00:01:00.000000Z', 'a', 1.5)");
+                commitAndRefresh(job, "('2026-01-01T00:02:00.000000Z', 'a', 2.5)");
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:01:00.000000Z -> 2
+                        2026-01-01T00:02:00.000000Z -> 3
+                        """);
+
+                final TableToken baseToken = engine.verifyTableName("base");
+                try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                    walWriter.commitWithParams(
+                            ts("2026-01-01T00:02:00.000000Z"),
+                            ts("2026-01-01T00:03:00.000000Z"),
+                            WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                    );
+                }
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:01:00.000000Z -> 2
+                        """);
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT));
+
+                commitAndRefresh(job, "('2026-01-01T00:01:30.000000Z', 'a', 3.0)");
+                assertCheckpointLadder(instance, false, """
+                        2025-12-31T23:55:00.000000Z -> 1
+                        2026-01-01T00:01:00.000000Z -> 2
+                        2026-01-01T00:01:30.000000Z -> 3
+                        """);
+            }
+            final String rows = """
+                    ts\tsym\tx\ts
+                    2025-12-31T23:55:00.000000Z\ta\t0.5\t0.5
+                    2026-01-01T00:01:00.000000Z\ta\t1.5\t2.0
+                    2026-01-01T00:01:30.000000Z\ta\t3.0\t5.0
+                    """;
+            assertDepartedViewRows(rows);
+            assertNoRefreshFaults("lv");
+
+            restartLiveViewsAndRecover();
+            assertDepartedViewRestored(rows);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                commitAndRefresh(job, "('2026-01-01T00:03:00.000000Z', 'a', 4.0)");
+            }
+            final String grownRows = rows + "2026-01-01T00:03:00.000000Z\ta\t4.0\t" + forwardS + "\n";
+            assertDepartedViewRows(grownRows);
+            restartLiveViewsAndRecover();
+            assertDepartedViewRestored(grownRows);
+        });
+    }
+
+    private void assertDepartedViewRestored(String rows) throws Exception {
+        assertRestoredFromTimeline("lv");
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+        assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("view_status\nactive\n");
+        assertDepartedViewRows(rows);
+        assertNoRefreshFaults("lv");
+    }
+
+    private void assertDepartedViewRows(String rows) throws Exception {
+        assertQuery("SELECT ts, sym, x, s FROM lv")
+                .noLeakCheck()
+                .timestamp("ts")
+                .expectSize()
+                .returns(rows);
     }
 
     private void assertLiveViewValid() {

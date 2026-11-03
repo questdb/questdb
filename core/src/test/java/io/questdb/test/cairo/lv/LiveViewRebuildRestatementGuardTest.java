@@ -1542,7 +1542,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         // which the marker exists to protect, so a marker the clear left behind must read as
         // live. The restart rebuilds rather than restores, and the guard refuses the rebuild
         // over the day the base lost.
-        final MarkerClearFault fault = new MarkerClearFault();
+        final LiveViewMarkerClearFault fault = new LiveViewMarkerClearFault();
         assertMemoryLeak(fault, () -> {
             final LiveViewRebuildRestatementGuard guard = failMarkerClearAfterASpliceAndRestart(
                     fault,
@@ -1573,7 +1573,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         // clear left behind is a leftover, and the restart must clear it and restore from the
         // timeline. Reading it as live would rebuild, meet the day the base lost and stop the
         // view.
-        final MarkerClearFault fault = new MarkerClearFault();
+        final LiveViewMarkerClearFault fault = new LiveViewMarkerClearFault();
         assertMemoryLeak(fault, () -> {
             final String forwardRow = "2026-01-03T10:00:00.000000Z\tacct-1\t144.0\t3\n";
             failMarkerClearAfterASpliceAndRestart(
@@ -5265,7 +5265,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
      * @return what the restart's whole-view rebuild guard found, if a rebuild ran
      */
     private LiveViewRebuildRestatementGuard failMarkerClearAfterASpliceAndRestart(
-            MarkerClearFault fault,
+            LiveViewMarkerClearFault fault,
             String values,
             int generationsPublished,
             String correctedRows
@@ -6252,38 +6252,6 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
 
         int getDedupHistoryFailures() {
             return dedupHistoryFailures.get();
-        }
-    }
-
-    /**
-     * Once armed, refuses every unlink of a view's published repair marker,
-     * {@code _checkpoints/_repairing}, and leaves the file in place: what a clear that fails
-     * between a repair's last publication and the end of its turn leaves behind.
-     */
-    private static final class MarkerClearFault extends TestFilesFacadeImpl {
-        private final AtomicBoolean isArmed = new AtomicBoolean();
-        private final AtomicInteger refusedClears = new AtomicInteger();
-
-        @Override
-        public boolean removeQuiet(LPSZ name) {
-            if (isArmed.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)) {
-                refusedClears.incrementAndGet();
-                return false;
-            }
-            return super.removeQuiet(name);
-        }
-
-        void arm() {
-            refusedClears.set(0);
-            isArmed.set(true);
-        }
-
-        void disarm() {
-            isArmed.set(false);
-        }
-
-        int getRefusedClears() {
-            return refusedClears.get();
         }
     }
 

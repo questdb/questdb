@@ -88,6 +88,8 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
     private static final String DEDUP_BASE = "quotes";
     private static final int DEDUP_SEED_COMMITS = 6;
     private static final String DEDUP_VIEW = "quotes_lv";
+    private static final String DEPARTED_BASE = "readings";
+    private static final String DEPARTED_VIEW = "readings_lv";
     private static final long FIRST_TS = MicrosTimestampDriver.floor("2026-02-02T00:00:00.000000Z");
     private static final String IN_MEMORY_VIEW = "trades_lv_mem";
     private static final Log LOG = LogFactory.getLog(LiveViewServerRestartTest.class);
@@ -223,6 +225,58 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
                 assertActive(conn, DEDUP_VIEW);
                 assertNoRefreshFaults(serverMain, DEDUP_VIEW);
             }
+        });
+    }
+
+    @Test
+    public void testDepartedNewestRowSurvivesAServerRestart() throws Exception {
+        // The newest row of a filtered view over a deduplicating base leaves it through an
+        // upsert to a value the filter rejects, and a late row lands between the root below it
+        // and the departed row. The base lost the day of the view's oldest row, which only the
+        // timeline keeps: each cold boot must restore from it rather than rebuild from the base.
+        assertMemoryLeak(() -> {
+            final String rowsSql = "SELECT ts::varchar, sym, x, s FROM " + DEPARTED_VIEW + " ORDER BY 1";
+            final String expected = """
+                    2025-12-31T12:00:00.000000Z\ta\t0.5\t0.5
+                    2026-01-01T00:01:00.000000Z\ta\t1.5\t2.0
+                    2026-01-01T00:01:30.000000Z\ta\t3.0\t5.0
+                    """;
+            try (TestServerMain serverMain = startServer(1); Connection conn = connect()) {
+                execute(conn, "CREATE TABLE " + DEPARTED_BASE + " (ts TIMESTAMP, sym SYMBOL, x DOUBLE)"
+                        + " TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+                execute(conn, "CREATE LIVE VIEW " + DEPARTED_VIEW + " FLUSH EVERY 100ms START FROM BEGINNING AS"
+                        + " SELECT ts, sym, x, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) s"
+                        + " FROM " + DEPARTED_BASE + " WHERE x > 0");
+                final String[] statements = {
+                        "INSERT INTO " + DEPARTED_BASE + " VALUES ('2025-12-31T12:00:00.000000Z', 'a', 0.5)",
+                        "ALTER TABLE " + DEPARTED_BASE + " DROP PARTITION LIST '2025-12-31'",
+                        "INSERT INTO " + DEPARTED_BASE + " VALUES ('2026-01-01T00:01:00.000000Z', 'a', 1.5)",
+                        "INSERT INTO " + DEPARTED_BASE + " VALUES ('2026-01-01T00:02:00.000000Z', 'a', 2.5)",
+                        // The newest row leaves the view.
+                        "INSERT INTO " + DEPARTED_BASE + " VALUES ('2026-01-01T00:02:00.000000Z', 'a', -2.5)",
+                        "INSERT INTO " + DEPARTED_BASE + " VALUES ('2026-01-01T00:01:30.000000Z', 'a', 3.0)"
+                };
+                for (String statement : statements) {
+                    execute(conn, statement);
+                    awaitCaughtUp(serverMain, conn, DEPARTED_BASE, DEPARTED_VIEW);
+                }
+                TestUtils.assertEquals(expected, readRows(conn, rowsSql));
+                assertNoRefreshFaults(serverMain, DEPARTED_VIEW);
+            }
+            for (int restart = 0; restart < 2; restart++) {
+                try (TestServerMain serverMain = startServer(1); Connection conn = connect()) {
+                    assertRestartRestoredFromTimeline(serverMain, conn, DEPARTED_VIEW);
+                    TestUtils.assertEquals(DEPARTED_VIEW + " must come back with the rows it had", expected, readRows(conn, rowsSql));
+                    assertNoRefreshFaults(serverMain, DEPARTED_VIEW);
+                }
+            }
+            capture.drain();
+            Assert.assertEquals(
+                    "both restarts must restore from the timeline",
+                    2,
+                    capture.countOccurrences("restored live view from checkpoint timeline [view=" + DEPARTED_VIEW + ",")
+            );
+            capture.assertNotLogged("live view checkpoint timeline rebuild does not match durable materialization");
         });
     }
 
@@ -672,10 +726,14 @@ public class LiveViewServerRestartTest extends AbstractBootstrapTest {
     }
 
     private TestServerMain startServer() {
+        return startServer(CHECKPOINT_ROWS);
+    }
+
+    private TestServerMain startServer(int checkpointRows) {
         return startWithEnvVariables(
                 PropertyKey.CAIRO_LIVE_VIEW_ENABLED.getEnvVarName(), "true",
                 PropertyKey.LIVE_VIEW_REFRESH_WORKER_COUNT.getEnvVarName(), "2",
-                PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS.getEnvVarName(), String.valueOf(CHECKPOINT_ROWS),
+                PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS.getEnvVarName(), String.valueOf(checkpointRows),
                 PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
                 PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false"
         );

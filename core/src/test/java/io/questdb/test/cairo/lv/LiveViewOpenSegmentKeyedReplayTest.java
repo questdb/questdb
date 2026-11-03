@@ -33,9 +33,13 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts;
+import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointOpenSegmentCost;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentChangeSet;
+import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -45,6 +49,8 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
@@ -55,6 +61,8 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
@@ -1273,6 +1281,100 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
             restartAndCommitForwardRows(4, 13);
             assertRestoredFromTimeline("lv");
             assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testAKeyedResumeOfAnInsertOnlyRowTruncatesNothingAboveTheFrontier() throws Exception {
+        // An insert-only correction removes no row, and the stored rows the keyed replay leaves
+        // alone keep the view's frontier on the newest root its splice kept. Nothing above the
+        // frontier is truncated, so the ladder keeps every checkpoint id it had.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+                final LongList idsBefore = checkpointIds();
+                hooks(job).setForceOpenSegmentKeyedReplay(true);
+                commit(row(4, 2, 35, "acct-1"), job);
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPLICE_FRONTIER_TRUNCATE_COUNT));
+                TestUtils.assertEquals(idsBefore.toString(), checkpointIds().toString());
+                assertViewMatchesRecompute();
+            }
+            restartAndCommitForwardRows(4, 12);
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testAKeyedResumeUnderARootAboveTheFrontierTruncatesItBeforeItsSeal() throws Exception {
+        // A pure delete of the open day's newest hour leaves the view's frontier below the
+        // departed rows' timestamps, which the view has already seen. A cycle that puts no row
+        // through the window then seals its root at the newest timestamp seen rather than at
+        // the frontier, so a root sits above the frontier when the next correction arrives:
+        // an insert-only row between the two, which the keyed route resumes. Its output ends
+        // below that root, so the resume truncates it after the hand-back and seals the new
+        // frontier. The base lost an hour the view keeps, which a shadow of the base carries
+        // for the recompute.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+                final LiveViewInstance instance = viewInstance();
+                try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("tx"))) {
+                    walWriter.commitWithParams(
+                            ts("2026-01-04T09:00:00.000000Z"),
+                            ts("2026-01-04T10:00:00.000000Z"),
+                            WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                    );
+                }
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(1, job.getStatsForTest().get(SPLICE_FRONTIER_TRUNCATE_COUNT));
+                Assert.assertEquals(ts("2026-01-04T08:40:00.000000Z"), instance.getHeadCheckpointMaxTs());
+
+                execute("CREATE TABLE tx_shadow AS (SELECT * FROM tx) TIMESTAMP(created_at) PARTITION BY HOUR");
+                setCurrentMicros(currentMicros + 6 * Micros.MINUTE_MICROS);
+                execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-02T00'");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(
+                        "the cycle without rows must seal at the newest timestamp the view has seen",
+                        ts("2026-01-04T09:40:00.000000Z"),
+                        instance.getHeadCheckpointMaxTs()
+                );
+
+                final long ladderTail = ladderSize();
+                hooks(job).setForceOpenSegmentKeyedReplay(true);
+                execute("INSERT INTO tx_shadow VALUES " + row(4, 8, 50, "acct-1"));
+                commit(row(4, 8, 50, "acct-1"), job);
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                Assert.assertEquals(2, job.getStatsForTest().get(SPLICE_FRONTIER_TRUNCATE_COUNT));
+                Assert.assertEquals("the root above the frontier gives way to the frontier's", ladderTail, ladderSize());
+                final LongList ladder = snapshotCheckpointLadder(instance);
+                Assert.assertEquals(ts("2026-01-04T08:50:00.000000Z"), ladder.getQuick(ladder.size() - 2));
+                Assert.assertEquals(ts("2026-01-04T08:50:00.000000Z"), instance.getHeadCheckpointMaxTs());
+                assertViewMatchesShadowRecompute();
+            }
+            for (int restart = 0; restart < 2; restart++) {
+                restartCycle();
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                }
+                assertRestoredFromTimeline("lv");
+                Assert.assertFalse(viewInstance().isCheckpointRecoveryBlocked());
+                assertNoRefreshFaults("lv");
+                assertViewMatchesShadowRecompute();
+            }
         });
     }
 
@@ -2511,6 +2613,29 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         );
     }
 
+    // The checkpoint ids of every logical root the view's published generation holds, ascending.
+    private LongList checkpointIds() {
+        final LongList ids = new LongList();
+        try (
+                Path dir = new Path().of(configuration.getDbRoot())
+                        .concat(viewInstance().getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(configuration);
+                LiveViewCheckpointTimelineReader reader = new LiveViewCheckpointTimelineReader(configuration)
+        ) {
+            store.of(dir);
+            reader.of(dir);
+            try (LiveViewCheckpointGenerationPin pin = store.pin()) {
+                reader.iterateAll(pin.getTimelineRootRef(), entry -> ids.add(entry.checkpointId));
+            }
+        }
+        return ids;
+    }
+
+    private long ladderSize() {
+        return snapshotCheckpointLadder(viewInstance()).size() / 2;
+    }
+
     /**
      * Drops the in-memory view registry and rebuilds it, which is what makes the next
      * refresh restore its runtime from the checkpoint timeline rather than continue from
@@ -2594,6 +2719,24 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     private void assertViewMatchesRecompute() throws Exception {
         assertViewMatchesRecomputeIgnoringFaults();
         assertNoRefreshFaults("lv");
+    }
+
+    // The recompute over a copy of the base that kept the rows a DROP PARTITION took from it,
+    // which the view keeps too.
+    private void assertViewMatchesShadowRecompute() throws Exception {
+        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
+        final String recompute = "select created_at, account_id, "
+                + "sum(amount) over (partition by account_id, bucket order by created_at "
+                + "rows between unbounded preceding and current row) as cumulative_sum "
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx_shadow)";
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + recompute + ") order by 2, 1, 3",
+                "(lv) order by 2, 1, 3",
+                LOG,
+                true
+        );
     }
 
     private void assertViewMatchesRecomputeIgnoringFaults() throws Exception {

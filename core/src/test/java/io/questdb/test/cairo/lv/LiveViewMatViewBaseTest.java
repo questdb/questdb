@@ -30,6 +30,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -296,6 +297,66 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
                     2026-01-01T03:00:00.000000Z\tb\t72.0\t2
                     2026-01-02T01:00:00.000000Z\tb\t32.0\t1
                     """);
+            assertViewActive();
+        });
+    }
+
+    @Test
+    public void testDepartedNewestBucketThenALateBucketRestoresFromTheTimeline() throws Exception {
+        // A base correction that the mat view's filter drops empties its newest bucket, and its
+        // incremental refresh removes that bucket with a REPLACE_RANGE: the newest row the view
+        // derived leaves it. A late base row then fills a bucket between the root below the
+        // departed one and the departed one. Each restart must restore from the timeline the
+        // two repairs left.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, k)");
+            execute("CREATE MATERIALIZED VIEW mvbase AS (SELECT ts, k, sum(v) AS sv FROM base WHERE v > 0 SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues(engine);
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms START FROM NOW AS " + ANCHORED_VIEW_SQL);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2026-01-01T00:10:00.000000Z', 'a', 1.0)");
+                refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2026-01-01T02:10:00.000000Z', 'a', 4.0)");
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv_on_mv");
+                Assert.assertNotNull(instance);
+                assertCheckpointLadder(instance, false, """
+                        2026-01-01T00:00:00.000000Z -> 1
+                        2026-01-01T02:00:00.000000Z -> 2
+                        """);
+                refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2026-01-01T02:10:00.000000Z', 'a', -1.0)");
+                assertCheckpointLadder(instance, false, """
+                        2026-01-01T00:00:00.000000Z -> 1
+                        """);
+                Assert.assertEquals(1, job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT));
+                refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2026-01-01T01:10:00.000000Z', 'a', 2.0)");
+                assertCheckpointLadder(instance, false, """
+                        2026-01-01T00:00:00.000000Z -> 1
+                        2026-01-01T01:00:00.000000Z -> 2
+                        """);
+            }
+            assertViewMatchesRecompute();
+            final String rows = """
+                    ts\tk\ts\tc
+                    2026-01-01T00:00:00.000000Z\ta\t1.0\t1
+                    2026-01-01T01:00:00.000000Z\ta\t3.0\t2
+                    """;
+            assertQuery(VIEW_ROWS_QUERY).noLeakCheck().expectSize().returns(rows);
+
+            restartCycle();
+            assertRestoredFromTimeline("lv_on_mv");
+            assertQuery(VIEW_ROWS_QUERY).noLeakCheck().expectSize().returns(rows);
+            assertViewActive();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                refreshMatViewAndView(job, "INSERT INTO base (ts, k, v) VALUES ('2026-01-01T03:10:00.000000Z', 'a', 8.0)");
+            }
+            assertViewMatchesRecompute();
+            final String grownRows = rows + "2026-01-01T03:00:00.000000Z\ta\t11.0\t3\n";
+            assertQuery(VIEW_ROWS_QUERY).noLeakCheck().expectSize().returns(grownRows);
+
+            restartCycle();
+            assertRestoredFromTimeline("lv_on_mv");
+            assertQuery(VIEW_ROWS_QUERY).noLeakCheck().expectSize().returns(grownRows);
             assertViewActive();
         });
     }

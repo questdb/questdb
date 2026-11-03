@@ -103,15 +103,18 @@ public final class LiveViewRefreshStats {
     public static final int SPARSE_PUBLICATION_FALLBACK_COUNT = 36;
     // Stored rows sparse publications left in place.
     public static final int SPARSE_PUBLICATION_ROWS_KEPT = 37;
+    // Anchor resumes whose output ended below the newest root their splice kept, so they
+    // truncated the spliced timeline at the view's new frontier before the head seal.
+    public static final int SPLICE_FRONTIER_TRUNCATE_COUNT = 38;
     // Attempts to take back the symbol ids a discarded pass assigned and no flush committed,
     // each one a call of LiveViewInMemoryTier.tryRewindSymbolCache.
-    public static final int SYMBOL_REWIND_ATTEMPT_COUNT = 38;
+    public static final int SYMBOL_REWIND_ATTEMPT_COUNT = 39;
     // Of those attempts, the ones a reader refused by pinning a slot whose symbol horizon
     // reaches the ids the rewind would take back.
-    public static final int SYMBOL_REWIND_REFUSAL_COUNT = 39;
+    public static final int SYMBOL_REWIND_REFUSAL_COUNT = 40;
     // Keys keyed resumes handed back to the primary runtime.
-    public static final int TRANSPLANTED_KEY_COUNT = 40;
-    private static final int STAT_COUNT = 41;
+    public static final int TRANSPLANTED_KEY_COUNT = 41;
+    private static final int STAT_COUNT = 42;
     // Completed repairs by route, one slot per LiveViewCheckpointRepairRoute.ROUTE_*, after the
     // counters above. A repair counts once, on the turn that publishes it.
     private final long[] values = new long[STAT_COUNT + LiveViewCheckpointRepairRoute.ROUTE_COUNT];

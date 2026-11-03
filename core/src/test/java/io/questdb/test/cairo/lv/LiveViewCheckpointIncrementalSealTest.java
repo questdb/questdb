@@ -47,6 +47,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.map.Map;
@@ -1284,6 +1285,9 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                         1,
                         anchorWindow().getCheckpointLastFreezeKeyCount()
                 );
+                // The replay ran past every root it kept, so nothing above the frontier is
+                // truncated, which would demote the seal to a complete one.
+                Assert.assertEquals(0, job.getStatsForTest().get(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT));
                 assertHeadRootPartitionCount(6);
                 assertViewMatchesRecompute(NOON_ANCHOR);
             }

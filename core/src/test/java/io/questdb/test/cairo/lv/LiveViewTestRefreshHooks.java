@@ -63,6 +63,7 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
     private Consumer<Throwable> refreshFaultObserver;
     // Repair cleanup chains to let through before the next one throws; -1 is disarmed.
     private int repairCleanupFaultCountdown = -1;
+    private Runnable resumeHeadSealStart;
     private Runnable resumeReplayStart;
     private Runnable symbolRewindStart;
 
@@ -152,6 +153,15 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
         final Runnable action = peerTurnBeforeRefreshLatch;
         if (action != null) {
             peerTurnBeforeRefreshLatch = null;
+            action.run();
+        }
+    }
+
+    @Override
+    public void beforeResumeHeadSeal() {
+        final Runnable action = resumeHeadSealStart;
+        if (action != null) {
+            resumeHeadSealStart = null;
             action.run();
         }
     }
@@ -408,6 +418,16 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
 
     public void setSimulateRepairUnwindCleanupFault() {
         isRepairUnwindCleanupFaultArmed = true;
+    }
+
+    /**
+     * One-shot. The action runs on the refresh worker with the refresh latch held, inside the
+     * resume's publication tail, so a throw ends the turn there as a fault the refresh failure
+     * handler counts. It must not reach DROP LIVE VIEW or a checkpoint freeze, which wait for
+     * that latch.
+     */
+    public void setSimulateResumeHeadSealStart(Runnable action) {
+        resumeHeadSealStart = action;
     }
 
     public void setSimulateResumeReplayStart(Runnable action) {

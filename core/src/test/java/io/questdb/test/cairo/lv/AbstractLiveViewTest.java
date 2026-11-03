@@ -61,6 +61,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.datetime.nanotime.NanosFormatUtils;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -759,6 +761,25 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Asserts every logical root of {@code instance}'s checkpoint timeline, ascending, one line
+     * each as {@code maxTimestamp -> effective row position}, with the timestamp printed in
+     * microseconds, or in nanoseconds when {@code isNanos}. See {@link #snapshotCheckpointLadder}.
+     */
+    protected void assertCheckpointLadder(LiveViewInstance instance, boolean isNanos, String expected) {
+        final LongList ladder = snapshotCheckpointLadder(instance);
+        final StringSink sink = new StringSink();
+        for (int i = 0, n = ladder.size(); i < n; i += 2) {
+            if (isNanos) {
+                NanosFormatUtils.appendDateTimeNSec(sink, ladder.getQuick(i));
+            } else {
+                MicrosFormatUtils.appendDateTimeUSec(sink, ladder.getQuick(i));
+            }
+            sink.put(" -> ").put(ladder.getQuick(i + 1)).put('\n');
+        }
+        TestUtils.assertEquals("checkpoint ladder of live view '" + instance.getDefinition().getViewName() + "'", expected, sink);
+    }
+
+    /**
      * Asserts the named view refreshed without a single faulting cycle.
      * <p>
      * Any test whose oracle compares the live view against a from-base recompute of its own SELECT
@@ -974,6 +995,22 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
             }
         }
         return ladder;
+    }
+
+    /**
+     * Stops every live view the way a process stop does - the registry drops its instances and
+     * every reader and writer goes back - then registers them again from disk and drives the
+     * restart recovery to quiescence.
+     */
+    protected void restartLiveViewsAndRecover() {
+        engine.getLiveViewRegistry().clear();
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        engine.releaseInactive();
+        engine.buildViewGraphs();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
+        }
     }
 
     /**

@@ -33,6 +33,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -287,6 +288,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             "AA", "BB", "CC", "DD", "EE", "FF", "GG", "HH",
             "II", "JJ", "KK", "LL", "MM", "NN", "OO", "PP"
     };
+    // The refresh jobs runDedupFuzz and runReplaceRangeFuzz ran, summed, so a batch can assert
+    // which repairs its departures reached.
+    private final LiveViewRouteCoverage coverage = new LiveViewRouteCoverage();
 
     @Test
     public void testFuzzAnchored() throws Exception {
@@ -491,6 +495,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                         true, rnd.nextBoolean(), rnd.nextBoolean(), true, null);
             }
         });
+        coverage.log(LOG, "dedup");
+        // Each run ends moving its newest rows out of the view: see departNewestRows.
+        coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
     }
 
     @Test
@@ -835,6 +842,9 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                         rnd.nextBoolean(), rnd.nextBoolean(), rnd.nextBoolean());
             }
         });
+        coverage.log(LOG, "replace range");
+        // Each run ends moving its newest rows out of the view: see departNewestRows.
+        coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
     }
 
     @Test
@@ -1160,6 +1170,19 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return b;
     }
 
+    // Repairs the job published on a route other than the anchor resume's two.
+    private static long countRepairsOffTheResume(LiveViewRefreshJob job) {
+        final LiveViewRefreshStats stats = job.getStatsForTest();
+        long repairs = 0;
+        for (int route = 0; route < LiveViewCheckpointRepairRoute.ROUTE_COUNT; route++) {
+            if (route != LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR
+                    && route != LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR) {
+                repairs += stats.getRouteCount(route);
+            }
+        }
+        return repairs;
+    }
+
     // Renders one INSERT literal for a DECIMAL(precision, scale) value: an
     // occasional NULL, else a signed value with exactly `scale` fractional digits
     // and the mandatory 'm' suffix. The unscaled magnitude is capped at 10^15 - 1
@@ -1233,6 +1256,14 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             sb.put(lines[i]).put('\n');
         }
         return sb.toString();
+    }
+
+    // Whether the anchor resume repaired every change of a departNewestRows episode, given the
+    // count of repairs off the resume from before it. The restore after a departure is what this
+    // fuzz checks of the resume's splice: a departure the head-miss replay or a rebuild repaired
+    // is left to the checks of that route.
+    private static boolean isRepairedByTheResume(LiveViewRefreshJob job, long repairsOffTheResumeBefore) {
+        return countRepairsOffTheResume(job) == repairsOffTheResumeBefore;
     }
 
     // Opens the inner LiveViewRecordCursor for the SELECT (unwrapping any
@@ -1557,6 +1588,22 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         return " WHERE ts >= " + boundary + (withWhere ? " AND i > 0" : "");
     }
 
+    // The oracle of a run that ended on departNewestRows: the recompute over the base, or, when
+    // dropTheOldestDayTheViewHolds dropped a day, the view's own rows from before the drop.
+    private void assertDepartureOracle(
+            String oracleOrderedSql,
+            String viewOrderedSql,
+            @Nullable String rowsBeforeTheDrop
+    ) throws Exception {
+        if (rowsBeforeTheDrop == null) {
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+        } else {
+            final StringSink rows = new StringSink();
+            printSql(viewOrderedSql, rows);
+            TestUtils.assertEquals("the view must keep the rows of the day its base dropped", rowsBeforeTheDrop, rows);
+        }
+    }
+
     // CREATE must have resolved and persisted exactly the boundary the run's oracle folds into
     // its WHERE. Without this the oracle would silently drift from the view under test: a NOW
     // that read a clock the harness did not pin, or a literal that lost precision on the way
@@ -1587,6 +1634,120 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 + (maxTs + 2) + "::timestamp, 'AA', 2, 2.0)");
         drainWalQueue();
         drainJob(job); // refresh only -> lead in RAM (clock not advanced past FLUSH EVERY)
+    }
+
+    /**
+     * Commits two batches of four rows above every base row, each refreshed on its own, so each
+     * seals a root at any row cadence the batch draws, then moves the newer batch out of the
+     * view: the shape after which a restart once could not restore from the timeline, because
+     * the splice that repairs the departure kept the departed rows' root above the view's new
+     * frontier. The rows leave through a REPLACE_RANGE pure delete, or, over a filtered view
+     * whose base has dedup keys, through an upsert of each of them to a value the filter rejects.
+     * Either way the root below them is the anchor, and resuming from it reads no more rows than
+     * a localized rebuild would. One run in three adds a late row the filter keeps between the
+     * two batches in the same commit, and one in three in the next commit. {@code usedTs} is the
+     * run's pool of taken timestamps, or null on a base whose dedup keys keep every row unique.
+     *
+     * @return true when rows departed, and the caller restarts
+     */
+    private boolean departNewestRows(
+            Rnd rnd,
+            LiveViewRefreshJob job,
+            TableToken baseToken,
+            @Nullable LongHashSet usedTs,
+            int symCount,
+            boolean withWhere
+    ) throws Exception {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        final long baseMaxTs = queryTimestamp("SELECT max(ts) FROM base");
+        if (instance == null
+                || instance.getStateReader().getSeedState() != LiveViewState.SEED_STATE_ACTIVE
+                || baseMaxTs == Numbers.LONG_NULL) {
+            return false;
+        }
+        final long[] keptTs = new long[4];
+        commitEpisodeBatch(rnd, baseMaxTs + 1 + rnd.nextInt(1_000_000), usedTs, symCount, keptTs, null);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        final long[] departedTs = new long[4];
+        final int[] departedSym = new int[4];
+        commitEpisodeBatch(rnd, keptTs[3] + 2 + rnd.nextInt(1_000_000), usedTs, symCount, departedTs, departedSym);
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+
+        int lateMode = rnd.nextInt(3);
+        long lateTs = Numbers.LONG_NULL;
+        for (int attempt = 0; lateMode > 0 && attempt < 16; attempt++) {
+            final long t = keptTs[3] + 1 + rnd.nextLong(departedTs[0] - keptTs[3] - 1);
+            if (usedTs == null || usedTs.add(t)) {
+                lateTs = t;
+                break;
+            }
+        }
+        if (lateTs == Numbers.LONG_NULL) {
+            lateMode = 0;
+        }
+        final int lateSym = rnd.nextInt(symCount);
+        final long lateI = 1 + rnd.nextInt(1000);
+        final double lateX = rnd.nextDouble() * 1000.0;
+        final boolean isUpsert = usedTs == null && withWhere;
+        LOG.info().$("LV fuzz departure: keptHighTs=").$ts(keptTs[3]).$(", departedLowTs=").$ts(departedTs[0])
+                .$(", departedHighTs=").$ts(departedTs[3]).$(", upsert=").$(isUpsert)
+                .$(", lateMode=").$(lateMode).$(", lateTs=").$ts(lateTs).$();
+        if (isUpsert) {
+            final StringSink sink = new StringSink();
+            sink.put("INSERT INTO base (ts, sym, i, x) VALUES ");
+            for (int k = 0; k < departedTs.length; k++) {
+                sink.put(k > 0 ? ", (" : "(").put(departedTs[k]).put("::timestamp, '").put(SYMBOLS[departedSym[k]]).put("', -1, 0.0)");
+            }
+            if (lateMode == 1) {
+                sink.put(", (").put(lateTs).put("::timestamp, '").put(SYMBOLS[lateSym]).put("', ").put(lateI).put(", ").put(lateX).put(')');
+            }
+            execute(sink);
+        } else {
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                if (lateMode == 1) {
+                    appendRow(walWriter, lateTs, lateSym, lateI, lateX);
+                }
+                walWriter.commitWithParams(lateMode == 1 ? lateTs : departedTs[0], departedTs[3] + 1, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
+            }
+        }
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        if (lateMode == 2) {
+            execute("INSERT INTO base (ts, sym, i, x) VALUES (" + lateTs + "::timestamp, '" + SYMBOLS[lateSym] + "', " + lateI + ", " + lateX + ")");
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        }
+        return true;
+    }
+
+    // Four rows a millisecond apart from fromTs, on random keys and with values the run's filter
+    // keeps, in one commit. Fills tsOut, and symOut when not null, with what it wrote.
+    private void commitEpisodeBatch(
+            Rnd rnd,
+            long fromTs,
+            @Nullable LongHashSet usedTs,
+            int symCount,
+            long[] tsOut,
+            @Nullable int[] symOut
+    ) throws SqlException {
+        final StringSink sink = new StringSink();
+        sink.put("INSERT INTO base (ts, sym, i, x) VALUES ");
+        long t = fromTs;
+        for (int k = 0; k < tsOut.length; k++, t += 1_000) {
+            while (usedTs != null && !usedTs.add(t)) {
+                t++;
+            }
+            final int sym = rnd.nextInt(symCount);
+            tsOut[k] = t;
+            if (symOut != null) {
+                symOut[k] = sym;
+            }
+            sink.put(k > 0 ? ", (" : "(").put(t).put("::timestamp, '").put(SYMBOLS[sym]).put("', ")
+                    .put(1 + rnd.nextInt(1000)).put(", ").put(rnd.nextDouble() * 1000.0).put(')');
+        }
+        execute(sink);
     }
 
     // One randomized REPLACE_RANGE commit against the base: picks a band whose
@@ -1711,6 +1872,45 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         execute("ALTER TABLE base DROP PARTITION LIST '2030-01-01'");
         drainWalQueue();
         refreshCycle(job);
+    }
+
+    /**
+     * One run in two drops the oldest day the view holds rows of, as TTL or DROP PARTITION
+     * would, after {@link #departNewestRows} and ahead of the restart that follows it. The view
+     * keeps those rows and the base no longer holds them, so the restart brings them back only
+     * from the timeline: a rebuild from the base would lose them, or be refused. The view is
+     * checked against the recompute first, while the base still holds them, and its rows from
+     * then on are the oracle. A view whose rows all sit on one day drops nothing: its oldest
+     * day holds the departure's rows too.
+     *
+     * @return the view's rows ahead of the drop, ordered by {@code viewOrderedSql}, or null when
+     * the run dropped nothing
+     */
+    private @Nullable String dropTheOldestDayTheViewHolds(
+            Rnd rnd,
+            LiveViewRefreshJob job,
+            String oracleOrderedSql,
+            String viewOrderedSql
+    ) throws Exception {
+        if (rnd.nextBoolean()) {
+            return null;
+        }
+        final long viewMinTs = queryTimestamp("SELECT min(ts) FROM lv");
+        final long viewMaxTs = queryTimestamp("SELECT max(ts) FROM lv");
+        if (viewMinTs == Numbers.LONG_NULL || viewMinTs / Micros.DAY_MICROS == viewMaxTs / Micros.DAY_MICROS) {
+            return null;
+        }
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext, oracleOrderedSql, viewOrderedSql, LOG, true);
+        final StringSink rows = new StringSink();
+        printSql(viewOrderedSql, rows);
+        final StringSink day = new StringSink();
+        MicrosFormatUtils.appendDateTimeUSec(day, viewMinTs - viewMinTs % Micros.DAY_MICROS);
+        day.clear("yyyy-MM-dd".length());
+        LOG.info().$("LV fuzz departure: dropping the oldest day the view holds [day=").$(day).I$();
+        execute("ALTER TABLE base DROP PARTITION LIST '" + day + "'");
+        drainWalQueue();
+        driveRefreshToQuiescence(job);
+        return rows.toString();
     }
 
     // One random transparent base-DDL op: ADD a fresh unreferenced column, or
@@ -3278,7 +3478,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 .$(", removals=").$(removals).$(", where=").$(withWhere).$(", indexed=").$(isIndexed)
                 .$(", knobs=[").$(knobLog).$("], sql=").$(viewSql).$();
 
+        final String oracleOrderedSql = "(" + oracleSql + ") ORDER BY ts, sym::string";
+        final String viewOrderedSql = "(lv) ORDER BY ts, sym::string";
         final StringSink sink = new StringSink();
+        String rowsBeforeTheDrop = null;
         LiveViewRefreshJob job = null;
         try {
             if (preCount > 0) {
@@ -3315,6 +3518,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                         if (inst != null
                                 && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
+                            coverage.absorb(job);
                             job = Misc.free(job);
                             engine.getLiveViewRegistry().clear();
                             engine.buildViewGraphs();
@@ -3325,22 +3529,38 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             }
 
             driveRefreshToQuiescence(job);
+            final long repairsOffTheResume = countRepairsOffTheResume(job);
+            if (departNewestRows(rnd, job, engine.verifyTableName("base"), null, symCount, withWhere)) {
+                // An anchored run draws repair knobs that can take the departure off the chained
+                // resume, and one route there does not keep the timeline: a declined chain whose
+                // replay emits no row retires it. The default knobs keep the chain. See
+                // isRepairedByTheResume for a departure another route repaired.
+                final boolean isTimelineKept = anchor == null && isRepairedByTheResume(job, repairsOffTheResume);
+                if (isTimelineKept) {
+                    rowsBeforeTheDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
+                }
+                coverage.absorb(job);
+                job = Misc.free(job);
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                job = new LiveViewRefreshJob(0, engine, 1);
+                driveRefreshToQuiescence(job);
+                if (isTimelineKept) {
+                    // No fault struck the run, so the departure left a root at the view's frontier.
+                    assertRestoredFromTimeline("lv");
+                }
+            }
         } finally {
+            coverage.absorb(job);
             Misc.free(job);
         }
 
         // The oracle: the live view equals its own window recomputed over the applied (deduped)
         // base under the run's START FROM boundary. (ts, sym::string) is a total order because
         // (ts, sym) is the dedup key; genericStringMatch tolerates SYMBOL-vs-STRING on the
-        // passthrough.
-        TestUtils.assertSqlCursors(
-                engine,
-                sqlExecutionContext,
-                "(" + oracleSql + ") ORDER BY ts, sym::string",
-                "(lv) ORDER BY ts, sym::string",
-                LOG,
-                true
-        );
+        // passthrough. A run that dropped a day the view holds compares against the view's own
+        // rows from before the drop instead.
+        assertDepartureOracle(oracleOrderedSql, viewOrderedSql, rowsBeforeTheDrop);
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
@@ -5102,7 +5322,10 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
 
         final TableToken baseToken = engine.verifyTableName("base");
+        final String oracleOrderedSql = "(" + oracleSql + ") ORDER BY 1, 2";
+        final String viewOrderedSql = "(lv) ORDER BY 1, 2";
         final StringSink sink = new StringSink();
+        String rowsBeforeTheDrop = null;
         LiveViewRefreshJob job = null;
         try {
             if (preCount > 0) {
@@ -5143,6 +5366,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                         LiveViewInstance inst = engine.getLiveViewRegistry().getViewInstance("lv");
                         if (inst != null
                                 && inst.getStateReader().getSeedState() == LiveViewState.SEED_STATE_ACTIVE) {
+                            coverage.absorb(job);
                             job = Misc.free(job);
                             engine.getLiveViewRegistry().clear();
                             engine.buildViewGraphs();
@@ -5158,22 +5382,34 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             drainWalQueue();
 
             driveRefreshToQuiescence(job);
+            final long repairsOffTheResume = countRepairsOffTheResume(job);
+            if (departNewestRows(rnd, job, baseToken, usedTs, symCount, withWhere)) {
+                final boolean isTimelineKept = isRepairedByTheResume(job, repairsOffTheResume);
+                if (isTimelineKept) {
+                    rowsBeforeTheDrop = dropTheOldestDayTheViewHolds(rnd, job, oracleOrderedSql, viewOrderedSql);
+                }
+                coverage.absorb(job);
+                job = Misc.free(job);
+                engine.getLiveViewRegistry().clear();
+                engine.buildViewGraphs();
+                job = new LiveViewRefreshJob(0, engine, 1);
+                driveRefreshToQuiescence(job);
+                if (isTimelineKept) {
+                    // No fault struck the run, so the departure left a root at the view's frontier.
+                    assertRestoredFromTimeline("lv");
+                }
+            }
         } finally {
+            coverage.absorb(job);
             Misc.free(job);
         }
 
         // The oracle: the live view must equal its own window query recomputed over the applied
         // (post-replace) base under the run's START FROM boundary. ORDER BY 1, 2 - (ts, sym),
         // unique over ties - gives both sides a total order; genericStringMatch tolerates
-        // SYMBOL-vs-STRING on passthrough.
-        TestUtils.assertSqlCursors(
-                engine,
-                sqlExecutionContext,
-                "(" + oracleSql + ") ORDER BY 1, 2",
-                "(lv) ORDER BY 1, 2",
-                LOG,
-                true
-        );
+        // SYMBOL-vs-STRING on passthrough. A run that dropped a day the view holds compares
+        // against the view's own rows from before the drop instead.
+        assertDepartureOracle(oracleOrderedSql, viewOrderedSql, rowsBeforeTheDrop);
         assertNoRefreshFaults("lv");
 
         execute("DROP LIVE VIEW lv");

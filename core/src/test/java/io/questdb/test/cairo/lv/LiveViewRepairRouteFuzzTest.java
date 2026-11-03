@@ -33,6 +33,8 @@ import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.Misc;
@@ -89,6 +91,9 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     // A pass that skips its repair's inline apply rather than injecting a fault.
     private static final int APPLY_SKIP = 11;
     private static final long DAY_MICROS = 86_400_000_000L;
+    // The rows each batch of departureEpisode commits: above the largest row cadence the knobs
+    // draw, so each batch seals a root of its own.
+    private static final int DEPARTURE_BATCH_ROWS = 96;
     // The variants before rank (see VARIANT_COUNT): their functions hold their state in the
     // fused anchor root. rank() and dense_rank() keep a partition map of their own, which the
     // keyed open-segment routes decline (LiveViewRefreshJob.isEveryFunctionDurablyGrouped).
@@ -314,6 +319,8 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                 coverage.assertReached(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD);
                 coverage.assertReached(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR);
                 coverage.assertReachedStat(LiveViewRefreshStats.SEGMENT_YIELD_COUNT);
+                // Reached through departureEpisode, which every run of these arms ends on.
+                coverage.assertReachedStat(LiveViewRefreshStats.SPLICE_FRONTIER_TRUNCATE_COUNT);
                 assertTimestampGroupsRepaired();
             }
             case STEER_KEYED_OPEN_SEGMENT -> {
@@ -611,6 +618,51 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Rows on the synthetic key above every other row, in two commits that each seal what they
+     * carry on a pass of their own - {@link #DEPARTURE_BATCH_ROWS} rows clear every row cadence
+     * the knobs draw - then a pure-delete REPLACE_RANGE over the newer commit's rows, which is
+     * how a mat view's refresh removes its newest bucket: the repair's output ends below the
+     * root those rows sealed. One run in three puts a late synthetic row below the deleted rows
+     * in the same commit, and one in three in the next pass. No generated row sits in the band,
+     * so it deletes the synthetic rows alone.
+     */
+    private void departureEpisode(Rnd rnd, PassShape shape) throws Exception {
+        pass(rnd, shape, -1, PIN_NO, false);
+        insertSyntheticBatch(maxInsertedTs + 1 + rnd.nextInt(1_000_000));
+        drainWalQueue();
+        pass(rnd, shape, -1, PIN_NO, false);
+        final long keptHighTs = maxInsertedTs;
+        final long departedLowTs = insertSyntheticBatch(keptHighTs + 2 + rnd.nextInt(1_000_000));
+        drainWalQueue();
+        pass(rnd, shape, -1, PIN_NO, false);
+        final long departedHighTs = maxInsertedTs;
+        final int lateMode = rnd.nextInt(3);
+        final long lateTs = keptHighTs + 1 + rnd.nextLong(departedLowTs - keptHighTs - 1);
+        LOG.info().$("LV route fuzz: departure [departedLowTs=").$ts(departedLowTs)
+                .$(", departedHighTs=").$ts(departedHighTs)
+                .$(", lateMode=").$(lateMode)
+                .$(", lateTs=").$ts(lateTs).I$();
+        try (WalWriter walWriter = engine.getWalWriter(engine.verifyTableName("base"))) {
+            if (lateMode == 1) {
+                Assert.assertTrue(syntheticTs.add(lateTs));
+                final TableWriter.Row row = walWriter.newRow(lateTs);
+                row.putSym(1, SYNTHETIC_KEY);
+                row.putLong(2, 1 + (lateTs & 511));
+                row.putDouble(3, 1.0);
+                row.append();
+            }
+            walWriter.commitWithParams(lateMode == 1 ? lateTs : departedLowTs, departedHighTs + 1, WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE);
+        }
+        drainWalQueue();
+        pass(rnd, shape, -1, PIN_NO, false);
+        if (lateMode == 2) {
+            insertSynthetic(lateTs);
+            drainWalQueue();
+            pass(rnd, shape, -1, PIN_NO, false);
+        }
+    }
+
+    /**
      * Holds the view's table writer across a few passes, as a busy writer or a memory-pressure
      * back-off does: no apply of the view's own WAL lands, so a repair's or a flush's block
      * stays committed and unapplied while later drains publish leads. Reads must stay on the
@@ -659,6 +711,29 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                     .put(SYNTHETIC_TIE_KEY).put("', ").put(1 + (t & 511)).put(", 1.0)");
         }
         execute(syntheticSink);
+    }
+
+    // DEPARTURE_BATCH_ROWS rows on the synthetic key in one commit, at the first timestamps
+    // from fromTs up the key has not used. Returns the lowest of them.
+    private long insertSyntheticBatch(long fromTs) throws SqlException {
+        syntheticSink.clear();
+        syntheticSink.put("INSERT INTO base (ts, sym, i, x) VALUES ");
+        long lowTs = Numbers.LONG_NULL;
+        long t = fromTs;
+        for (int k = 0; k < DEPARTURE_BATCH_ROWS; k++, t++) {
+            while (!syntheticTs.add(t)) {
+                t++;
+            }
+            if (k == 0) {
+                lowTs = t;
+            } else {
+                syntheticSink.put(", ");
+            }
+            maxInsertedTs = Math.max(maxInsertedTs, t);
+            syntheticSink.put('(').put(t).put("::timestamp, '").put(SYNTHETIC_KEY).put("', ").put(1 + (t & 511)).put(", 1.0)");
+        }
+        execute(syntheticSink);
+        return lowTs;
     }
 
     /**
@@ -980,6 +1055,9 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
             }
             if (isTieRun) {
                 tieInClosedSegmentEpisode(rnd, shape, rows, isFiltered);
+            }
+            if (steer == STEER_MIXED || steer == STEER_ANCHORS) {
+                departureEpisode(rnd, shape);
             }
             if (faultPct > 0 && firedThisRun == 0) {
                 // No drawn fault fired. One in-order row above every other one, whose forward

@@ -186,6 +186,60 @@ public class LiveViewNoRowCheckpointTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testDepartureThenNoRowCyclesReleaseBaseWal() throws Exception {
+        // One commit seals two rows under one root at the newer of them, and an upsert then moves
+        // that row out of the filter. The resume leaves the view's head at the row below it, with
+        // no root above: the stretch of rejected commits after it then moves the head's base
+        // coordinate and the generation's on the duration cadence, as it does after any row.
+        configureWalPurge();
+        configureCadence(CADENCE_MICROS);
+        final long stepMicros = 1_200_000;
+        assertMemoryLeak(() -> {
+            createDedupBaseView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(START_MICROS);
+                commit(job, minute(1), "a", 1.5, stepMicros);
+                execute("INSERT INTO base VALUES ('" + minute(2) + "', 'a', 2.5), ('" + minute(3) + "', 'a', 4.5)");
+                refresh(job, stepMicros);
+                final LiveViewInstance instance = instance();
+                Assert.assertEquals(ts(minute(3)), instance.getHeadCheckpointMaxTs());
+                commit(job, minute(3), "a", -4.5, stepMicros);
+                Assert.assertEquals(3, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(ts(minute(2)), instance.getHeadCheckpointMaxTs());
+                for (int i = 4; i <= 9; i++) {
+                    commit(job, minute(i), "a", -1.0, stepMicros);
+                }
+                Assert.assertEquals(9, instance.getStateReader().getLvConsumedSeqTxn());
+                Assert.assertEquals(9, instance.getHeadCheckpointBaseSeqTxn());
+                Assert.assertEquals(0, instance.getCheckpointSealFailures());
+                assertQuery("SELECT checkpoint_timeline_normalized_base_seqtxn FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("checkpoint_timeline_normalized_base_seqtxn\n9\n");
+                // The older of the two superblock slots, which the publication at seqTxn 9 left at 8.
+                Assert.assertEquals(8, instance.getCheckpointTimelineWalPurgeFloor());
+                Assert.assertEquals("the purge must keep only the segments above the floor", 9 - 8, countWalSegments(purgeBaseWal()));
+                assertViewMatchesRecompute();
+            }
+            restartCycle();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertRestoredFromTimeline("lv");
+            assertQuery("SELECT ts, sym, x, s FROM lv")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tx\ts
+                            2026-01-01T00:01:00.000000Z\ta\t1.5\t1.5
+                            2026-01-01T00:02:00.000000Z\ta\t2.5\t4.0
+                            """);
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
     public void testFailedNoRowPublicationKeepsTheHeadAndRetries() throws Exception {
         configureCadence(CADENCE_MICROS);
         assertMemoryLeak(() -> {
