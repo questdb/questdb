@@ -451,17 +451,26 @@ public class FuzzRunner {
     }
 
     /**
-     * Applies the transactions to a WAL table, failing its {@code failAfterCalls}-th file system
-     * call. Unlike {@link #applyNonWal}, this faults the table under test, not the oracle. Then
-     * resumes WAL, finishes the apply and asserts the table is not suspended. The engine must run
-     * on {@link #getFileFacade()}. {@code Integer.MAX_VALUE} applies without a failure.
+     * Applies the transactions to a WAL table, failing the {@code failAfterCalls}-th file system
+     * call of the WAL apply, counted once the table writer is open. Unlike {@link #applyNonWal},
+     * this faults the table under test, not the oracle. Then resumes WAL, finishes the apply and
+     * asserts the table is not suspended. The engine must run on {@link #getFileFacade()}.
+     * {@code Integer.MAX_VALUE} applies without a failure.
      *
-     * @return the number of file system calls the armed apply made, to size the next failure
+     * @return the number of file system calls the armed apply made once the table writer was
+     * open, to size the next failure
      */
     public long applyWalWithIoFailure(ObjList<FuzzTransaction> transactions, String tableName, Rnd applyRnd, int failAfterCalls) {
         final TableToken tableToken = engine.verifyTableName(tableName);
         applyToWal(transactions, tableName, 1, applyRnd);
         Assert.assertSame("the engine must run on the failure facade", ff, engine.getConfiguration().getFilesFacade());
+        // ApplyWal2TableJob takes this writer from the pool, so the failure below lands on the apply and
+        // never on the writer open. A failure there hits pre-existing writer-open bugs that are not what
+        // this harness tests: a failed length() of _meta truncates _meta to 0 bytes, and a failed
+        // length() of _cv leaks its fd and mapping.
+        try (TableWriter ignored = engine.getWriter(tableToken, "open before the armed WAL apply")) {
+            // close() returns the writer to the pool, idle and open
+        }
         ff.clearFailures();
         ff.setToFailAfter(failAfterCalls);
         final long calls;
