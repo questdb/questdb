@@ -987,20 +987,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
         // union.
         assertMemoryLeak(() -> {
             createDayFilterTable();
-            try {
-                for (int jitMode : new int[]{SqlJitMode.JIT_MODE_DISABLED, SqlJitMode.JIT_MODE_ENABLED}) {
-                    sqlExecutionContext.setJitMode(jitMode);
-                    assertQuery("SELECT k FROM x WHERE ts IN '[2024-[01..12]-[01..20],2024-[01..12]-[01..20]]#mon'")
-                            .noLeakCheck()
-                            .returns("""
-                                    k
-                                    3
-                                    6
-                                    """);
-                }
-            } finally {
-                sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            }
+            assertFilterWithAndWithoutJit("ts IN '[2024-[01..12]-[01..20],2024-[01..12]-[01..20]]#mon'", "k\n3\n6\n", true);
         });
     }
 
