@@ -354,6 +354,8 @@ public class CompositeFaultInjectionTest extends AbstractCairoTest {
         try (TableReader reader = engine.getReader(tableToken)) {
             Assert.assertFalse(reader.getTxFile().isPartitionComposite(0));
         }
+        // The swapped-out directory waits for the save points that still list it.
+        releaseSavePointHolds("cx");
         try (Path path = new Path()) {
             path.of(configuration.getDbRoot()).concat(tableToken).concat("1970-01-01");
             Assert.assertFalse("swapped-out source directory left behind", configuration.getFilesFacade().exists(path.$()));

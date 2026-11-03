@@ -238,6 +238,7 @@ public class QwpTudCache implements QuietCloseable {
             try {
                 if (!tud.isDropped()) {
                     tud.commit(false);
+                    advanceStructureCheckGate(tud);
                     reportCommittedTxn(tud, consumer);
                 }
             } catch (CommitFailedException e) {
@@ -273,6 +274,29 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     /**
+     * Commits a QWP commit batch: the rows that consecutive frames appended to
+     * {@code tud}'s writer without committing. The caller first checks that the
+     * writer holds exactly those rows ({@code QwpIngressProcessorState.isCommitBatchIntact}).
+     * Reports the commit's seqTxn to {@code consumer} like {@link #commitAll}. A
+     * dropped table throws; the caller rolls everything back and refuses the batch.
+     */
+    public void commitBatch(WalTableUpdateDetails tud, CommittedTxnConsumer consumer) throws Throwable {
+        try {
+            tud.commit(false);
+        } catch (CommitFailedException e) {
+            if (!e.isTableDropped()) {
+                throw e.getReason();
+            }
+            tud.setIsDropped();
+            throw CairoException.nonCritical()
+                    .put("dropped table discarded buffered rows, cannot acknowledge: ")
+                    .put(tud.getTableNameUtf8());
+        }
+        advanceStructureCheckGate(tud);
+        reportCommittedTxn(tud, consumer);
+    }
+
+    /**
      * Whether ANY live table in this cache still holds rows appended but not committed.
      * <p>
      * This is the fact behind {@code QwpIngressProcessorState.uncommittedDeferredRows}: the per-table
@@ -290,6 +314,18 @@ public class QwpTudCache implements QuietCloseable {
             }
         }
         return false;
+    }
+
+    /**
+     * True when {@code tud} is this cache's current entry for its table name.
+     */
+    public boolean isCachedEntry(WalTableUpdateDetails tud) {
+        final int keyIndex = tableUpdateDetails.keyIndex(tud.getTableNameUtf8());
+        return keyIndex < 0 && tableUpdateDetails.valueAt(keyIndex) == tud;
+    }
+
+    public boolean isDistressed() {
+        return isDistressed;
     }
 
     /**
@@ -317,6 +353,7 @@ public class QwpTudCache implements QuietCloseable {
                     // may have left work that is committed but unreported.
                     if (hadBufferedRows) {
                         tud.commitIfMaxUncommittedRowsCountReached();
+                        advanceStructureCheckGate(tud);
                     }
                     reportCommittedTxn(tud, consumer);
                 }
@@ -369,6 +406,7 @@ public class QwpTudCache implements QuietCloseable {
             try {
                 if (!tud.isDropped()) {
                     tud.commit(false);
+                    advanceStructureCheckGate(tud);
                 }
             } catch (CommitFailedException e) {
                 if (e.isTableDropped()) {
@@ -658,6 +696,29 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     /**
+     * A data commit of our own is one sequencer txn with no structure change in
+     * it. applyPendingStructureChanges() gates on the sequencer's seqTxn, so
+     * without this every message on a connection would re-run goActive() -- the
+     * sequencer read lock, the metadata change log lookup and two token lookups
+     * -- for a txn this connection wrote itself. Only the exact single-step case
+     * is taken: any interleaved txn by another writer may be structural and keeps
+     * the full check.
+     * <p>
+     * That relies on the sequencer advancing the tracker for EVERY txn it logs,
+     * including an ALTER on a suspended table (see
+     * {@code TableSequencerImpl.nextStructureTxn}). A tracker that lagged the log
+     * there would leave this gate closed over a DROP or RENAME COLUMN, and the
+     * next commit's NO_TXN replay in the WalWriter would discard or re-home the
+     * values this connection already appended under the old columns.
+     */
+    private static void advanceStructureCheckGate(WalTableUpdateDetails tud) {
+        final long seqTxn = tud.getLastSeqTxn();
+        if (seqTxn > 0 && seqTxn == tud.getLastStructureCheckSeqTxn() + 1) {
+            tud.setLastStructureCheckSeqTxn(seqTxn);
+        }
+    }
+
+    /**
      * Hands the consumer every seqTxn advance this connection has produced for
      * {@code tud} that it has not already seen.
      * <p>
@@ -683,8 +744,9 @@ public class QwpTudCache implements QuietCloseable {
      * than gating on it, on three counts.
      * The ALTER is permanent work this connection produced, and a rollback of the
      * deferred group does not undo it. No DURABLE ack can outrun an upload:
-     * {@code QwpIngressProcessorState.collectDurableProgress} forwards only the
-     * registry's own uploadedSeqTxn, never the pending value, and on the normal path
+     * {@code QwpIngressProcessorState.collectDurableProgress} forwards the registry's
+     * own frontier, capped at the pending value, and reports the pending value itself
+     * only once that frontier reaches it or the table's directory is gone, and on the normal path
      * the group-closing {@link #commitAll(CommittedTxnConsumer)} supersedes the pending
      * entry with the data txn -- on a rollback or error exit, and on a normal exit that
      * commits no data txn for that table, the metadata-only entry instead stands until

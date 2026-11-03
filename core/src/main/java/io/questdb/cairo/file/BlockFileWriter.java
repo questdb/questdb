@@ -48,10 +48,10 @@ import static io.questdb.cairo.file.BlockFileUtils.*;
 
 public class BlockFileWriter implements Closeable {
     private final BlockMemoryHandleImpl blockMemoryHandle = new BlockMemoryHandleImpl();
-    private final int commitMode;
     private final FilesFacade ff;
     private int blockCount;
     private long blockOffset;
+    private int commitMode;
     private MemoryCMARW file;
     private boolean isCommitted;
     private MemoryCARW memory;
@@ -59,7 +59,8 @@ public class BlockFileWriter implements Closeable {
     public BlockFileWriter(FilesFacade ff, int commitMode) {
         assert commitMode == CommitMode.ASYNC
                 || commitMode == CommitMode.NOSYNC
-                || commitMode == CommitMode.SYNC;
+                || commitMode == CommitMode.SYNC
+                || commitMode == CommitMode.ADAPTIVE;
         this.ff = ff;
         this.commitMode = commitMode;
     }
@@ -106,8 +107,21 @@ public class BlockFileWriter implements Closeable {
         Vect.memcpy(fileBaseAddress + regionWriteOffset + HEADER_SIZE, memoryBaseAddress, regionLength);
 
         currentVersion += 1;
+        // The offset and length for the new version live in the header slot the current version does not
+        // use (slots alternate by version parity), so writing them cannot disturb the version in force.
         setRegionOffset(currentVersion, regionWriteOffset);
         setRegionLength(currentVersion, regionLength);
+
+        // Data before pointer. The version word at offset 0 selects a region in the file's tail, on another
+        // page, and the kernel writes dirty pages back in any order. Publishing the version word in the same
+        // barrier as its region could leave a durable version naming bytes that never reached the device;
+        // BlockFileReader then refuses the file ("block file checksum mismatch") with no fallback to the
+        // previous region. These files hold view and mat-view definitions, which nothing can re-derive, so
+        // this barrier makes a durable version word imply durable region bytes.
+        if (commitMode != CommitMode.NOSYNC) {
+            file.sync(commitMode == CommitMode.ASYNC);
+        }
+
         setVersionVolatile(currentVersion);
 
         if (commitMode != CommitMode.NOSYNC) {
@@ -151,6 +165,14 @@ public class BlockFileWriter implements Closeable {
 
     public WritableBlock reserve(int bytes) {
         return blockMemoryHandle.reset(bytes);
+    }
+
+    public void setCommitMode(int commitMode) {
+        assert commitMode == CommitMode.ASYNC
+                || commitMode == CommitMode.NOSYNC
+                || commitMode == CommitMode.SYNC
+                || commitMode == CommitMode.ADAPTIVE;
+        this.commitMode = commitMode;
     }
 
     private void reset() {

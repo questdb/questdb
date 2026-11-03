@@ -119,6 +119,13 @@ public interface MetadataService {
      */
     void addIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, @Nullable ObjList<CharSequence> coveringColumnNames);
 
+    /**
+     * Called after a change no WAL replay can redo, such as an attach. A table writer takes a durable epoch on
+     * an adaptive table; nothing else needs to act.
+     */
+    default void advanceDurableEpochAfter(CharSequence operation) {
+    }
+
     AttachDetachStatus attachPartition(long partitionTimestamp);
 
     void changeCacheFlag(int columnIndex, boolean isCacheOn);

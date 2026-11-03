@@ -567,7 +567,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 if (isBaseCursorExhausted && !hasExplicitTo) {
                     if (hasDataForCurrentBucket && keysMap != null) {
                         isEmittingFills = true;
-                        keysMapCursor.toTop();
+                        rewindKeys();
                         return emitNextFillRow();
                     }
                     return false;
@@ -621,7 +621,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                             continue;
                         }
                         isEmittingFills = true;
-                        keysMapCursor.toTop();
+                        rewindKeys();
                         if (emitNextFillRow()) {
                             return true;
                         }
@@ -631,7 +631,7 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                     if (keysMap != null && keyCount > 0) {
                         // This bucket has NO data at all -- emit fills for all keys
                         isEmittingFills = true;
-                        keysMapCursor.toTop();
+                        rewindKeys();
                         toEmitCnt = keyCount;
                         if (emitNextFillRow()) {
                             return true;
@@ -810,8 +810,16 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 assert (hasPendingRow && pendingTs > currentBucketTimestamp) || isBaseCursorExhausted
                         : "next bucket must be a confirmed gap before re-entering inner emit";
                 isEmittingFills = true;
-                keysMapCursor.toTop();
+                rewindKeys();
             }
+        }
+
+        // Starts a scan over the keys for a bucket's fill rows. Pass 2 stamps keys through
+        // keysMap.withKey(), which can grow the map and move its heap, so a cursor taken before
+        // the last stamp would read freed memory; this takes a fresh one at every scan instead
+        // of rewinding the old one.
+        private void rewindKeys() {
+            keysMapCursor = keysMap.getCursor();
         }
 
         // Writes per-type null sentinels into every fixed-size PREV cache slot.
@@ -900,7 +908,6 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
                 MapRecord mapRecord = keysMap.getRecord();
                 mapRecord.setSymbolTableResolver(baseCursor, symbolTableColIndices);
                 keysMapRecord = mapRecord;
-                keysMapCursor = keysMap.getCursor();
             } else {
                 // Non-keyed: degenerate case with 1 "empty" key
                 keyCount = 1;
