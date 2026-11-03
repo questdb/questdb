@@ -100,12 +100,19 @@ final class QwpIngressWireHarness {
     }
 
     static byte[] createMaskedFrame(int opcode, byte[] payload, boolean isFin) {
-        // all test frames are tiny; single-byte payload length is sufficient
-        assert payload.length <= 125;
-        byte[] frame = new byte[2 + 4 + payload.length];
+        // test frames are small: a single-byte or a 16-bit payload length is sufficient
+        assert payload.length < 65_536;
+        final boolean isShort = payload.length <= 125;
+        byte[] frame = new byte[(isShort ? 2 : 4) + 4 + payload.length];
         int offset = 0;
         frame[offset++] = (byte) ((isFin ? 0x80 : 0) | (opcode & 0x0F));
-        frame[offset++] = (byte) (0x80 | payload.length);
+        if (isShort) {
+            frame[offset++] = (byte) (0x80 | payload.length);
+        } else {
+            frame[offset++] = (byte) (0x80 | 126);
+            frame[offset++] = (byte) (payload.length >>> 8);
+            frame[offset++] = (byte) payload.length;
+        }
         System.arraycopy(DEFAULT_MASK_KEY, 0, frame, offset, 4);
         offset += 4;
         for (int i = 0; i < payload.length; i++) {
@@ -315,6 +322,38 @@ final class QwpIngressWireHarness {
         for (int r = 0; r < rows; r++) {
             i = writeLeLong(block, i, pairs[2 * r + 1]);
         }
+        assert i == block.length;
+        return block;
+    }
+
+    /**
+     * One-row table block with schema [{@code v} LONG, {@code w} LONG, {@code ""}
+     * TIMESTAMP (designated)]: {@link #tableBlock} with one more column.
+     */
+    static byte[] tableBlockWithExtraColumn(String table, long v, long w, long tsMicros) {
+        final byte[] name = table.getBytes(StandardCharsets.UTF_8);
+        assert name.length < 128;
+        byte[] block = new byte[1 + name.length + 10 + 3 * 9];
+        int i = 0;
+        block[i++] = (byte) name.length;
+        System.arraycopy(name, 0, block, i, name.length);
+        i += name.length;
+        block[i++] = 1; // rowCount
+        block[i++] = 3; // columnCount
+        block[i++] = 1; // column name length
+        block[i++] = 'v';
+        block[i++] = QwpConstants.TYPE_LONG;
+        block[i++] = 1; // column name length
+        block[i++] = 'w';
+        block[i++] = QwpConstants.TYPE_LONG;
+        block[i++] = 0; // empty name = designated timestamp
+        block[i++] = QwpConstants.TYPE_TIMESTAMP;
+        block[i++] = 0; // no null bitmap
+        i = writeLeLong(block, i, v);
+        block[i++] = 0;
+        i = writeLeLong(block, i, w);
+        block[i++] = 0;
+        i = writeLeLong(block, i, tsMicros);
         assert i == block.length;
         return block;
     }

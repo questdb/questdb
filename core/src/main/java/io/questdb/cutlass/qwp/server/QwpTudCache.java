@@ -274,11 +274,12 @@ public class QwpTudCache implements QuietCloseable {
     }
 
     /**
-     * Commits a QWP commit batch: the rows that consecutive frames appended to
-     * {@code tud}'s writer without committing. The caller first checks that the
-     * writer holds exactly those rows ({@code QwpIngressProcessorState.isCommitBatchIntact}).
-     * Reports the commit's seqTxn to {@code consumer} like {@link #commitAll}. A
-     * dropped table throws; the caller rolls everything back and refuses the batch.
+     * Commits one table of a QWP commit batch: the rows that the batch's frames
+     * appended to {@code tud}'s writer without committing. The caller first checks that
+     * the writer holds exactly those rows
+     * ({@code QwpIngressProcessorState.isCommitBatchEntryIntact}). Reports the commit's
+     * seqTxn to {@code consumer} like {@link #commitAll}. A dropped table throws; the
+     * caller stops the batch commit there and refuses the rest of the batch.
      */
     public void commitBatch(WalTableUpdateDetails tud, CommittedTxnConsumer consumer) throws Throwable {
         try {
@@ -314,6 +315,16 @@ public class QwpTudCache implements QuietCloseable {
             }
         }
         return false;
+    }
+
+    /**
+     * This cache's entry for the table name, or null when it has none. A plain lookup:
+     * unlike {@link #getTableUpdateDetails}, it neither checks the entry for staleness
+     * nor applies pending structure changes, so it cannot commit, roll back or evict
+     * anything.
+     */
+    public WalTableUpdateDetails getCachedTableUpdateDetails(Utf8Sequence tableNameUtf8) {
+        return tableUpdateDetails.get(tableNameUtf8);
     }
 
     /**

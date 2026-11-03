@@ -174,8 +174,13 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
         });
     }
 
+    /**
+     * A frame of two tables joins the commit batch that a frame of one of them opened:
+     * each table commits once, and the ack the real sender consumes names both
+     * commits.
+     */
     @Test
-    public void testBoundaryAndStandaloneFrameReportSeqTxnsToRealSender() throws Exception {
+    public void testMultiTableCommitBatchReportsSeqTxnsToRealSender() throws Exception {
         assertMemoryLeak(() -> {
             try (TestServerMain server = startWithEnvVariables(
                     PropertyKey.QWP_MAX_UNCOMMITTED_ROWS.getEnvVarName(), "1000000")) {
@@ -201,7 +206,7 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                 }
                 TestUtils.assertEventually(() -> server.assertSql("SELECT val FROM boundary_a", "val\n1\n2\n"));
                 TestUtils.assertEventually(() -> server.assertSql("SELECT val FROM boundary_b", "val\n3\n"));
-                server.assertSql("SELECT sequencerTxn FROM wal_tables() WHERE name = 'boundary_a'", "sequencerTxn\n2\n");
+                server.assertSql("SELECT sequencerTxn FROM wal_tables() WHERE name = 'boundary_a'", "sequencerTxn\n1\n");
                 server.assertSql("SELECT sequencerTxn FROM wal_tables() WHERE name = 'boundary_b'", "sequencerTxn\n1\n");
                 long aTxn = -1;
                 long bTxn = -1;
@@ -221,7 +226,7 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                     }
                 }
                 Assert.assertEquals(1, lastAck);
-                Assert.assertEquals(2, aTxn);
+                Assert.assertEquals(1, aTxn);
                 Assert.assertEquals(1, bTxn);
             }
         });
@@ -271,9 +276,9 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
 
     /**
      * A frame that joins a commit batch and fails on its own value is NACKed only
-     * after the batch's earlier frames are committed and acked: the appender
-     * cancels the bad block, the batch is intact, and the server commits it before
-     * answering the bad frame with its own status.
+     * after the batch's earlier frames are committed and acked: the server rolls the
+     * batch back with the bad frame, redoes the earlier frames one by one, each with
+     * its own commit, and then answers the bad frame with its own status.
      */
     @Test
     public void testBadValueInCommitBatchIsNackedAfterEarlierFramesAreAcked() throws Exception {
@@ -323,8 +328,8 @@ public class QwpAckSeqTxnCoverageBlackBoxTest extends AbstractQwpBootstrapTest {
                         "SELECT count() FROM wal_tables() WHERE writerTxn < sequencerTxn", "count\n0\n"));
                 server.assertSql("SELECT id FROM u",
                         "id\n11111111-1111-1111-1111-111111111111\n22222222-2222-2222-2222-222222222222\n");
-                // One commit for both: the second frame joined the first's batch.
-                server.assertSql("SELECT sequencerTxn FROM wal_tables() WHERE name = 'u'", "sequencerTxn\n1\n");
+                // One commit each: the redo commits the batch's frames one by one.
+                server.assertSql("SELECT sequencerTxn FROM wal_tables() WHERE name = 'u'", "sequencerTxn\n2\n");
             }
         });
     }

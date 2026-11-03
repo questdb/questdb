@@ -29,8 +29,12 @@ import io.questdb.client.cutlass.qwp.client.QwpWebSocketEncoder;
 import io.questdb.client.cutlass.qwp.protocol.QwpTableBuffer;
 import io.questdb.client.std.Unsafe;
 import io.questdb.cutlass.qwp.protocol.QwpColumnDef;
+import io.questdb.cutlass.qwp.protocol.QwpConstants;
 import io.questdb.cutlass.qwp.protocol.QwpMessageCursor;
+import io.questdb.cutlass.qwp.protocol.QwpParseException;
+import io.questdb.cutlass.qwp.protocol.QwpSchema;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
+import io.questdb.cutlass.qwp.protocol.QwpTableHeader;
 import io.questdb.cutlass.qwp.server.QwpStreamingDecoder;
 import io.questdb.std.ObjList;
 import org.junit.Assert;
@@ -41,6 +45,31 @@ import static io.questdb.cutlass.qwp.protocol.QwpConstants.TYPE_TIMESTAMP;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
 
 public class QwpTableBlockCursorSchemaCacheTest {
+
+    /**
+     * The cache keeps at most as many tables as it was built for. A new table past
+     * that starts the cache over, so the tables before it parse again.
+     */
+    @Test
+    public void testCacheHoldsAtMostItsCapacityOfTables() throws Exception {
+        final long clientMemUsedBefore = Unsafe.getMemUsed();
+        assertMemoryLeak(() -> {
+            try (QwpStreamingDecoder decoder = new QwpStreamingDecoder(QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE, 2)) {
+                ObjList<QwpColumnDef> a = decode(decoder, "a", "val");
+                ObjList<QwpColumnDef> b = decode(decoder, "b", "val");
+                Assert.assertEquals(2, decoder.getCachedSchemaCount());
+                Assert.assertSame(a, decode(decoder, "a", "val"));
+                Assert.assertSame(b, decode(decoder, "b", "val"));
+                // The third table empties the full cache before it joins.
+                ObjList<QwpColumnDef> c = decode(decoder, "c", "val");
+                Assert.assertEquals(1, decoder.getCachedSchemaCount());
+                Assert.assertSame(c, decode(decoder, "c", "val"));
+                Assert.assertNotSame(a, decode(decoder, "a", "val"));
+                Assert.assertEquals(2, decoder.getCachedSchemaCount());
+            }
+        });
+        Assert.assertEquals("client native memory leaked", clientMemUsedBefore, Unsafe.getMemUsed());
+    }
 
     @Test
     public void testIdenticalSchemaReusesParseAndDifferentSchemaDoesNot() throws Exception {
@@ -67,11 +96,113 @@ public class QwpTableBlockCursorSchemaCacheTest {
         Assert.assertEquals("client native memory leaked", clientMemUsedBefore, Unsafe.getMemUsed());
     }
 
+    /**
+     * Each table keeps its own parse, so blocks that alternate between tables, even
+     * tables with identical columns, parse each table's schema once.
+     */
+    @Test
+    public void testInterleavedTablesKeepTheirParses() throws Exception {
+        final long clientMemUsedBefore = Unsafe.getMemUsed();
+        assertMemoryLeak(() -> {
+            try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {
+                ObjList<QwpColumnDef> a = decode(decoder, "a", "val");
+                ObjList<QwpColumnDef> b = decode(decoder, "b", "other");
+                ObjList<QwpColumnDef> c = decode(decoder, "c", "val");
+                Assert.assertNotSame(a, b);
+                Assert.assertNotSame("a table keeps its own parse, whatever its columns", a, c);
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertSame(a, decode(decoder, "a", "val"));
+                    Assert.assertSame(b, decode(decoder, "b", "other"));
+                    Assert.assertSame(c, decode(decoder, "c", "val"));
+                }
+                // A table's new schema replaces its parse and leaves the others alone.
+                ObjList<QwpColumnDef> b2 = decode(decoder, "b", "val");
+                Assert.assertNotSame(b, b2);
+                Assert.assertSame(a, decode(decoder, "a", "val"));
+                Assert.assertSame(b2, decode(decoder, "b", "val"));
+                Assert.assertEquals(3, decoder.getCachedSchemaCount());
+            }
+        });
+        Assert.assertEquals("client native memory leaked", clientMemUsedBefore, Unsafe.getMemUsed());
+    }
+
+    /**
+     * A block of a cached table whose data ends inside its schema section must not
+     * take the cached parse: it parses the section, fails, and the parse error
+     * releases every cached schema with the cursor's other caches.
+     */
+    @Test
+    public void testTruncatedSchemaSkipsCacheAndParseErrorReleasesIt() throws Exception {
+        final long clientMemUsedBefore = Unsafe.getMemUsed();
+        assertMemoryLeak(() -> {
+            try (QwpStreamingDecoder decoder = new QwpStreamingDecoder()) {
+                decode(decoder, "a", "val");
+                decode(decoder, "b", "val");
+                final long retainedWithSchemas = retainedCacheBytes(decoder, "a", "val");
+                Assert.assertEquals(2, decoder.getCachedSchemaCount());
+                try (
+                        QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                        QwpTableBuffer buffer = new QwpTableBuffer("a")
+                ) {
+                    buffer.getOrCreateColumn("val", TYPE_LONG, false).addLong(1);
+                    buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP).addLong(1_000_000_000_000L);
+                    buffer.nextRow();
+                    final int size = encoder.encode(buffer);
+                    final long address = encoder.getBuffer().getBufferPtr();
+                    // Cut the payload one byte short of the end of the schema section.
+                    final long payload = address + QwpConstants.HEADER_SIZE;
+                    final QwpTableHeader header = new QwpTableHeader(QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
+                    header.parse(payload, size - QwpConstants.HEADER_SIZE);
+                    final QwpSchema.ParseResult schema = new QwpSchema.ParseResult();
+                    QwpSchema.parse(
+                            payload + header.getBytesConsumed(),
+                            size - QwpConstants.HEADER_SIZE - header.getBytesConsumed(),
+                            header.getColumnCount(),
+                            schema
+                    );
+                    final int payloadLength = header.getBytesConsumed() + schema.bytesConsumed - 1;
+                    Unsafe.getUnsafe().putInt(address + 8, payloadLength);
+                    try {
+                        decoder.decode(address, QwpConstants.HEADER_SIZE + payloadLength).nextTable();
+                        Assert.fail("a truncated schema section must not parse");
+                    } catch (QwpParseException expected) {
+                        // The schema parse's error: a cache hit would have skipped the parse
+                        // and failed later, on column data past the block's end.
+                        Assert.assertEquals(QwpParseException.ErrorCode.HEADER_TOO_SHORT, expected.getErrorCode());
+                    }
+                }
+                Assert.assertEquals(0, decoder.getCachedSchemaCount());
+                Assert.assertTrue(retainedCacheBytes(decoder, "c", "val") < retainedWithSchemas);
+            }
+        });
+        Assert.assertEquals("client native memory leaked", clientMemUsedBefore, Unsafe.getMemUsed());
+    }
+
     private static ObjList<QwpColumnDef> decode(QwpStreamingDecoder decoder, String columnName) throws Exception {
+        return decode(decoder, "test_table", columnName);
+    }
+
+    // Decodes a block of the table and returns what the decoder's caches retain then.
+    private static long retainedCacheBytes(QwpStreamingDecoder decoder, String tableName, String columnName) throws Exception {
+        try (
+                QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                QwpTableBuffer buffer = new QwpTableBuffer(tableName)
+        ) {
+            buffer.getOrCreateColumn(columnName, TYPE_LONG, false).addLong(1);
+            buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP).addLong(1_000_000_000_000L);
+            buffer.nextRow();
+            final int size = encoder.encode(buffer);
+            final QwpMessageCursor msg = decoder.decode(encoder.getBuffer().getBufferPtr(), size);
+            msg.nextTable();
+            return msg.getRetainedCacheBytes();
+        }
+    }
+
+    private static ObjList<QwpColumnDef> decode(QwpStreamingDecoder decoder, String tableName, String columnName) throws Exception {
         // The encoder does not own the table buffer; both hold native memory.
         try (
                 QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
-                QwpTableBuffer buffer = new QwpTableBuffer("test_table")
+                QwpTableBuffer buffer = new QwpTableBuffer(tableName)
         ) {
             QwpTableBuffer.ColumnBuffer col = buffer.getOrCreateColumn(columnName, TYPE_LONG, false);
             QwpTableBuffer.ColumnBuffer tsCol = buffer.getOrCreateDesignatedTimestampColumn(TYPE_TIMESTAMP);

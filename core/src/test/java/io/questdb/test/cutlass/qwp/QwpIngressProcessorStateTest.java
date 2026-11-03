@@ -45,6 +45,7 @@ import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.processors.LineHttpProcessorConfiguration;
 import io.questdb.cutlass.line.tcp.ConnectionSymbolCache;
 import io.questdb.cutlass.line.tcp.DefaultColumnTypes;
+import io.questdb.cutlass.line.tcp.QwpWalAppender;
 import io.questdb.cutlass.line.tcp.TableUpdateDetails;
 import io.questdb.cutlass.line.tcp.WalTableUpdateDetails;
 import io.questdb.cutlass.qwp.protocol.QwpArrayColumnCursor;
@@ -90,58 +91,6 @@ import java.util.function.Consumer;
 public class QwpIngressProcessorStateTest extends AbstractCairoTest {
 
     @Test
-    public void testJoiningFrameMalformedValueKeepsBatchRows() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE prepared_strings (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
-            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
-                state.of(1, AllowAllSecurityContext.INSTANCE);
-                for (int pass = 0; pass < 2; pass++) {
-                    try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
-                         QwpTableBuffer table = new QwpTableBuffer("prepared_strings")) {
-                        var value = table.getOrCreateColumn("val", QwpConstants.TYPE_VARCHAR, false);
-                        var timestamp = table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP);
-                        value.addString(pass == 0 ? "prefix" : "ok");
-                        timestamp.addLong(1_000_000L);
-                        table.nextRow();
-                        if (pass == 1) {
-                            value.addString("ab");
-                            timestamp.addLong(2_000_000L);
-                            table.nextRow();
-                        }
-                        int length = encoder.encode(table);
-                        long address = encoder.getBuffer().getBufferPtr();
-                        if (pass == 1) {
-                            corruptQwpUtf8Value(address, length, QwpConstants.TYPE_VARCHAR);
-                        }
-                        state.addData(address, address + length);
-                    }
-                    state.prepareMessage();
-                    Assert.assertTrue(state.isOk());
-                    if (pass == 0) {
-                        state.processPreparedMessage();
-                        Assert.assertTrue(state.isOk());
-                        Assert.assertTrue(state.tryOpenCommitBatch(0));
-                        state.clearMessageState();
-                    } else {
-                        Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
-                        state.processPreparedJoiningMessage();
-                        Assert.assertEquals(QwpIngressProcessorState.Status.PARSE_ERROR, state.getStatus());
-                        // The appender cancelled the malformed block: the batch's row is all
-                        // the writer holds uncommitted.
-                        Assert.assertTrue(state.isCommitBatchIntact());
-                        state.clearErrorForBatchSalvage();
-                        Assert.assertTrue(state.commitBatch());
-                        Assert.assertEquals(0, state.getHighestProcessedSequence());
-                    }
-                }
-            }
-            drainWalQueue();
-            assertQuery("SELECT val FROM prepared_strings").noLeakCheck().expectSize().returns("val\nprefix\n");
-        });
-    }
-
-    @Test
     public void testArrayColumnFramesJoinCommitBatch() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE arrays (arr DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -151,17 +100,10 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 for (int frame = 0; frame < 3; frame++) {
                     final double value = frame;
                     prepareArrayBlock(state, column -> column.addDoubleArray(new double[]{value, value + 0.5}), 1_000_000L + frame);
-                    if (frame == 0) {
-                        state.processPreparedMessage();
-                        Assert.assertTrue(state.tryOpenCommitBatch(frame));
-                    } else {
-                        // Phase 1 re-validates array dimensions on every block, but an
-                        // array column that exists settles the schema like any other.
-                        Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
-                        state.processPreparedJoiningMessage();
-                        Assert.assertTrue(state.getErrorText(), state.isOk());
-                        Assert.assertTrue(state.addToCommitBatch(frame));
-                    }
+                    // Phase 1 re-validates array dimensions on every block, but an
+                    // array column that exists settles the schema like any other.
+                    Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(frame, 0, 0));
+                    Assert.assertTrue(state.getErrorText(), state.isOk());
                     state.clearMessageState();
                 }
                 Assert.assertTrue(state.commitBatch());
@@ -195,18 +137,16 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 state.clear();
 
                 prepareArrayBlock(state, column -> column.addDoubleArray(new double[]{7.0, 8.0}), 3_000_000L);
-                state.processPreparedMessage();
-                Assert.assertTrue(state.tryOpenCommitBatch(2));
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(2, 0, 0));
                 state.clearMessageState();
                 prepareArrayBlock(state, column -> column.addDoubleArray(new double[][]{{9.0, 10.0}, {11.0, 12.0}}), 4_000_000L);
-                Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
-                state.processPreparedJoiningMessage();
+                // The block appended next to the batch's rows: only a redo can drop it.
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_REDO, state.joinCommitBatch(3, 0, 0));
                 Assert.assertEquals(QwpIngressProcessorState.Status.SCHEMA_MISMATCH, state.getStatus());
                 TestUtils.assertContains(state.getErrorText(), "array dimensionality mismatch");
-                Assert.assertTrue(state.isCommitBatchIntact());
-                state.clearErrorForBatchSalvage();
-                Assert.assertTrue(state.commitBatch());
-                Assert.assertEquals(2, state.getHighestProcessedSequence());
+                // The redo starts by rolling back the batch with the failed frame.
+                state.clear();
+                Assert.assertFalse(state.isCommitBatchPending());
             }
             drainWalQueue();
             assertQuery("SELECT arr, ts FROM arrays")
@@ -216,7 +156,6 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     .returns("""
                             arr\tts
                             [1.0,2.0]\t1970-01-01T00:00:01.000000Z
-                            [7.0,8.0]\t1970-01-01T00:00:03.000000Z
                             """);
         });
     }
@@ -229,22 +168,60 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, lineConfigWithCap(3))) {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 prepareLongBlocks(state, 1, "capped");
-                state.processPreparedMessage();
-                Assert.assertTrue(state.tryOpenCommitBatch(0));
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(0, 0, 0));
                 state.clearMessageState();
                 prepareLongBlocks(state, 1, "capped");
-                Assert.assertTrue("1 + 1 rows stay below the cap of 3", state.isPreparedMessageJoinableToCommitBatch());
-                state.processPreparedJoiningMessage();
-                Assert.assertTrue(state.addToCommitBatch(1));
+                Assert.assertEquals("1 + 1 rows stay below the cap of 3",
+                        QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(1, 0, 0));
                 state.clearMessageState();
                 prepareLongBlocks(state, 1, "capped");
-                Assert.assertFalse("2 + 1 rows would reach the cap", state.isPreparedMessageJoinableToCommitBatch());
+                Assert.assertEquals("2 + 1 rows would reach the cap",
+                        QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(2, 0, 0));
+                Assert.assertTrue(state.isOk());
                 state.clearMessageState();
                 Assert.assertTrue(state.commitBatch());
                 Assert.assertEquals(1, state.getHighestProcessedSequence());
             }
             drainWalQueue();
             assertQuery("SELECT count() FROM capped").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+        });
+    }
+
+    /**
+     * The batch commit checks that each table's writer holds exactly its batch rows. A
+     * row that reached a batch table's writer behind the batch's back, which no
+     * production path does, stops the commit at that table: the table before it
+     * commits, and the watermark stops before its first frame.
+     */
+    @Test
+    public void testCommitBatchStopsAtTableWhoseRowsChanged() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE first_t (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE second_t (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                final String[] frames = {"first_t", "second_t", "first_t"};
+                for (int seq = 0; seq < frames.length; seq++) {
+                    prepareLongBlocks(state, 1, frames[seq]);
+                    Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(seq, 0, 0));
+                    state.clearMessageState();
+                }
+                final TableWriter.Row row = state.getCommitBatchWriter(1).newRow(5_000_000L);
+                row.putLong(0, 99);
+                row.append();
+                Assert.assertFalse(state.commitBatch());
+                Assert.assertEquals(QwpIngressProcessorState.Status.INTERNAL_ERROR, state.getStatus());
+                TestUtils.assertContains(state.getErrorText(), "commit batch rows are not intact");
+                Assert.assertEquals("the NACK names second_t's first frame", 1, state.getCommitBatchFailureSequence());
+                Assert.assertEquals("the watermark covers the frame before it", 0, state.getHighestProcessedSequence());
+                state.abandonCommitBatch();
+                Assert.assertTrue(state.hasUnresolvedSequence());
+                state.clear();
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM first_t").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+            assertQuery("SELECT count() FROM second_t").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
         });
     }
 
@@ -256,22 +233,71 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 prepareLongBlocks(state, 1, "evolving");
-                state.processPreparedMessage();
-                Assert.assertTrue(state.tryOpenCommitBatch(0));
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(0, 0, 0));
                 state.clearMessageState();
                 prepareEvolvedBlock(state, "evolving");
-                Assert.assertFalse("a schema the writer has not settled cannot join", state.isPreparedMessageJoinableToCommitBatch());
-                // Even appended directly, a joining frame cannot create the column.
-                state.processPreparedJoiningMessage();
-                Assert.assertEquals(QwpIngressProcessorState.Status.INTERNAL_ERROR, state.getStatus());
-                Assert.assertTrue("the refused block left the batch's rows alone", state.isCommitBatchIntact());
-                state.clearErrorForBatchSalvage();
+                Assert.assertEquals("a schema the writer has not settled cannot join",
+                        QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(1, 0, 0));
+                Assert.assertTrue(state.isOk());
                 Assert.assertTrue(state.commitBatch());
             }
             drainWalQueue();
             assertQuery("SELECT count() FROM evolving").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
             assertQuery("SELECT \"column\" FROM table_columns('evolving')").noLeakCheck()
                     .noRandomAccess().returns("column\nval\nts\n");
+        });
+    }
+
+    /**
+     * Frames that alternate between tables keep each table's schema parse and column
+     * resolution, and keep joining one commit batch: once warm, they allocate nothing,
+     * as frames of one table do.
+     */
+    @Test
+    public void testInterleavedTablesAllocateNothingOnceWarm() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[] tables = {"alloc_a", "alloc_b", "alloc_c"};
+            final long[] messages = new long[tables.length];
+            final int[] messageSizes = new int[tables.length];
+            try {
+                for (int t = 0; t < tables.length; t++) {
+                    execute("CREATE TABLE " + tables[t] + " (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                         QwpTableBuffer table = new QwpTableBuffer(tables[t])) {
+                        table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false).addLong(t);
+                        table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L);
+                        table.nextRow();
+                        messageSizes[t] = encoder.encode(table);
+                        messages[t] = Unsafe.malloc(messageSizes[t], MemoryTag.NATIVE_DEFAULT);
+                        Unsafe.getUnsafe().copyMemory(encoder.getBuffer().getBufferPtr(), messages[t], messageSizes[t]);
+                    }
+                }
+                LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+                try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                    state.of(1, AllowAllSecurityContext.INSTANCE);
+                    // The first rounds create each table's writer, caches and batch entry.
+                    long seq = ingestInterleaved(state, messages, messageSizes, 0, 300);
+                    try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+                        final com.sun.management.ThreadMXBean threadMXBean = scope.getBean();
+                        final long threadId = Thread.currentThread().threadId();
+                        final long before = threadMXBean.getThreadAllocatedBytes(threadId);
+                        seq = ingestInterleaved(state, messages, messageSizes, seq, 3_000);
+                        final long allocated = threadMXBean.getThreadAllocatedBytes(threadId) - before;
+                        Assert.assertTrue("3,000 interleaved frames allocated " + allocated + " bytes", allocated < 64 * 1024);
+                    }
+                    Assert.assertEquals(seq - 1, state.getHighestProcessedSequence());
+                }
+            } finally {
+                for (int t = 0; t < tables.length; t++) {
+                    if (messages[t] != 0) {
+                        Unsafe.free(messages[t], messageSizes[t], MemoryTag.NATIVE_DEFAULT);
+                    }
+                }
+            }
+            drainWalQueue();
+            for (String table : tables) {
+                assertQuery("SELECT count() FROM " + table).noLeakCheck().noRandomAccess().expectSize().returns("count\n1100\n");
+            }
         });
     }
 
@@ -286,7 +312,6 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     prepareLongBlocks(state, 1, "prepared", "prepared");
                     state.processPreparedMessage();
                     Assert.assertTrue(state.isOk());
-                    Assert.assertFalse("a two-block frame cannot open a commit batch", state.tryOpenCommitBatch(pass));
                     state.processPreparedMessage(); // the prepared first cursor cannot be consumed twice
                     state.commit();
                     Assert.assertTrue(state.isOk());
@@ -307,54 +332,63 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Every plain frame joins the commit batch, whatever its tables: frames without
+     * tables or rows, frames of several tables, and frames of tables the batch does
+     * not hold yet. A block without rows joins nothing. Each table commits once.
+     */
     @Test
-    public void testPreparedMessageClassifiesEmptyAndRowlessBlocks() throws Exception {
+    public void testPreparedMessageJoinsWhateverItsTables() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE other (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final long preparedTxn = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("prepared"));
+            final long otherTxn = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("other"));
             LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
             try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
-                // Empty and rowless frames never open a batch.
+                // An empty frame opens the batch.
                 prepareLongBlocks(state, 0);
-                state.processPreparedMessage();
-                Assert.assertTrue(state.isOk());
-                Assert.assertFalse(state.tryOpenCommitBatch(0));
-                state.commit();
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(0, 0, 0));
+                Assert.assertEquals(0, state.getCommitBatchTableCount());
                 state.clearMessageState();
+                // A rowless block joins no table.
                 prepareLongBlocks(state, 0, "prepared");
-                state.processPreparedMessage();
-                Assert.assertFalse(state.tryOpenCommitBatch(1));
-                state.commit();
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(1, 0, 0));
+                Assert.assertEquals(0, state.getCommitBatchTableCount());
                 state.clearMessageState();
-                // A row-bearing singleton opens one.
                 prepareLongBlocks(state, 1, "prepared");
-                state.processPreparedMessage();
-                Assert.assertTrue(state.tryOpenCommitBatch(2));
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(2, 0, 0));
+                Assert.assertEquals(1, state.getCommitBatchTableCount());
                 state.clearMessageState();
-                // Rowless and two-block frames cannot join it.
+                // A rowless block of a batch table and a frame of two blocks of it.
                 prepareLongBlocks(state, 0, "prepared");
-                Assert.assertFalse(state.isPreparedMessageJoinableToCommitBatch());
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(3, 0, 0));
                 state.clearMessageState();
                 prepareLongBlocks(state, 1, "prepared", "prepared");
-                Assert.assertFalse(state.isPreparedMessageJoinableToCommitBatch());
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(4, 0, 0));
+                Assert.assertEquals(1, state.getCommitBatchTableCount());
                 state.clearMessageState();
-                // Another table cannot join it.
-                execute("CREATE TABLE other (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                // Another table joins, alone and next to the batch's first table.
                 prepareLongBlocks(state, 1, "other");
-                Assert.assertFalse(state.isPreparedMessageJoinableToCommitBatch());
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(5, 0, 0));
+                Assert.assertEquals(2, state.getCommitBatchTableCount());
                 state.clearMessageState();
-                // A row-bearing singleton with the settled schema joins it.
-                prepareLongBlocks(state, 1, "prepared");
-                Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
-                state.processPreparedJoiningMessage();
-                Assert.assertTrue(state.isOk());
-                Assert.assertTrue(state.addToCommitBatch(3));
+                prepareLongBlocks(state, 1, "prepared", "other");
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(6, 0, 0));
+                Assert.assertEquals(2, state.getCommitBatchTableCount());
                 state.clearMessageState();
                 Assert.assertTrue(state.commitBatch());
-                Assert.assertEquals(3, state.getHighestProcessedSequence());
+                Assert.assertEquals(6, state.getHighestProcessedSequence());
+                Assert.assertFalse(state.isCommitBatchPending());
             }
             drainWalQueue();
-            assertQuery("SELECT count() FROM prepared").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+            assertQuery("SELECT count() FROM prepared").noLeakCheck().noRandomAccess().expectSize().returns("count\n4\n");
+            assertQuery("SELECT count() FROM other").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+            Assert.assertEquals("one commit per table", preparedTxn + 1,
+                    engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("prepared")));
+            Assert.assertEquals("one commit per table", otherTxn + 1,
+                    engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("other")));
         });
     }
 
@@ -628,6 +662,51 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A schema is settled for a table once Phase 1 resolved it onto that table's
+     * writer, and stays settled while other tables resolve theirs, until the table's
+     * own metadata changes.
+     */
+    @Test
+    public void testSchemaSettledFollowsEachTablesOwnResolution() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE settle_a (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE settle_b (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration lineConfig = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (
+                    QwpTudCache cache = new QwpTudCache(engine, true, true, new DefaultColumnTypes(lineConfig), PartitionBy.DAY);
+                    QwpWalAppender appender = new QwpWalAppender(true, 127, 50);
+                    QwpStreamingDecoder decoder = new QwpStreamingDecoder()
+            ) {
+                final WalTableUpdateDetails tudA = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("settle_a"), null, null, 10);
+                final WalTableUpdateDetails tudB = cache.getTableUpdateDetails(
+                        AllowAllSecurityContext.INSTANCE, new Utf8String("settle_b"), null, null, 10);
+                final ObjList<QwpColumnDef> schemaA = appendOneRow(decoder, appender, tudA, "settle_a", null, false);
+                Assert.assertFalse("a table that resolved nothing is not settled", appender.isSchemaSettled(schemaA, tudB));
+                appendOneRow(decoder, appender, tudA, "settle_a", null, true);
+                Assert.assertTrue(appender.isSchemaSettled(schemaA, tudA));
+                final ObjList<QwpColumnDef> schemaB = appendOneRow(decoder, appender, tudB, "settle_b", null, true);
+                Assert.assertNotSame(schemaA, schemaB);
+                Assert.assertTrue(appender.isSchemaSettled(schemaB, tudB));
+                Assert.assertTrue("b's resolution leaves a's settled", appender.isSchemaSettled(schemaA, tudA));
+                Assert.assertFalse("a schema of another table does not count", appender.isSchemaSettled(schemaA, tudB));
+                // A block that adds a column to a changes a's metadata version.
+                appendOneRow(decoder, appender, tudA, "settle_a", "extra", true);
+                Assert.assertFalse(appender.isSchemaSettled(schemaA, tudA));
+                Assert.assertTrue(appender.isSchemaSettled(schemaB, tudB));
+                try {
+                    cache.commitAll();
+                } catch (Throwable t) {
+                    throw new AssertionError(t);
+                }
+            }
+            drainWalQueue();
+            assertQuery("SELECT count() FROM settle_a").noLeakCheck().noRandomAccess().expectSize().returns("count\n2\n");
+            assertQuery("SELECT count() FROM settle_b").noLeakCheck().noRandomAccess().expectSize().returns("count\n1\n");
+        });
+    }
+
     @Test
     public void testWatermarkClampedWhileDeferredRowsUncommitted() throws Exception {
         assertMemoryLeak(() -> {
@@ -812,6 +891,56 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
     // A deferred frame that appends NO rows must never be ack-covered, however
     // clean the connection is: the client's dictionary chunks are exactly this
     // frame, and the data frames behind them reference the ids they register.
+    /**
+     * Frames of two tables with 20 columns each, past the initial capacity of a
+     * table's column mapping and of its cached schema section, alternate and keep
+     * joining one commit batch.
+     */
+    @Test
+    public void testWideSchemaFramesJoinCommitBatch() throws Exception {
+        assertMemoryLeak(() -> {
+            final StringBuilder columns = new StringBuilder();
+            for (int c = 0; c < 20; c++) {
+                columns.append("column_").append(c).append(" LONG, ");
+            }
+            execute("CREATE TABLE wide_a (" + columns + "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE wide_b (" + columns + "ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            LineHttpProcessorConfiguration config = new DefaultHttpServerConfiguration.DefaultLineHttpProcessorConfiguration(configuration);
+            try (QwpIngressProcessorState state = new QwpIngressProcessorState(1024, 4096, engine, config)) {
+                state.of(1, AllowAllSecurityContext.INSTANCE);
+                for (int seq = 0; seq < 4; seq++) {
+                    try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+                         QwpTableBuffer table = new QwpTableBuffer(seq % 2 == 0 ? "wide_a" : "wide_b")) {
+                        for (int c = 0; c < 20; c++) {
+                            table.getOrCreateColumn("column_" + c, QwpConstants.TYPE_LONG, false).addLong(seq * 100L + c);
+                        }
+                        table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L + seq);
+                        table.nextRow();
+                        int length = encoder.encode(table);
+                        long address = encoder.getBuffer().getBufferPtr();
+                        state.addData(address, address + length);
+                    }
+                    state.prepareMessage();
+                    Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(seq, 0, 0));
+                    state.clearMessageState();
+                }
+                Assert.assertEquals(2, state.getCommitBatchTableCount());
+                Assert.assertTrue(state.commitBatch());
+            }
+            drainWalQueue();
+            assertQuery("SELECT column_0, column_19 FROM wide_a").noLeakCheck().expectSize().returns("""
+                    column_0\tcolumn_19
+                    0\t19
+                    200\t219
+                    """);
+            assertQuery("SELECT column_0, column_19 FROM wide_b").noLeakCheck().expectSize().returns("""
+                    column_0\tcolumn_19
+                    100\t119
+                    300\t319
+                    """);
+        });
+    }
+
     @Test
     public void testZeroRowDeferredFrameIsNeverAckCovered() throws Exception {
         assertMemoryLeak(() -> {
@@ -6496,25 +6625,24 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 state.of(1, AllowAllSecurityContext.INSTANCE);
                 state.setDurableAckEnabled(true);
                 prepareLongBlocks(state, 1, "prepared");
-                state.processPreparedMessage();
-                Assert.assertTrue(state.tryOpenCommitBatch(0));
+                Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(0, 0, 0));
                 state.clearMessageState();
                 prepareLongBlocks(state, 1, "prepared");
                 if (isAfterAdmission) {
-                    Assert.assertTrue(state.isPreparedMessageJoinableToCommitBatch());
+                    // The frame joins and appends to the old writer before the replacement.
+                    Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(1, 0, 0));
+                    state.clearMessageState();
                 }
                 execute(isDrop ? "DROP TABLE prepared" : "RENAME TABLE prepared TO prepared_old");
                 execute("CREATE TABLE prepared (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
                 long replacementTxn = engine.getTableSequencerAPI().lastTxn(engine.verifyTableName("prepared"));
-                if (isAfterAdmission) {
-                    state.processPreparedJoiningMessage();
+                if (!isAfterAdmission) {
+                    Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_BOUNDARY, state.joinCommitBatch(1, 0, 0));
                     Assert.assertTrue(state.isOk());
-                    state.addToCommitBatch(1);
-                } else {
-                    Assert.assertFalse(state.isPreparedMessageJoinableToCommitBatch());
                 }
                 Assert.assertFalse(state.commitBatch());
                 Assert.assertFalse(state.isOk());
+                Assert.assertEquals(0, state.getCommitBatchFailureSequence());
                 Assert.assertEquals(0, state.getPendingAckSeqTxns().size());
                 Assert.assertEquals(-1, state.getHighestProcessedSequence());
                 state.abandonCommitBatch();
@@ -6529,6 +6657,56 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 assertQuery("SELECT count() FROM prepared_old").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
             }
         });
+    }
+
+    // Feeds frameCount frames that cycle through the given messages, each joining the
+    // commit batch, and commits the batch every 30 frames, like a receive pass would.
+    private static long ingestInterleaved(
+            QwpIngressProcessorState state,
+            long[] messages,
+            int[] messageSizes,
+            long seq,
+            int frameCount
+    ) {
+        for (int i = 0; i < frameCount; i++, seq++) {
+            final int t = i % messages.length;
+            state.addData(messages[t], messages[t] + messageSizes[t]);
+            state.prepareMessage();
+            Assert.assertEquals(QwpIngressProcessorState.COMMIT_BATCH_JOINED, state.joinCommitBatch(seq, 0, 0));
+            state.clearMessageState();
+            if ((i + 1) % 30 == 0) {
+                Assert.assertTrue(state.commitBatch());
+            }
+        }
+        return seq;
+    }
+
+    // Decodes a one-row block of table [val LONG, ts] (plus extraColumn LONG when not
+    // null) and, when isAppend, appends it to tud. Returns the block's schema.
+    private static ObjList<QwpColumnDef> appendOneRow(
+            QwpStreamingDecoder decoder,
+            QwpWalAppender appender,
+            WalTableUpdateDetails tud,
+            String tableName,
+            String extraColumn,
+            boolean isAppend
+    ) throws Exception {
+        try (QwpWebSocketEncoder encoder = new QwpWebSocketEncoder();
+             QwpTableBuffer table = new QwpTableBuffer(tableName)) {
+            table.getOrCreateColumn("val", QwpConstants.TYPE_LONG, false).addLong(1);
+            if (extraColumn != null) {
+                table.getOrCreateColumn(extraColumn, QwpConstants.TYPE_LONG, false).addLong(2);
+            }
+            table.getOrCreateDesignatedTimestampColumn(QwpConstants.TYPE_TIMESTAMP).addLong(1_000_000L);
+            table.nextRow();
+            final int length = encoder.encode(table);
+            final QwpMessageCursor message = decoder.decode(encoder.getBuffer().getBufferPtr(), length);
+            final QwpTableBlockCursor block = message.nextTable();
+            if (isAppend) {
+                appender.appendToWalStreaming(AllowAllSecurityContext.INSTANCE, block, tud);
+            }
+            return block.getSchema();
+        }
     }
 
     private static void prepareEvolvedBlock(QwpIngressProcessorState state, String name) {

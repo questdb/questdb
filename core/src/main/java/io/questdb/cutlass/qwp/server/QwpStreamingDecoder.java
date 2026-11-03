@@ -31,6 +31,7 @@ import io.questdb.cutlass.qwp.protocol.QwpParseException;
 import io.questdb.cutlass.qwp.protocol.QwpTableBlockCursor;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Zero-allocation streaming decoder for QWP v1 messages.
@@ -81,16 +82,26 @@ public class QwpStreamingDecoder implements QuietCloseable {
     private final QwpMessageCursor messageCursor;
 
     public QwpStreamingDecoder() {
-        this(QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE);
+        this(QwpConstants.DEFAULT_MAX_ROWS_PER_TABLE, QwpConstants.DEFAULT_MAX_TABLES_PER_CONNECTION);
     }
 
-    public QwpStreamingDecoder(int maxRowsPerTable) {
-        this.messageCursor = new QwpMessageCursor(maxRowsPerTable);
+    /**
+     * @param maxRowsPerTable     the most rows a table block may carry
+     * @param schemaCacheCapacity the most tables whose schema parse the decoder keeps;
+     *                            the most tables a connection may write to
+     */
+    public QwpStreamingDecoder(int maxRowsPerTable, int schemaCacheCapacity) {
+        this.messageCursor = new QwpMessageCursor(maxRowsPerTable, schemaCacheCapacity);
     }
 
     @Override
     public void close() {
         reset();
+    }
+
+    @TestOnly
+    public int getCachedSchemaCount() {
+        return messageCursor.getCachedSchemaCount();
     }
 
     /**

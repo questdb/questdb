@@ -169,7 +169,7 @@ public class QwpUdpReceiver extends SynchronizedJob implements Closeable {
             );
 
             this.messageHeader = new QwpMessageHeader();
-            this.messageCursor = new QwpMessageCursor(configuration.getMaxRowsPerTable());
+            this.messageCursor = new QwpMessageCursor(configuration.getMaxRowsPerTable(), configuration.getMaxTablesPerConnection());
             this.buf = buf;
             this.walAppender = walAppender;
             this.tudCache = tudCache;

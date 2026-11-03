@@ -64,6 +64,14 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
      * per cache, so it needs no synchronisation.
      */
     private long lastStructureCheckSeqTxn = Long.MIN_VALUE;
+    // QwpWalAppender's Phase 1 column resolution for this table: each table keeps its
+    // own, so frames of several interleaved tables all skip Phase 1. Lives and dies with
+    // this entry, which bounds it by the table cache. QWP ingest path only.
+    private QwpWalAppender.ColumnMapping qwpColumnMapping;
+    // Position of this table in the QWP connection's commit batch, -1 before it first
+    // joins one. Only a hint: the batch confirms that the entry at this position is this
+    // table's before using it, so the batch need not reset it. QWP ingest path only.
+    private int qwpCommitBatchSlot = -1;
 
     public WalTableUpdateDetails(
             CairoEngine engine,
@@ -97,6 +105,10 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
         return lastStructureCheckSeqTxn;
     }
 
+    public int getQwpCommitBatchSlot() {
+        return qwpCommitBatchSlot;
+    }
+
     @Override
     public ThreadLocalDetails getThreadLocalDetails(int workerId) {
         return super.getThreadLocalDetails(0);
@@ -108,5 +120,17 @@ public class WalTableUpdateDetails extends TableUpdateDetails {
 
     public void setLastStructureCheckSeqTxn(long seqTxn) {
         lastStructureCheckSeqTxn = seqTxn;
+    }
+
+    public void setQwpCommitBatchSlot(int slot) {
+        qwpCommitBatchSlot = slot;
+    }
+
+    QwpWalAppender.ColumnMapping getQwpColumnMapping() {
+        return qwpColumnMapping;
+    }
+
+    void setQwpColumnMapping(QwpWalAppender.ColumnMapping mapping) {
+        qwpColumnMapping = mapping;
     }
 }
